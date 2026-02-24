@@ -1,13 +1,6 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import {
-  collection,
-  doc,
-  increment,
-  onSnapshot,
-  orderBy,
-  query,
-  updateDoc,
-} from "firebase/firestore";
+import { doc, increment, serverTimestamp, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -16,44 +9,62 @@ import {
   Image,
   Pressable,
   Text,
+  TextInput,
   View,
 } from "react-native";
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useAuth } from "../../src/hooks/useAuth";
+import {
+  CategoryFilter,
+  ClosetItem,
+  ItemSort,
+  StatusFilter,
+  isInCategory,
+  listenToItems,
+} from "../../src/lib/items";
 import { db } from "../../src/lib/firebase";
 import { addItemToOutfit, toDateKey } from "../../src/lib/outfits";
-import { ClothingItem, ClothingStatus } from "../../src/types/ClothingItem";
 
-type StatusFilter = "ALL" | ClothingStatus;
+const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
+  { key: "ALL", label: "All" },
+  { key: "AVAILABLE", label: "Available" },
+  { key: "WORN", label: "Worn" },
+  { key: "IN_LAUNDRY", label: "Laundry" },
+];
 
-// ✅ Home sections
+const CATEGORY_FILTERS: { key: CategoryFilter; label: string }[] = [
+  { key: "ALL", label: "All" },
+  { key: "TOP", label: "Top" },
+  { key: "BOTTOM", label: "Bottom" },
+  { key: "SHOES", label: "Shoes" },
+  { key: "OUTERWEAR", label: "Outerwear" },
+  { key: "ACCESSORY", label: "Accessory" },
+];
+
+const SORT_OPTIONS: { key: ItemSort; label: string }[] = [
+  { key: "NEWEST", label: "Newest" },
+  { key: "MOST_WORN", label: "Most worn" },
+];
+
 const SECTIONS = [
-  { key: "TOPS", title: "Tops", includes: ["tshirt", "shirt", "hoodie", "jacket"] },
-  { key: "BOTTOMS", title: "Bottoms", includes: ["jeans", "pants", "trousers", "shorts"] },
-  { key: "SHOES", title: "Shoes", includes: ["shoes"] },
-  {
-    key: "ACCESSORIES",
-    title: "Accessories",
-    includes: ["cap", "caps", "sunglasses", "watch", "watches", "accessory", "accessories"],
-  },
+  { key: "TOP", title: "Top" },
+  { key: "BOTTOM", title: "Bottom" },
+  { key: "SHOES", title: "Shoes" },
+  { key: "OUTERWEAR", title: "Outerwear" },
+  { key: "ACCESSORY", title: "Accessory" },
 ] as const;
 
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
-function normalizeCategory(cat: string) {
-  return (cat || "").trim().toLowerCase();
+function sectionForItem(item: ClosetItem): SectionKey {
+  const c = (item.category ?? "").trim().toLowerCase();
+  if (["top"].includes(c)) return "TOP";
+  if (["bottom"].includes(c)) return "BOTTOM";
+  if (c === "shoes") return "SHOES";
+  if (["outerwear"].includes(c)) return "OUTERWEAR";
+  return "ACCESSORY";
 }
 
-function sectionForItem(item: ClothingItem): SectionKey {
-  const c = normalizeCategory(item.category);
-  for (const s of SECTIONS) {
-    if (s.includes.includes(c)) return s.key;
-  }
-  return "ACCESSORIES";
-}
-
-/* ---------- Status styling (dot + border tint) ---------- */
 function statusStyle(status: "AVAILABLE" | "WORN" | "IN_LAUNDRY") {
   switch (status) {
     case "AVAILABLE":
@@ -67,7 +78,6 @@ function statusStyle(status: "AVAILABLE" | "WORN" | "IN_LAUNDRY") {
   }
 }
 
-/* ---------- Small UI components ---------- */
 function ActionChip({
   icon,
   label,
@@ -108,7 +118,7 @@ function ItemPhotoCard({
   onToLaundry,
   onWashed,
 }: {
-  item: ClothingItem;
+  item: ClosetItem;
   onWoreToday: () => void;
   onToLaundry: () => void;
   onWashed: () => void;
@@ -221,18 +231,21 @@ function Pill({
         backgroundColor: active ? "#111" : "transparent",
       }}
     >
-      <Text style={{ color: active ? "#fff" : "#111" }}>{label}</Text>
+      <Text style={{ color: active ? "#fff" : "#111", fontWeight: "700" }}>{label}</Text>
     </Pressable>
   );
 }
 
-/* ---------- Screen ---------- */
 export default function WardrobeScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
-  const [items, setItems] = useState<ClothingItem[]>([]);
+
+  const [items, setItems] = useState<ClosetItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ALL");
+  const [sortMode, setSortMode] = useState<ItemSort>("NEWEST");
 
   async function markWorn(itemId: string) {
     try {
@@ -245,7 +258,7 @@ export default function WardrobeScreen() {
       await updateDoc(ref, {
         status: "WORN",
         wearCountSinceWash: increment(1),
-        lastWornDate: Date.now(),
+        lastWornDate: serverTimestamp(),
       });
     } catch (err: any) {
       console.log(err);
@@ -273,7 +286,7 @@ export default function WardrobeScreen() {
       await updateDoc(doc(db, "users", uid, "items", itemId), {
         status: "AVAILABLE",
         wearCountSinceWash: 0,
-        lastWashedDate: Date.now(),
+        lastWashedDate: serverTimestamp(),
       });
     } catch (err: any) {
       console.log(err);
@@ -282,8 +295,6 @@ export default function WardrobeScreen() {
   }
 
   useEffect(() => {
-    let unsub: undefined | (() => void);
-
     if (!uid) {
       setItems([]);
       setLoading(false);
@@ -291,95 +302,159 @@ export default function WardrobeScreen() {
       return;
     }
 
-    const itemsRef = collection(db, "users", uid, "items");
-    const q = query(itemsRef, orderBy("createdAt", "desc"));
-
-    unsub = onSnapshot(
-      q,
-      (snap) => {
-        const next: ClothingItem[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as any),
-        }));
-        setItems(next);
+    setLoading(true);
+    const unsub = listenToItems(uid, (next) => {
+      setItems(next);
+      setLoading(false);
+    }, {
+      status: statusFilter,
+      sort: sortMode,
+      onError: (message) => {
+        Alert.alert("Firestore error", message);
         setLoading(false);
       },
-      (err) => {
-        console.log(err);
-        Alert.alert("Firestore error", err.message);
-        setLoading(false);
-      }
-    );
+    });
 
-    return () => unsub?.();
-  }, [uid]);
+    return () => unsub();
+  }, [uid, statusFilter, sortMode]);
 
-  // Status counts (for pills)
-  const totalCount = items.length;
-  const availableCount = items.filter((i) => i.status === "AVAILABLE").length;
-  const wornCount = items.filter((i) => i.status === "WORN").length;
-  const laundryCount = items.filter((i) => i.status === "IN_LAUNDRY").length;
+  const normalizedSearch = searchText.trim().toLowerCase();
 
-  // Apply status filter once
-  const filteredByStatus = useMemo(() => {
-    return statusFilter === "ALL" ? items : items.filter((i) => i.status === statusFilter);
-  }, [items, statusFilter]);
+  const filteredItems = useMemo(() => {
+    let next = items;
 
-  // Build section data
+    if (statusFilter !== "ALL") {
+      next = next.filter((i) => i.status === statusFilter);
+    }
+
+    if (categoryFilter !== "ALL") {
+      next = next.filter((i) => isInCategory(i, categoryFilter));
+    }
+
+    if (normalizedSearch) {
+      next = next.filter((i) => {
+        const name = (i.name || "").toLowerCase();
+        const brand = (i.brand || "").toLowerCase();
+        return name.includes(normalizedSearch) || brand.includes(normalizedSearch);
+      });
+    }
+
+    return next;
+  }, [items, statusFilter, categoryFilter, normalizedSearch]);
+
   const sectionData = useMemo(() => {
-    const buckets: Record<SectionKey, ClothingItem[]> = {
-      TOPS: [],
-      BOTTOMS: [],
+    const buckets: Record<SectionKey, ClosetItem[]> = {
+      TOP: [],
+      BOTTOM: [],
       SHOES: [],
-      ACCESSORIES: [],
+      OUTERWEAR: [],
+      ACCESSORY: [],
     };
 
-    for (const it of filteredByStatus) {
+    for (const it of filteredItems) {
       buckets[sectionForItem(it)].push(it);
     }
 
-    return SECTIONS.map((s) => ({
-      key: s.key,
-      title: s.title,
-      items: buckets[s.key as SectionKey],
-    }));
-  }, [filteredByStatus]);
+    const visible =
+      categoryFilter === "ALL"
+        ? SECTIONS
+        : SECTIONS.filter((s) => s.key === categoryFilter);
+
+    return visible.map((s) => ({ key: s.key, title: s.title, items: buckets[s.key] }));
+  }, [filteredItems, categoryFilter]);
+
+  const hasResults = filteredItems.length > 0;
+  const isDefaultFilter =
+    !normalizedSearch && statusFilter === "ALL" && categoryFilter === "ALL";
 
   return (
     <View style={{ flex: 1, paddingHorizontal: 16 }}>
-      <Text style={{ fontSize: 22, fontWeight: "800", marginBottom: 10 }}>
-        Wardrobe
-      </Text>
+      <Text style={{ fontSize: 22, fontWeight: "800", marginBottom: 10 }}>Wardrobe</Text>
 
-      {/* ✅ Status pills */}
-      <View style={{ flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <Pill label={`All (${totalCount})`} active={statusFilter === "ALL"} onPress={() => setStatusFilter("ALL")} />
-        <Pill
-          label={`Available (${availableCount})`}
-          active={statusFilter === "AVAILABLE"}
-          onPress={() => setStatusFilter("AVAILABLE")}
-        />
-        <Pill label={`Worn (${wornCount})`} active={statusFilter === "WORN"} onPress={() => setStatusFilter("WORN")} />
-        <Pill
-          label={`Laundry (${laundryCount})`}
-          active={statusFilter === "IN_LAUNDRY"}
-          onPress={() => setStatusFilter("IN_LAUNDRY")}
-        />
+      <TextInput
+        value={searchText}
+        onChangeText={setSearchText}
+        placeholder="Search by name or brand"
+        style={{
+          borderWidth: 1,
+          borderColor: "#ddd",
+          borderRadius: 12,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          marginBottom: 10,
+        }}
+      />
+
+      <View style={{ marginBottom: 8 }}>
+        <Text style={{ fontWeight: "800", marginBottom: 6 }}>Status</Text>
+        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+          {STATUS_FILTERS.map((f) => (
+            <Pill
+              key={f.key}
+              label={f.label}
+              active={statusFilter === f.key}
+              onPress={() => setStatusFilter(f.key)}
+            />
+          ))}
+        </View>
+      </View>
+
+      <View style={{ marginBottom: 8 }}>
+        <Text style={{ fontWeight: "800", marginBottom: 6 }}>Category</Text>
+        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+          {CATEGORY_FILTERS.map((f) => (
+            <Pill
+              key={f.key}
+              label={f.label}
+              active={categoryFilter === f.key}
+              onPress={() => setCategoryFilter(f.key)}
+            />
+          ))}
+        </View>
+      </View>
+
+      <View style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "800", marginBottom: 6 }}>Sort</Text>
+        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+          {SORT_OPTIONS.map((f) => (
+            <Pill
+              key={f.key}
+              label={f.label}
+              active={sortMode === f.key}
+              onPress={() => setSortMode(f.key)}
+            />
+          ))}
+        </View>
       </View>
 
       {loading ? (
         <View style={{ flex: 1, justifyContent: "center" }}>
           <ActivityIndicator />
-          <Text style={{ textAlign: "center", marginTop: 10, opacity: 0.7 }}>
-            Loading…
+          <Text style={{ textAlign: "center", marginTop: 10, opacity: 0.7 }}>Loading…</Text>
+        </View>
+      ) : !hasResults ? (
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center", gap: 10 }}>
+          <Text style={{ fontSize: 16, fontWeight: "800" }}>
+            {isDefaultFilter ? "No items yet" : "No results match filters"}
           </Text>
+          <Pressable
+            onPress={() => router.push("/(tabs)/add")}
+            style={{
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              borderRadius: 10,
+              backgroundColor: "#111",
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "900" }}>Add your first item</Text>
+          </Pressable>
         </View>
       ) : (
         <FlatList
           data={sectionData}
           keyExtractor={(s) => s.key}
           showsVerticalScrollIndicator={false}
-          ItemSeparatorComponent={() => <View style={{ height: 12 }} />}  // ⬅️ smaller spacing
+          ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           renderItem={({ item: section }) => (
             <View>
               <Text style={{ fontSize: 16, fontWeight: "900", marginBottom: 6 }}>
@@ -394,12 +469,12 @@ export default function WardrobeScreen() {
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   keyExtractor={(it) => it.id}
-                  ItemSeparatorComponent={() => <View style={{ width: 10 }} />} // ⬅️ tighter
+                  ItemSeparatorComponent={() => <View style={{ width: 10 }} />}
                   renderItem={({ item }) => (
                     <Pressable onPress={() => router.push(`/(tabs)/item/${item.id}`)}>
                       <ItemPhotoCard
                         item={item}
-                        onWoreToday={() => markWorn(item.id)}      // ✅ fixed (was markWoreToday)
+                        onWoreToday={() => markWorn(item.id)}
                         onToLaundry={() => moveToLaundry(item.id)}
                         onWashed={() => markWashed(item.id)}
                       />
@@ -412,7 +487,6 @@ export default function WardrobeScreen() {
         />
       )}
 
-      {/* ✅ Floating "+" */}
       <Pressable
         onPress={() => router.push("/(tabs)/add")}
         style={{
