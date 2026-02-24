@@ -65,3 +65,18 @@ service firebase.storage {
 ```
 
 If upload fails with a permission error, verify your Storage rules and that the app is signed in before uploading.
+
+## Firestore Rules (Example)
+
+Use rules like this so each authenticated user can only read/write their own `users/{uid}` documents and nested collections (including `items` and `outfits`):
+
+```txt
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
+```

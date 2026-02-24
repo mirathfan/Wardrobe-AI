@@ -53,6 +53,12 @@ export default function TabLayout() {
        title: "AI",
        }}
       />
+      <Tabs.Screen
+       name="profile"
+       options={{
+       title: "Profile",
+       }}
+      />
 
 
 

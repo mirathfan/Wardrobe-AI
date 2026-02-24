@@ -15,7 +15,9 @@ import {
   Text,
   View,
 } from "react-native";
-import { auth, db } from "../../src/lib/firebase";
+import { router } from "expo-router";
+import { useAuth } from "../../src/hooks/useAuth";
+import { db } from "../../src/lib/firebase";
 
 type Status = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 
@@ -37,6 +39,8 @@ const TABS: { key: "NEEDS_WASH" | "IN_LAUNDRY" | "CLEAN"; label: string }[] = [
 ];
 
 export default function LaundryScreen() {
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
   const [allItems, setAllItems] = useState<ClothingItem[]>([]);
   const [tab, setTab] = useState<"NEEDS_WASH" | "IN_LAUNDRY" | "CLEAN">(
     "IN_LAUNDRY"
@@ -44,10 +48,13 @@ export default function LaundryScreen() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
+    if (!uid) {
+      setLoading(false);
+      router.replace("/(auth)/login");
+      return;
+    }
 
-    const itemsRef = collection(db, "users", user.uid, "items");
+    const itemsRef = collection(db, "users", uid, "items");
     const q = query(itemsRef, orderBy("createdAt", "desc"));
 
     const unsub = onSnapshot(
@@ -64,7 +71,7 @@ export default function LaundryScreen() {
     );
 
     return () => unsub();
-  }, []);
+  }, [uid]);
 
   // Simple “needs wash” logic: worn items OR wearCountSinceWash >= 3
   // (tweak threshold later)
@@ -103,8 +110,7 @@ export default function LaundryScreen() {
 
   async function markAllWashed() {
     try {
-      const user = auth.currentUser;
-      if (!user) return;
+      if (!uid) return router.replace("/(auth)/login");
 
       if (inLaundry.length === 0) {
         Alert.alert("Nothing to wash", "Laundry is empty.");
@@ -113,7 +119,7 @@ export default function LaundryScreen() {
 
       await Promise.all(
         inLaundry.map((it) =>
-          updateDoc(doc(db, "users", user.uid, "items", it.id), {
+          updateDoc(doc(db, "users", uid, "items", it.id), {
             status: "AVAILABLE",
             wearCountSinceWash: 0,
             lastWashedDate: Date.now(),
@@ -131,8 +137,7 @@ export default function LaundryScreen() {
   async function moveTabItemsToLaundry() {
     // Optional: when on Needs wash tab, quickly move them to IN_LAUNDRY
     try {
-      const user = auth.currentUser;
-      if (!user) return;
+      if (!uid) return router.replace("/(auth)/login");
 
       if (tab !== "NEEDS_WASH") return;
 
@@ -143,7 +148,7 @@ export default function LaundryScreen() {
 
       await Promise.all(
         needsWash.map((it) =>
-          updateDoc(doc(db, "users", user.uid, "items", it.id), {
+          updateDoc(doc(db, "users", uid, "items", it.id), {
             status: "IN_LAUNDRY",
           })
         )

@@ -1,5 +1,5 @@
 // app/(tabs)/today.tsx
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { router } from "expo-router";
 import {
   collection,
   doc,
@@ -12,7 +12,8 @@ import {
 } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, View } from "react-native";
-import { auth, db } from "../../src/lib/firebase";
+import { useAuth } from "../../src/hooks/useAuth";
+import { db } from "../../src/lib/firebase";
 
 type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 
@@ -80,9 +81,8 @@ function fmtHeaderDate(d: Date) {
 }
 
 export default function TodayScreen() {
-  // same test user flow you used elsewhere
-  const testEmail = "testuser1@example.com";
-  const testPass = "TestPass123!";
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
 
   const [selectedDate, setSelectedDate] = useState<Date>(startOfDay(new Date()));
   const [items, setItems] = useState<ClothingItem[]>([]);
@@ -94,66 +94,55 @@ export default function TodayScreen() {
   const today = useMemo(() => startOfDay(new Date()), []);
   const inFuture = useMemo(() => selectedDate.getTime() > today.getTime(), [selectedDate, today]);
 
-  async function ensureSignedIn() {
-    if (auth.currentUser) return auth.currentUser;
-    const res = await signInWithEmailAndPassword(auth, testEmail, testPass);
-    return res.user;
-  }
-
   useEffect(() => {
     let unsubItems: undefined | (() => void);
     let unsubOutfit: undefined | (() => void);
 
-    (async () => {
-      try {
-        const user = await ensureSignedIn();
+    if (!uid) {
+      setItems([]);
+      setOutfit(null);
+      setLoading(false);
+      router.replace("/(auth)/login");
+      return;
+    }
 
-        // 1) listen to wardrobe items
-        const itemsRef = collection(db, "users", user.uid, "items");
-        const qItems = query(itemsRef, orderBy("createdAt", "desc"));
-        unsubItems = onSnapshot(
-          qItems,
-          (snap) => {
-            const next: ClothingItem[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-            setItems(next);
-          },
-          (err) => {
-            console.log(err);
-            Alert.alert("Firestore error", err.message);
-          }
-        );
+    const itemsRef = collection(db, "users", uid, "items");
+    const qItems = query(itemsRef, orderBy("createdAt", "desc"));
+    unsubItems = onSnapshot(
+      qItems,
+      (snap) => {
+        const next: ClothingItem[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        setItems(next);
+      },
+      (err) => {
+        console.log(err);
+        Alert.alert("Firestore error", err.message);
+      }
+    );
 
-        // 2) listen to outfit doc for selected date
-        const outfitRef = doc(db, "users", user.uid, "outfits", dateKey);
-        unsubOutfit = onSnapshot(
-          outfitRef,
-          (snap) => {
-            if (!snap.exists()) {
-              setOutfit(null);
-            } else {
-              setOutfit(snap.data() as OutfitDoc);
-            }
-            setLoading(false);
-          },
-          (err) => {
-            console.log(err);
-            Alert.alert("Firestore error", err.message);
-            setLoading(false);
-          }
-        );
-      } catch (e: any) {
-        console.log(e);
-        Alert.alert("Auth error", e?.message ?? "Auth failed");
+    const outfitRef = doc(db, "users", uid, "outfits", dateKey);
+    unsubOutfit = onSnapshot(
+      outfitRef,
+      (snap) => {
+        if (!snap.exists()) {
+          setOutfit(null);
+        } else {
+          setOutfit(snap.data() as OutfitDoc);
+        }
+        setLoading(false);
+      },
+      (err) => {
+        console.log(err);
+        Alert.alert("Firestore error", err.message);
         setLoading(false);
       }
-    })();
+    );
 
     return () => {
       if (unsubItems) unsubItems();
       if (unsubOutfit) unsubOutfit();
     };
-    // IMPORTANT: dateKey changes should re-subscribe for outfit doc
-  }, [dateKey]);
+  }, [dateKey, uid]);
 
   const outfitItemIds = useMemo(() => outfit?.itemIds ?? [], [outfit?.itemIds]);
   const outfitItems = useMemo(() => {
@@ -162,10 +151,9 @@ export default function TodayScreen() {
   }, [items, outfitItemIds]);
 
   async function ensureOutfitDocExists() {
-    const user = auth.currentUser;
-    if (!user) throw new Error("Not signed in");
+    if (!uid) throw new Error("Not signed in");
 
-    const ref = doc(db, "users", user.uid, "outfits", dateKey);
+    const ref = doc(db, "users", uid, "outfits", dateKey);
 
     // create if missing (merge keeps it safe)
     const base: OutfitDoc = {
@@ -181,12 +169,14 @@ export default function TodayScreen() {
 
   async function toggleItemForDay(itemId: string) {
     try {
-      const user = auth.currentUser;
-      if (!user) return Alert.alert("Not signed in", "Please sign in first.");
+      if (!uid) {
+        router.replace("/(auth)/login");
+        return Alert.alert("Not signed in", "Please sign in first.");
+      }
 
       await ensureOutfitDocExists();
 
-      const ref = doc(db, "users", user.uid, "outfits", dateKey);
+      const ref = doc(db, "users", uid, "outfits", dateKey);
       const cur = new Set(outfit?.itemIds ?? []);
       if (cur.has(itemId)) cur.delete(itemId);
       else cur.add(itemId);
@@ -204,8 +194,10 @@ export default function TodayScreen() {
 
   async function markAsWornToday() {
     try {
-      const user = auth.currentUser;
-      if (!user) return Alert.alert("Not signed in", "Please sign in first.");
+      if (!uid) {
+        router.replace("/(auth)/login");
+        return Alert.alert("Not signed in", "Please sign in first.");
+      }
       if (!isSameDay(selectedDate, today)) {
         return Alert.alert("Not today", "You can only mark as worn on today's date.");
       }
@@ -213,7 +205,7 @@ export default function TodayScreen() {
         return Alert.alert("Empty outfit", "Add items first.");
       }
 
-      const ref = doc(db, "users", user.uid, "outfits", dateKey);
+      const ref = doc(db, "users", uid, "outfits", dateKey);
       await setDoc(
         ref,
         {
