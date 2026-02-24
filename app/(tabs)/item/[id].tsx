@@ -14,6 +14,7 @@ type ClothingItem = {
   primaryColor?: string;
   status?: "AVAILABLE" | "WORN" | "IN_LAUNDRY";
   wearCountSinceWash?: number;
+  photoUrl?: string | null;
   photoUri?: string | null;
   size?: string | null;
   notes?: string | null;
@@ -27,6 +28,7 @@ export default function ItemDetailsScreen() {
 
   const [item, setItem] = useState<ClothingItem | null>(null);
   const [loading, setLoading] = useState(true);
+  const itemImageUri = item?.photoUrl || item?.photoUri || null;
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -106,9 +108,9 @@ export default function ItemDetailsScreen() {
         ) : (
           <>
             <View style={card}>
-              {item.photoUri ? (
+              {itemImageUri ? (
                 <Image
-                  source={{ uri: item.photoUri }}
+                  source={{ uri: itemImageUri }}
                   style={{ width: "100%", height: 260, borderRadius: 14 }}
                   resizeMode="cover"
                 />

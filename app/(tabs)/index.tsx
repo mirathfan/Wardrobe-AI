@@ -114,6 +114,7 @@ function ItemPhotoCard({
   onWashed: () => void;
 }) {
   const s = statusStyle(item.status);
+  const itemImageUri = item.photoUrl || item.photoUri;
 
   return (
     <View
@@ -126,9 +127,9 @@ function ItemPhotoCard({
         backgroundColor: "#fff",
       }}
     >
-      {item.photoUri ? (
+      {itemImageUri ? (
         <Image
-          source={{ uri: item.photoUri }}
+          source={{ uri: itemImageUri }}
           style={{ width: "100%", height: 140 }}
           resizeMode="cover"
         />
