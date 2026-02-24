@@ -7,6 +7,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyD1dGOddJZqr7qYYX7p0l0c5MWo-xTp5Ss",
   authDomain: "closet-app-57146.firebaseapp.com",
   projectId: "closet-app-57146",
+  storageBucket: "closet-app-57146.firebasestorage.app",
   messagingSenderId: "1043970871162",
   appId: "1:1043970871162:web:87c7eb1a6ffcf5b9ad50c3",
 };

@@ -1,5 +1,5 @@
+import * as ImageManipulator from "expo-image-manipulator";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-
 import { storage } from "./firebase";
 
 type UploadItemPhotoParams = {
@@ -19,19 +19,17 @@ async function processImageToJpegUri(params: {
 }) {
   const { localUri, originalWidth, maxWidth, quality } = params;
 
-  try {
-    // eslint-disable-next-line import/no-unresolved
-    const mod = await import("expo-image-manipulator");
-    const actions =
-      originalWidth && originalWidth > maxWidth ? [{ resize: { width: maxWidth } }] : [];
-    const result = await mod.manipulateAsync(localUri, actions, {
-      compress: quality,
-      format: mod.SaveFormat.JPEG,
-    });
-    return result.uri;
-  } catch {
-    return localUri;
-  }
+  const actions =
+    originalWidth && originalWidth > maxWidth
+      ? [{ resize: { width: maxWidth } }]
+      : [];
+
+  const result = await ImageManipulator.manipulateAsync(localUri, actions, {
+    compress: quality,
+    format: ImageManipulator.SaveFormat.JPEG,
+  });
+
+  return result.uri;
 }
 
 export async function uploadItemPhoto(params: UploadItemPhotoParams) {
