@@ -1,13 +1,18 @@
 import {
   collection,
+  doc,
+  increment,
   onSnapshot,
   orderBy,
   query,
   QueryConstraint,
+  serverTimestamp,
+  updateDoc,
   where,
 } from "firebase/firestore";
 
 import { db } from "./firebase";
+import { addItemToOutfit, toDateKey } from "./outfits";
 import { ClothingItem, ClothingStatus } from "../types/ClothingItem";
 
 export type ClosetItem = ClothingItem;
@@ -29,6 +34,10 @@ const CATEGORY_MAP: Record<Exclude<CategoryFilter, "ALL">, string[]> = {
   ACCESSORY: ["accessory"],
 };
 
+function norm(v?: string | null) {
+  return (v ?? "").trim().toLowerCase();
+}
+
 export function categoryValuesFor(filter: CategoryFilter) {
   if (filter === "ALL") return [];
   return CATEGORY_MAP[filter];
@@ -36,7 +45,7 @@ export function categoryValuesFor(filter: CategoryFilter) {
 
 export function isInCategory(item: ClosetItem, filter: CategoryFilter) {
   if (filter === "ALL") return true;
-  const category = item.category;
+  const category = norm(item.category);
   return categoryValuesFor(filter).includes(category);
 }
 
@@ -77,4 +86,30 @@ export function listenToItems(
     },
     (err) => options?.onError?.(err.message)
   );
+}
+
+export async function markWorn(uid: string, itemId: string) {
+  const dateKey = toDateKey(new Date());
+  await addItemToOutfit(dateKey, itemId, false);
+
+  const ref = doc(db, "users", uid, "items", itemId);
+  await updateDoc(ref, {
+    status: "WORN",
+    wearCountSinceWash: increment(1),
+    lastWornDate: serverTimestamp(),
+  });
+}
+
+export async function sendToLaundry(uid: string, itemId: string) {
+  const ref = doc(db, "users", uid, "items", itemId);
+  await updateDoc(ref, { status: "IN_LAUNDRY" });
+}
+
+export async function markWashed(uid: string, itemId: string) {
+  const ref = doc(db, "users", uid, "items", itemId);
+  await updateDoc(ref, {
+    status: "AVAILABLE",
+    wearCountSinceWash: 0,
+    lastWashedDate: serverTimestamp(),
+  });
 }
