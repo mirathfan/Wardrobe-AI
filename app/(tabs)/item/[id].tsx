@@ -8,7 +8,7 @@ import { useAuth } from "../../../src/hooks/useAuth";
 import { db } from "../../../src/lib/firebase";
 import {
   markWashed as markWashedItem,
-  markWorn,
+  safeMarkWorn,
   sendToLaundry,
 } from "../../../src/lib/items";
 import { ClothingItem } from "../../../src/types/ClothingItem";
@@ -73,7 +73,7 @@ export default function ItemDetailsScreen() {
 
     try {
       setActionLoading(true);
-      await markWorn(uid, itemId);
+      await safeMarkWorn(uid, itemId);
     } catch (e: any) {
       console.log(e);
       Alert.alert("Error", e?.message ?? "Failed to mark item as worn");

@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   increment,
   onSnapshot,
   orderBy,
@@ -31,6 +32,7 @@ export type CategoryFilter =
   | "SHOES"
   | "OUTERWEAR"
   | "ACCESSORY";
+export const MAX_WEARS_BEFORE_WASH = 2;
 
 const CATEGORY_MAP: Record<Exclude<CategoryFilter, "ALL">, string[]> = {
   TOP: ["top"],
@@ -134,16 +136,63 @@ export function listenToItems(
   );
 }
 
-export async function markWorn(uid: string, itemId: string) {
-  const dateKey = toDateKey(new Date());
-  await addItemToOutfit(dateKey, itemId, false);
+function toDateValue(value: unknown): Date | null {
+  if (!value) return null;
+  if (typeof (value as any).toDate === "function") {
+    const d = (value as any).toDate();
+    return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
+  }
+  if (typeof value === "number") {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  return null;
+}
 
+function isSameLocalDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+export async function safeMarkWorn(uid: string, itemId: string) {
   const ref = doc(db, "users", uid, "items", itemId);
+  const snap = await getDoc(ref);
+
+  if (!snap.exists()) {
+    throw new Error("Item not found");
+  }
+
+  const data = snap.data() as Partial<ClosetItem>;
+  if (data.status === "IN_LAUNDRY") {
+    throw new Error("Item is in laundry");
+  }
+
+  const wearCount = Number(data.wearCountSinceWash ?? 0);
+  if (wearCount >= MAX_WEARS_BEFORE_WASH) {
+    throw new Error("Wash required before wearing again");
+  }
+
+  const lastWorn = toDateValue(data.lastWornDate);
+  if (lastWorn && isSameLocalDay(lastWorn, new Date())) {
+    throw new Error("Item already worn today");
+  }
+
+  await addItemToOutfit(toDateKey(new Date()), itemId, false);
   await updateDoc(ref, {
     status: "WORN",
     wearCountSinceWash: increment(1),
     lastWornDate: serverTimestamp(),
   });
+}
+
+export async function markWorn(uid: string, itemId: string) {
+  return safeMarkWorn(uid, itemId);
 }
 
 export async function sendToLaundry(uid: string, itemId: string) {
