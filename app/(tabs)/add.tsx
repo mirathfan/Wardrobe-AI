@@ -14,16 +14,15 @@ import {
 
 import { useAuth } from "../../src/hooks/useAuth";
 import { db } from "../../src/lib/firebase";
+import { CanonicalCategory, toCanonicalCategory } from "../../src/lib/items";
 import { uploadItemPhoto } from "../../src/lib/uploadImage";
 
-const QUICK_CATEGORIES = [
-  "tshirt",
-  "shirt",
-  "jeans",
+const CATEGORIES: CanonicalCategory[] = [
+  "top",
+  "bottom",
   "shoes",
-  "hoodie",
-  "jacket",
-  "accessories",
+  "outerwear",
+  "accessory",
 ];
 
 const DEFAULT_COLORS = [
@@ -50,10 +49,6 @@ function normColor(s: string) {
   return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
 }
 
-function isQuickCategory(cat: string) {
-  return QUICK_CATEGORIES.includes((cat || "").trim().toLowerCase());
-}
-
 export default function AddItemScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
@@ -69,10 +64,7 @@ export default function AddItemScreen() {
 
   const [brand, setBrand] = useState("");
   const [name, setName] = useState("");
-
-  const [category, setCategory] = useState("tshirt");
-  const [customCategory, setCustomCategory] = useState("");
-  const [addingCustomCategory, setAddingCustomCategory] = useState(false);
+  const [category, setCategory] = useState<CanonicalCategory>("top");
 
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [customColor, setCustomColor] = useState("");
@@ -84,7 +76,7 @@ export default function AddItemScreen() {
   const [purchaseDate, setPurchaseDate] = useState("");
 
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [photoUri, setPhotoUri] = useState<string | null>(null); // legacy
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [pendingPhotoUri, setPendingPhotoUri] = useState<string | null>(null);
   const [pendingPhotoWidth, setPendingPhotoWidth] = useState<number | null>(null);
 
@@ -113,16 +105,7 @@ export default function AddItemScreen() {
 
         setBrand(data.brand ?? "");
         setName(data.name ?? "");
-
-        const loadedCategory = (data.category ?? "tshirt").toString().toLowerCase();
-        if (isQuickCategory(loadedCategory)) {
-          setCategory(loadedCategory);
-          setCustomCategory("");
-        } else {
-          setCategory("tshirt");
-          setCustomCategory(loadedCategory);
-        }
-        setAddingCustomCategory(false);
+        setCategory(toCanonicalCategory(data.category));
 
         const loadedColors: string[] =
           Array.isArray(data.colors) && data.colors.length
@@ -153,11 +136,6 @@ export default function AddItemScreen() {
     })();
   }, [isEdit, editItemId, uid]);
 
-  const categoryFinal = useMemo(() => {
-    const c = norm(customCategory) || norm(category);
-    return c.toLowerCase();
-  }, [category, customCategory]);
-
   const colorOptions = useMemo(() => {
     const set = new Set<string>(DEFAULT_COLORS.map(normColor));
     selectedColors.forEach((c) => set.add(normColor(c)));
@@ -178,13 +156,6 @@ export default function AddItemScreen() {
     setSelectedColors((prev) => (prev.includes(c) ? prev : [...prev, c]));
     setCustomColor("");
     setAddingCustomColor(false);
-  }
-
-  function addCustomCategoryNow() {
-    const c = norm(customCategory);
-    if (!c) return;
-    setCustomCategory(c.toLowerCase());
-    setAddingCustomCategory(false);
   }
 
   async function pickPhoto(source: "library" | "camera") {
@@ -230,11 +201,11 @@ export default function AddItemScreen() {
     }
   }
 
-  async function resolvePhotoFields(uid: string, itemId: string) {
+  async function resolvePhotoFields(currentUid: string, itemId: string) {
     if (pendingPhotoUri) {
       setUploadingPhoto(true);
       const uploadedUrl = await uploadItemPhoto({
-        uid,
+        uid: currentUid,
         itemId,
         localUri: pendingPhotoUri,
         originalWidth: pendingPhotoWidth,
@@ -277,12 +248,6 @@ export default function AddItemScreen() {
         "Enter a name (e.g., Air Jordan 2)."
       );
     }
-    if (!categoryFinal) {
-      return Alert.alert(
-        "Missing category",
-        "Pick a category or add a custom one."
-      );
-    }
     if (selectedColors.length === 0) {
       return Alert.alert("Missing colors", "Select at least 1 color.");
     }
@@ -308,7 +273,7 @@ export default function AddItemScreen() {
     const payloadBase = {
       brand: b,
       name: n,
-      category: categoryFinal,
+      category,
       colors: selectedColors.map(normColor).filter(Boolean),
       primaryColor: normColor(selectedColors[0] ?? ""),
       size: norm(size) || null,
@@ -348,9 +313,7 @@ export default function AddItemScreen() {
 
       setBrand("");
       setName("");
-      setCategory("tshirt");
-      setCustomCategory("");
-      setAddingCustomCategory(false);
+      setCategory("top");
       setSelectedColors([]);
       setCustomColor("");
       setAddingCustomColor(false);
@@ -375,7 +338,6 @@ export default function AddItemScreen() {
   }
 
   const canAddCustomColor = customColor.trim().length > 0;
-  const canAddCustomCategory = customCategory.trim().length > 0;
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
@@ -481,76 +443,16 @@ export default function AddItemScreen() {
 
       <View style={{ gap: 8 }}>
         <Text style={{ fontSize: 16, fontWeight: "700" }}>Category</Text>
-
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {QUICK_CATEGORIES.map((cat) => (
+          {CATEGORIES.map((cat) => (
             <Pill
               key={cat}
               label={cat}
-              active={customCategory.trim().length === 0 && category === cat}
-              onPress={() => {
-                setCategory(cat);
-                setCustomCategory("");
-                setAddingCustomCategory(false);
-              }}
+              active={category === cat}
+              onPress={() => setCategory(cat)}
             />
           ))}
-
-          {addingCustomCategory ? (
-            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-              <TextInput
-                value={customCategory}
-                onChangeText={setCustomCategory}
-                placeholder="Type category"
-                style={[input, { paddingVertical: 8, width: 160 }]}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={() => {
-                  if (!canAddCustomCategory) return;
-                  addCustomCategoryNow();
-                }}
-              />
-
-              <Pressable
-                onPress={addCustomCategoryNow}
-                disabled={!canAddCustomCategory}
-                style={{
-                  paddingVertical: 8,
-                  paddingHorizontal: 14,
-                  borderRadius: 999,
-                  borderWidth: 1,
-                  borderColor: canAddCustomCategory ? "#111" : "#ddd",
-                  backgroundColor: canAddCustomCategory ? "#111" : "transparent",
-                  opacity: canAddCustomCategory ? 1 : 0.5,
-                }}
-              >
-                <Text
-                  style={{
-                    color: canAddCustomCategory ? "#fff" : "#111",
-                    fontWeight: "800",
-                  }}
-                >
-                  Add
-                </Text>
-              </Pressable>
-
-              <Pill
-                label="Cancel"
-                active={false}
-                onPress={() => {
-                  setCustomCategory("");
-                  setAddingCustomCategory(false);
-                }}
-              />
-            </View>
-          ) : (
-            <Pill label="+" active={false} onPress={() => setAddingCustomCategory(true)} />
-          )}
         </View>
-
-        {customCategory.trim().length > 0 && !addingCustomCategory ? (
-          <Text style={{ color: "#666" }}>Using custom category: {categoryFinal}</Text>
-        ) : null}
       </View>
 
       <View style={{ gap: 8 }}>

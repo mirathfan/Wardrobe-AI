@@ -18,6 +18,12 @@ import { ClothingItem, ClothingStatus } from "../types/ClothingItem";
 export type ClosetItem = ClothingItem;
 export type ItemSort = "NEWEST" | "MOST_WORN";
 export type StatusFilter = "ALL" | ClothingStatus;
+export type CanonicalCategory =
+  | "top"
+  | "bottom"
+  | "shoes"
+  | "outerwear"
+  | "accessory";
 export type CategoryFilter =
   | "ALL"
   | "TOP"
@@ -38,6 +44,46 @@ function norm(v?: string | null) {
   return (v ?? "").trim().toLowerCase();
 }
 
+export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
+  const v = norm(raw).replace(/\s+/g, " ");
+
+  if (
+    ["top", "tshirt", "t-shirt", "shirt", "tee", "polo", "sweater"].includes(v)
+  ) {
+    return "top";
+  }
+
+  if (
+    ["bottom", "pants", "trousers", "jeans", "shorts", "joggers"].includes(v)
+  ) {
+    return "bottom";
+  }
+
+  if (["shoes", "sneakers", "boots", "slides"].includes(v)) {
+    return "shoes";
+  }
+
+  if (["outerwear", "jacket", "hoodie", "coat", "blazer"].includes(v)) {
+    return "outerwear";
+  }
+
+  if (
+    [
+      "accessory",
+      "accessories",
+      "cap",
+      "hat",
+      "watch",
+      "sunglasses",
+      "belt",
+    ].includes(v)
+  ) {
+    return "accessory";
+  }
+
+  return "accessory";
+}
+
 export function categoryValuesFor(filter: CategoryFilter) {
   if (filter === "ALL") return [];
   return CATEGORY_MAP[filter];
@@ -45,7 +91,7 @@ export function categoryValuesFor(filter: CategoryFilter) {
 
 export function isInCategory(item: ClosetItem, filter: CategoryFilter) {
   if (filter === "ALL") return true;
-  const category = norm(item.category);
+  const category = toCanonicalCategory(item.category);
   return categoryValuesFor(filter).includes(category);
 }
 

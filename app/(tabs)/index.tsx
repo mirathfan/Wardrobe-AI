@@ -21,6 +21,7 @@ import {
   StatusFilter,
   isInCategory,
   listenToItems,
+  toCanonicalCategory,
 } from "../../src/lib/items";
 import { db } from "../../src/lib/firebase";
 import { addItemToOutfit, toDateKey } from "../../src/lib/outfits";
@@ -57,11 +58,11 @@ const SECTIONS = [
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
 function sectionForItem(item: ClosetItem): SectionKey {
-  const c = (item.category ?? "").trim().toLowerCase();
-  if (["top"].includes(c)) return "TOP";
-  if (["bottom"].includes(c)) return "BOTTOM";
+  const c = toCanonicalCategory(item.category);
+  if (c === "top") return "TOP";
+  if (c === "bottom") return "BOTTOM";
   if (c === "shoes") return "SHOES";
-  if (["outerwear"].includes(c)) return "OUTERWEAR";
+  if (c === "outerwear") return "OUTERWEAR";
   return "ACCESSORY";
 }
 
