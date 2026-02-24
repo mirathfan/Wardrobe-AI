@@ -15,7 +15,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { auth, db } from "../src/lib/firebase";
+import { auth, db } from "../../src/lib/firebase";
 
 type Status = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 

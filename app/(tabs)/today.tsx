@@ -12,7 +12,7 @@ import {
 } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, View } from "react-native";
-import { auth, db } from "../src/lib/firebase"; // adjust if your path differs
+import { auth, db } from "../../src/lib/firebase";
 
 type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 
@@ -155,7 +155,7 @@ export default function TodayScreen() {
     // IMPORTANT: dateKey changes should re-subscribe for outfit doc
   }, [dateKey]);
 
-  const outfitItemIds = outfit?.itemIds ?? [];
+  const outfitItemIds = useMemo(() => outfit?.itemIds ?? [], [outfit?.itemIds]);
   const outfitItems = useMemo(() => {
     const map = new Map(items.map((it) => [it.id, it]));
     return outfitItemIds.map((id) => map.get(id)).filter(Boolean) as ClothingItem[];

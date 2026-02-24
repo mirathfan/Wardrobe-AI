@@ -9,7 +9,7 @@ import {
 } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, View } from "react-native";
-import { auth, db } from "../src/lib/firebase";
+import { auth, db } from "../../src/lib/firebase";
 
 type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 

@@ -21,9 +21,9 @@ import {
 } from "react-native";
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { auth, db } from "../src/lib/firebase";
-import { addItemToOutfit, toDateKey } from "../src/lib/outfits";
-import { ClothingItem, ClothingStatus } from "../src/types/ClothingItem";
+import { auth, db } from "../../src/lib/firebase";
+import { addItemToOutfit, toDateKey } from "../../src/lib/outfits";
+import { ClothingItem, ClothingStatus } from "../../src/types/ClothingItem";
 
 type StatusFilter = "ALL" | ClothingStatus;
 

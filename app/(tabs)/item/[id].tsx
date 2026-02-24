@@ -3,7 +3,7 @@ import { deleteDoc, doc, onSnapshot } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { auth, db } from "../../src/lib/firebase";
+import { auth, db } from "../../../src/lib/firebase";
 
 type ClothingItem = {
   id: string;
