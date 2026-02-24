@@ -26,8 +26,12 @@
 /users/{uid}/items/{itemId}.jpg
 
 ## Security
-- Firestore rules: TODO
-- Storage rules: TODO
+- Firestore rules: owner-scoped + item/outfit validation (supports partial updateDoc validation)
+- Storage rules: owner-scoped + image-only uploads (max 10MB)
+
+### Deploy rules
+Run from project root:
+- `firebase deploy --only firestore:rules,storage`
 
 ## Known issues / tech debt
 - [ ] Add proper Firestore/Storage rules

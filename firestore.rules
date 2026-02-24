@@ -2,7 +2,6 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function isSignedIn() {
       return request.auth != null;
     }
@@ -11,20 +10,73 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    function validStatus(status) {
+      return status in ["AVAILABLE", "WORN", "IN_LAUNDRY"];
+    }
+
+    function validCategory(category) {
+      return category in ["top", "bottom", "shoes", "outerwear", "accessory"];
+    }
+
+    function validWearCount(count) {
+      return count is number && count >= 0;
+    }
+
+    function noForeignUidField(data, uid) {
+      return !("uid" in data) || data.uid == uid;
+    }
+
+    function validItemCreate(data, uid) {
+      return data is map
+        && data.keys().hasAll(["status", "category", "wearCountSinceWash"])
+        && validStatus(data.status)
+        && validCategory(data.category)
+        && validWearCount(data.wearCountSinceWash)
+        && noForeignUidField(data, uid);
+    }
+
+    function validItemUpdate(data, uid) {
+      let changed = data.diff(resource.data).affectedKeys();
+      return data is map
+        && (!changed.hasAny(["status"]) || validStatus(data.status))
+        && (!changed.hasAny(["category"]) || validCategory(data.category))
+        && (!changed.hasAny(["wearCountSinceWash"]) || validWearCount(data.wearCountSinceWash))
+        && (!changed.hasAny(["uid"]) || data.uid == uid)
+        && noForeignUidField(data, uid);
+    }
+
+    // Firestore rules do not support full list iteration, so we enforce list type and ownership fields.
+    function validOutfitCreate(data, uid) {
+      return data is map
+        && data.keys().hasAll(["itemIds", "planned"])
+        && data.itemIds is list
+        && data.planned is bool
+        && noForeignUidField(data, uid);
+    }
+
+    function validOutfitUpdate(data, uid) {
+      let changed = data.diff(resource.data).affectedKeys();
+      return data is map
+        && (!changed.hasAny(["itemIds"]) || data.itemIds is list)
+        && (!changed.hasAny(["planned"]) || data.planned is bool)
+        && (!changed.hasAny(["uid"]) || data.uid == uid)
+        && noForeignUidField(data, uid);
+    }
+
     match /users/{uid} {
       allow read, write: if isOwner(uid);
 
       match /items/{itemId} {
         allow read: if isOwner(uid);
-        allow create: if isOwner(uid);
-        allow update: if isOwner(uid);
+        allow create: if isOwner(uid) && validItemCreate(request.resource.data, uid);
+        allow update: if isOwner(uid) && validItemUpdate(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
 
-      match /outfits/{outfitId} {
+      match /outfits/{dateKey} {
         allow read: if isOwner(uid);
-        allow create: if isOwner(uid);
-        allow update: if isOwner(uid);
+        allow create: if isOwner(uid) && validOutfitCreate(request.resource.data, uid);
+        allow update: if isOwner(uid) && validOutfitUpdate(request.resource.data, uid);
         allow delete: if isOwner(uid);
       }
     }
