@@ -1,68 +1,53 @@
-// app/(tabs)/today.tsx
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { router } from "expo-router";
 import {
   collection,
   doc,
+  increment,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
-  updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, FlatList, Pressable, Text, View } from "react-native";
-import { auth, db } from "../src/lib/firebase"; // adjust if your path differs
+import { Alert, FlatList, Image, Pressable, Text, View } from "react-native";
 
-type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
-
-type ClothingItem = {
-  id: string;
-  brand: string;
-  name?: string; // product name (if you stored it)
-  category: string;
-  colors?: string[];
-  primaryColor?: string;
-  status: ClothingStatus;
-  wearCountSinceWash: number;
-  createdAt: number;
-  lastWornDate?: number | null;
-  lastWashedDate?: number | null;
-  photoUri?: string | null;
-};
+import { useAuth } from "../../src/hooks/useAuth";
+import { db } from "../../src/lib/firebase";
+import { MAX_WEARS_BEFORE_WASH, toCanonicalCategory } from "../../src/lib/items";
+import { toDateKey } from "../../src/lib/outfits";
+import { ClothingItem } from "../../src/types/ClothingItem";
 
 type OutfitDoc = {
-  dateKey: string; // YYYY-MM-DD
+  dateKey: string;
   itemIds: string[];
-  planned: boolean; // true = future plan, false = actually worn/logged
+  planned: boolean;
   updatedAt?: any;
   createdAt?: any;
 };
 
-function pad2(n: number) {
-  return n < 10 ? `0${n}` : `${n}`;
+function itemDisplayName(item: ClothingItem) {
+  return item.name || `${item.primaryColor ?? ""} ${item.category}`.trim();
 }
 
-function toDateKey(d: Date) {
-  const yyyy = d.getFullYear();
-  const mm = pad2(d.getMonth() + 1);
-  const dd = pad2(d.getDate());
-  return `${yyyy}-${mm}-${dd}`;
+function valueToDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (typeof (value as any).toDate === "function") {
+    const d = (value as any).toDate();
+    return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
+  }
+  if (typeof value === "number") {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  return null;
 }
 
-function addDays(d: Date, delta: number) {
-  const x = new Date(d);
-  x.setDate(x.getDate() + delta);
-  return x;
-}
-
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function isSameDay(a: Date, b: Date) {
+function isSameLocalDate(a: Date, b: Date) {
   return (
     a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
@@ -70,212 +55,237 @@ function isSameDay(a: Date, b: Date) {
   );
 }
 
-function fmtHeaderDate(d: Date) {
-  // e.g., Thu, Dec 26
-  return d.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
-
 export default function TodayScreen() {
-  // same test user flow you used elsewhere
-  const testEmail = "testuser1@example.com";
-  const testPass = "TestPass123!";
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
 
-  const [selectedDate, setSelectedDate] = useState<Date>(startOfDay(new Date()));
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [outfit, setOutfit] = useState<OutfitDoc | null>(null);
   const [loading, setLoading] = useState(true);
   const [addingMode, setAddingMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
 
-  const dateKey = useMemo(() => toDateKey(selectedDate), [selectedDate]);
-  const today = useMemo(() => startOfDay(new Date()), []);
-  const inFuture = useMemo(() => selectedDate.getTime() > today.getTime(), [selectedDate, today]);
-
-  async function ensureSignedIn() {
-    if (auth.currentUser) return auth.currentUser;
-    const res = await signInWithEmailAndPassword(auth, testEmail, testPass);
-    return res.user;
-  }
+  const dateKey = useMemo(() => toDateKey(new Date()), []);
 
   useEffect(() => {
     let unsubItems: undefined | (() => void);
     let unsubOutfit: undefined | (() => void);
 
-    (async () => {
-      try {
-        const user = await ensureSignedIn();
+    if (!uid) {
+      setItems([]);
+      setOutfit(null);
+      setLoading(false);
+      router.replace("/(auth)/login");
+      return;
+    }
 
-        // 1) listen to wardrobe items
-        const itemsRef = collection(db, "users", user.uid, "items");
-        const qItems = query(itemsRef, orderBy("createdAt", "desc"));
-        unsubItems = onSnapshot(
-          qItems,
-          (snap) => {
-            const next: ClothingItem[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-            setItems(next);
-          },
-          (err) => {
-            console.log(err);
-            Alert.alert("Firestore error", err.message);
-          }
-        );
+    const itemsRef = collection(db, "users", uid, "items");
+    const qItems = query(itemsRef, orderBy("createdAt", "desc"));
+    unsubItems = onSnapshot(
+      qItems,
+      (snap) => {
+        const next: ClothingItem[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        setItems(next);
+      },
+      (err) => {
+        console.log(err);
+        Alert.alert("Firestore error", err.message);
+      }
+    );
 
-        // 2) listen to outfit doc for selected date
-        const outfitRef = doc(db, "users", user.uid, "outfits", dateKey);
-        unsubOutfit = onSnapshot(
-          outfitRef,
-          (snap) => {
-            if (!snap.exists()) {
-              setOutfit(null);
-            } else {
-              setOutfit(snap.data() as OutfitDoc);
-            }
-            setLoading(false);
-          },
-          (err) => {
-            console.log(err);
-            Alert.alert("Firestore error", err.message);
-            setLoading(false);
-          }
-        );
-      } catch (e: any) {
-        console.log(e);
-        Alert.alert("Auth error", e?.message ?? "Auth failed");
+    const outfitRef = doc(db, "users", uid, "outfits", dateKey);
+    unsubOutfit = onSnapshot(
+      outfitRef,
+      (snap) => {
+        if (!snap.exists()) {
+          setOutfit(null);
+        } else {
+          setOutfit(snap.data() as OutfitDoc);
+        }
+        setLoading(false);
+      },
+      (err) => {
+        console.log(err);
+        Alert.alert("Firestore error", err.message);
         setLoading(false);
       }
-    })();
+    );
 
     return () => {
-      if (unsubItems) unsubItems();
-      if (unsubOutfit) unsubOutfit();
+      unsubItems?.();
+      unsubOutfit?.();
     };
-    // IMPORTANT: dateKey changes should re-subscribe for outfit doc
-  }, [dateKey]);
+  }, [dateKey, uid]);
 
-  const outfitItemIds = outfit?.itemIds ?? [];
+  useEffect(() => {
+    if (!addingMode) return;
+    setSelectedIds(outfit?.itemIds ?? []);
+  }, [addingMode, outfit?.itemIds]);
+
+  const itemsById = useMemo(() => new Map(items.map((it) => [it.id, it])), [items]);
+
   const outfitItems = useMemo(() => {
-    const map = new Map(items.map((it) => [it.id, it]));
-    return outfitItemIds.map((id) => map.get(id)).filter(Boolean) as ClothingItem[];
-  }, [items, outfitItemIds]);
+    const ids = outfit?.itemIds ?? [];
+    return ids.map((id) => itemsById.get(id)).filter(Boolean) as ClothingItem[];
+  }, [itemsById, outfit?.itemIds]);
 
-  async function ensureOutfitDocExists() {
-    const user = auth.currentUser;
-    if (!user) throw new Error("Not signed in");
+  const hasOutfit = (outfit?.itemIds?.length ?? 0) > 0;
 
-    const ref = doc(db, "users", user.uid, "outfits", dateKey);
-
-    // create if missing (merge keeps it safe)
-    const base: OutfitDoc = {
-      dateKey,
-      itemIds: outfit?.itemIds ?? [],
-      planned: inFuture ? true : false,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-
-    await setDoc(ref, base, { merge: true });
+  function toggleSelected(itemId: string) {
+    setSelectedIds((prev) =>
+      prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]
+    );
   }
 
-  async function toggleItemForDay(itemId: string) {
-    try {
-      const user = auth.currentUser;
-      if (!user) return Alert.alert("Not signed in", "Please sign in first.");
+  function validateOutfit(ids: string[]) {
+    const selected = ids
+      .map((id) => itemsById.get(id))
+      .filter(Boolean) as ClothingItem[];
 
-      await ensureOutfitDocExists();
+    const categories = new Set(selected.map((i) => toCanonicalCategory(i.category)));
 
-      const ref = doc(db, "users", user.uid, "outfits", dateKey);
-      const cur = new Set(outfit?.itemIds ?? []);
-      if (cur.has(itemId)) cur.delete(itemId);
-      else cur.add(itemId);
-
-      await updateDoc(ref, {
-        itemIds: Array.from(cur),
-        planned: inFuture ? true : false,
-        updatedAt: serverTimestamp(),
-      });
-    } catch (e: any) {
-      console.log(e);
-      Alert.alert("Error", e?.message ?? "Failed to update outfit");
+    if (!categories.has("top")) {
+      return "Select at least one top.";
     }
+    if (!categories.has("bottom")) {
+      return "Select at least one bottom.";
+    }
+    if (!categories.has("shoes")) {
+      return "Select at least one shoes item.";
+    }
+
+    return null;
   }
 
-  async function markAsWornToday() {
-    try {
-      const user = auth.currentUser;
-      if (!user) return Alert.alert("Not signed in", "Please sign in first.");
-      if (!isSameDay(selectedDate, today)) {
-        return Alert.alert("Not today", "You can only mark as worn on today's date.");
-      }
-      if ((outfit?.itemIds?.length ?? 0) === 0) {
-        return Alert.alert("Empty outfit", "Add items first.");
-      }
+  async function savePlannedOutfit() {
+    if (!uid) {
+      router.replace("/(auth)/login");
+      return;
+    }
 
-      const ref = doc(db, "users", user.uid, "outfits", dateKey);
+    const validationError = validateOutfit(selectedIds);
+    if (validationError) {
+      Alert.alert("Incomplete outfit", validationError);
+      return;
+    }
+
+    try {
+      setSaving(true);
+      const ref = doc(db, "users", uid, "outfits", dateKey);
       await setDoc(
         ref,
         {
           dateKey,
-          planned: false,
-          updatedAt: serverTimestamp(),
+          itemIds: selectedIds,
+          planned: true,
           createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      setAddingMode(false);
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? "Failed to save outfit");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function markOutfitWorn() {
+    if (!uid) {
+      router.replace("/(auth)/login");
+      return;
+    }
+
+    const itemIds = outfit?.itemIds ?? [];
+    if (itemIds.length === 0) {
+      Alert.alert("No outfit", "Plan an outfit first.");
+      return;
+    }
+
+    for (const itemId of itemIds) {
+      const item = itemsById.get(itemId);
+      if (!item) {
+        Alert.alert("Outfit issue", "One of the selected items was not found.");
+        return;
+      }
+
+      if (item.status === "IN_LAUNDRY") {
+        Alert.alert("Cannot mark outfit worn", `${itemDisplayName(item)} is in laundry.`);
+        return;
+      }
+
+      if ((item.wearCountSinceWash ?? 0) >= MAX_WEARS_BEFORE_WASH) {
+        Alert.alert(
+          "Wash required",
+          `${itemDisplayName(item)} reached the wear limit. Wash it before wearing again.`
+        );
+        return;
+      }
+
+      const lastWorn = valueToDate(item.lastWornDate);
+      if (lastWorn && isSameLocalDate(lastWorn, new Date())) {
+        Alert.alert("Already worn", `${itemDisplayName(item)} is already marked worn today.`);
+        return;
+      }
+    }
+
+    try {
+      setSaving(true);
+      const batch = writeBatch(db);
+
+      const outfitRef = doc(db, "users", uid, "outfits", dateKey);
+      batch.set(
+        outfitRef,
+        {
+          dateKey,
+          planned: false,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
 
-      Alert.alert("Saved ✅", "Logged as worn today.");
+      for (const itemId of itemIds) {
+        const itemRef = doc(db, "users", uid, "items", itemId);
+        batch.update(itemRef, {
+          status: "WORN",
+          wearCountSinceWash: increment(1),
+          lastWornDate: serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+      Alert.alert("Saved", "Outfit marked as worn.");
     } catch (e: any) {
       console.log(e);
-      Alert.alert("Error", e?.message ?? "Failed to mark worn");
+      Alert.alert("Error", e?.message ?? "Failed to mark outfit worn");
+    } finally {
+      setSaving(false);
     }
   }
 
-  // Simple counts like your current UI (optional)
-  const wornTodayCount = useMemo(() => (isSameDay(selectedDate, today) && outfitItems.length ? 1 : 0), [
-    selectedDate,
-    today,
-    outfitItems.length,
-  ]);
-
   return (
-    <View style={{ flex: 1, padding: 16}}>
-      {/* Header with arrows + date */}
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Pressable onPress={() => setSelectedDate((d) => addDays(d, -1))} style={iconBtn}>
-          <Text style={iconText}>‹</Text>
-        </Pressable>
-
-        <View style={{ alignItems: "center" }}>
-          <Text style={{ fontSize: 22, fontWeight: "800" }}>Today</Text>
-          <Text style={{ fontSize: 16, fontWeight: "700", marginTop: 4 }}>{fmtHeaderDate(selectedDate)}</Text>
-          <Text style={{ color: "#666", marginTop: 2 }}>
-            {inFuture ? "Plan outfit" : isSameDay(selectedDate, today) ? "Outfit for today" : "Outfit history"}
-          </Text>
-        </View>
-
-        <Pressable onPress={() => setSelectedDate((d) => addDays(d, +1))} style={iconBtn}>
-          <Text style={iconText}>›</Text>
-        </Pressable>
-      </View>
+    <View style={{ flex: 1, padding: 16 }}>
+      <Text style={{ fontSize: 22, fontWeight: "800" }}>Today</Text>
+      <Text style={{ marginTop: 4, color: "#666" }}>{dateKey}</Text>
 
       <View style={{ height: 14 }} />
 
-      {/* Quick summary (you can remove if you want) */}
-      <Text style={{ fontSize: 16, fontWeight: "700" }}>Worn today: {wornTodayCount}</Text>
-
-      <View style={{ height: 12 }} />
-
-      {/* Outfit card */}
       <View style={card}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <Text style={{ fontSize: 16, fontWeight: "800" }}>
-            {outfit ? (outfit.planned ? "Planned outfit" : "Worn outfit") : "No outfit saved"}
+            {hasOutfit ? (outfit?.planned ? "Planned outfit" : "Worn outfit") : "No outfit planned"}
           </Text>
 
-          <Pressable onPress={() => setAddingMode((v) => !v)} style={pillBtn}>
-            <Text style={pillBtnText}>{addingMode ? "Done" : "Add items"}</Text>
+          <Pressable
+            onPress={() => setAddingMode((v) => !v)}
+            style={pillBtn}
+            disabled={saving}
+          >
+            <Text style={pillBtnText}>{addingMode ? "Done" : "Plan Outfit"}</Text>
           </Pressable>
         </View>
 
@@ -283,52 +293,71 @@ export default function TodayScreen() {
 
         {loading ? (
           <Text>Loading…</Text>
-        ) : outfitItems.length === 0 ? (
-          <Text style={{ color: "#666" }}>
-            {inFuture
-              ? "No planned items yet. Tap “Add items” and pick what you want to wear."
-              : "Nothing logged for this date. Tap “Add items” to save what you wore (or planned)."}
-          </Text>
+        ) : !hasOutfit ? (
+          <View style={{ gap: 10 }}>
+            <Text style={{ color: "#666" }}>No items planned for today.</Text>
+            <Pressable onPress={() => setAddingMode(true)} style={primaryBtn}>
+              <Text style={primaryBtnText}>Plan Outfit</Text>
+            </Pressable>
+          </View>
         ) : (
           <View style={{ gap: 10 }}>
-            {outfitItems.map((it) => (
-              <View key={it.id} style={miniCard}>
-                <Text style={{ fontSize: 15, fontWeight: "800" }}>
-                  {(it.primaryColor ?? it.colors?.[0] ?? "").toString()} {it.category}
-                </Text>
-                <Text style={{ color: "#111" }}>Brand: {it.brand}</Text>
-                {it.name ? <Text style={{ color: "#111" }}>Name: {it.name}</Text> : null}
-                {it.colors?.length ? <Text style={{ color: "#666" }}>Colors: {it.colors.join(" / ")}</Text> : null}
-              </View>
-            ))}
-          </View>
-        )}
+            {outfitItems.map((it) => {
+              const uri = it.photoUrl || it.photoUri || null;
+              return (
+                <View key={it.id} style={miniCard}>
+                  <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+                    {uri ? (
+                      <Image
+                        source={{ uri }}
+                        style={{ width: 52, height: 52, borderRadius: 10 }}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View
+                        style={{
+                          width: 52,
+                          height: 52,
+                          borderRadius: 10,
+                          backgroundColor: "#f3f3f3",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Text style={{ color: "#777", fontSize: 11 }}>No photo</Text>
+                      </View>
+                    )}
 
-        {isSameDay(selectedDate, today) && outfitItems.length > 0 && (
-          <>
-            <View style={{ height: 12 }} />
-            <Pressable onPress={markAsWornToday} style={primaryBtn}>
-              <Text style={primaryBtnText}>Mark as worn today</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: "800" }}>{itemDisplayName(it)}</Text>
+                      <Text style={{ color: "#666" }}>{it.brand} • {it.category}</Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+
+            <Pressable onPress={markOutfitWorn} style={[primaryBtn, saving ? { opacity: 0.6 } : null]} disabled={saving}>
+              <Text style={primaryBtnText}>Mark Outfit Worn</Text>
             </Pressable>
-          </>
+          </View>
         )}
       </View>
 
-      {/* Add items panel */}
       {addingMode && (
         <>
           <View style={{ height: 14 }} />
-          <Text style={{ fontSize: 16, fontWeight: "800", marginBottom: 10 }}>Pick from wardrobe</Text>
+          <Text style={{ fontSize: 16, fontWeight: "800", marginBottom: 10 }}>Pick outfit items</Text>
 
           <FlatList
             data={items}
             keyExtractor={(x) => x.id}
             ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
             renderItem={({ item }) => {
-              const selected = outfitItemIds.includes(item.id);
+              const selected = selectedIds.includes(item.id);
               return (
                 <Pressable
-                  onPress={() => toggleItemForDay(item.id)}
+                  onPress={() => toggleSelected(item.id)}
                   style={[
                     card,
                     {
@@ -338,24 +367,37 @@ export default function TodayScreen() {
                   ]}
                 >
                   <Text style={{ fontSize: 16, fontWeight: "800", color: selected ? "#fff" : "#111" }}>
-                    {(item.primaryColor ?? item.colors?.[0] ?? "").toString()} {item.category}
+                    {itemDisplayName(item)}
                   </Text>
                   <Text style={{ color: selected ? "#fff" : "#111" }}>
-                    {item.brand}
-                    {item.name ? ` • ${item.name}` : ""}
+                    {item.brand} • {item.category}
                   </Text>
                   <Text style={{ color: selected ? "#ddd" : "#666", marginTop: 6 }}>
-                    {selected ? "Added to this date ✓" : "Tap to add"}
+                    {selected ? "Selected ✓" : "Tap to select"}
                   </Text>
                 </Pressable>
               );
             }}
             ListEmptyComponent={<Text>No wardrobe items found.</Text>}
+            ListFooterComponent={
+              <View style={{ marginTop: 12, gap: 8 }}>
+                <Pressable
+                  onPress={savePlannedOutfit}
+                  style={[primaryBtn, saving ? { opacity: 0.6 } : null]}
+                  disabled={saving}
+                >
+                  <Text style={primaryBtnText}>Save Planned Outfit</Text>
+                </Pressable>
+                <Text style={{ color: "#666", fontSize: 12 }}>
+                  Minimum required: one top, one bottom, one shoes.
+                </Text>
+              </View>
+            }
           />
         </>
       )}
 
-      <View style={{ height: 24 }} />
+      <View style={{ height: 18 }} />
     </View>
   );
 }
@@ -374,21 +416,6 @@ const miniCard = {
   borderColor: "#eee",
   borderRadius: 12,
   backgroundColor: "#fafafa",
-} as const;
-
-const iconBtn = {
-  width: 44,
-  height: 44,
-  borderRadius: 999,
-  borderWidth: 1,
-  borderColor: "#ddd",
-  alignItems: "center",
-  justifyContent: "center",
-} as const;
-
-const iconText = {
-  fontSize: 26,
-  fontWeight: "900",
 } as const;
 
 const pillBtn = {

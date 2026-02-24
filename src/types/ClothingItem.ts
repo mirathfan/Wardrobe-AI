@@ -16,6 +16,7 @@ export type ClothingItem = {
   notes?: string | null;
   price?: number | null;
   purchaseDate?: string | null;
+  photoUrl?: string | null;
   photoUri?: string | null;
 
   // lifecycle

@@ -7,9 +7,11 @@ import {
     query,
     updateDoc,
 } from "firebase/firestore";
+import { router } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, View } from "react-native";
-import { auth, db } from "../src/lib/firebase";
+import { useAuth } from "../../src/hooks/useAuth";
+import { db } from "../../src/lib/firebase";
 
 type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 
@@ -37,17 +39,19 @@ function fmtShort(ts?: number | null) {
 }
 
 export default function AIScreen() {
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) {
+    if (!uid) {
       setLoading(false);
+      router.replace("/(auth)/login");
       return;
     }
 
-    const itemsRef = collection(db, "users", user.uid, "items");
+    const itemsRef = collection(db, "users", uid, "items");
     const q = query(itemsRef, orderBy("createdAt", "desc"));
 
     const unsub = onSnapshot(
@@ -68,13 +72,12 @@ export default function AIScreen() {
     );
 
     return () => unsub();
-  }, []);
+  }, [uid]);
 
   async function markWorn(itemId: string) {
     try {
-      const user = auth.currentUser;
-      if (!user) return;
-      await updateDoc(doc(db, "users", user.uid, "items", itemId), {
+      if (!uid) return router.replace("/(auth)/login");
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
         status: "WORN",
         wearCountSinceWash: increment(1),
         lastWornDate: Date.now(),
@@ -87,9 +90,8 @@ export default function AIScreen() {
 
   async function moveToLaundry(itemId: string) {
     try {
-      const user = auth.currentUser;
-      if (!user) return;
-      await updateDoc(doc(db, "users", user.uid, "items", itemId), {
+      if (!uid) return router.replace("/(auth)/login");
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
         status: "IN_LAUNDRY",
       });
     } catch (e: any) {
