@@ -1,5 +1,4 @@
 import { router } from "expo-router";
-import { signInWithEmailAndPassword } from "firebase/auth";
 import {
   collection,
   doc,
@@ -21,7 +20,8 @@ import {
 } from "react-native";
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { auth, db } from "../../src/lib/firebase";
+import { useAuth } from "../../src/hooks/useAuth";
+import { db } from "../../src/lib/firebase";
 import { addItemToOutfit, toDateKey } from "../../src/lib/outfits";
 import { ClothingItem, ClothingStatus } from "../../src/types/ClothingItem";
 
@@ -228,28 +228,20 @@ function Pill({
 
 /* ---------- Screen ---------- */
 export default function WardrobeScreen() {
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
-  const testEmail = "testuser1@example.com";
-  const testPass = "TestPass123!";
-
-  async function ensureSignedIn() {
-    if (auth.currentUser) return auth.currentUser;
-    const res = await signInWithEmailAndPassword(auth, testEmail, testPass);
-    return res.user;
-  }
-
   async function markWorn(itemId: string) {
     try {
-      const user = auth.currentUser;
-      if (!user) return;
+      if (!uid) return router.replace("/(auth)/login");
 
       const dateKey = toDateKey(new Date());
       await addItemToOutfit(dateKey, itemId, false);
 
-      const ref = doc(db, "users", user.uid, "items", itemId);
+      const ref = doc(db, "users", uid, "items", itemId);
       await updateDoc(ref, {
         status: "WORN",
         wearCountSinceWash: increment(1),
@@ -263,10 +255,9 @@ export default function WardrobeScreen() {
 
   async function moveToLaundry(itemId: string) {
     try {
-      const user = auth.currentUser;
-      if (!user) return;
+      if (!uid) return router.replace("/(auth)/login");
 
-      await updateDoc(doc(db, "users", user.uid, "items", itemId), {
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
         status: "IN_LAUNDRY",
       });
     } catch (err: any) {
@@ -277,10 +268,9 @@ export default function WardrobeScreen() {
 
   async function markWashed(itemId: string) {
     try {
-      const user = auth.currentUser;
-      if (!user) return;
+      if (!uid) return router.replace("/(auth)/login");
 
-      await updateDoc(doc(db, "users", user.uid, "items", itemId), {
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
         status: "AVAILABLE",
         wearCountSinceWash: 0,
         lastWashedDate: Date.now(),
@@ -294,37 +284,35 @@ export default function WardrobeScreen() {
   useEffect(() => {
     let unsub: undefined | (() => void);
 
-    (async () => {
-      try {
-        const user = await ensureSignedIn();
-        const itemsRef = collection(db, "users", user.uid, "items");
-        const q = query(itemsRef, orderBy("createdAt", "desc"));
+    if (!uid) {
+      setItems([]);
+      setLoading(false);
+      router.replace("/(auth)/login");
+      return;
+    }
 
-        unsub = onSnapshot(
-          q,
-          (snap) => {
-            const next: ClothingItem[] = snap.docs.map((d) => ({
-              id: d.id,
-              ...(d.data() as any),
-            }));
-            setItems(next);
-            setLoading(false);
-          },
-          (err) => {
-            console.log(err);
-            Alert.alert("Firestore error", err.message);
-            setLoading(false);
-          }
-        );
-      } catch (err: any) {
+    const itemsRef = collection(db, "users", uid, "items");
+    const q = query(itemsRef, orderBy("createdAt", "desc"));
+
+    unsub = onSnapshot(
+      q,
+      (snap) => {
+        const next: ClothingItem[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+        }));
+        setItems(next);
+        setLoading(false);
+      },
+      (err) => {
         console.log(err);
-        Alert.alert("Auth error", err?.message ?? "Unknown auth error");
+        Alert.alert("Firestore error", err.message);
         setLoading(false);
       }
-    })();
+    );
 
     return () => unsub?.();
-  }, []);
+  }, [uid]);
 
   // Status counts (for pills)
   const totalCount = items.length;

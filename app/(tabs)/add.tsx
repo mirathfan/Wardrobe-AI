@@ -1,6 +1,5 @@
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import { signInWithEmailAndPassword } from "firebase/auth";
 import { collection, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -13,7 +12,8 @@ import {
   View,
 } from "react-native";
 
-import { auth, db } from "../../src/lib/firebase";
+import { useAuth } from "../../src/hooks/useAuth";
+import { db } from "../../src/lib/firebase";
 import { uploadItemPhoto } from "../../src/lib/uploadImage";
 
 const QUICK_CATEGORIES = [
@@ -55,15 +55,14 @@ function isQuickCategory(cat: string) {
 }
 
 export default function AddItemScreen() {
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
   const { editId } = useLocalSearchParams<{ editId?: string }>();
   const editItemId = useMemo(
     () => (Array.isArray(editId) ? editId[0] : editId),
     [editId]
   );
   const isEdit = !!editItemId;
-
-  const testEmail = "testuser1@example.com";
-  const testPass = "TestPass123!";
 
   const [loading, setLoading] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -91,28 +90,17 @@ export default function AddItemScreen() {
 
   const previewPhotoUri = pendingPhotoUri ?? photoUrl ?? photoUri ?? null;
 
-  async function ensureSignedIn() {
-    if (auth.currentUser) return auth.currentUser;
-    const res = await signInWithEmailAndPassword(auth, testEmail, testPass);
-    return res.user;
-  }
-
-  useEffect(() => {
-    ensureSignedIn().catch((e) =>
-      Alert.alert("Auth error", e?.message ?? "Auth failed")
-    );
-  }, []);
-
   useEffect(() => {
     (async () => {
       try {
         if (!isEdit) return;
+        if (!uid) {
+          router.replace("/(auth)/login");
+          return;
+        }
 
         setLoading(true);
-        const user = await ensureSignedIn();
-        if (!user) return;
-
-        const ref = doc(db, "users", user.uid, "items", String(editItemId));
+        const ref = doc(db, "users", uid, "items", String(editItemId));
         const snap = await getDoc(ref);
 
         if (!snap.exists()) {
@@ -163,7 +151,7 @@ export default function AddItemScreen() {
         setLoading(false);
       }
     })();
-  }, [isEdit, editItemId]);
+  }, [isEdit, editItemId, uid]);
 
   const categoryFinal = useMemo(() => {
     const c = norm(customCategory) || norm(category);
@@ -299,10 +287,10 @@ export default function AddItemScreen() {
       return Alert.alert("Missing colors", "Select at least 1 color.");
     }
 
-    const user = auth.currentUser;
-    if (!user) return Alert.alert("Not signed in", "Please sign in first.");
-
-    const uid = user.uid || "test-user";
+    if (!uid) {
+      router.replace("/(auth)/login");
+      return Alert.alert("Not signed in", "Please sign in first.");
+    }
     const priceNum = parsePriceToNumber(price);
     const date = parsePurchaseDate(purchaseDate);
     if (date === "INVALID") {

@@ -3,7 +3,8 @@ import { deleteDoc, doc, onSnapshot } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { auth, db } from "../../../src/lib/firebase";
+import { useAuth } from "../../../src/hooks/useAuth";
+import { db } from "../../../src/lib/firebase";
 
 type ClothingItem = {
   id: string;
@@ -23,6 +24,8 @@ type ClothingItem = {
 };
 
 export default function ItemDetailsScreen() {
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
   const { id } = useLocalSearchParams<{ id: string }>();
   const itemId = useMemo(() => (Array.isArray(id) ? id[0] : id), [id]);
 
@@ -31,10 +34,12 @@ export default function ItemDetailsScreen() {
   const itemImageUri = item?.photoUrl || item?.photoUri || null;
 
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user || !itemId) return;
+    if (!uid || !itemId) {
+      if (!uid) router.replace("/(auth)/login");
+      return;
+    }
 
-    const ref = doc(db, "users", user.uid, "items", itemId);
+    const ref = doc(db, "users", uid, "items", itemId);
 
     const unsub = onSnapshot(
       ref,
@@ -54,11 +59,10 @@ export default function ItemDetailsScreen() {
     );
 
     return () => unsub();
-  }, [itemId]);
+  }, [itemId, uid]);
 
   async function onDelete() {
-    const user = auth.currentUser;
-    if (!user || !itemId) return;
+    if (!uid || !itemId) return router.replace("/(auth)/login");
 
     Alert.alert(
       "Delete item?",
@@ -70,7 +74,7 @@ export default function ItemDetailsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, "users", user.uid, "items", itemId));
+              await deleteDoc(doc(db, "users", uid, "items", itemId));
               router.back();
             } catch (e: any) {
               console.log(e);
