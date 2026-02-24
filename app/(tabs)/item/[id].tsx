@@ -3,25 +3,30 @@ import { deleteDoc, doc, onSnapshot } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
 import { useAuth } from "../../../src/hooks/useAuth";
 import { db } from "../../../src/lib/firebase";
+import {
+  markWashed as markWashedItem,
+  markWorn,
+  sendToLaundry,
+} from "../../../src/lib/items";
+import { ClothingItem } from "../../../src/types/ClothingItem";
 
-type ClothingItem = {
+type ItemDetails = ClothingItem & {
   id: string;
-  brand: string;
-  name?: string;
-  category: string;
-  colors?: string[];
-  primaryColor?: string;
-  status?: "AVAILABLE" | "WORN" | "IN_LAUNDRY";
-  wearCountSinceWash?: number;
-  photoUrl?: string | null;
-  photoUri?: string | null;
-  size?: string | null;
-  notes?: string | null;
-  price?: number | null;
-  purchaseDate?: string | null;
 };
+
+function formatDate(value?: any | null) {
+  if (!value) return "—";
+  if (typeof value?.toDate === "function") {
+    return value.toDate().toLocaleDateString();
+  }
+  if (typeof value === "number") {
+    return new Date(value).toLocaleDateString();
+  }
+  return "—";
+}
 
 export default function ItemDetailsScreen() {
   const { user } = useAuth();
@@ -29,8 +34,9 @@ export default function ItemDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const itemId = useMemo(() => (Array.isArray(id) ? id[0] : id), [id]);
 
-  const [item, setItem] = useState<ClothingItem | null>(null);
+  const [item, setItem] = useState<ItemDetails | null>(null);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
   const itemImageUri = item?.photoUrl || item?.photoUri || null;
 
   useEffect(() => {
@@ -61,6 +67,57 @@ export default function ItemDetailsScreen() {
     return () => unsub();
   }, [itemId, uid]);
 
+  async function onMarkWorn() {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+    if (item?.status === "IN_LAUNDRY") return;
+
+    try {
+      setActionLoading(true);
+      await markWorn(uid, itemId);
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? "Failed to mark item as worn");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function onSendToLaundry() {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+
+    try {
+      setActionLoading(true);
+      await sendToLaundry(uid, itemId);
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? "Failed to send item to laundry");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function onConfirmWashed() {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+
+    Alert.alert("Mark as washed?", "This will reset wear count and make item available.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Mark washed",
+        onPress: async () => {
+          try {
+            setActionLoading(true);
+            await markWashedItem(uid, itemId);
+          } catch (e: any) {
+            console.log(e);
+            Alert.alert("Error", e?.message ?? "Failed to mark item as washed");
+          } finally {
+            setActionLoading(false);
+          }
+        },
+      },
+    ]);
+  }
+
   async function onDelete() {
     if (!uid || !itemId) return router.replace("/(auth)/login");
 
@@ -87,7 +144,6 @@ export default function ItemDetailsScreen() {
   }
 
   function onEdit() {
-    // We reuse your add screen as an edit screen using query params
     router.push({
       pathname: "/(tabs)/add",
       params: { editId: itemId },
@@ -141,9 +197,11 @@ export default function ItemDetailsScreen() {
                 ) : null}
 
                 {item.status ? <Text style={{ color: "#666" }}>Status: {item.status}</Text> : null}
-                {typeof item.wearCountSinceWash === "number" ? (
-                  <Text style={{ color: "#666" }}>Wears since wash: {item.wearCountSinceWash}</Text>
-                ) : null}
+                <Text style={{ color: "#666" }}>
+                  Wears since wash: {item.wearCountSinceWash ?? 0}
+                </Text>
+                <Text style={{ color: "#666" }}>Last worn: {formatDate(item.lastWornDate)}</Text>
+                <Text style={{ color: "#666" }}>Last washed: {formatDate(item.lastWashedDate)}</Text>
 
                 {item.size ? <Text style={{ color: "#666" }}>Size: {item.size}</Text> : null}
                 {typeof item.price === "number" ? <Text style={{ color: "#666" }}>Price: {item.price}</Text> : null}
@@ -152,13 +210,46 @@ export default function ItemDetailsScreen() {
               </View>
             </View>
 
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <Pressable onPress={onEdit} style={[btn, { backgroundColor: "#111" }]}>
-                <Text style={[btnText, { color: "#fff" }]}>Edit</Text>
-              </Pressable>
-              <Pressable onPress={onDelete} style={[btn, { borderColor: "#d11", borderWidth: 1 }]}>
-                <Text style={[btnText, { color: "#d11" }]}>Delete</Text>
-              </Pressable>
+            <View style={{ gap: 10 }}>
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable
+                  onPress={onMarkWorn}
+                  disabled={actionLoading || item.status === "IN_LAUNDRY"}
+                  style={[
+                    btn,
+                    { backgroundColor: "#111" },
+                    actionLoading || item.status === "IN_LAUNDRY" ? { opacity: 0.5 } : null,
+                  ]}
+                >
+                  <Text style={[btnText, { color: "#fff" }]}>Mark as Worn</Text>
+                </Pressable>
+                <Pressable
+                  onPress={onSendToLaundry}
+                  disabled={actionLoading}
+                  style={[btn, { borderColor: "#111", borderWidth: 1 }, actionLoading ? { opacity: 0.6 } : null]}
+                >
+                  <Text style={[btnText, { color: "#111" }]}>Send to Laundry</Text>
+                </Pressable>
+              </View>
+
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable
+                  onPress={onConfirmWashed}
+                  disabled={actionLoading}
+                  style={[btn, { borderColor: "#0a7", borderWidth: 1 }, actionLoading ? { opacity: 0.6 } : null]}
+                >
+                  <Text style={[btnText, { color: "#0a7" }]}>Mark as Washed</Text>
+                </Pressable>
+              </View>
+
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable onPress={onEdit} style={[btn, { backgroundColor: "#111" }]}>
+                  <Text style={[btnText, { color: "#fff" }]}>Edit</Text>
+                </Pressable>
+                <Pressable onPress={onDelete} style={[btn, { borderColor: "#d11", borderWidth: 1 }]}>
+                  <Text style={[btnText, { color: "#d11" }]}>Delete</Text>
+                </Pressable>
+              </View>
             </View>
           </>
         )}
