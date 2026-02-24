@@ -1,5 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { Auth, getAuth, initializeAuth } from "firebase/auth";
+// eslint-disable-next-line import/no-unresolved
+import { getReactNativePersistence } from "firebase/auth/react-native";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
@@ -14,6 +16,17 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-export const auth = getAuth(app);
+let authInstance: Auth;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const AsyncStorage = require("@react-native-async-storage/async-storage").default;
+  authInstance = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  });
+} catch {
+  authInstance = getAuth(app);
+}
+
+export const auth = authInstance;
 export const db = getFirestore(app);
 export const storage = getStorage(app);
