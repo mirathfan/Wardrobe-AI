@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { doc, increment, serverTimestamp, updateDoc } from "firebase/firestore";
+import { doc, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -21,10 +21,10 @@ import {
   StatusFilter,
   isInCategory,
   listenToItems,
+  safeMarkWorn,
   toCanonicalCategory,
 } from "../../src/lib/items";
 import { db } from "../../src/lib/firebase";
-import { addItemToOutfit, toDateKey } from "../../src/lib/outfits";
 
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "ALL", label: "All" },
@@ -248,19 +248,10 @@ export default function WardrobeScreen() {
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ALL");
   const [sortMode, setSortMode] = useState<ItemSort>("NEWEST");
 
-  async function markWorn(itemId: string) {
+  async function onMarkWorn(itemId: string) {
     try {
       if (!uid) return router.replace("/(auth)/login");
-
-      const dateKey = toDateKey(new Date());
-      await addItemToOutfit(dateKey, itemId, false);
-
-      const ref = doc(db, "users", uid, "items", itemId);
-      await updateDoc(ref, {
-        status: "WORN",
-        wearCountSinceWash: increment(1),
-        lastWornDate: serverTimestamp(),
-      });
+      await safeMarkWorn(uid, itemId);
     } catch (err: any) {
       console.log(err);
       Alert.alert("Error", err?.message ?? "Failed to mark worn");
@@ -475,7 +466,7 @@ export default function WardrobeScreen() {
                     <Pressable onPress={() => router.push(`/(tabs)/item/${item.id}`)}>
                       <ItemPhotoCard
                         item={item}
-                        onWoreToday={() => markWorn(item.id)}
+                        onWoreToday={() => onMarkWorn(item.id)}
                         onToLaundry={() => moveToLaundry(item.id)}
                         onWashed={() => markWashed(item.id)}
                       />

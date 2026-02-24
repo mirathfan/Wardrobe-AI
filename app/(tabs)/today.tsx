@@ -15,7 +15,7 @@ import { Alert, FlatList, Image, Pressable, Text, View } from "react-native";
 
 import { useAuth } from "../../src/hooks/useAuth";
 import { db } from "../../src/lib/firebase";
-import { toCanonicalCategory } from "../../src/lib/items";
+import { MAX_WEARS_BEFORE_WASH, toCanonicalCategory } from "../../src/lib/items";
 import { toDateKey } from "../../src/lib/outfits";
 import { ClothingItem } from "../../src/types/ClothingItem";
 
@@ -29,6 +29,30 @@ type OutfitDoc = {
 
 function itemDisplayName(item: ClothingItem) {
   return item.name || `${item.primaryColor ?? ""} ${item.category}`.trim();
+}
+
+function valueToDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (typeof (value as any).toDate === "function") {
+    const d = (value as any).toDate();
+    return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
+  }
+  if (typeof value === "number") {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  return null;
+}
+
+function isSameLocalDate(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
 }
 
 export default function TodayScreen() {
@@ -179,6 +203,33 @@ export default function TodayScreen() {
     if (itemIds.length === 0) {
       Alert.alert("No outfit", "Plan an outfit first.");
       return;
+    }
+
+    for (const itemId of itemIds) {
+      const item = itemsById.get(itemId);
+      if (!item) {
+        Alert.alert("Outfit issue", "One of the selected items was not found.");
+        return;
+      }
+
+      if (item.status === "IN_LAUNDRY") {
+        Alert.alert("Cannot mark outfit worn", `${itemDisplayName(item)} is in laundry.`);
+        return;
+      }
+
+      if ((item.wearCountSinceWash ?? 0) >= MAX_WEARS_BEFORE_WASH) {
+        Alert.alert(
+          "Wash required",
+          `${itemDisplayName(item)} reached the wear limit. Wash it before wearing again.`
+        );
+        return;
+      }
+
+      const lastWorn = valueToDate(item.lastWornDate);
+      if (lastWorn && isSameLocalDate(lastWorn, new Date())) {
+        Alert.alert("Already worn", `${itemDisplayName(item)} is already marked worn today.`);
+        return;
+      }
     }
 
     try {
