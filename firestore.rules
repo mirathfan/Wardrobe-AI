@@ -15,7 +15,15 @@ service cloud.firestore {
     }
 
     function validCategory(category) {
-      return category in ["top", "bottom", "shoes", "outerwear", "accessory"];
+      return category in [
+        "top",
+        "bottom",
+        "outerwear",
+        "footwear",
+        "one_piece",
+        "accessory",
+        "shoes" // legacy alias kept for backwards compatibility
+      ];
     }
 
     function validWearCount(count) {

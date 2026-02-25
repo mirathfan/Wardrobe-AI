@@ -14,16 +14,16 @@ import {
 
 import { useAuth } from "../../src/hooks/useAuth";
 import { db } from "../../src/lib/firebase";
-import { CanonicalCategory, toCanonicalCategory } from "../../src/lib/items";
+import { normalizeCategoryForStorage } from "../../src/lib/items";
+import {
+  Category,
+  SUB_CATEGORIES,
+  isValidCategorySubCategory,
+  wearSlot,
+} from "../../src/shared/wardrobeTaxonomy";
 import { uploadItemPhoto } from "../../src/lib/uploadImage";
 
-const CATEGORIES: CanonicalCategory[] = [
-  "top",
-  "bottom",
-  "shoes",
-  "outerwear",
-  "accessory",
-];
+const CATEGORIES: Category[] = Object.values(Category);
 
 const DEFAULT_COLORS = [
   "Black",
@@ -64,7 +64,8 @@ export default function AddItemScreen() {
 
   const [brand, setBrand] = useState("");
   const [name, setName] = useState("");
-  const [category, setCategory] = useState<CanonicalCategory>("top");
+  const [category, setCategory] = useState<Category>(Category.TOP);
+  const [subCategory, setSubCategory] = useState("");
 
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [customColor, setCustomColor] = useState("");
@@ -105,7 +106,13 @@ export default function AddItemScreen() {
 
         setBrand(data.brand ?? "");
         setName(data.name ?? "");
-        setCategory(toCanonicalCategory(data.category));
+        const loadedCategory = normalizeCategoryForStorage(data.category);
+        setCategory(loadedCategory);
+        setSubCategory(
+          isValidCategorySubCategory(loadedCategory, data.subCategory)
+            ? data.subCategory
+            : ""
+        );
 
         const loadedColors: string[] =
           Array.isArray(data.colors) && data.colors.length
@@ -274,6 +281,10 @@ export default function AddItemScreen() {
       brand: b,
       name: n,
       category,
+      subCategory: isValidCategorySubCategory(category, subCategory)
+        ? subCategory
+        : null,
+      wearSlot: wearSlot(category),
       colors: selectedColors.map(normColor).filter(Boolean),
       primaryColor: normColor(selectedColors[0] ?? ""),
       size: norm(size) || null,
@@ -291,10 +302,24 @@ export default function AddItemScreen() {
         ...payloadBase,
         photoUrl: nextPhoto.photoUrl,
         photoUri: nextPhoto.photoUri,
+        photos: {
+          primaryUrl: nextPhoto.photoUrl,
+          urls: nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
+        },
       };
 
       if (isEdit) {
-        await updateDoc(itemRef, payload);
+        await updateDoc(itemRef, {
+          ...payload,
+          ...(pendingPhotoUri
+            ? {
+                ingestion: {
+                  status: "pending",
+                  lastRunAt: Date.now(),
+                },
+              }
+            : {}),
+        });
         Alert.alert("Saved ✅", "Item updated.");
         router.back();
         return;
@@ -307,13 +332,18 @@ export default function AddItemScreen() {
         createdAt: Date.now(),
         lastWornDate: null,
         lastWashedDate: Date.now(),
+        ingestion: {
+          status: "pending",
+          lastRunAt: Date.now(),
+        },
       });
 
       Alert.alert("Added ✅", "Item added to wardrobe.");
 
       setBrand("");
       setName("");
-      setCategory("top");
+      setCategory(Category.TOP);
+      setSubCategory("");
       setSelectedColors([]);
       setCustomColor("");
       setAddingCustomColor(false);
@@ -449,7 +479,32 @@ export default function AddItemScreen() {
               key={cat}
               label={cat}
               active={category === cat}
-              onPress={() => setCategory(cat)}
+              onPress={() => {
+                setCategory(cat);
+                setSubCategory("");
+              }}
+            />
+          ))}
+        </View>
+      </View>
+
+      <View style={{ gap: 8 }}>
+        <Text style={{ fontSize: 16, fontWeight: "700" }}>
+          Sub-category (optional)
+        </Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          <Pill
+            key="auto"
+            label="Auto"
+            active={!subCategory}
+            onPress={() => setSubCategory("")}
+          />
+          {SUB_CATEGORIES[category].map((sub) => (
+            <Pill
+              key={sub}
+              label={sub}
+              active={subCategory === sub}
+              onPress={() => setSubCategory(sub)}
             />
           ))}
         </View>
