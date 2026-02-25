@@ -248,15 +248,9 @@ export default function AddItemScreen() {
     const b = norm(brand);
     const n = norm(name);
 
-    if (!b) return Alert.alert("Missing brand", "Enter a brand (e.g., Nike).");
-    if (!n) {
-      return Alert.alert(
-        "Missing product name",
-        "Enter a name (e.g., Air Jordan 2)."
-      );
-    }
-    if (selectedColors.length === 0) {
-      return Alert.alert("Missing colors", "Select at least 1 color.");
+    const hasAtLeastOnePhoto = !!(pendingPhotoUri || photoUrl || photoUri);
+    if (!hasAtLeastOnePhoto) {
+      return Alert.alert("Missing photo", "Add at least one item photo.");
     }
 
     if (!uid) {
@@ -278,8 +272,8 @@ export default function AddItemScreen() {
       : doc(itemsRef);
 
     const payloadBase = {
-      brand: b,
-      name: n,
+      brand: b || "",
+      name: n || "",
       category,
       subCategory: isValidCategorySubCategory(category, subCategory)
         ? subCategory
@@ -368,6 +362,7 @@ export default function AddItemScreen() {
   }
 
   const canAddCustomColor = customColor.trim().length > 0;
+  const canSave = !!category && !!(pendingPhotoUri || photoUrl || photoUri) && !loading;
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
@@ -620,8 +615,8 @@ export default function AddItemScreen() {
 
       <Pressable
         onPress={saveItem}
-        style={[btnPrimary, loading ? { opacity: 0.6 } : null]}
-        disabled={loading}
+        style={[btnPrimary, !canSave ? { opacity: 0.6 } : null]}
+        disabled={!canSave}
       >
         <Text style={{ color: "#fff", fontSize: 16, fontWeight: "900" }}>
           {isEdit ? "Save Changes" : "Add to Wardrobe"}
