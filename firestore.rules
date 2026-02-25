@@ -30,6 +30,14 @@ service cloud.firestore {
       return count is number && count >= 0;
     }
 
+    function validColorSource(source) {
+      return source in ["ai", "user"];
+    }
+
+    function validOptionalString(value) {
+      return value == null || value is string;
+    }
+
     function noForeignUidField(data, uid) {
       return !("uid" in data) || data.uid == uid;
     }
@@ -49,6 +57,11 @@ service cloud.firestore {
         && (!changed.hasAny(["status"]) || validStatus(data.status))
         && (!changed.hasAny(["category"]) || validCategory(data.category))
         && (!changed.hasAny(["wearCountSinceWash"]) || validWearCount(data.wearCountSinceWash))
+        && (!changed.hasAny(["colorSource"]) || validColorSource(data.colorSource))
+        && (!changed.hasAny(["colorUpdatedAt"]) || data.colorUpdatedAt is number)
+        && (!changed.hasAny(["colorLabel"]) || validOptionalString(data.colorLabel))
+        && (!changed.hasAny(["primaryColor"]) || validOptionalString(data.primaryColor))
+        && (!changed.hasAny(["colors"]) || data.colors is list)
         && (!changed.hasAny(["uid"]) || data.uid == uid)
         && noForeignUidField(data, uid);
     }

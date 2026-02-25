@@ -39,6 +39,8 @@ export type ClothingItem = {
   colors?: string[];
   colorLabel?: string;
   primaryColor?: string;
+  colorSource?: "ai" | "user";
+  colorUpdatedAt?: number;
 
   size?: string | null;
   notes?: string | null;

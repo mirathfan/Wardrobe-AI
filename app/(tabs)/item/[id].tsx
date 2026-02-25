@@ -1,9 +1,10 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { deleteDoc, doc, onSnapshot } from "firebase/firestore";
+import { deleteDoc, deleteField, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
 import { useAuth } from "../../../src/hooks/useAuth";
 import { db } from "../../../src/lib/firebase";
 import {
@@ -36,6 +37,15 @@ function ingestionStatusLabel(item: ItemDetails) {
   return "pending";
 }
 
+function toTitleCase(value: string) {
+  if (!value) return value;
+  return value
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+}
+
 export default function ItemDetailsScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
@@ -45,6 +55,8 @@ export default function ItemDetailsScreen() {
   const [item, setItem] = useState<ItemDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [colorSaving, setColorSaving] = useState(false);
+  const [colorSavedAt, setColorSavedAt] = useState<number | null>(null);
   const itemImageUri = item?.photoUrl || item?.photoUri || null;
 
   useEffect(() => {
@@ -158,6 +170,45 @@ export default function ItemDetailsScreen() {
     });
   }
 
+  async function onSelectColor(color: string) {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+    try {
+      setColorSaving(true);
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
+        colors: [color],
+        colorLabel: toTitleCase(color),
+        primaryColor: toTitleCase(color),
+        colorSource: "user",
+        colorUpdatedAt: Date.now(),
+      });
+      setColorSavedAt(Date.now());
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? "Failed to save color");
+    } finally {
+      setColorSaving(false);
+    }
+  }
+
+  async function onResetToAI() {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+    try {
+      setColorSaving(true);
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
+        colorSource: "ai",
+        colorUpdatedAt: Date.now(),
+        "ingestion.status": "pending",
+        "ingestion.lastProcessedPhotoHash": deleteField(),
+      });
+      setColorSavedAt(Date.now());
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? "Failed to reset AI color");
+    } finally {
+      setColorSaving(false);
+    }
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }} edges={["top"]}>
       <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
@@ -220,6 +271,9 @@ export default function ItemDetailsScreen() {
                         <Text style={{ color: "#666" }}>
                           Colors: {item.colorLabel || item.colors?.join(", ") || "—"}
                         </Text>
+                        <Text style={{ color: "#666" }}>
+                          Source: {item.colorSource || "ai"}
+                        </Text>
                       </View>
                     );
                   }
@@ -248,6 +302,62 @@ export default function ItemDetailsScreen() {
                 {typeof item.price === "number" ? <Text style={{ color: "#666" }}>Price: {item.price}</Text> : null}
                 {item.purchaseDate ? <Text style={{ color: "#666" }}>Purchase date: {item.purchaseDate}</Text> : null}
                 {item.notes ? <Text style={{ color: "#666" }}>Notes: {item.notes}</Text> : null}
+
+                {ingestionStatusLabel(item) === "done" ? (
+                  <View style={{ marginTop: 10, gap: 8 }}>
+                    <Text style={{ color: "#222", fontWeight: "800" }}>
+                      Correct color
+                    </Text>
+                    <Text style={{ color: "#666" }}>
+                      Detected: {item.colorLabel || item.colors?.join(" / ") || "—"}. Tap to correct:
+                    </Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {ALLOWED_COLORS.map((color) => {
+                        const isSelected = (item.colors?.[0] || "").toLowerCase() === color;
+                        return (
+                          <Pressable
+                            key={color}
+                            onPress={() => onSelectColor(color)}
+                            disabled={colorSaving}
+                            style={{
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: isSelected ? "#111" : "#ddd",
+                              backgroundColor: isSelected ? "#111" : "#fff",
+                              opacity: colorSaving ? 0.65 : 1,
+                            }}
+                          >
+                            <Text style={{ color: isSelected ? "#fff" : "#111", fontWeight: "700" }}>
+                              {toTitleCase(color)}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    {item.colorSource === "user" ? (
+                      <Pressable
+                        onPress={onResetToAI}
+                        disabled={colorSaving}
+                        style={{
+                          alignSelf: "flex-start",
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: "#aaa",
+                          opacity: colorSaving ? 0.65 : 1,
+                        }}
+                      >
+                        <Text style={{ color: "#333", fontWeight: "700" }}>Reset to AI</Text>
+                      </Pressable>
+                    ) : null}
+                    {colorSavedAt ? (
+                      <Text style={{ color: "#0a7", fontSize: 12, fontWeight: "700" }}>Saved</Text>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             </View>
 
