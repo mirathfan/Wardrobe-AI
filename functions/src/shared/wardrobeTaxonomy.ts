@@ -7,6 +7,24 @@ export enum Category {
   ACCESSORY = "accessory",
 }
 
+export const ALLOWED_COLORS = [
+  "black",
+  "white",
+  "grey",
+  "navy",
+  "blue",
+  "green",
+  "red",
+  "brown",
+  "beige",
+  "cream",
+  "yellow",
+  "orange",
+  "pink",
+  "purple",
+] as const;
+export type AllowedColor = (typeof ALLOWED_COLORS)[number];
+
 export const SUB_CATEGORIES = {
   [Category.TOP]: [
     "tshirt",

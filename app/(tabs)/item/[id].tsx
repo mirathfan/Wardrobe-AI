@@ -201,9 +201,9 @@ export default function ItemDetailsScreen() {
                   <Text style={{ color: "#666" }}>Sub-category: {item.subCategory}</Text>
                 ) : null}
 
-                {item.colors?.length ? (
+                {item.colorLabel || item.colors?.length ? (
                   <Text style={{ color: "#666" }}>
-                    Colors: {item.colors.join(" / ")}
+                    Colors: {item.colorLabel || item.colors?.join(" / ") || "—"}
                   </Text>
                 ) : null}
                 {(() => {
@@ -218,7 +218,7 @@ export default function ItemDetailsScreen() {
                           Extracted: {item.category ?? "—"} / {item.subCategory ?? "—"}
                         </Text>
                         <Text style={{ color: "#666" }}>
-                          Colors: {item.colors?.join(", ") || "—"}
+                          Colors: {item.colorLabel || item.colors?.join(", ") || "—"}
                         </Text>
                       </View>
                     );

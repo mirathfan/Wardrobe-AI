@@ -37,6 +37,7 @@ export type ClothingItem = {
   // new (safe + optional)
   name?: string;
   colors?: string[];
+  colorLabel?: string;
   primaryColor?: string;
 
   size?: string | null;

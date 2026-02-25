@@ -3,7 +3,14 @@ import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { logger } from "firebase-functions/v2";
-import { Category, SUB_CATEGORIES, isValidCategorySubCategory, wearSlot } from "./shared/wardrobeTaxonomy";
+import {
+  ALLOWED_COLORS,
+  AllowedColor,
+  Category,
+  SUB_CATEGORIES,
+  isValidCategorySubCategory,
+  wearSlot,
+} from "./shared/wardrobeTaxonomy";
 
 if (!getApps().length) {
   initializeApp();
@@ -49,22 +56,7 @@ const ALLOWED_PATTERNS = new Set([
   "textured",
   "unknown",
 ]);
-const ALLOWED_COLORS = new Set([
-  "black",
-  "white",
-  "grey",
-  "navy",
-  "blue",
-  "green",
-  "red",
-  "brown",
-  "beige",
-  "cream",
-  "yellow",
-  "orange",
-  "purple",
-  "pink",
-]);
+const ALLOWED_COLOR_SET = new Set<string>(ALLOWED_COLORS);
 
 function toMillis(value: LastRunAtValue): number | null {
   if (!value) return null;
@@ -122,29 +114,64 @@ function normalizeSubCategory(value: unknown): string | null {
   return raw || null;
 }
 
-function normalizeColors(values: unknown): string[] {
-  if (!Array.isArray(values)) return [];
+function toTitleCase(value: string): string {
+  return value
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
 
-  const out: string[] = [];
-  for (const entry of values) {
-    const raw = String(entry ?? "").trim().toLowerCase();
-    if (!raw) continue;
+function normalizeColorToken(raw: string): AllowedColor | null {
+  const text = raw.toLowerCase().replace(/[_-]/g, " ").trim();
+  if (!text) return null;
+  if (text.includes("multi") || text.includes("various")) return null;
+  if (text.includes("gray") || text.includes("grey")) return "grey";
+  if (text.includes("navy")) return "navy";
+  if (text.includes("blue")) return "blue";
+  if (text.includes("black")) return "black";
+  if (text.includes("white")) return "white";
+  if (
+    text.includes("cream") ||
+    text.includes("ivory") ||
+    text.includes("off white")
+  ) {
+    return "cream";
+  }
+  if (text.includes("beige") || text.includes("tan") || text.includes("khaki")) {
+    return "beige";
+  }
+  if (text.includes("brown")) return "brown";
+  if (text.includes("red")) return "red";
+  if (text.includes("green")) return "green";
+  if (text.includes("yellow")) return "yellow";
+  if (text.includes("orange")) return "orange";
+  if (text.includes("pink")) return "pink";
+  if (text.includes("purple")) return "purple";
+  return null;
+}
 
-    const mapped =
-      raw === "gray" ? "grey" :
-      raw === "tan" ? "beige" :
-      raw === "off white" || raw === "off-white" ? "cream" :
-      raw === "light blue" || raw === "sky blue" || raw === "baby blue" ? "blue" :
-      raw === "maroon" ? "red" :
-      raw === "olive" ? "green" :
-      raw;
+function normalizeColors(values: unknown): { colors: AllowedColor[]; colorLabel?: string } {
+  if (!Array.isArray(values)) return {colors: []};
 
-    if (ALLOWED_COLORS.has(mapped) && !out.includes(mapped)) {
-      out.push(mapped);
-    }
+  const rawColors = values
+    .map((entry) => String(entry ?? "").trim().toLowerCase())
+    .filter((value) => value.length > 0)
+    .filter((value) => !value.includes("multi") && !value.includes("various"))
+    .slice(0, 2);
+
+  const colorLabel = rawColors.length > 0 ? rawColors.join(" / ") : undefined;
+
+  const out: AllowedColor[] = [];
+  for (const raw of rawColors) {
+    const mapped = normalizeColorToken(raw);
+    if (!mapped) continue;
+    if (!ALLOWED_COLOR_SET.has(mapped)) continue;
+    if (!out.includes(mapped)) out.push(mapped);
+    if (out.length >= 2) break;
   }
 
-  return out;
+  return {colors: out, colorLabel};
 }
 
 function applyScoreConstraints(
@@ -213,6 +240,7 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
             "Do not hallucinate brand names or logos.",
             "Extract garment color only; ignore background objects, lighting casts, shadows, and skin tones.",
             "If uncertain about material or pattern, return 'unknown'.",
+            "Return up to 2 concrete garment color names in colors. Do NOT output multicolor.",
             "Use strict scoring rubric with anchors:",
             "formalityScore: 0.0 gym/lounge tee, 0.3 casual everyday, 0.5 smart-casual knit, 0.7 business-casual shirt/blazer mix, 0.9 formal tailoring.",
             "warmthScore: 0.0 very light sleeveless/summer fabric, 0.3 light short-sleeve cotton, 0.5 midweight long-sleeve, 0.7 hoodie/sweater, 0.9 heavy coat/insulated outerwear.",
@@ -231,7 +259,7 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
                 "Analyze this garment photo.",
                 "Prefer visible garment type.",
                 "If uncertain, pick the closest valid category/subCategory and use unknown for uncertain fields.",
-                "Keep colors to simple lowercase names.",
+                "Colors must describe the garment only, not the background.",
               ].join(" "),
             },
             {
@@ -345,7 +373,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
 
       const pattern = normalizePattern(extracted.pattern);
       const material = normalizeMaterial(extracted.material);
-      const colors = normalizeColors(extracted.colors);
+      const {colors, colorLabel} = normalizeColors(extracted.colors);
+      const primaryColor = colors[0] ? toTitleCase(colors[0]) : undefined;
       const constrainedScores = applyScoreConstraints(
         category,
         subCategory,
@@ -370,6 +399,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
           pattern,
           material,
           colors,
+          colorLabel,
+          primaryColor,
           formalityScore,
           warmthScore,
           warning,
@@ -383,6 +414,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
         pattern,
         material,
         colors,
+        colorLabel,
+        ...(primaryColor ? {primaryColor} : {}),
         formalityScore,
         warmthScore,
         photos: {
