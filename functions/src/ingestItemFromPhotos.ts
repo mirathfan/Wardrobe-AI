@@ -27,6 +27,11 @@ type ItemDoc = {
   };
   photoUrl?: string | null;
   photoUri?: string | null;
+  colors?: string[];
+  colorLabel?: string;
+  primaryColor?: string;
+  colorSource?: "ai" | "user";
+  colorUpdatedAt?: number;
   ingestion?: {
     status?: IngestionStatus;
     lastRunAt?: Timestamp | { toMillis?: () => number } | number | null;
@@ -315,6 +320,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
 
     const photoHash = hashPhotoUrls(photoUrls);
     const status = String(after.ingestion?.status ?? "").trim() as IngestionStatus | "";
+    const existingColorSource = String(after.colorSource ?? "").trim().toLowerCase();
+    const hasUserColorOverride = existingColorSource === "user";
     const lastRunAtMs = toMillis(after.ingestion?.lastRunAt);
     const lastHash = after.ingestion?.lastProcessedPhotoHash ?? before?.ingestion?.lastProcessedPhotoHash ?? "";
     const hasNewPhoto = lastHash !== photoHash;
@@ -402,9 +409,11 @@ export const ingestItemFromPhotos = onDocumentWritten(
           colors,
           ...(safeColorLabel ? {colorLabel: safeColorLabel} : {}),
           primaryColor,
+          colorSource: hasUserColorOverride ? "user" : "ai",
           formalityScore,
           warmthScore,
           warning,
+          userColorOverridePreserved: hasUserColorOverride,
         },
       });
 
@@ -414,9 +423,13 @@ export const ingestItemFromPhotos = onDocumentWritten(
         wearSlot: wearSlot(category),
         pattern,
         material,
-        colors,
-        ...(safeColorLabel ? {colorLabel: safeColorLabel} : {}),
-        ...(primaryColor ? {primaryColor} : {}),
+        ...(!hasUserColorOverride ? {
+          colors,
+          ...(safeColorLabel ? {colorLabel: safeColorLabel} : {}),
+          ...(primaryColor ? {primaryColor} : {}),
+          colorSource: "ai",
+          colorUpdatedAt: Date.now(),
+        } : {}),
         formalityScore,
         warmthScore,
         photos: {
