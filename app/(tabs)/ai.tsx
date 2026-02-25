@@ -52,19 +52,30 @@ function fallbackIntent(prompt: string): OutfitIntent {
     occasion: p.includes("work")
       ? "work"
       : p.includes("gym")
-      ? "gym"
-      : p.includes("date")
-      ? "date"
-      : undefined,
-    vibe: p.includes("party") || p.includes("date") || p.includes("club") ? "party" : undefined,
+        ? "gym"
+        : p.includes("date")
+          ? "date"
+          : undefined,
+    vibe:
+      p.includes("party") || p.includes("date") || p.includes("club")
+        ? "party"
+        : undefined,
     colorPreference: colors,
     includeOuterwear:
-      p.includes("jacket") || p.includes("hoodie") || p.includes("coat") || p.includes("outerwear"),
+      p.includes("jacket") ||
+      p.includes("hoodie") ||
+      p.includes("coat") ||
+      p.includes("outerwear"),
     includeAccessory:
-      p.includes("accessory") || p.includes("hat") || p.includes("watch") || p.includes("belt"),
+      p.includes("accessory") ||
+      p.includes("hat") ||
+      p.includes("watch") ||
+      p.includes("belt"),
     allowRewearToday: p.includes("reuse") || p.includes("rewear"),
     allowOverWearLimit:
-      p.includes("don't care about wash") || p.includes("dont care about wash") || p.includes("ignore wash"),
+      p.includes("don't care about wash") ||
+      p.includes("dont care about wash") ||
+      p.includes("ignore wash"),
   };
 }
 
@@ -106,6 +117,9 @@ function displayName(item: ClothingItem) {
 }
 
 export default function AIScreen() {
+  const INTENT_ENDPOINT = process.env.EXPO_PUBLIC_OUTFIT_INTENT_URL;
+
+  console.log("AI URL:", INTENT_ENDPOINT);
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
@@ -129,7 +143,7 @@ export default function AIScreen() {
         status: "ALL",
         sort: "NEWEST",
         onError: (message) => Alert.alert("Firestore error", message),
-      }
+      },
     );
 
     return () => unsub();
@@ -159,7 +173,7 @@ export default function AIScreen() {
       if (next.length === 0) {
         Alert.alert(
           "No valid outfits",
-          "Try a broader prompt or wash/refresh some items."
+          "Try a broader prompt or wash/refresh some items.",
         );
       }
     } catch (e: any) {
@@ -186,7 +200,7 @@ export default function AIScreen() {
           planned: true,
           updatedAt: serverTimestamp(),
         },
-        { merge: true }
+        { merge: true },
       );
 
       Alert.alert("Saved", "Outfit saved to Today.", [
@@ -284,13 +298,19 @@ export default function AIScreen() {
                         justifyContent: "center",
                       }}
                     >
-                      <Text style={{ fontSize: 10, color: "#888" }}>No photo</Text>
+                      <Text style={{ fontSize: 10, color: "#888" }}>
+                        No photo
+                      </Text>
                     </View>
                   )}
 
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: "800" }}>{displayName(item)}</Text>
-                    <Text style={{ color: "#666" }}>{item.brand || "Unknown brand"}</Text>
+                    <Text style={{ fontWeight: "800" }}>
+                      {displayName(item)}
+                    </Text>
+                    <Text style={{ color: "#666" }}>
+                      {item.brand || "Unknown brand"}
+                    </Text>
                   </View>
                 </View>
               );
@@ -318,7 +338,9 @@ export default function AIScreen() {
       ))}
 
       {suggestions.length === 0 && !loading ? (
-        <Text style={{ color: "#666" }}>No suggestions yet. Enter a prompt to start.</Text>
+        <Text style={{ color: "#666" }}>
+          No suggestions yet. Enter a prompt to start.
+        </Text>
       ) : null}
     </ScrollView>
   );
