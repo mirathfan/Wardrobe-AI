@@ -94,9 +94,7 @@ function hashPhotoUrls(urls: string[]): string {
 function clampScore(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0.5;
-  if (n < 0) return 0;
-  if (n > 1) return 1;
-  return n;
+  return Math.max(0, Math.min(1, n));
 }
 
 function normalizePattern(value: unknown): string {
@@ -256,10 +254,15 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
   };
 
   const content = data.choices?.[0]?.message?.content ?? "";
+  logger.info("OpenAI raw extraction response", {
+    rawText: content.slice(0, 2000),
+    truncated: content.length > 2000,
+  });
   const parsed = safeJsonExtract(content);
   if (!parsed) {
     throw new Error("OpenAI returned invalid JSON payload");
   }
+  logger.info("OpenAI parsed extraction payload", {parsed});
 
   return parsed;
 }
@@ -283,7 +286,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
     }
 
     const photoHash = hashPhotoUrls(photoUrls);
-    const status = after.ingestion?.status;
+    const status = String(after.ingestion?.status ?? "").trim() as IngestionStatus | "";
     const lastRunAtMs = toMillis(after.ingestion?.lastRunAt);
     const lastHash = after.ingestion?.lastProcessedPhotoHash ?? before?.ingestion?.lastProcessedPhotoHash ?? "";
     const hasNewPhoto = lastHash !== photoHash;
@@ -349,8 +352,29 @@ export const ingestItemFromPhotos = onDocumentWritten(
         clampScore(extracted.formalityScore),
         clampScore(extracted.warmthScore)
       );
-      const formalityScore = constrainedScores.formalityScore;
-      const warmthScore = constrainedScores.warmthScore;
+      let formalityScore = constrainedScores.formalityScore;
+      let warmthScore = constrainedScores.warmthScore;
+
+      if (subCategory === "tshirt") {
+        formalityScore = Math.min(formalityScore, 0.5);
+        warmthScore = Math.min(warmthScore, 0.4);
+      }
+
+      logger.info("Ingestion normalized output", {
+        uid,
+        itemId,
+        normalized: {
+          category,
+          subCategory,
+          wearSlot: wearSlot(category),
+          pattern,
+          material,
+          colors,
+          formalityScore,
+          warmthScore,
+          warning,
+        },
+      });
 
       await ref.set({
         category,
