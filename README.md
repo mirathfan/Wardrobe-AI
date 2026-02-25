@@ -25,6 +25,22 @@ In the output, you'll find options to open the app in a
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
+## Wardrobe Ingestion v1
+
+- Items stay multi-tenant under `users/{uid}/items/{itemId}`.
+- On create/update of an item doc, Cloud Functions v2 (`ingestItemFromPhotos`) checks for photo URLs and `ingestion.status`.
+- The function writes `ingestion.status: processing`, calls OpenAI with the primary photo, validates taxonomy (`category/subCategory`), normalizes colors/pattern/material/scores, then writes `ingestion.status: done`.
+- Loop safety: it stores `ingestion.lastProcessedPhotoHash` and skips unchanged photos.
+- Retry safety: failed ingestions are not retried more than once per hour unless a new photo is added.
+- If AI fails, item remains usable and `ingestion.status: failed` with error details.
+
+### Local verification checklist
+
+1. Create an item with a photo in the app, then confirm Firestore item has `ingestion.status: done` plus `category/subCategory/colors/pattern/material/formalityScore/warmthScore`.
+2. Update the same item with a new photo and confirm ingestion reruns once and updates extracted fields.
+3. Open AI outfits and confirm generation still works with no runtime errors.
+4. Confirm function logs show no repeated processing loop for unchanged photo hashes.
+
 ## Get a fresh project
 
 When you're ready, run:

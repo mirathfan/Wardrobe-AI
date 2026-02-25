@@ -28,6 +28,14 @@ function formatDate(value?: any | null) {
   return "—";
 }
 
+function ingestionStatusLabel(item: ItemDetails) {
+  const status = item.ingestion?.status ?? "pending";
+  if (status === "done") return "done";
+  if (status === "failed") return "failed";
+  if (status === "processing") return "processing";
+  return "pending";
+}
+
 export default function ItemDetailsScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
@@ -189,12 +197,45 @@ export default function ItemDetailsScreen() {
                 <Text style={{ color: "#666" }}>
                   Category: {item.category}
                 </Text>
+                {item.subCategory ? (
+                  <Text style={{ color: "#666" }}>Sub-category: {item.subCategory}</Text>
+                ) : null}
 
                 {item.colors?.length ? (
                   <Text style={{ color: "#666" }}>
                     Colors: {item.colors.join(" / ")}
                   </Text>
                 ) : null}
+                {(() => {
+                  const ingestionStatus = ingestionStatusLabel(item);
+                  if (ingestionStatus === "done") {
+                    return (
+                      <View style={{ marginTop: 4, gap: 2 }}>
+                        <Text style={{ color: "#0a7", fontWeight: "800" }}>
+                          Ingestion: Complete
+                        </Text>
+                        <Text style={{ color: "#666" }}>
+                          Extracted: {item.category ?? "—"} / {item.subCategory ?? "—"}
+                        </Text>
+                        <Text style={{ color: "#666" }}>
+                          Colors: {item.colors?.join(", ") || "—"}
+                        </Text>
+                      </View>
+                    );
+                  }
+                  if (ingestionStatus === "failed") {
+                    return (
+                      <Text style={{ color: "#d11", fontWeight: "700" }}>
+                        Couldn&apos;t analyze, you can edit manually
+                      </Text>
+                    );
+                  }
+                  return (
+                    <Text style={{ color: "#666", fontWeight: "700" }}>
+                      Analyzing…
+                    </Text>
+                  );
+                })()}
 
                 {item.status ? <Text style={{ color: "#666" }}>Status: {item.status}</Text> : null}
                 <Text style={{ color: "#666" }}>
