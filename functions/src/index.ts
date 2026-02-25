@@ -1,6 +1,13 @@
+import { getApps, initializeApp } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 import { parseOutfitIntentFromPrompt } from "./parseOutfitIntent";
 export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
+
+if (!getApps().length) {
+  initializeApp();
+}
+getFirestore().settings({ignoreUndefinedProperties: true});
 
 export const parseOutfitIntent = onRequest(
   { cors: true, secrets: ["OPENAI_API_KEY"] },

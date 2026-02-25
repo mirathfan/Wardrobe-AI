@@ -374,6 +374,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const pattern = normalizePattern(extracted.pattern);
       const material = normalizeMaterial(extracted.material);
       const {colors, colorLabel} = normalizeColors(extracted.colors);
+      const safeColorLabel = colorLabel?.trim() ? colorLabel.trim() : null;
       const primaryColor = colors[0] ? toTitleCase(colors[0]) : undefined;
       const constrainedScores = applyScoreConstraints(
         category,
@@ -399,7 +400,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           pattern,
           material,
           colors,
-          colorLabel,
+          ...(safeColorLabel ? {colorLabel: safeColorLabel} : {}),
           primaryColor,
           formalityScore,
           warmthScore,
@@ -414,7 +415,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         pattern,
         material,
         colors,
-        colorLabel,
+        ...(safeColorLabel ? {colorLabel: safeColorLabel} : {}),
         ...(primaryColor ? {primaryColor} : {}),
         formalityScore,
         warmthScore,
