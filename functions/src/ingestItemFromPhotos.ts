@@ -136,6 +136,7 @@ function normalizeColors(values: unknown): string[] {
       raw === "gray" ? "grey" :
       raw === "tan" ? "beige" :
       raw === "off white" || raw === "off-white" ? "cream" :
+      raw === "light blue" || raw === "sky blue" || raw === "baby blue" ? "blue" :
       raw === "maroon" ? "red" :
       raw === "olive" ? "green" :
       raw;
@@ -146,6 +147,33 @@ function normalizeColors(values: unknown): string[] {
   }
 
   return out;
+}
+
+function applyScoreConstraints(
+  category: Category,
+  subCategory: string,
+  formalityScore: number,
+  warmthScore: number
+): { formalityScore: number; warmthScore: number } {
+  let nextFormality = formalityScore;
+  let nextWarmth = warmthScore;
+
+  if (subCategory === "tshirt") {
+    nextFormality = Math.min(nextFormality, 0.5);
+    nextWarmth = Math.min(nextWarmth, 0.4);
+  }
+
+  if (
+    category === Category.TOP &&
+    ["hoodie", "sweatshirt", "sweater"].includes(subCategory)
+  ) {
+    nextWarmth = Math.max(nextWarmth, 0.6);
+  }
+
+  return {
+    formalityScore: clampScore(nextFormality),
+    warmthScore: clampScore(nextWarmth),
+  };
 }
 
 function safeJsonExtract(text: string): RawExtraction | null {
@@ -185,7 +213,13 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
             "category, subCategory, colors, pattern, material, formalityScore, warmthScore.",
             "No markdown, no extra keys, no prose.",
             "Do not hallucinate brand names or logos.",
-            "Best-effort taxonomy. If unsure on pattern/material, return 'unknown'.",
+            "Extract garment color only; ignore background objects, lighting casts, shadows, and skin tones.",
+            "If uncertain about material or pattern, return 'unknown'.",
+            "Use strict scoring rubric with anchors:",
+            "formalityScore: 0.0 gym/lounge tee, 0.3 casual everyday, 0.5 smart-casual knit, 0.7 business-casual shirt/blazer mix, 0.9 formal tailoring.",
+            "warmthScore: 0.0 very light sleeveless/summer fabric, 0.3 light short-sleeve cotton, 0.5 midweight long-sleeve, 0.7 hoodie/sweater, 0.9 heavy coat/insulated outerwear.",
+            "Hard constraints: if subCategory is tshirt then formalityScore <= 0.5 and warmthScore <= 0.4.",
+            "Hard constraints: if category is top and subCategory is hoodie, sweatshirt, or sweater then warmthScore >= 0.6.",
             `Valid categories: ${Object.values(Category).join(", ")}.`,
             `Valid subCategory map: ${JSON.stringify(SUB_CATEGORIES)}.`,
           ].join(" "),
@@ -199,7 +233,7 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
                 "Analyze this garment photo.",
                 "Prefer visible garment type.",
                 "If uncertain, pick the closest valid category/subCategory and use unknown for uncertain fields.",
-                "Keep colors to simple names.",
+                "Keep colors to simple lowercase names.",
               ].join(" "),
             },
             {
@@ -309,8 +343,14 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const pattern = normalizePattern(extracted.pattern);
       const material = normalizeMaterial(extracted.material);
       const colors = normalizeColors(extracted.colors);
-      const formalityScore = clampScore(extracted.formalityScore);
-      const warmthScore = clampScore(extracted.warmthScore);
+      const constrainedScores = applyScoreConstraints(
+        category,
+        subCategory,
+        clampScore(extracted.formalityScore),
+        clampScore(extracted.warmthScore)
+      );
+      const formalityScore = constrainedScores.formalityScore;
+      const warmthScore = constrainedScores.warmthScore;
 
       await ref.set({
         category,
