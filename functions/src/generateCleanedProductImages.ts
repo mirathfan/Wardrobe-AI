@@ -31,6 +31,7 @@ type ItemDoc = {
     cleanedSource?: string | null;
     cleanedFromHash?: string | null;
     cleanedCrop?: Record<string, unknown> | null;
+    forceCleaned?: boolean | null;
   };
   ingestion?: {
     status?: string;
@@ -604,6 +605,7 @@ export const generateCleanedProductImages = onDocumentWritten(
       return;
     }
 
+    const forceCleaned = after.photos?.forceCleaned === true;
     const missingCleaned = !after.photos?.cleanedUrl || !after.photos?.cleanedThumbUrl;
     const cleanedUpdatedAtMs = toMillis(after.cleanedUpdatedAt);
     const updatedAtMs = toMillis(after.updatedAt) ?? 0;
@@ -614,10 +616,11 @@ export const generateCleanedProductImages = onDocumentWritten(
     const cropChanged =
       JSON.stringify(after.crop ?? null) !== JSON.stringify(after.photos?.cleanedCrop ?? null);
 
-    if (!missingCleaned && !stale && !cropChanged) {
+    if (!forceCleaned && !missingCleaned && !stale && !cropChanged) {
       logger.info("Skipping cleaned image generation: output already fresh", {
         uid,
         itemId,
+        forceCleaned,
         missingCleaned,
         stale,
         cropChanged,
@@ -630,7 +633,7 @@ export const generateCleanedProductImages = onDocumentWritten(
     const sourceBytes = await downloadImageBytes(inputUrl);
     const sourceHash = createHash("sha1").update(sourceBytes).digest("hex");
     const cleanedFromHash = String(after.photos?.cleanedFromHash ?? "").trim();
-    if (cleanedFromHash && cleanedFromHash === sourceHash) {
+    if (!forceCleaned && cleanedFromHash && cleanedFromHash === sourceHash) {
       logger.info("Skipping cleaned image generation: same source hash", {uid, itemId, sourceHash});
       return;
     }
@@ -707,6 +710,7 @@ export const generateCleanedProductImages = onDocumentWritten(
           cleanedSource: "onnx",
           cleanedFromHash: sourceHash,
           cleanedCrop: after.crop ?? null,
+          forceCleaned: false,
         },
         cleanedUpdatedAt: Date.now(),
       },
