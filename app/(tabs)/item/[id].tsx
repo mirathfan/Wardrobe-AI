@@ -58,6 +58,8 @@ export default function ItemDetailsScreen() {
   const [colorSaving, setColorSaving] = useState(false);
   const [colorSavedAt, setColorSavedAt] = useState<number | null>(null);
   const itemImageUri =
+    item?.photos?.cleanedThumbUrl ||
+    item?.photos?.cleanedUrl ||
     item?.photos?.thumbUrl ||
     item?.photos?.croppedUrl ||
     item?.photos?.primaryUrl ||

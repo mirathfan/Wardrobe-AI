@@ -304,6 +304,8 @@ export default function TodayScreen() {
           <View style={{ gap: 10 }}>
             {outfitItems.map((it) => {
               const uri =
+                it.photos?.cleanedThumbUrl ||
+                it.photos?.cleanedUrl ||
                 it.photos?.thumbUrl ||
                 it.photos?.croppedUrl ||
                 it.photos?.primaryUrl ||

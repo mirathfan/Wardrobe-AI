@@ -62,6 +62,10 @@ service cloud.firestore {
         && (!("primaryUrl" in value) || validOptionalString(value.primaryUrl))
         && (!("croppedUrl" in value) || validOptionalString(value.croppedUrl))
         && (!("thumbUrl" in value) || validOptionalString(value.thumbUrl))
+        && (!("cleanedUrl" in value) || validOptionalString(value.cleanedUrl))
+        && (!("cleanedThumbUrl" in value) || validOptionalString(value.cleanedThumbUrl))
+        && (!("cleanedSource" in value) || value.cleanedSource == "placeholder")
+        && (!("cleanedFromHash" in value) || validOptionalString(value.cleanedFromHash))
         && (!("urls" in value) || value.urls is list);
     }
 
@@ -96,6 +100,7 @@ service cloud.firestore {
         && (!changed.hasAny(["colorConfidence"]) || validOptionalNumber(data.colorConfidence))
         && (!changed.hasAny(["colorNeedsReview"]) || validOptionalBool(data.colorNeedsReview))
         && (!changed.hasAny(["crop"]) || validCrop(data.crop))
+        && (!changed.hasAny(["cleanedUpdatedAt"]) || data.cleanedUpdatedAt is number)
         && (!changed.hasAny(["photos"]) || validPhotosMap(data.photos))
         && (!changed.hasAny(["uid"]) || data.uid == uid)
         && noForeignUidField(data, uid);

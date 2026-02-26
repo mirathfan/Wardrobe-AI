@@ -126,6 +126,8 @@ function ItemPhotoCard({
 }) {
   const s = statusStyle(item.status);
   const itemImageUri =
+    item.photos?.cleanedThumbUrl ||
+    item.photos?.cleanedUrl ||
     item.photos?.thumbUrl ||
     item.photos?.croppedUrl ||
     item.photos?.primaryUrl ||

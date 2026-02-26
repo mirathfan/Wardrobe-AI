@@ -269,6 +269,8 @@ export default function AIScreen() {
               const item = itemsById.get(itemId);
               if (!item) return null;
               const uri =
+                item.photos?.cleanedThumbUrl ||
+                item.photos?.cleanedUrl ||
                 item.photos?.thumbUrl ||
                 item.photos?.croppedUrl ||
                 item.photos?.primaryUrl ||
