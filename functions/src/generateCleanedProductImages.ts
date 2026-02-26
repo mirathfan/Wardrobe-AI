@@ -144,21 +144,30 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
   outputShape: number[];
   outputLength: number;
 }> {
-  const src = await sharp(sourceBytes)
+  const originalMeta = await sharp(sourceBytes)
+    .rotate()
+    .metadata();
+  const originalWidth = originalMeta.width ?? 0;
+  const originalHeight = originalMeta.height ?? 0;
+  if (!originalWidth || !originalHeight) {
+    throw new Error("Invalid original dimensions for cleaned image generation");
+  }
+
+  const originalRgb = await sharp(sourceBytes)
+    .rotate()
     .removeAlpha()
     .raw()
     .toBuffer({resolveWithObject: true});
-
-  const sourceWidth = src.info.width;
-  const sourceHeight = src.info.height;
-  if (!sourceWidth || !sourceHeight) {
-    throw new Error("Invalid source dimensions for cleaned image generation");
+  const rgbWidth = originalRgb.info.width;
+  const rgbHeight = originalRgb.info.height;
+  if (!rgbWidth || !rgbHeight) {
+    throw new Error("Invalid RGB dimensions for cleaned image generation");
   }
 
   const modelWidth = 320;
   const modelHeight = 320;
-  const resized = await sharp(src.data, {
-    raw: {width: sourceWidth, height: sourceHeight, channels: 3},
+  const resized = await sharp(originalRgb.data, {
+    raw: {width: rgbWidth, height: rgbHeight, channels: 3},
   })
     .resize(modelWidth, modelHeight, {fit: "fill"})
     .raw()
@@ -231,15 +240,29 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
   const alphaResized = await sharp(Buffer.from(alphaNormalized), {
     raw: {width: alphaWidth, height: alphaHeight, channels: 1},
   })
-    .resize(sourceWidth, sourceHeight, {fit: "fill"})
+    .resize(originalWidth, originalHeight, {fit: "fill"})
     .blur(0.8)
     .raw()
-    .toBuffer();
+    .toBuffer({resolveWithObject: true});
+  const alphaWidthFinal = alphaResized.info.width;
+  const alphaHeightFinal = alphaResized.info.height;
+  const alphaData = alphaResized.data;
+
+  if (
+    rgbWidth !== originalWidth ||
+    rgbHeight !== originalHeight ||
+    alphaWidthFinal !== originalWidth ||
+    alphaHeightFinal !== originalHeight
+  ) {
+    throw new Error(
+      `Alpha/RGB dimension mismatch rgb=${rgbWidth}x${rgbHeight} alpha=${alphaWidthFinal}x${alphaHeightFinal} original=${originalWidth}x${originalHeight}`
+    );
+  }
 
   let finalAlphaMin = Number.POSITIVE_INFINITY;
   let finalAlphaMax = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < alphaResized.length; i++) {
-    const v = alphaResized[i] / 255;
+  for (let i = 0; i < alphaData.length; i++) {
+    const v = alphaData[i] / 255;
     if (v < finalAlphaMin) finalAlphaMin = v;
     if (v > finalAlphaMax) finalAlphaMax = v;
   }
@@ -249,17 +272,17 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     );
   }
 
-  const cleanedRaw = Buffer.alloc(sourceWidth * sourceHeight * 3);
-  for (let i = 0; i < sourceWidth * sourceHeight; i++) {
-    const alpha = alphaResized[i] / 255;
+  const cleanedRaw = Buffer.alloc(rgbWidth * rgbHeight * 3);
+  for (let i = 0; i < rgbWidth * rgbHeight; i++) {
+    const alpha = alphaData[i] / 255;
     const base = i * 3;
-    cleanedRaw[base] = Math.round(src.data[base] * alpha + 255 * (1 - alpha));
-    cleanedRaw[base + 1] = Math.round(src.data[base + 1] * alpha + 255 * (1 - alpha));
-    cleanedRaw[base + 2] = Math.round(src.data[base + 2] * alpha + 255 * (1 - alpha));
+    cleanedRaw[base] = Math.round(originalRgb.data[base] * alpha + 255 * (1 - alpha));
+    cleanedRaw[base + 1] = Math.round(originalRgb.data[base + 1] * alpha + 255 * (1 - alpha));
+    cleanedRaw[base + 2] = Math.round(originalRgb.data[base + 2] * alpha + 255 * (1 - alpha));
   }
 
   const cleanedBytes = await sharp(cleanedRaw, {
-    raw: {width: sourceWidth, height: sourceHeight, channels: 3},
+    raw: {width: rgbWidth, height: rgbHeight, channels: 3},
   })
     .resize({width: 1024, height: 1024, fit: "inside", withoutEnlargement: true})
     .jpeg({quality: 88})
