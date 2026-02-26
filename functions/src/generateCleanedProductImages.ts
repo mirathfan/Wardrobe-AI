@@ -142,7 +142,6 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
 }> {
   const src = await sharp(sourceBytes)
     .removeAlpha()
-    .toColourspace("rgb")
     .raw()
     .toBuffer({resolveWithObject: true});
 
@@ -306,7 +305,25 @@ export const generateCleanedProductImages = onDocumentWritten(
       return;
     }
 
-    const cleanedResult = await createCleanedImagesWithOnnx(sourceBytes);
+    let cleanedResult: {
+      cleanedBytes: Buffer;
+      cleanedThumbBytes: Buffer;
+      inferMs: number;
+      alphaMin: number;
+      alphaMax: number;
+    };
+    try {
+      cleanedResult = await createCleanedImagesWithOnnx(sourceBytes);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("ONNX cleaned image generation failed", {
+        uid,
+        itemId,
+        inputUrl,
+        error: message,
+      });
+      return;
+    }
     const cleanedBytes = cleanedResult.cleanedBytes;
     const cleanedThumbBytes = cleanedResult.cleanedThumbBytes;
 
