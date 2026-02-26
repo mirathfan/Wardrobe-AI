@@ -646,8 +646,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
       let finalColors: AllowedColor[] = [];
       let finalColorLabel: string | null = null;
       let finalPrimaryColor: string | undefined;
-      let colorConfidence = 0.5;
-      let colorNeedsReview = false;
+      let colorConfidence = 0.4;
+      let colorNeedsReview = true;
 
       if (pixelPrimaryMatchesAi) {
         finalColors = [pixelPrimary];
@@ -659,15 +659,25 @@ export const ingestItemFromPhotos = onDocumentWritten(
         finalColors = [pixelPrimary];
         finalColorLabel = toTitleCase(pixelPrimary);
         finalPrimaryColor = toTitleCase(pixelPrimary);
-        colorConfidence = 0.5;
-        colorNeedsReview = !!aiPrimary;
       } else if (aiPrimary) {
         finalColors = [aiPrimary];
         finalColorLabel = safeAiColorLabel ? toTitleCase(safeAiColorLabel) : toTitleCase(aiPrimary);
         finalPrimaryColor = toTitleCase(aiPrimary);
-        colorConfidence = 0.6;
-        colorNeedsReview = false;
       }
+      const final = (finalColors[0] || "").toLowerCase();
+      const pixel = (pixelColors[0] || "").toLowerCase();
+
+      if (final && pixel && final === pixel) {
+        colorNeedsReview = false;
+        colorConfidence = 0.9;
+      } else if (final && pixel && final !== pixel) {
+        colorNeedsReview = true;
+        colorConfidence = 0.4;
+      } else if (!pixel) {
+        colorNeedsReview = true;
+        colorConfidence = 0.3;
+      }
+
       const persistedColorNeedsReview = hasUserColorOverride ? false : colorNeedsReview;
 
       const constrainedScores = applyScoreConstraints(
