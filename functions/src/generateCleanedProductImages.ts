@@ -45,6 +45,8 @@ async function getSegmentationSession(): Promise<ort.InferenceSession> {
     logger.info("Loaded ONNX segmentation model", {
       modelPath,
       modelLoadMs: Date.now() - modelLoadStart,
+      inputNames: session.inputNames,
+      outputNames: session.outputNames,
     });
     return session;
   })();
@@ -139,6 +141,8 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
   inferMs: number;
   alphaMin: number;
   alphaMax: number;
+  outputShape: number[];
+  outputLength: number;
 }> {
   const src = await sharp(sourceBytes)
     .removeAlpha()
@@ -162,11 +166,16 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
 
   const hw = modelWidth * modelHeight;
   const tensorData = new Float32Array(3 * hw);
+  const mean = [0.485, 0.456, 0.406];
+  const std = [0.229, 0.224, 0.225];
   for (let i = 0; i < hw; i++) {
     const pixelIndex = i * 3;
-    tensorData[i] = resized[pixelIndex] / 255;
-    tensorData[hw + i] = resized[pixelIndex + 1] / 255;
-    tensorData[2 * hw + i] = resized[pixelIndex + 2] / 255;
+    const r = resized[pixelIndex] / 255;
+    const g = resized[pixelIndex + 1] / 255;
+    const b = resized[pixelIndex + 2] / 255;
+    tensorData[i] = (r - mean[0]) / std[0];
+    tensorData[hw + i] = (g - mean[1]) / std[1];
+    tensorData[2 * hw + i] = (b - mean[2]) / std[2];
   }
 
   const input = new ort.Tensor("float32", tensorData, [1, 3, modelHeight, modelWidth]);
@@ -184,21 +193,38 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
 
   const outputData = output.data as Float32Array;
   const outputDims = output.dims;
-  const alphaWidth = outputDims.length >= 2 ? outputDims[outputDims.length - 1] : modelWidth;
-  const alphaHeight = outputDims.length >= 2 ? outputDims[outputDims.length - 2] : modelHeight;
+  const alphaWidth =
+    outputDims.length >= 2 && outputDims[outputDims.length - 1] > 0
+      ? outputDims[outputDims.length - 1]
+      : modelWidth;
+  const alphaHeight =
+    outputDims.length >= 2 && outputDims[outputDims.length - 2] > 0
+      ? outputDims[outputDims.length - 2]
+      : modelHeight;
+  const alphaPlane = alphaWidth * alphaHeight;
+  if (alphaPlane <= 0 || outputData.length < alphaPlane) {
+    throw new Error(`Invalid ONNX output shape: ${JSON.stringify(outputDims)}`);
+  }
+  const offset = outputData.length - alphaPlane;
 
-  let alphaMin = Number.POSITIVE_INFINITY;
-  let alphaMax = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < outputData.length; i++) {
-    const v = outputData[i];
-    if (v < alphaMin) alphaMin = v;
-    if (v > alphaMax) alphaMax = v;
+  let rawMin = Number.POSITIVE_INFINITY;
+  let rawMax = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < alphaPlane; i++) {
+    const v = outputData[offset + i];
+    if (v < rawMin) rawMin = v;
+    if (v > rawMax) rawMax = v;
   }
 
-  const spread = alphaMax - alphaMin;
-  const alphaNormalized = new Uint8Array(outputData.length);
-  for (let i = 0; i < outputData.length; i++) {
-    const value = spread > 1e-8 ? (outputData[i] - alphaMin) / spread : 0;
+  const looksLikeLogits = rawMin < 0 || rawMax > 1;
+  const alphaNormalized = new Uint8Array(alphaPlane);
+  let alphaMin = Number.POSITIVE_INFINITY;
+  let alphaMax = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < alphaPlane; i++) {
+    const v = outputData[offset + i];
+    const prob = looksLikeLogits ? 1 / (1 + Math.exp(-v)) : v;
+    const value = Math.max(0, Math.min(1, prob));
+    if (value < alphaMin) alphaMin = value;
+    if (value > alphaMax) alphaMax = value;
     alphaNormalized[i] = Math.max(0, Math.min(255, Math.round(value * 255)));
   }
 
@@ -209,6 +235,19 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     .blur(0.8)
     .raw()
     .toBuffer();
+
+  let finalAlphaMin = Number.POSITIVE_INFINITY;
+  let finalAlphaMax = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < alphaResized.length; i++) {
+    const v = alphaResized[i] / 255;
+    if (v < finalAlphaMin) finalAlphaMin = v;
+    if (v > finalAlphaMax) finalAlphaMax = v;
+  }
+  if (finalAlphaMax < 0.05 || finalAlphaMax - finalAlphaMin < 0.01) {
+    throw new Error(
+      `Degenerate alpha mask: min=${finalAlphaMin.toFixed(4)} max=${finalAlphaMax.toFixed(4)}`
+    );
+  }
 
   const cleanedRaw = Buffer.alloc(sourceWidth * sourceHeight * 3);
   for (let i = 0; i < sourceWidth * sourceHeight; i++) {
@@ -222,6 +261,7 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
   const cleanedBytes = await sharp(cleanedRaw, {
     raw: {width: sourceWidth, height: sourceHeight, channels: 3},
   })
+    .resize({width: 1024, height: 1024, fit: "inside", withoutEnlargement: true})
     .jpeg({quality: 88})
     .toBuffer();
 
@@ -234,8 +274,10 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     cleanedBytes,
     cleanedThumbBytes,
     inferMs,
-    alphaMin: Number.isFinite(alphaMin) ? alphaMin : 0,
-    alphaMax: Number.isFinite(alphaMax) ? alphaMax : 0,
+    alphaMin: Number.isFinite(finalAlphaMin) ? finalAlphaMin : 0,
+    alphaMax: Number.isFinite(finalAlphaMax) ? finalAlphaMax : 0,
+    outputShape: Array.from(outputDims),
+    outputLength: outputData.length,
   };
 }
 
@@ -311,6 +353,8 @@ export const generateCleanedProductImages = onDocumentWritten(
       inferMs: number;
       alphaMin: number;
       alphaMax: number;
+      outputShape: number[];
+      outputLength: number;
     };
     try {
       cleanedResult = await createCleanedImagesWithOnnx(sourceBytes);
@@ -340,6 +384,8 @@ export const generateCleanedProductImages = onDocumentWritten(
       cleanedThumbPath,
       sourceBytes: sourceBytes.length,
       inferMs: cleanedResult.inferMs,
+      outputShape: cleanedResult.outputShape,
+      outputLength: cleanedResult.outputLength,
       alphaMin: cleanedResult.alphaMin,
       alphaMax: cleanedResult.alphaMax,
       cleanedBytes: cleanedBytes.length,
