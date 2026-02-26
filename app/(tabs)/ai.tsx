@@ -268,7 +268,13 @@ export default function AIScreen() {
             {s.itemIds.map((itemId) => {
               const item = itemsById.get(itemId);
               if (!item) return null;
-              const uri = item.photoUrl || item.photoUri;
+              const uri =
+                item.photos?.thumbUrl ||
+                item.photos?.croppedUrl ||
+                item.photos?.primaryUrl ||
+                item.photoUrl ||
+                item.photos?.urls?.[0] ||
+                null;
               return (
                 <View
                   key={itemId}

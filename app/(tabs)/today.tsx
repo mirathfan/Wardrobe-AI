@@ -303,7 +303,13 @@ export default function TodayScreen() {
         ) : (
           <View style={{ gap: 10 }}>
             {outfitItems.map((it) => {
-              const uri = it.photoUrl || it.photoUri || null;
+              const uri =
+                it.photos?.thumbUrl ||
+                it.photos?.croppedUrl ||
+                it.photos?.primaryUrl ||
+                it.photoUrl ||
+                it.photos?.urls?.[0] ||
+                null;
               return (
                 <View key={it.id} style={miniCard}>
                   <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>

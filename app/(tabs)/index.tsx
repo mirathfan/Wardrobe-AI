@@ -125,7 +125,13 @@ function ItemPhotoCard({
   onWashed: () => void;
 }) {
   const s = statusStyle(item.status);
-  const itemImageUri = item.photoUrl || item.photoUri;
+  const itemImageUri =
+    item.photos?.thumbUrl ||
+    item.photos?.croppedUrl ||
+    item.photos?.primaryUrl ||
+    item.photoUrl ||
+    item.photos?.urls?.[0] ||
+    null;
 
   return (
     <View
