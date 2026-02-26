@@ -230,20 +230,32 @@ function rgbToHsv(
 function mapRgbToAllowedColor(r: number, g: number, b: number): AllowedColor {
   const {h, s, v} = rgbToHsv(r, g, b);
 
-  // Low-saturation colors should map to neutral palette buckets.
-  if (s < 0.2) {
+  // Very low saturation should map to neutral palette buckets.
+  if (s < 0.12) {
     if (v > 0.85) return "white";
     if (v < 0.2) return "black";
     return "grey";
   }
 
-  if (h < 15 || h >= 345) return "red";
-  if (h < 40) return "orange";
-  if (h < 68) return "yellow";
-  if (h < 170) return "green";
-  if (h < 260) return "blue";
-  if (h < 300) return "purple";
-  if (h < 345) return "pink";
+  const mapByHue = (): AllowedColor | null => {
+    if (h >= 345 || h < 15) return "red";
+    if (h >= 15 && h < 45) return "orange";
+    if (h >= 45 && h < 75) return "yellow";
+    if (h >= 80 && h < 160) return "green";
+    if (h >= 190 && h < 250) return "blue";
+    if (h >= 250 && h < 300) return "purple";
+    if (h >= 300 && h < 345) return "pink";
+    return null;
+  };
+
+  // Pastel zone: attempt hue-based color and only fall back if hue is ambiguous.
+  if (s < 0.25) {
+    const mappedPastel = mapByHue();
+    return mappedPastel ?? "grey";
+  }
+
+  const mapped = mapByHue();
+  if (mapped) return mapped;
 
   return "grey";
 }
