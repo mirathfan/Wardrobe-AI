@@ -290,6 +290,18 @@ function clampBbox(
   nw = Math.max(MIN_CROP_RATIO, Math.min(1, nw));
   nh = Math.max(MIN_CROP_RATIO, Math.min(1, nh));
 
+  if (nw * nh > 0.7) {
+    nx += 0.05 * nw;
+    ny += 0.05 * nh;
+    nw *= 0.9;
+    nh *= 0.9;
+
+    nx = Math.max(0, Math.min(1, nx));
+    ny = Math.max(0, Math.min(1, ny));
+    nw = Math.max(MIN_CROP_RATIO, Math.min(1, nw));
+    nh = Math.max(MIN_CROP_RATIO, Math.min(1, nh));
+  }
+
   if (nx + nw > 1) nx = Math.max(0, 1 - nw);
   if (ny + nh > 1) ny = Math.max(0, 1 - nh);
 
