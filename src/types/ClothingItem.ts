@@ -32,6 +32,8 @@ export type ClothingItem = {
   photos?: {
     primaryUrl?: string | null;
     urls?: string[];
+    croppedUrl?: string;
+    thumbUrl?: string;
   };
 
   // new (safe + optional)
@@ -41,6 +43,13 @@ export type ClothingItem = {
   primaryColor?: string;
   colorSource?: "ai" | "user";
   colorUpdatedAt?: number;
+  aiColorLabel?: string;
+  aiColors?: string[];
+  pixelColors?: string[];
+  pixelColorHex?: string;
+  colorConfidence?: number;
+  colorNeedsReview?: boolean;
+  crop?: { x: number; y: number; w: number; h: number; source: "ai" };
 
   size?: string | null;
   notes?: string | null;
