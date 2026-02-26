@@ -75,23 +75,6 @@ const ALLOWED_PATTERNS = new Set([
 ]);
 const ALLOWED_COLOR_SET = new Set<string>(ALLOWED_COLORS);
 const MIN_CROP_RATIO = 0.3;
-const COLOR_RGB: Record<AllowedColor, [number, number, number]> = {
-  black: [20, 20, 20],
-  white: [245, 245, 245],
-  grey: [128, 128, 128],
-  navy: [30, 45, 95],
-  blue: [55, 110, 210],
-  green: [60, 145, 80],
-  red: [195, 55, 60],
-  brown: [120, 82, 58],
-  beige: [202, 176, 132],
-  cream: [238, 228, 198],
-  yellow: [225, 195, 55],
-  orange: [225, 132, 55],
-  pink: [220, 140, 180],
-  purple: [140, 95, 170],
-};
-
 function toMillis(value: LastRunAtValue): number | null {
   if (!value) return null;
   if (typeof value === "number") return value;
@@ -213,19 +196,56 @@ function toHex(r: number, g: number, b: number): string {
   return `#${parts.map((n) => n.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
 }
 
-function mapRgbToAllowedColor(r: number, g: number, b: number): AllowedColor {
-  let best: AllowedColor = "grey";
-  let bestDistance = Number.POSITIVE_INFINITY;
+function rgbToHsv(
+  r: number,
+  g: number,
+  b: number
+): { h: number; s: number; v: number } {
+  const rn = Math.max(0, Math.min(255, r)) / 255;
+  const gn = Math.max(0, Math.min(255, g)) / 255;
+  const bn = Math.max(0, Math.min(255, b)) / 255;
 
-  for (const color of ALLOWED_COLORS) {
-    const [cr, cg, cb] = COLOR_RGB[color];
-    const distance = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
-    if (distance < bestDistance) {
-      best = color;
-      bestDistance = distance;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const d = max - min;
+
+  let h = 0;
+  if (d !== 0) {
+    if (max === rn) {
+      h = ((gn - bn) / d) % 6;
+    } else if (max === gn) {
+      h = (bn - rn) / d + 2;
+    } else {
+      h = (rn - gn) / d + 4;
     }
+    h *= 60;
+    if (h < 0) h += 360;
   }
-  return best;
+
+  const s = max === 0 ? 0 : d / max;
+  const v = max;
+  return {h, s, v};
+}
+
+function mapRgbToAllowedColor(r: number, g: number, b: number): AllowedColor {
+  const {h, s, v} = rgbToHsv(r, g, b);
+
+  // Low-saturation colors should map to neutral palette buckets.
+  if (s < 0.2) {
+    if (v > 0.85) return "white";
+    if (v < 0.2) return "black";
+    return "grey";
+  }
+
+  if (h < 15 || h >= 345) return "red";
+  if (h < 40) return "orange";
+  if (h < 68) return "yellow";
+  if (h < 170) return "green";
+  if (h < 260) return "blue";
+  if (h < 300) return "purple";
+  if (h < 345) return "pink";
+
+  return "grey";
 }
 
 async function downloadImageBytes(url: string): Promise<Buffer> {
