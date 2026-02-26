@@ -141,6 +141,8 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
   alphaMin: number;
   alphaMax: number;
   chosenOutputName: string;
+  inverted: boolean;
+  fgRatio: number;
   alphaMean: number;
   alphaP05: number;
   alphaP95: number;
@@ -203,11 +205,18 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     return sorted[idx];
   };
 
-  let chosenOutputName = "";
-  let chosenMask320: Float32Array | null = null;
-  let chosenP05 = 0;
-  let chosenP95 = 0;
-  let chosenSpread = Number.NEGATIVE_INFINITY;
+  type OutputEval = {
+    name: string;
+    mask320: Float32Array;
+    alphaMean: number;
+    alphaP05: number;
+    alphaP95: number;
+    alphaSpread: number;
+    fgRatio: number;
+    score: number;
+  };
+  const evaluatedOutputs: OutputEval[] = [];
+  const validOutputs: OutputEval[] = [];
 
   for (const outputName of session.outputNames) {
     const output = outputMap[outputName];
@@ -262,26 +271,81 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     const p05 = percentile(asNumbers, 0.05);
     const p95 = percentile(asNumbers, 0.95);
     const spread = p95 - p05;
-    if (spread > chosenSpread) {
-      chosenSpread = spread;
-      chosenOutputName = outputName;
-      chosenMask320 = mask320;
-      chosenP05 = p05;
-      chosenP95 = p95;
+    const alphaMean = asNumbers.reduce((sum, value) => sum + value, 0) / asNumbers.length;
+    const fgCount = asNumbers.reduce((sum, value) => sum + (value > 0.5 ? 1 : 0), 0);
+    const fgRatio = fgCount / asNumbers.length;
+    const score = spread * (1 - Math.abs(fgRatio - 0.35));
+
+    const out: OutputEval = {
+      name: outputName,
+      mask320,
+      alphaMean,
+      alphaP05: p05,
+      alphaP95: p95,
+      alphaSpread: spread,
+      fgRatio,
+      score,
+    };
+    evaluatedOutputs.push(out);
+    if (fgRatio >= 0.03 && fgRatio <= 0.97) {
+      validOutputs.push(out);
     }
   }
 
-  if (!chosenMask320 || !chosenOutputName) {
+  if (evaluatedOutputs.length === 0) {
     throw new Error("No valid ONNX output mask found");
   }
 
-  const normDen = Math.max(1e-6, chosenP95 - chosenP05);
-  const alphaNormalized = new Uint8Array(chosenMask320.length);
-  for (let i = 0; i < chosenMask320.length; i++) {
-    const clamped = Math.max(chosenP05, Math.min(chosenP95, chosenMask320[i]));
-    const scaled = (clamped - chosenP05) / normDen;
+  let selected = validOutputs.sort((a, b) => b.score - a.score)[0];
+  if (!selected) {
+    const fallbackName = session.outputNames[session.outputNames.length - 1] ?? "";
+    selected =
+      evaluatedOutputs.find((out) => out.name === fallbackName) ??
+      evaluatedOutputs[evaluatedOutputs.length - 1];
+  }
+
+  const normDen = Math.max(1e-6, selected.alphaP95 - selected.alphaP05);
+  const alphaNormalizedFloat = new Float32Array(selected.mask320.length);
+  for (let i = 0; i < selected.mask320.length; i++) {
+    const clamped = Math.max(selected.alphaP05, Math.min(selected.alphaP95, selected.mask320[i]));
+    const scaled = (clamped - selected.alphaP05) / normDen;
     const gamma = Math.pow(Math.max(0, Math.min(1, scaled)), 0.8);
-    alphaNormalized[i] = Math.round(gamma * 255);
+    alphaNormalizedFloat[i] = gamma;
+  }
+
+  const fgRatioFor = (values: Float32Array): number => {
+    let fg = 0;
+    for (let i = 0; i < values.length; i++) {
+      if (values[i] > 0.5) fg += 1;
+    }
+    return fg / values.length;
+  };
+
+  const fgRatioAlpha = fgRatioFor(alphaNormalizedFloat);
+  const invAlpha = new Float32Array(alphaNormalizedFloat.length);
+  for (let i = 0; i < alphaNormalizedFloat.length; i++) {
+    invAlpha[i] = 1 - alphaNormalizedFloat[i];
+  }
+  const fgRatioInvAlpha = fgRatioFor(invAlpha);
+
+  const target = 0.35;
+  const alphaValid = fgRatioAlpha >= 0.05 && fgRatioAlpha <= 0.9;
+  const invValid = fgRatioInvAlpha >= 0.05 && fgRatioInvAlpha <= 0.9;
+  const chooseInverted =
+    (!alphaValid && invValid) ||
+    (alphaValid && invValid && Math.abs(fgRatioInvAlpha - target) < Math.abs(fgRatioAlpha - target));
+
+  const selectedAlpha = chooseInverted ? invAlpha : alphaNormalizedFloat;
+  const fgRatioSelected = chooseInverted ? fgRatioInvAlpha : fgRatioAlpha;
+  if (fgRatioSelected < 0.05 || fgRatioSelected > 0.9) {
+    throw new Error(
+      `Degenerate selected foreground ratio: ${fgRatioSelected.toFixed(4)} (output=${selected.name})`
+    );
+  }
+
+  const alphaNormalized = new Uint8Array(selectedAlpha.length);
+  for (let i = 0; i < selectedAlpha.length; i++) {
+    alphaNormalized[i] = Math.round(Math.max(0, Math.min(1, selectedAlpha[i])) * 255);
   }
 
   const alphaResized = await sharp(Buffer.from(alphaNormalized), {
@@ -324,6 +388,14 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     alphaSum += alphaData[i] / 255;
   }
   const alphaMean = alphaData.length ? alphaSum / alphaData.length : 0;
+  let fgCountFinal = 0;
+  for (let i = 0; i < alphaData.length; i++) {
+    if (alphaData[i] / 255 > 0.5) fgCountFinal += 1;
+  }
+  const fgRatio = alphaData.length ? fgCountFinal / alphaData.length : 0;
+  if (fgRatio < 0.03 || fgRatio > 0.97) {
+    throw new Error(`Degenerate final foreground ratio: ${fgRatio.toFixed(4)}`);
+  }
 
   const cleanedRaw = Buffer.alloc(rgbWidth * rgbHeight * 3);
   for (let i = 0; i < rgbWidth * rgbHeight; i++) {
@@ -352,11 +424,13 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     inferMs,
     alphaMin: Number.isFinite(finalAlphaMin) ? finalAlphaMin : 0,
     alphaMax: Number.isFinite(finalAlphaMax) ? finalAlphaMax : 0,
-    chosenOutputName,
+    chosenOutputName: selected.name,
+    inverted: chooseInverted,
+    fgRatio,
     alphaMean,
-    alphaP05: chosenP05,
-    alphaP95: chosenP95,
-    alphaSpread: chosenSpread,
+    alphaP05: selected.alphaP05,
+    alphaP95: selected.alphaP95,
+    alphaSpread: selected.alphaSpread,
   };
 }
 
@@ -439,6 +513,8 @@ export const generateCleanedProductImages = onDocumentWritten(
       alphaMin: number;
       alphaMax: number;
       chosenOutputName: string;
+      inverted: boolean;
+      fgRatio: number;
       alphaMean: number;
       alphaP05: number;
       alphaP95: number;
@@ -473,6 +549,8 @@ export const generateCleanedProductImages = onDocumentWritten(
       sourceBytes: sourceBytes.length,
       inferMs: cleanedResult.inferMs,
       chosenOutputName: cleanedResult.chosenOutputName,
+      inverted: cleanedResult.inverted,
+      fgRatio: cleanedResult.fgRatio,
       alphaMean: cleanedResult.alphaMean,
       alphaP05: cleanedResult.alphaP05,
       alphaP95: cleanedResult.alphaP95,
