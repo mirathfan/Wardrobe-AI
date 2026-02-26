@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
@@ -293,16 +293,19 @@ function clampBbox(
 
 async function uploadImageAndGetUrl(path: string, bytes: Buffer, contentType = "image/jpeg"): Promise<string> {
   const bucket = getStorage().bucket();
+  const bucketName = bucket.name;
   const file = bucket.file(path);
+  const token = randomUUID();
   await file.save(bytes, {
-    metadata: {contentType},
+    metadata: {
+      contentType,
+      metadata: {
+        firebaseStorageDownloadTokens: token,
+      },
+    },
     resumable: false,
   });
-  const [url] = await file.getSignedUrl({
-    action: "read",
-    expires: "2500-01-01",
-  });
-  return url;
+  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
 }
 
 async function detectPixelColor(croppedBytes: Buffer): Promise<{ pixelColor: AllowedColor; pixelHex: string }> {
