@@ -2,8 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
+import path from "node:path";
 import { logger } from "firebase-functions/v2";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
+import * as ort from "onnxruntime-node";
 import sharp from "sharp";
 
 if (!getApps().length) {
@@ -30,6 +32,25 @@ type ItemDoc = {
     status?: string;
   };
 };
+
+let sessionPromise: Promise<ort.InferenceSession> | null = null;
+
+async function getSegmentationSession(): Promise<ort.InferenceSession> {
+  if (sessionPromise) return sessionPromise;
+
+  sessionPromise = (async () => {
+    const modelPath = path.join(__dirname, "..", "models", "u2netp.onnx");
+    const modelLoadStart = Date.now();
+    const session = await ort.InferenceSession.create(modelPath);
+    logger.info("Loaded ONNX segmentation model", {
+      modelPath,
+      modelLoadMs: Date.now() - modelLoadStart,
+    });
+    return session;
+  })();
+
+  return sessionPromise;
+}
 
 function pickCleanedFields(doc?: ItemDoc) {
   return {
@@ -112,6 +133,113 @@ async function uploadImageAndGetUrl(path: string, bytes: Buffer): Promise<string
   return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
 }
 
+async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
+  cleanedBytes: Buffer;
+  cleanedThumbBytes: Buffer;
+  inferMs: number;
+  alphaMin: number;
+  alphaMax: number;
+}> {
+  const src = await sharp(sourceBytes)
+    .removeAlpha()
+    .toColourspace("rgb")
+    .raw()
+    .toBuffer({resolveWithObject: true});
+
+  const sourceWidth = src.info.width;
+  const sourceHeight = src.info.height;
+  if (!sourceWidth || !sourceHeight) {
+    throw new Error("Invalid source dimensions for cleaned image generation");
+  }
+
+  const modelWidth = 320;
+  const modelHeight = 320;
+  const resized = await sharp(src.data, {
+    raw: {width: sourceWidth, height: sourceHeight, channels: 3},
+  })
+    .resize(modelWidth, modelHeight, {fit: "fill"})
+    .raw()
+    .toBuffer();
+
+  const hw = modelWidth * modelHeight;
+  const tensorData = new Float32Array(3 * hw);
+  for (let i = 0; i < hw; i++) {
+    const pixelIndex = i * 3;
+    tensorData[i] = resized[pixelIndex] / 255;
+    tensorData[hw + i] = resized[pixelIndex + 1] / 255;
+    tensorData[2 * hw + i] = resized[pixelIndex + 2] / 255;
+  }
+
+  const input = new ort.Tensor("float32", tensorData, [1, 3, modelHeight, modelWidth]);
+  const session = await getSegmentationSession();
+  const inputName = session.inputNames[0];
+  const inferStart = Date.now();
+  const outputMap = await session.run({[inputName]: input});
+  const inferMs = Date.now() - inferStart;
+
+  const outputName = session.outputNames[0];
+  const output = outputMap[outputName];
+  if (!output) {
+    throw new Error("ONNX segmentation output is missing");
+  }
+
+  const outputData = output.data as Float32Array;
+  const outputDims = output.dims;
+  const alphaWidth = outputDims.length >= 2 ? outputDims[outputDims.length - 1] : modelWidth;
+  const alphaHeight = outputDims.length >= 2 ? outputDims[outputDims.length - 2] : modelHeight;
+
+  let alphaMin = Number.POSITIVE_INFINITY;
+  let alphaMax = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < outputData.length; i++) {
+    const v = outputData[i];
+    if (v < alphaMin) alphaMin = v;
+    if (v > alphaMax) alphaMax = v;
+  }
+
+  const spread = alphaMax - alphaMin;
+  const alphaNormalized = new Uint8Array(outputData.length);
+  for (let i = 0; i < outputData.length; i++) {
+    const value = spread > 1e-8 ? (outputData[i] - alphaMin) / spread : 0;
+    alphaNormalized[i] = Math.max(0, Math.min(255, Math.round(value * 255)));
+  }
+
+  const alphaResized = await sharp(Buffer.from(alphaNormalized), {
+    raw: {width: alphaWidth, height: alphaHeight, channels: 1},
+  })
+    .resize(sourceWidth, sourceHeight, {fit: "fill"})
+    .blur(0.8)
+    .raw()
+    .toBuffer();
+
+  const cleanedRaw = Buffer.alloc(sourceWidth * sourceHeight * 3);
+  for (let i = 0; i < sourceWidth * sourceHeight; i++) {
+    const alpha = alphaResized[i] / 255;
+    const base = i * 3;
+    cleanedRaw[base] = Math.round(src.data[base] * alpha + 255 * (1 - alpha));
+    cleanedRaw[base + 1] = Math.round(src.data[base + 1] * alpha + 255 * (1 - alpha));
+    cleanedRaw[base + 2] = Math.round(src.data[base + 2] * alpha + 255 * (1 - alpha));
+  }
+
+  const cleanedBytes = await sharp(cleanedRaw, {
+    raw: {width: sourceWidth, height: sourceHeight, channels: 3},
+  })
+    .jpeg({quality: 88})
+    .toBuffer();
+
+  const cleanedThumbBytes = await sharp(cleanedBytes)
+    .resize({width: 256, height: 256, fit: "inside", withoutEnlargement: true})
+    .jpeg({quality: 80})
+    .toBuffer();
+
+  return {
+    cleanedBytes,
+    cleanedThumbBytes,
+    inferMs,
+    alphaMin: Number.isFinite(alphaMin) ? alphaMin : 0,
+    alphaMax: Number.isFinite(alphaMax) ? alphaMax : 0,
+  };
+}
+
 export const generateCleanedProductImages = onDocumentWritten(
   {
     document: "users/{uid}/items/{itemId}",
@@ -178,17 +306,9 @@ export const generateCleanedProductImages = onDocumentWritten(
       return;
     }
 
-    const cleanedBytes = await sharp(sourceBytes)
-      .resize({width: 1024, height: 1024, fit: "inside", withoutEnlargement: true})
-      .flatten({background: {r: 255, g: 255, b: 255}})
-      .jpeg({quality: 88})
-      .toBuffer();
-
-    const cleanedThumbBytes = await sharp(cleanedBytes)
-      .resize({width: 256, height: 256, fit: "inside", withoutEnlargement: true})
-      .flatten({background: {r: 255, g: 255, b: 255}})
-      .jpeg({quality: 80})
-      .toBuffer();
+    const cleanedResult = await createCleanedImagesWithOnnx(sourceBytes);
+    const cleanedBytes = cleanedResult.cleanedBytes;
+    const cleanedThumbBytes = cleanedResult.cleanedThumbBytes;
 
     const cleanedPath = `users/${uid}/items/${itemId}/cleaned.jpg`;
     const cleanedThumbPath = `users/${uid}/items/${itemId}/cleaned_thumb.jpg`;
@@ -202,6 +322,9 @@ export const generateCleanedProductImages = onDocumentWritten(
       cleanedPath,
       cleanedThumbPath,
       sourceBytes: sourceBytes.length,
+      inferMs: cleanedResult.inferMs,
+      alphaMin: cleanedResult.alphaMin,
+      alphaMax: cleanedResult.alphaMax,
       cleanedBytes: cleanedBytes.length,
       cleanedThumbBytes: cleanedThumbBytes.length,
     });
@@ -213,7 +336,7 @@ export const generateCleanedProductImages = onDocumentWritten(
         photos: {
           cleanedUrl,
           cleanedThumbUrl,
-          cleanedSource: "placeholder",
+          cleanedSource: "onnx",
           cleanedFromHash: sourceHash,
         },
         cleanedUpdatedAt: Date.now(),
