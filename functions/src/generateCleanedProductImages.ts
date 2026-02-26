@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
@@ -116,14 +117,14 @@ async function downloadImageBytes(url: string): Promise<Buffer> {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function uploadImageAndGetUrl(path: string, bytes: Buffer): Promise<string> {
+async function uploadImageAndGetUrl(path: string, bytes: Buffer, contentType = "image/jpeg"): Promise<string> {
   const bucket = getStorage().bucket();
   const token = randomUUID();
   const file = bucket.file(path);
 
   await file.save(bytes, {
     metadata: {
-      contentType: "image/jpeg",
+      contentType,
       metadata: {
         firebaseStorageDownloadTokens: token,
       },
@@ -134,20 +135,31 @@ async function uploadImageAndGetUrl(path: string, bytes: Buffer): Promise<string
   return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
 }
 
-async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
+type CleanedOnnxSuccess = {
+  ok: true;
   cleanedBytes: Buffer;
   cleanedThumbBytes: Buffer;
+  debugMaskBytes: Buffer;
+  debugOverlayBytes: Buffer;
   inferMs: number;
   alphaMin: number;
   alphaMax: number;
   chosenOutputName: string;
   inverted: boolean;
   fgRatio: number;
+  centerMinusBorder: number;
   alphaMean: number;
   alphaP05: number;
   alphaP95: number;
   alphaSpread: number;
-}> {
+};
+
+type CleanedOnnxFailure = {
+  ok: false;
+  reason: string;
+};
+
+async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<CleanedOnnxSuccess | CleanedOnnxFailure> {
   const originalMeta = await sharp(sourceBytes)
     .rotate()
     .metadata();
@@ -207,16 +219,61 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
 
   type OutputEval = {
     name: string;
-    mask320: Float32Array;
-    alphaMean: number;
     alphaP05: number;
     alphaP95: number;
     alphaSpread: number;
+  };
+  type MaskCandidate = {
+    outputName: string;
+    inverted: boolean;
+    mask320: Float32Array;
+    alphaMean: number;
     fgRatio: number;
+    centerMinusBorder: number;
+    alphaP05: number;
+    alphaP95: number;
+    alphaSpread: number;
     score: number;
   };
   const evaluatedOutputs: OutputEval[] = [];
-  const validOutputs: OutputEval[] = [];
+  const validCandidates: MaskCandidate[] = [];
+
+  const computeBorderCenterGap = (values: Float32Array): number => {
+    const w = modelWidth;
+    const h = modelHeight;
+    const borderW = Math.max(1, Math.round(w * 0.12));
+    const borderH = Math.max(1, Math.round(h * 0.12));
+    const centerX0 = Math.floor(w * 0.2);
+    const centerX1 = Math.ceil(w * 0.8);
+    const centerY0 = Math.floor(h * 0.2);
+    const centerY1 = Math.ceil(h * 0.8);
+
+    let borderSum = 0;
+    let borderCount = 0;
+    let centerSum = 0;
+    let centerCount = 0;
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const idx = y * w + x;
+        const v = values[idx];
+        const isBorder =
+          x < borderW || x >= w - borderW || y < borderH || y >= h - borderH;
+        if (isBorder) {
+          borderSum += v;
+          borderCount += 1;
+        }
+        if (x >= centerX0 && x < centerX1 && y >= centerY0 && y < centerY1) {
+          centerSum += v;
+          centerCount += 1;
+        }
+      }
+    }
+
+    const borderMean = borderCount ? borderSum / borderCount : 0;
+    const centerMean = centerCount ? centerSum / centerCount : 0;
+    return centerMean - borderMean;
+  };
 
   for (const outputName of session.outputNames) {
     const output = outputMap[outputName];
@@ -271,82 +328,150 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     const p05 = percentile(asNumbers, 0.05);
     const p95 = percentile(asNumbers, 0.95);
     const spread = p95 - p05;
-    const alphaMean = asNumbers.reduce((sum, value) => sum + value, 0) / asNumbers.length;
-    const fgCount = asNumbers.reduce((sum, value) => sum + (value > 0.5 ? 1 : 0), 0);
-    const fgRatio = fgCount / asNumbers.length;
-    const score = spread * (1 - Math.abs(fgRatio - 0.35));
-
-    const out: OutputEval = {
-      name: outputName,
-      mask320,
-      alphaMean,
+    let sampledMin = Number.POSITIVE_INFINITY;
+    let sampledMax = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < asNumbers.length; i += 32) {
+      const v = asNumbers[i];
+      if (v < sampledMin) sampledMin = v;
+      if (v > sampledMax) sampledMax = v;
+    }
+    logger.info("ONNX output stats", {
+      outputName,
+      outputDims,
+      outputDataLength: outputData.length,
+      rawMin,
+      rawMax,
+      sampledMin,
+      sampledMax,
       alphaP05: p05,
       alphaP95: p95,
       alphaSpread: spread,
-      fgRatio,
-      score,
+    });
+    const out: OutputEval = {
+      name: outputName,
+      alphaP05: p05,
+      alphaP95: p95,
+      alphaSpread: spread,
     };
     evaluatedOutputs.push(out);
-    if (fgRatio >= 0.03 && fgRatio <= 0.97) {
-      validOutputs.push(out);
+
+    const normDen = Math.max(1e-6, p95 - p05);
+    const normalized = new Float32Array(mask320.length);
+    for (let i = 0; i < mask320.length; i++) {
+      const clamped = Math.max(p05, Math.min(p95, mask320[i]));
+      const scaled = (clamped - p05) / normDen;
+      const gamma = Math.pow(Math.max(0, Math.min(1, scaled)), 0.8);
+      normalized[i] = gamma;
     }
+
+    const addCandidate = (candidateMask: Float32Array, inverted: boolean) => {
+      if (spread < 0.05) return;
+
+      let sum = 0;
+      let fgCount = 0;
+      for (let i = 0; i < candidateMask.length; i++) {
+        const value = candidateMask[i];
+        sum += value;
+        if (value > 0.5) fgCount += 1;
+      }
+      const alphaMean = candidateMask.length ? sum / candidateMask.length : 0;
+      const fgRatio = candidateMask.length ? fgCount / candidateMask.length : 0;
+      if (fgRatio < 0.01 || fgRatio > 0.995) return;
+
+      const centerMinusBorder = computeBorderCenterGap(candidateMask);
+      const score = spread + centerMinusBorder * 0.3;
+      logger.info("ONNX candidate stats", {
+        outputName,
+        inverted,
+        fgRatio,
+        alphaMean,
+        centerMinusBorder,
+        spread,
+        score,
+      });
+
+      validCandidates.push({
+        outputName,
+        inverted,
+        mask320: candidateMask,
+        alphaMean,
+        fgRatio,
+        centerMinusBorder,
+        alphaP05: p05,
+        alphaP95: p95,
+        alphaSpread: spread,
+        score,
+      });
+    };
+
+    addCandidate(normalized, false);
+    const inverted = new Float32Array(normalized.length);
+    for (let i = 0; i < normalized.length; i++) {
+      inverted[i] = 1 - normalized[i];
+    }
+    addCandidate(inverted, true);
   }
 
   if (evaluatedOutputs.length === 0) {
-    throw new Error("No valid ONNX output mask found");
+    return {
+      ok: false,
+      reason: "No valid ONNX output mask found",
+    };
   }
 
-  let selected = validOutputs.sort((a, b) => b.score - a.score)[0];
-  if (!selected) {
-    const fallbackName = session.outputNames[session.outputNames.length - 1] ?? "";
-    selected =
-      evaluatedOutputs.find((out) => out.name === fallbackName) ??
-      evaluatedOutputs[evaluatedOutputs.length - 1];
+  if (validCandidates.length === 0) {
+    return {
+      ok: false,
+      reason: "No non-degenerate ONNX mask candidate found",
+    };
   }
 
-  const normDen = Math.max(1e-6, selected.alphaP95 - selected.alphaP05);
-  const alphaNormalizedFloat = new Float32Array(selected.mask320.length);
-  for (let i = 0; i < selected.mask320.length; i++) {
-    const clamped = Math.max(selected.alphaP05, Math.min(selected.alphaP95, selected.mask320[i]));
-    const scaled = (clamped - selected.alphaP05) / normDen;
-    const gamma = Math.pow(Math.max(0, Math.min(1, scaled)), 0.8);
-    alphaNormalizedFloat[i] = gamma;
-  }
-
-  const fgRatioFor = (values: Float32Array): number => {
-    let fg = 0;
-    for (let i = 0; i < values.length; i++) {
-      if (values[i] > 0.5) fg += 1;
-    }
-    return fg / values.length;
-  };
-
-  const fgRatioAlpha = fgRatioFor(alphaNormalizedFloat);
-  const invAlpha = new Float32Array(alphaNormalizedFloat.length);
-  for (let i = 0; i < alphaNormalizedFloat.length; i++) {
-    invAlpha[i] = 1 - alphaNormalizedFloat[i];
-  }
-  const fgRatioInvAlpha = fgRatioFor(invAlpha);
-
-  const target = 0.35;
-  const alphaValid = fgRatioAlpha >= 0.05 && fgRatioAlpha <= 0.9;
-  const invValid = fgRatioInvAlpha >= 0.05 && fgRatioInvAlpha <= 0.9;
-  const chooseInverted =
-    (!alphaValid && invValid) ||
-    (alphaValid && invValid && Math.abs(fgRatioInvAlpha - target) < Math.abs(fgRatioAlpha - target));
-
-  const selectedAlpha = chooseInverted ? invAlpha : alphaNormalizedFloat;
-  const fgRatioSelected = chooseInverted ? fgRatioInvAlpha : fgRatioAlpha;
-  if (fgRatioSelected < 0.05 || fgRatioSelected > 0.9) {
-    throw new Error(
-      `Degenerate selected foreground ratio: ${fgRatioSelected.toFixed(4)} (output=${selected.name})`
-    );
+  const selected = validCandidates.sort((a, b) => b.score - a.score)[0];
+  logger.info("ONNX selected candidate", {
+    outputName: selected.outputName,
+    inverted: selected.inverted,
+    fgRatio: selected.fgRatio,
+    centerMinusBorder: selected.centerMinusBorder,
+    alphaMean: selected.alphaMean,
+    spread: selected.alphaSpread,
+    score: selected.score,
+  });
+  const selectedAlpha = selected.mask320;
+  if (selected.fgRatio < 0.02 || selected.fgRatio > 0.995 || selected.alphaSpread < 0.10) {
+    return {
+      ok: false,
+      reason: `Selected mask failed threshold checks fg=${selected.fgRatio.toFixed(4)} spread=${selected.alphaSpread.toFixed(4)}`,
+    };
   }
 
   const alphaNormalized = new Uint8Array(selectedAlpha.length);
   for (let i = 0; i < selectedAlpha.length; i++) {
     alphaNormalized[i] = Math.round(Math.max(0, Math.min(1, selectedAlpha[i])) * 255);
   }
+  const debugMaskBytes = await sharp(Buffer.from(alphaNormalized), {
+    raw: {width: modelWidth, height: modelHeight, channels: 1},
+  })
+    .png()
+    .toBuffer();
+  await writeFile("/tmp/mask.png", debugMaskBytes);
+
+  const overlayRaw = Buffer.alloc(modelWidth * modelHeight * 3);
+  for (let i = 0; i < modelWidth * modelHeight; i++) {
+    const a = selectedAlpha[i];
+    const base = i * 3;
+    const r = resized[base];
+    const g = resized[base + 1];
+    const b = resized[base + 2];
+    overlayRaw[base] = Math.round(r * (1 - a * 0.6) + 255 * (a * 0.6));
+    overlayRaw[base + 1] = Math.round(g * (1 - a * 0.6));
+    overlayRaw[base + 2] = Math.round(b * (1 - a * 0.6));
+  }
+  const debugOverlayBytes = await sharp(overlayRaw, {
+    raw: {width: modelWidth, height: modelHeight, channels: 3},
+  })
+    .png()
+    .toBuffer();
+  await writeFile("/tmp/overlay.png", debugOverlayBytes);
 
   const alphaResized = await sharp(Buffer.from(alphaNormalized), {
     raw: {width: modelWidth, height: modelHeight, channels: 1},
@@ -419,14 +544,18 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     .toBuffer();
 
   return {
+    ok: true,
     cleanedBytes,
     cleanedThumbBytes,
+    debugMaskBytes,
+    debugOverlayBytes,
     inferMs,
     alphaMin: Number.isFinite(finalAlphaMin) ? finalAlphaMin : 0,
     alphaMax: Number.isFinite(finalAlphaMax) ? finalAlphaMax : 0,
-    chosenOutputName: selected.name,
-    inverted: chooseInverted,
+    chosenOutputName: selected.outputName,
+    inverted: selected.inverted,
     fgRatio,
+    centerMinusBorder: selected.centerMinusBorder,
     alphaMean,
     alphaP05: selected.alphaP05,
     alphaP95: selected.alphaP95,
@@ -506,20 +635,7 @@ export const generateCleanedProductImages = onDocumentWritten(
       return;
     }
 
-    let cleanedResult: {
-      cleanedBytes: Buffer;
-      cleanedThumbBytes: Buffer;
-      inferMs: number;
-      alphaMin: number;
-      alphaMax: number;
-      chosenOutputName: string;
-      inverted: boolean;
-      fgRatio: number;
-      alphaMean: number;
-      alphaP05: number;
-      alphaP95: number;
-      alphaSpread: number;
-    };
+    let cleanedResult: CleanedOnnxSuccess | CleanedOnnxFailure;
     try {
       cleanedResult = await createCleanedImagesWithOnnx(sourceBytes);
     } catch (error) {
@@ -532,13 +648,28 @@ export const generateCleanedProductImages = onDocumentWritten(
       });
       return;
     }
+    if (!cleanedResult.ok) {
+      logger.error("ONNX cleaned image generation skipped", {
+        uid,
+        itemId,
+        inputUrl,
+        reason: cleanedResult.reason,
+      });
+      return;
+    }
     const cleanedBytes = cleanedResult.cleanedBytes;
     const cleanedThumbBytes = cleanedResult.cleanedThumbBytes;
+    const debugMaskBytes = cleanedResult.debugMaskBytes;
+    const debugOverlayBytes = cleanedResult.debugOverlayBytes;
 
     const cleanedPath = `users/${uid}/items/${itemId}/cleaned.jpg`;
     const cleanedThumbPath = `users/${uid}/items/${itemId}/cleaned_thumb.jpg`;
+    const debugMaskPath = `users/${uid}/items/${itemId}/debug_mask.png`;
+    const debugOverlayPath = `users/${uid}/items/${itemId}/debug_overlay.png`;
     const cleanedUrl = await uploadImageAndGetUrl(cleanedPath, cleanedBytes);
     const cleanedThumbUrl = await uploadImageAndGetUrl(cleanedThumbPath, cleanedThumbBytes);
+    const debugMaskUrl = await uploadImageAndGetUrl(debugMaskPath, debugMaskBytes, "image/png");
+    const debugOverlayUrl = await uploadImageAndGetUrl(debugOverlayPath, debugOverlayBytes, "image/png");
 
     logger.info("Cleaned image generation transition", {
       uid,
@@ -546,11 +677,16 @@ export const generateCleanedProductImages = onDocumentWritten(
       inputUrl,
       cleanedPath,
       cleanedThumbPath,
+      debugMaskPath,
+      debugOverlayPath,
+      debugMaskUrl,
+      debugOverlayUrl,
       sourceBytes: sourceBytes.length,
       inferMs: cleanedResult.inferMs,
       chosenOutputName: cleanedResult.chosenOutputName,
       inverted: cleanedResult.inverted,
       fgRatio: cleanedResult.fgRatio,
+      centerMinusBorder: cleanedResult.centerMinusBorder,
       alphaMean: cleanedResult.alphaMean,
       alphaP05: cleanedResult.alphaP05,
       alphaP95: cleanedResult.alphaP95,
