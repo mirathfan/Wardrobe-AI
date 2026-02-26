@@ -57,7 +57,13 @@ export default function ItemDetailsScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [colorSaving, setColorSaving] = useState(false);
   const [colorSavedAt, setColorSavedAt] = useState<number | null>(null);
-  const itemImageUri = item?.photoUrl || item?.photoUri || null;
+  const itemImageUri =
+    item?.photos?.thumbUrl ||
+    item?.photos?.croppedUrl ||
+    item?.photos?.primaryUrl ||
+    item?.photoUrl ||
+    item?.photoUri ||
+    null;
 
   useEffect(() => {
     if (!uid || !itemId) {
@@ -305,6 +311,22 @@ export default function ItemDetailsScreen() {
 
                 {ingestionStatusLabel(item) === "done" ? (
                   <View style={{ marginTop: 10, gap: 8 }}>
+                    {item.colorNeedsReview && item.colorSource !== "user" ? (
+                      <View
+                        style={{
+                          borderWidth: 1,
+                          borderColor: "#f2c66d",
+                          backgroundColor: "#fff8e8",
+                          borderRadius: 10,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ color: "#7a5a18", fontWeight: "700" }}>
+                          Color check: AI said {item.aiColorLabel || "—"}, pixels suggest{" "}
+                          {toTitleCase(item.pixelColors?.[0] || "—")}. Tap a color to confirm.
+                        </Text>
+                      </View>
+                    ) : null}
                     <Text style={{ color: "#222", fontWeight: "800" }}>
                       Correct color
                     </Text>
