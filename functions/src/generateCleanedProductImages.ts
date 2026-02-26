@@ -23,12 +23,38 @@ type ItemDoc = {
     croppedUrl?: string | null;
     cleanedUrl?: string | null;
     cleanedThumbUrl?: string | null;
+    cleanedSource?: string | null;
     cleanedFromHash?: string | null;
   };
   ingestion?: {
     status?: string;
   };
 };
+
+function pickCleanedFields(doc?: ItemDoc) {
+  return {
+    cleanedUpdatedAt: doc?.cleanedUpdatedAt ?? null,
+    cleanedUrl: doc?.photos?.cleanedUrl ?? null,
+    cleanedThumbUrl: doc?.photos?.cleanedThumbUrl ?? null,
+    cleanedSource: doc?.photos?.cleanedSource ?? null,
+    cleanedFromHash: doc?.photos?.cleanedFromHash ?? null,
+  };
+}
+
+function stripCleanedFields(doc?: ItemDoc): Record<string, unknown> {
+  if (!doc) return {};
+  return {
+    ...doc,
+    cleanedUpdatedAt: undefined,
+    photos: {
+      ...(doc.photos ?? {}),
+      cleanedUrl: undefined,
+      cleanedThumbUrl: undefined,
+      cleanedSource: undefined,
+      cleanedFromHash: undefined,
+    },
+  };
+}
 
 function toMillis(value: LastRunLike): number | null {
   if (!value) return null;
@@ -89,6 +115,9 @@ async function uploadImageAndGetUrl(path: string, bytes: Buffer): Promise<string
 export const generateCleanedProductImages = onDocumentWritten(
   {
     document: "users/{uid}/items/{itemId}",
+    region: "us-central1",
+    memory: "1GiB",
+    timeoutSeconds: 60,
   },
   async (event) => {
     const uid = String(event.params.uid ?? "");
@@ -96,6 +125,21 @@ export const generateCleanedProductImages = onDocumentWritten(
     const before = event.data?.before.data() as ItemDoc | undefined;
     const after = event.data?.after.data() as ItemDoc | undefined;
     if (!after) return;
+
+    if (before) {
+      const cleanedChanged =
+        JSON.stringify(pickCleanedFields(before)) !==
+        JSON.stringify(pickCleanedFields(after));
+      const onlyCleanedFieldsChanged =
+        cleanedChanged &&
+        JSON.stringify(stripCleanedFields(before)) ===
+          JSON.stringify(stripCleanedFields(after));
+
+      if (onlyCleanedFieldsChanged) {
+        logger.info("Skipping cleaned image generation: self-write", {uid, itemId});
+        return;
+      }
+    }
 
     const status = trimStatus(after.ingestion?.status);
     if (status !== "done") {
