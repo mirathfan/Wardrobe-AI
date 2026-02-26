@@ -34,6 +34,10 @@ export type ClothingItem = {
     urls?: string[];
     croppedUrl?: string;
     thumbUrl?: string;
+    cleanedUrl?: string;
+    cleanedThumbUrl?: string;
+    cleanedSource?: "placeholder";
+    cleanedFromHash?: string;
   };
 
   // new (safe + optional)
@@ -50,6 +54,7 @@ export type ClothingItem = {
   colorConfidence?: number;
   colorNeedsReview?: boolean;
   crop?: { x: number; y: number; w: number; h: number; source: "ai" };
+  cleanedUpdatedAt?: number;
 
   size?: string | null;
   notes?: string | null;

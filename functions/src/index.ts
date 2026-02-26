@@ -3,6 +3,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 import { parseOutfitIntentFromPrompt } from "./parseOutfitIntent";
 export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
+export { generateCleanedProductImages } from "./generateCleanedProductImages";
 
 if (!getApps().length) {
   initializeApp();
