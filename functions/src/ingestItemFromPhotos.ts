@@ -644,6 +644,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         colorConfidence = 0.6;
         colorNeedsReview = false;
       }
+      const persistedColorNeedsReview = hasUserColorOverride ? false : colorNeedsReview;
 
       const constrainedScores = applyScoreConstraints(
         category,
@@ -672,8 +673,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
           ...(safeAiColorLabel ? {aiColorLabel: safeAiColorLabel} : {}),
           pixelColors,
           pixelColorHex: pixelResult.pixelHex,
-          colorConfidence,
-          colorNeedsReview,
+          ...(hasUserColorOverride ? {} : {colorConfidence}),
+          colorNeedsReview: persistedColorNeedsReview,
           crop: cropRect.normalized,
           photos: {
             primaryUrl: photoUrls[0],
@@ -702,8 +703,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
         ...(aiColors.length > 0 ? {aiColors} : {}),
         ...(pixelColors.length > 0 ? {pixelColors} : {}),
         ...(pixelResult.pixelHex ? {pixelColorHex: pixelResult.pixelHex} : {}),
-        colorConfidence,
-        colorNeedsReview,
+        ...(hasUserColorOverride ? {} : {colorConfidence}),
+        colorNeedsReview: persistedColorNeedsReview,
         crop: cropRect.normalized,
         ...(!hasUserColorOverride ? {
           ...(finalColors.length > 0 ? {colors: finalColors} : {}),

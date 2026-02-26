@@ -186,6 +186,8 @@ export default function ItemDetailsScreen() {
         primaryColor: toTitleCase(color),
         colorSource: "user",
         colorUpdatedAt: Date.now(),
+        colorNeedsReview: false,
+        colorConfidence: 1,
       });
       setColorSavedAt(Date.now());
     } catch (e: any) {
