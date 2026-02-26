@@ -14,6 +14,7 @@ import {
 } from "react-native";
 
 import { useAuth } from "../../src/hooks/useAuth";
+import { getItemImageUrl } from "../../src/lib/itemImage";
 import {
   CategoryFilter,
   ClosetItem,
@@ -125,15 +126,7 @@ function ItemPhotoCard({
   onWashed: () => void;
 }) {
   const s = statusStyle(item.status);
-  const itemImageUri =
-    item.photos?.cleanedThumbUrl ||
-    item.photos?.cleanedUrl ||
-    item.photos?.thumbUrl ||
-    item.photos?.croppedUrl ||
-    item.photos?.primaryUrl ||
-    item.photoUrl ||
-    item.photos?.urls?.[0] ||
-    null;
+  const itemImageUri = getItemImageUrl(item, { variant: "thumb" });
 
   return (
     <View

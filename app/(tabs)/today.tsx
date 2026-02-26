@@ -15,6 +15,7 @@ import { Alert, FlatList, Image, Pressable, Text, View } from "react-native";
 
 import { useAuth } from "../../src/hooks/useAuth";
 import { db } from "../../src/lib/firebase";
+import { getItemImageUrl } from "../../src/lib/itemImage";
 import { MAX_WEARS_BEFORE_WASH, toCanonicalCategory } from "../../src/lib/items";
 import { toDateKey } from "../../src/lib/outfits";
 import { ClothingItem } from "../../src/types/ClothingItem";
@@ -303,15 +304,7 @@ export default function TodayScreen() {
         ) : (
           <View style={{ gap: 10 }}>
             {outfitItems.map((it) => {
-              const uri =
-                it.photos?.cleanedThumbUrl ||
-                it.photos?.cleanedUrl ||
-                it.photos?.thumbUrl ||
-                it.photos?.croppedUrl ||
-                it.photos?.primaryUrl ||
-                it.photoUrl ||
-                it.photos?.urls?.[0] ||
-                null;
+              const uri = getItemImageUrl(it, { variant: "thumb" });
               return (
                 <View key={it.id} style={miniCard}>
                   <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>

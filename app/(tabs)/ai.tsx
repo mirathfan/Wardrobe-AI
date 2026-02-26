@@ -13,6 +13,7 @@ import {
 
 import { useAuth } from "../../src/hooks/useAuth";
 import { db } from "../../src/lib/firebase";
+import { getItemImageUrl } from "../../src/lib/itemImage";
 import { listenToItems } from "../../src/lib/items";
 import {
   OutfitIntent,
@@ -268,15 +269,7 @@ export default function AIScreen() {
             {s.itemIds.map((itemId) => {
               const item = itemsById.get(itemId);
               if (!item) return null;
-              const uri =
-                item.photos?.cleanedThumbUrl ||
-                item.photos?.cleanedUrl ||
-                item.photos?.thumbUrl ||
-                item.photos?.croppedUrl ||
-                item.photos?.primaryUrl ||
-                item.photoUrl ||
-                item.photos?.urls?.[0] ||
-                null;
+              const uri = getItemImageUrl(item, { variant: "thumb" });
               return (
                 <View
                   key={itemId}

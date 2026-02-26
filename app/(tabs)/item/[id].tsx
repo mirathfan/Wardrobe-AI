@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
 import { useAuth } from "../../../src/hooks/useAuth";
 import { db } from "../../../src/lib/firebase";
+import { getItemImageUrl } from "../../../src/lib/itemImage";
 import {
   markWashed as markWashedItem,
   safeMarkWorn,
@@ -57,15 +58,7 @@ export default function ItemDetailsScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [colorSaving, setColorSaving] = useState(false);
   const [colorSavedAt, setColorSavedAt] = useState<number | null>(null);
-  const itemImageUri =
-    item?.photos?.cleanedThumbUrl ||
-    item?.photos?.cleanedUrl ||
-    item?.photos?.thumbUrl ||
-    item?.photos?.croppedUrl ||
-    item?.photos?.primaryUrl ||
-    item?.photoUrl ||
-    item?.photoUri ||
-    null;
+  const itemImageUri = getItemImageUrl(item, { variant: "hero" });
 
   useEffect(() => {
     if (!uid || !itemId) {
