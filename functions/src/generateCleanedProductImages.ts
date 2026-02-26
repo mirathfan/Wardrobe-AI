@@ -17,6 +17,8 @@ type LastRunLike = Timestamp | { toMillis?: () => number } | number | null | und
 type ItemDoc = {
   updatedAt?: LastRunLike;
   cleanedUpdatedAt?: LastRunLike;
+  colorUpdatedAt?: LastRunLike;
+  cropUpdatedAt?: LastRunLike;
   crop?: Record<string, unknown> | null;
   photoUrl?: string | null;
   photos?: {
@@ -27,6 +29,7 @@ type ItemDoc = {
     cleanedThumbUrl?: string | null;
     cleanedSource?: string | null;
     cleanedFromHash?: string | null;
+    cleanedCrop?: Record<string, unknown> | null;
   };
   ingestion?: {
     status?: string;
@@ -61,6 +64,7 @@ function pickCleanedFields(doc?: ItemDoc) {
     cleanedThumbUrl: doc?.photos?.cleanedThumbUrl ?? null,
     cleanedSource: doc?.photos?.cleanedSource ?? null,
     cleanedFromHash: doc?.photos?.cleanedFromHash ?? null,
+    cleanedCrop: doc?.photos?.cleanedCrop ?? null,
   };
 }
 
@@ -75,6 +79,7 @@ function stripCleanedFields(doc?: ItemDoc): Record<string, unknown> {
       cleanedThumbUrl: undefined,
       cleanedSource: undefined,
       cleanedFromHash: undefined,
+      cleanedCrop: undefined,
     },
   };
 }
@@ -101,12 +106,6 @@ function getInputImageUrl(item: ItemDoc): string {
     "";
   const url = String(candidate).trim();
   return /^https?:\/\//i.test(url) ? url : "";
-}
-
-function hasCropChanged(before?: ItemDoc, after?: ItemDoc): boolean {
-  const prev = JSON.stringify(before?.crop ?? null);
-  const next = JSON.stringify(after?.crop ?? null);
-  return prev !== next;
 }
 
 async function downloadImageBytes(url: string): Promise<Buffer> {
@@ -141,8 +140,11 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
   inferMs: number;
   alphaMin: number;
   alphaMax: number;
-  outputShape: number[];
-  outputLength: number;
+  chosenOutputName: string;
+  alphaMean: number;
+  alphaP05: number;
+  alphaP95: number;
+  alphaSpread: number;
 }> {
   const originalMeta = await sharp(sourceBytes)
     .rotate()
@@ -194,51 +196,96 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
   const outputMap = await session.run({[inputName]: input});
   const inferMs = Date.now() - inferStart;
 
-  const outputName = session.outputNames[0];
-  const output = outputMap[outputName];
-  if (!output) {
-    throw new Error("ONNX segmentation output is missing");
+  const percentile = (values: number[], p: number): number => {
+    if (values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1))));
+    return sorted[idx];
+  };
+
+  let chosenOutputName = "";
+  let chosenMask320: Float32Array | null = null;
+  let chosenP05 = 0;
+  let chosenP95 = 0;
+  let chosenSpread = Number.NEGATIVE_INFINITY;
+
+  for (const outputName of session.outputNames) {
+    const output = outputMap[outputName];
+    if (!output) continue;
+
+    const outputDataRaw = output.data as Float32Array | number[];
+    const outputData = Array.from(outputDataRaw as ArrayLike<number>);
+    const outputDims = output.dims;
+    const maskWidth =
+      outputDims.length >= 2 && outputDims[outputDims.length - 1] > 0
+        ? outputDims[outputDims.length - 1]
+        : modelWidth;
+    const maskHeight =
+      outputDims.length >= 2 && outputDims[outputDims.length - 2] > 0
+        ? outputDims[outputDims.length - 2]
+        : modelHeight;
+    const plane = maskWidth * maskHeight;
+    if (plane <= 0 || outputData.length < plane) continue;
+
+    const offset = outputData.length - plane;
+    let rawMin = Number.POSITIVE_INFINITY;
+    let rawMax = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < plane; i++) {
+      const v = outputData[offset + i];
+      if (v < rawMin) rawMin = v;
+      if (v > rawMax) rawMax = v;
+    }
+
+    const looksLikeLogits = rawMin < 0 || rawMax > 1;
+    const maskU8 = new Uint8Array(plane);
+    for (let i = 0; i < plane; i++) {
+      const raw = outputData[offset + i];
+      const prob = looksLikeLogits ? 1 / (1 + Math.exp(-raw)) : raw;
+      const clamped = Math.max(0, Math.min(1, prob));
+      maskU8[i] = Math.round(clamped * 255);
+    }
+
+    const mask320Bytes = await sharp(Buffer.from(maskU8), {
+      raw: {width: maskWidth, height: maskHeight, channels: 1},
+    })
+      .resize(modelWidth, modelHeight, {fit: "fill"})
+      .raw()
+      .toBuffer();
+    const mask320 = new Float32Array(modelWidth * modelHeight);
+    const asNumbers = new Array<number>(mask320.length);
+    for (let i = 0; i < mask320.length; i++) {
+      const value = mask320Bytes[i] / 255;
+      mask320[i] = value;
+      asNumbers[i] = value;
+    }
+
+    const p05 = percentile(asNumbers, 0.05);
+    const p95 = percentile(asNumbers, 0.95);
+    const spread = p95 - p05;
+    if (spread > chosenSpread) {
+      chosenSpread = spread;
+      chosenOutputName = outputName;
+      chosenMask320 = mask320;
+      chosenP05 = p05;
+      chosenP95 = p95;
+    }
   }
 
-  const outputData = output.data as Float32Array;
-  const outputDims = output.dims;
-  const alphaWidth =
-    outputDims.length >= 2 && outputDims[outputDims.length - 1] > 0
-      ? outputDims[outputDims.length - 1]
-      : modelWidth;
-  const alphaHeight =
-    outputDims.length >= 2 && outputDims[outputDims.length - 2] > 0
-      ? outputDims[outputDims.length - 2]
-      : modelHeight;
-  const alphaPlane = alphaWidth * alphaHeight;
-  if (alphaPlane <= 0 || outputData.length < alphaPlane) {
-    throw new Error(`Invalid ONNX output shape: ${JSON.stringify(outputDims)}`);
-  }
-  const offset = outputData.length - alphaPlane;
-
-  let rawMin = Number.POSITIVE_INFINITY;
-  let rawMax = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < alphaPlane; i++) {
-    const v = outputData[offset + i];
-    if (v < rawMin) rawMin = v;
-    if (v > rawMax) rawMax = v;
+  if (!chosenMask320 || !chosenOutputName) {
+    throw new Error("No valid ONNX output mask found");
   }
 
-  const looksLikeLogits = rawMin < 0 || rawMax > 1;
-  const alphaNormalized = new Uint8Array(alphaPlane);
-  let alphaMin = Number.POSITIVE_INFINITY;
-  let alphaMax = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < alphaPlane; i++) {
-    const v = outputData[offset + i];
-    const prob = looksLikeLogits ? 1 / (1 + Math.exp(-v)) : v;
-    const value = Math.max(0, Math.min(1, prob));
-    if (value < alphaMin) alphaMin = value;
-    if (value > alphaMax) alphaMax = value;
-    alphaNormalized[i] = Math.max(0, Math.min(255, Math.round(value * 255)));
+  const normDen = Math.max(1e-6, chosenP95 - chosenP05);
+  const alphaNormalized = new Uint8Array(chosenMask320.length);
+  for (let i = 0; i < chosenMask320.length; i++) {
+    const clamped = Math.max(chosenP05, Math.min(chosenP95, chosenMask320[i]));
+    const scaled = (clamped - chosenP05) / normDen;
+    const gamma = Math.pow(Math.max(0, Math.min(1, scaled)), 0.8);
+    alphaNormalized[i] = Math.round(gamma * 255);
   }
 
   const alphaResized = await sharp(Buffer.from(alphaNormalized), {
-    raw: {width: alphaWidth, height: alphaHeight, channels: 1},
+    raw: {width: modelWidth, height: modelHeight, channels: 1},
   })
     .resize(originalWidth, originalHeight, {fit: "fill"})
     .blur(0.8)
@@ -272,6 +319,12 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     );
   }
 
+  let alphaSum = 0;
+  for (let i = 0; i < alphaData.length; i++) {
+    alphaSum += alphaData[i] / 255;
+  }
+  const alphaMean = alphaData.length ? alphaSum / alphaData.length : 0;
+
   const cleanedRaw = Buffer.alloc(rgbWidth * rgbHeight * 3);
   for (let i = 0; i < rgbWidth * rgbHeight; i++) {
     const alpha = alphaData[i] / 255;
@@ -299,8 +352,11 @@ async function createCleanedImagesWithOnnx(sourceBytes: Buffer): Promise<{
     inferMs,
     alphaMin: Number.isFinite(finalAlphaMin) ? finalAlphaMin : 0,
     alphaMax: Number.isFinite(finalAlphaMax) ? finalAlphaMax : 0,
-    outputShape: Array.from(outputDims),
-    outputLength: outputData.length,
+    chosenOutputName,
+    alphaMean,
+    alphaP05: chosenP05,
+    alphaP95: chosenP95,
+    alphaSpread: chosenSpread,
   };
 }
 
@@ -346,10 +402,14 @@ export const generateCleanedProductImages = onDocumentWritten(
     }
 
     const missingCleaned = !after.photos?.cleanedUrl || !after.photos?.cleanedThumbUrl;
-    const updatedAtMs = toMillis(after.updatedAt);
     const cleanedUpdatedAtMs = toMillis(after.cleanedUpdatedAt);
-    const stale = !!updatedAtMs && (!cleanedUpdatedAtMs || cleanedUpdatedAtMs < updatedAtMs);
-    const cropChanged = hasCropChanged(before, after);
+    const updatedAtMs = toMillis(after.updatedAt) ?? 0;
+    const colorUpdatedAtMs = toMillis(after.colorUpdatedAt) ?? 0;
+    const cropUpdatedAtMs = toMillis(after.cropUpdatedAt) ?? 0;
+    const sourceUpdatedAtMs = Math.max(updatedAtMs, colorUpdatedAtMs, cropUpdatedAtMs);
+    const stale = !!sourceUpdatedAtMs && (!cleanedUpdatedAtMs || cleanedUpdatedAtMs < sourceUpdatedAtMs);
+    const cropChanged =
+      JSON.stringify(after.crop ?? null) !== JSON.stringify(after.photos?.cleanedCrop ?? null);
 
     if (!missingCleaned && !stale && !cropChanged) {
       logger.info("Skipping cleaned image generation: output already fresh", {
@@ -358,6 +418,8 @@ export const generateCleanedProductImages = onDocumentWritten(
         missingCleaned,
         stale,
         cropChanged,
+        sourceUpdatedAtMs,
+        cleanedUpdatedAtMs,
       });
       return;
     }
@@ -376,8 +438,11 @@ export const generateCleanedProductImages = onDocumentWritten(
       inferMs: number;
       alphaMin: number;
       alphaMax: number;
-      outputShape: number[];
-      outputLength: number;
+      chosenOutputName: string;
+      alphaMean: number;
+      alphaP05: number;
+      alphaP95: number;
+      alphaSpread: number;
     };
     try {
       cleanedResult = await createCleanedImagesWithOnnx(sourceBytes);
@@ -407,8 +472,11 @@ export const generateCleanedProductImages = onDocumentWritten(
       cleanedThumbPath,
       sourceBytes: sourceBytes.length,
       inferMs: cleanedResult.inferMs,
-      outputShape: cleanedResult.outputShape,
-      outputLength: cleanedResult.outputLength,
+      chosenOutputName: cleanedResult.chosenOutputName,
+      alphaMean: cleanedResult.alphaMean,
+      alphaP05: cleanedResult.alphaP05,
+      alphaP95: cleanedResult.alphaP95,
+      alphaSpread: cleanedResult.alphaSpread,
       alphaMin: cleanedResult.alphaMin,
       alphaMax: cleanedResult.alphaMax,
       cleanedBytes: cleanedBytes.length,
@@ -424,6 +492,7 @@ export const generateCleanedProductImages = onDocumentWritten(
           cleanedThumbUrl,
           cleanedSource: "onnx",
           cleanedFromHash: sourceHash,
+          cleanedCrop: after.crop ?? null,
         },
         cleanedUpdatedAt: Date.now(),
       },
