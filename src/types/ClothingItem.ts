@@ -35,9 +35,11 @@ export type ClothingItem = {
     croppedUrl?: string;
     thumbUrl?: string;
     cleanedUrl?: string;
+    cleanedPhotoUrl?: string;
     cleanedThumbUrl?: string;
-    cleanedSource?: "placeholder";
+    cleanedSource?: "placeholder" | "onnx" | "ios_vision";
     cleanedFromHash?: string;
+    forceCleaned?: boolean;
   };
 
   // new (safe + optional)

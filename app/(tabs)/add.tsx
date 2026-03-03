@@ -1,10 +1,9 @@
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { collection, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
-  Image,
   Pressable,
   ScrollView,
   Text,
@@ -12,6 +11,7 @@ import {
   View,
 } from "react-native";
 
+import { PhotoEditorSection } from "../../src/components/PhotoEditorSection";
 import { useAuth } from "../../src/hooks/useAuth";
 import { db } from "../../src/lib/firebase";
 import { normalizeCategoryForStorage } from "../../src/lib/items";
@@ -21,6 +21,10 @@ import {
   isValidCategorySubCategory,
   wearSlot,
 } from "../../src/shared/wardrobeTaxonomy";
+import {
+  isVisionBackgroundRemovalAvailable,
+  removeBackground,
+} from "../../src/bg/removeBackground";
 import { uploadItemPhoto } from "../../src/lib/uploadImage";
 
 const CATEGORIES: Category[] = Object.values(Category);
@@ -39,6 +43,8 @@ const DEFAULT_COLORS = [
   "Silver",
 ];
 
+const DEFAULT_REFINE_VALUE = 1 / 3;
+
 function norm(s: string) {
   return (s || "").trim();
 }
@@ -47,6 +53,30 @@ function normColor(s: string) {
   const t = norm(s);
   if (!t) return "";
   return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+}
+
+function getRefineOptions(value: number) {
+  const normalizedValue = Math.max(0, Math.min(1, value));
+  const edgeTighten =
+    normalizedValue >= 0.8 ? (normalizedValue - 0.8) / 0.2 : 0;
+  return {
+    threshold: 0.58 + normalizedValue * 0.12,
+    cleanupRadius: Math.round(2 + normalizedValue * 2),
+    feather: Math.round(normalizedValue * 2),
+    edgeTighten,
+    maskToAlpha: true,
+  };
+}
+
+function getRefineRequestKey(uri: string, value: number) {
+  const { threshold, cleanupRadius, feather, edgeTighten } = getRefineOptions(value);
+  return [
+    uri,
+    threshold.toFixed(2),
+    cleanupRadius,
+    feather,
+    edgeTighten.toFixed(2),
+  ].join("|");
 }
 
 export default function AddItemScreen() {
@@ -78,10 +108,30 @@ export default function AddItemScreen() {
 
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [cleanedPhotoUrl, setCleanedPhotoUrl] = useState<string | null>(null);
+  const [serverCleanedUrl, setServerCleanedUrl] = useState<string | null>(null);
   const [pendingPhotoUri, setPendingPhotoUri] = useState<string | null>(null);
+  const [pendingCleanedPhotoUri, setPendingCleanedPhotoUri] = useState<string | null>(null);
   const [pendingPhotoWidth, setPendingPhotoWidth] = useState<number | null>(null);
+  const [originalPickedPhotoUri, setOriginalPickedPhotoUri] = useState<string | null>(null);
+  const [refineValue, setRefineValue] = useState(DEFAULT_REFINE_VALUE);
+  const [refiningCutout, setRefiningCutout] = useState(false);
+  const lastCompletedRefineKeyRef = useRef("");
+  const latestRefineRequestIdRef = useRef(0);
+  const refineTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const previewPhotoUri = pendingPhotoUri ?? photoUrl ?? photoUri ?? null;
+  const previewPhotoUri =
+    pendingPhotoUri ??
+    cleanedPhotoUrl ??
+    pendingCleanedPhotoUri ??
+    serverCleanedUrl ??
+    photoUrl ??
+    photoUri ??
+    null;
+  const canRefineCutout =
+    isVisionBackgroundRemovalAvailable() &&
+    !!originalPickedPhotoUri &&
+    !!(pendingPhotoUri || pendingCleanedPhotoUri);
 
   useEffect(() => {
     (async () => {
@@ -132,8 +182,19 @@ export default function AddItemScreen() {
 
         setPhotoUrl(data.photoUrl ?? null);
         setPhotoUri(data.photoUri ?? null);
+        setCleanedPhotoUrl(data.photos?.cleanedPhotoUrl ?? null);
+        setServerCleanedUrl(data.photos?.cleanedUrl ?? null);
         setPendingPhotoUri(null);
+        setPendingCleanedPhotoUri(null);
         setPendingPhotoWidth(null);
+        setOriginalPickedPhotoUri(null);
+        setRefineValue(DEFAULT_REFINE_VALUE);
+        lastCompletedRefineKeyRef.current = "";
+        latestRefineRequestIdRef.current = 0;
+        if (refineTimeoutRef.current) {
+          clearTimeout(refineTimeoutRef.current);
+          refineTimeoutRef.current = null;
+        }
       } catch (e: any) {
         console.log(e);
         Alert.alert("Error", e?.message ?? "Failed to load item");
@@ -142,6 +203,14 @@ export default function AddItemScreen() {
       }
     })();
   }, [isEdit, editItemId, uid]);
+
+  useEffect(() => {
+    return () => {
+      if (refineTimeoutRef.current) {
+        clearTimeout(refineTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const colorOptions = useMemo(() => {
     const set = new Set<string>(DEFAULT_COLORS.map(normColor));
@@ -163,6 +232,75 @@ export default function AddItemScreen() {
     setSelectedColors((prev) => (prev.includes(c) ? prev : [...prev, c]));
     setCustomColor("");
     setAddingCustomColor(false);
+  }
+
+  function scheduleRefine(value: number, immediate = false) {
+    if (!canRefineCutout || !originalPickedPhotoUri) return;
+
+    const normalizedValue = Math.max(0, Math.min(1, value));
+    const { threshold, cleanupRadius, feather } = getRefineOptions(normalizedValue);
+    const requestKey = getRefineRequestKey(originalPickedPhotoUri, normalizedValue);
+    if (lastCompletedRefineKeyRef.current === requestKey) return;
+
+    const requestId = latestRefineRequestIdRef.current + 1;
+    latestRefineRequestIdRef.current = requestId;
+
+    if (refineTimeoutRef.current) {
+      clearTimeout(refineTimeoutRef.current);
+      refineTimeoutRef.current = null;
+    }
+
+    const execute = async () => {
+      try {
+        setRefiningCutout(true);
+        const cutoutUri = await removeBackground(originalPickedPhotoUri, {
+          threshold,
+          cleanupRadius,
+          feather,
+        });
+        if (requestId !== latestRefineRequestIdRef.current) return;
+        lastCompletedRefineKeyRef.current = requestKey;
+        setPendingPhotoUri(cutoutUri);
+        setPendingCleanedPhotoUri(cutoutUri);
+        setCleanedPhotoUrl(null);
+        console.log(
+          `[AddItem] refine done value=${normalizedValue.toFixed(2)}, threshold=${threshold.toFixed(2)}, radius=${cleanupRadius}, feather=${feather}, uri=${cutoutUri}`
+        );
+      } catch (e) {
+        if (requestId === latestRefineRequestIdRef.current) {
+          console.log(e);
+        }
+      } finally {
+        if (requestId === latestRefineRequestIdRef.current) {
+          setRefiningCutout(false);
+        }
+      }
+    };
+
+    if (immediate) {
+      void execute();
+      return;
+    }
+
+    refineTimeoutRef.current = setTimeout(() => {
+      refineTimeoutRef.current = null;
+      void execute();
+    }, 200);
+  }
+
+  function handleRefineValueChange(value: number) {
+    setRefineValue(value);
+    scheduleRefine(value, false);
+  }
+
+  function handleRefineValueComplete(value: number) {
+    setRefineValue(value);
+    scheduleRefine(value, true);
+  }
+
+  function handleRefineReset() {
+    setRefineValue(DEFAULT_REFINE_VALUE);
+    scheduleRefine(DEFAULT_REFINE_VALUE, true);
   }
 
   async function pickPhoto(source: "library" | "camera") {
@@ -200,7 +338,27 @@ export default function AddItemScreen() {
       if (res.canceled || !res.assets[0]) return;
 
       const asset = res.assets[0];
-      setPendingPhotoUri(asset.uri);
+      const originalUri = asset.uri;
+      if (refineTimeoutRef.current) {
+        clearTimeout(refineTimeoutRef.current);
+        refineTimeoutRef.current = null;
+      }
+      latestRefineRequestIdRef.current = 0;
+      setRefiningCutout(false);
+      const initialOptions = getRefineOptions(DEFAULT_REFINE_VALUE);
+      const cutoutUri = await removeBackground(originalUri, initialOptions);
+      console.log("[AddItem] original image URI:", originalUri);
+      console.log("[AddItem] final display/upload URI:", cutoutUri);
+      lastCompletedRefineKeyRef.current = getRefineRequestKey(
+        originalUri,
+        DEFAULT_REFINE_VALUE
+      );
+      latestRefineRequestIdRef.current = 0;
+      setOriginalPickedPhotoUri(originalUri);
+      setRefineValue(DEFAULT_REFINE_VALUE);
+      setPendingPhotoUri(cutoutUri);
+      setPendingCleanedPhotoUri(cutoutUri);
+      setCleanedPhotoUrl(null);
       setPendingPhotoWidth(asset.width ?? null);
     } catch (e: any) {
       console.log(e);
@@ -215,16 +373,34 @@ export default function AddItemScreen() {
         uid: currentUid,
         itemId,
         localUri: pendingPhotoUri,
+        cleanedLocalUri: pendingCleanedPhotoUri,
         originalWidth: pendingPhotoWidth,
       });
-      return { photoUrl: uploadedUrl, photoUri: null };
+      console.log("[AddItem] saved photos.cleanedPhotoUrl:", uploadedUrl.cleanedUrl);
+      console.log("[AddItem] saved photos.cleanedUrl:", serverCleanedUrl);
+      return {
+        photoUrl: uploadedUrl.primaryUrl,
+        photoUri: null,
+        cleanedPhotoUrl: uploadedUrl.cleanedUrl,
+        cleanedUrl: serverCleanedUrl,
+      };
     }
 
     if (!photoUrl && !photoUri) {
-      return { photoUrl: null, photoUri: null };
+      return {
+        photoUrl: null,
+        photoUri: null,
+        cleanedPhotoUrl: cleanedPhotoUrl,
+        cleanedUrl: serverCleanedUrl,
+      };
     }
 
-    return { photoUrl, photoUri };
+    return {
+      photoUrl,
+      photoUri,
+      cleanedPhotoUrl,
+      cleanedUrl: serverCleanedUrl,
+    };
   }
 
   function parsePriceToNumber(s: string) {
@@ -296,15 +472,15 @@ export default function AddItemScreen() {
         ...payloadBase,
         photoUrl: nextPhoto.photoUrl,
         photoUri: nextPhoto.photoUri,
-        photos: {
-          primaryUrl: nextPhoto.photoUrl,
-          urls: nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
-        },
       };
+      console.log("[AddItem] writing photos.cleanedPhotoUrl:", nextPhoto.cleanedPhotoUrl ?? null);
+      console.log("[AddItem] writing photos.cleanedUrl:", nextPhoto.cleanedUrl ?? null);
 
       if (isEdit) {
-        await updateDoc(itemRef, {
+        const updatePayload: Record<string, any> = {
           ...payload,
+          "photos.primaryUrl": nextPhoto.photoUrl,
+          "photos.urls": nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
           ...(pendingPhotoUri
             ? {
                 ingestion: {
@@ -313,7 +489,11 @@ export default function AddItemScreen() {
                 },
               }
             : {}),
-        });
+        };
+        if (nextPhoto.cleanedPhotoUrl) {
+          updatePayload["photos.cleanedPhotoUrl"] = nextPhoto.cleanedPhotoUrl;
+        }
+        await updateDoc(itemRef, updatePayload);
         Alert.alert("Saved ✅", "Item updated.");
         router.back();
         return;
@@ -321,6 +501,15 @@ export default function AddItemScreen() {
 
       await setDoc(itemRef, {
         ...payload,
+        photos: {
+          primaryUrl: nextPhoto.photoUrl,
+          urls: nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
+          ...(nextPhoto.cleanedPhotoUrl
+            ? {
+                cleanedPhotoUrl: nextPhoto.cleanedPhotoUrl,
+              }
+            : {}),
+        },
         status: "AVAILABLE",
         wearCountSinceWash: 0,
         createdAt: Date.now(),
@@ -347,8 +536,19 @@ export default function AddItemScreen() {
       setPurchaseDate("");
       setPhotoUrl(null);
       setPhotoUri(null);
+      setCleanedPhotoUrl(null);
+      setServerCleanedUrl(null);
       setPendingPhotoUri(null);
+      setPendingCleanedPhotoUri(null);
       setPendingPhotoWidth(null);
+      setOriginalPickedPhotoUri(null);
+      setRefineValue(DEFAULT_REFINE_VALUE);
+      lastCompletedRefineKeyRef.current = "";
+      latestRefineRequestIdRef.current = 0;
+      if (refineTimeoutRef.current) {
+        clearTimeout(refineTimeoutRef.current);
+        refineTimeoutRef.current = null;
+      }
     } catch (e: any) {
       console.log(e);
       Alert.alert(
@@ -386,67 +586,35 @@ export default function AddItemScreen() {
 
       {loading ? <Text>{uploadingPhoto ? "Uploading photo..." : "Loading..."}</Text> : null}
 
-      <View style={{ gap: 10 }}>
-        <Text style={{ fontSize: 16, fontWeight: "700" }}>Photo</Text>
-
-        {previewPhotoUri ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <Image
-              source={{ uri: previewPhotoUri }}
-              style={{
-                width: 88,
-                height: 88,
-                borderRadius: 14,
-                borderWidth: 1,
-                borderColor: "#ddd",
-              }}
-            />
-            <View style={{ gap: 8 }}>
-              <Pressable onPress={() => pickPhoto("library")} style={btnSecondary} disabled={loading}>
-                <Text style={btnSecondaryText}>Change photo</Text>
-              </Pressable>
-              <Pressable onPress={() => pickPhoto("camera")} style={btnSecondary} disabled={loading}>
-                <Text style={btnSecondaryText}>Use camera</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  setPendingPhotoUri(null);
-                  setPendingPhotoWidth(null);
-                  setPhotoUrl(null);
-                  setPhotoUri(null);
-                }}
-                style={btnSecondary}
-                disabled={loading}
-              >
-                <Text style={btnSecondaryText}>Remove</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : (
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Pressable
-              onPress={() => pickPhoto("library")}
-              style={[btnSecondary, { flex: 1 }]}
-              disabled={loading}
-            >
-              <Text style={btnSecondaryText}>Pick from gallery</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => pickPhoto("camera")}
-              style={[btnSecondary, { flex: 1 }]}
-              disabled={loading}
-            >
-              <Text style={btnSecondaryText}>Use camera</Text>
-            </Pressable>
-          </View>
-        )}
-
-        {pendingPhotoUri ? (
-          <Text style={{ color: "#666" }}>
-            New photo selected. It will upload to Firebase Storage when you save.
-          </Text>
-        ) : null}
-      </View>
+      <PhotoEditorSection
+        previewUri={previewPhotoUri}
+        refineValue={refineValue}
+        isProcessing={refiningCutout}
+        canRefine={canRefineCutout}
+        showPendingNote={!!pendingPhotoUri}
+        onPickLibrary={() => void pickPhoto("library")}
+        onUseCamera={() => void pickPhoto("camera")}
+        onRemove={() => {
+          setPendingPhotoUri(null);
+          setPendingCleanedPhotoUri(null);
+          setPendingPhotoWidth(null);
+          setPhotoUrl(null);
+          setPhotoUri(null);
+          setCleanedPhotoUrl(null);
+          setServerCleanedUrl(null);
+          setOriginalPickedPhotoUri(null);
+          setRefineValue(DEFAULT_REFINE_VALUE);
+          lastCompletedRefineKeyRef.current = "";
+          latestRefineRequestIdRef.current = 0;
+          if (refineTimeoutRef.current) {
+            clearTimeout(refineTimeoutRef.current);
+            refineTimeoutRef.current = null;
+          }
+        }}
+        onRefineChange={handleRefineValueChange}
+        onRefineComplete={handleRefineValueComplete}
+        onResetRefine={handleRefineReset}
+      />
 
       <Field label="Brand">
         <TextInput

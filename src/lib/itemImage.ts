@@ -1,7 +1,13 @@
 type ImageLikeItem = {
   photoUrl?: string | null;
+  photoUri?: string | null;
+  cleanedUrl?: string | null;
+  cleanedPhotoUrl?: string | null;
+  cleanedLocalUri?: string | null;
+  pendingPhotoUri?: string | null;
   photos?: {
     cleanedUrl?: string | null;
+    cleanedPhotoUrl?: string | null;
     cleanedThumbUrl?: string | null;
     thumbUrl?: string | null;
     croppedUrl?: string | null;
@@ -10,7 +16,7 @@ type ImageLikeItem = {
   };
 };
 
-function firstValidUrl(values: Array<string | null | undefined>): string | null {
+function firstValidUrl(values: (string | null | undefined)[]): string | null {
   for (const value of values) {
     const url = String(value ?? "").trim();
     if (url) return url;
@@ -26,24 +32,35 @@ export function getItemImageUrl(
 
   if (options.variant === "hero") {
     return firstValidUrl([
+      item.photos?.cleanedPhotoUrl,
+      item.cleanedPhotoUrl,
       item.photos?.cleanedUrl,
+      item.cleanedUrl,
+      item.cleanedLocalUri,
+      item.photoUrl,
+      item.photoUri,
+      item.photos?.primaryUrl,
       item.photos?.cleanedThumbUrl,
       item.photos?.thumbUrl,
       item.photos?.croppedUrl,
-      item.photos?.primaryUrl,
-      item.photoUrl,
+      item.pendingPhotoUri,
       item.photos?.urls?.[0],
     ]);
   }
 
   return firstValidUrl([
-    item.photos?.cleanedThumbUrl,
+    item.photos?.cleanedPhotoUrl,
+    item.cleanedPhotoUrl,
     item.photos?.cleanedUrl,
+    item.cleanedUrl,
+    item.cleanedLocalUri,
+    item.photos?.cleanedThumbUrl,
+    item.photoUrl,
+    item.photoUri,
     item.photos?.thumbUrl,
     item.photos?.croppedUrl,
     item.photos?.primaryUrl,
-    item.photoUrl,
+    item.pendingPhotoUri,
     item.photos?.urls?.[0],
   ]);
 }
-

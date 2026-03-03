@@ -61,6 +61,31 @@ export default function ItemDetailsScreen() {
   const itemImageUri = getItemImageUrl(item, { variant: "hero" });
 
   useEffect(() => {
+    if (!itemImageUri) return;
+    const baseUri = itemImageUri.split("?")[0]?.toLowerCase() ?? "";
+    const kind = baseUri.endsWith(".png")
+      ? "png"
+      : baseUri.endsWith(".jpg") || baseUri.endsWith(".jpeg")
+        ? "jpg"
+        : "unknown";
+    console.log("[ItemScreen] displaying image URI:", itemImageUri);
+    console.log("[ItemScreen] displayed image suffix:", kind);
+  }, [itemImageUri]);
+
+  useEffect(() => {
+    if (!item) return;
+    console.log("[ItemScreen] image fields:", {
+      itemId: item.id,
+      photos: item.photos ?? null,
+      photoUrl: item.photoUrl ?? null,
+      photoUri: item.photoUri ?? null,
+      cleanedUrl: (item as any).cleanedUrl ?? null,
+      cleanedPhotoUrl: (item as any).cleanedPhotoUrl ?? null,
+      selectedImageUri: itemImageUri,
+    });
+  }, [item, itemImageUri]);
+
+  useEffect(() => {
     if (!uid || !itemId) {
       if (!uid) router.replace("/(auth)/login");
       return;
@@ -231,11 +256,27 @@ export default function ItemDetailsScreen() {
           <>
             <View style={card}>
               {itemImageUri ? (
-                <Image
-                  source={{ uri: itemImageUri }}
+                <View
                   style={{ width: "100%", height: 260, borderRadius: 14 }}
-                  resizeMode="cover"
-                />
+                >
+                  <View
+                    style={{
+                      width: "100%",
+                      height: 260,
+                      borderRadius: 14,
+                      backgroundColor: "#ff4d4f",
+                      overflow: "hidden",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Image
+                      source={{ uri: itemImageUri }}
+                      style={{ width: "100%", height: 260 }}
+                      resizeMode="contain"
+                    />
+                  </View>
+                </View>
               ) : (
                 <View style={{ height: 260, borderRadius: 14, backgroundColor: "#f3f3f3", alignItems: "center", justifyContent: "center" }}>
                   <Text style={{ color: "#777", fontWeight: "800" }}>No photo</Text>
