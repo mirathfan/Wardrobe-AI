@@ -10,17 +10,46 @@ import { SectionTitle } from "../ui/SectionTitle";
 
 export const DetailsStep = React.memo(function DetailsStep({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  const statusPillStyles =
+    derived.aiStatusPill.tone === "error"
+      ? { borderColor: "#fca5a5", backgroundColor: "#fef2f2", color: "#b91c1c" }
+      : derived.aiStatusPill.tone === "ready"
+        ? { borderColor: "#86efac", backgroundColor: "#f0fdf4", color: "#166534" }
+        : derived.aiStatusPill.tone === "running"
+          ? { borderColor: "#cbd5e1", backgroundColor: "#f8fafc", color: "#334155" }
+          : { borderColor: "#e5e7eb", backgroundColor: "#fff", color: "#4b5563" };
 
   return (
     <SectionCard>
       <SectionTitle title="Details" />
-      <View style={controller.styles.inlineInfo}>
-        {derived.aiStatusRows.map((line: string, index: number) => (
-          <Text key={`${line}-${index}`} style={{ color: "#666" }}>
-            {line}
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <View
+          style={{
+            borderWidth: 1,
+            borderRadius: 999,
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            borderColor: statusPillStyles.borderColor,
+            backgroundColor: statusPillStyles.backgroundColor,
+          }}
+        >
+          <Text style={{ fontSize: 12, fontWeight: "700", color: statusPillStyles.color }}>
+            {derived.aiStatusPill.label}
           </Text>
-        ))}
+        </View>
+        {derived.canApplyAiSuggestions ? (
+          <Pill label="Apply" active={false} onPress={actions.applyAiSuggestions} />
+        ) : null}
       </View>
+      {derived.aiStatusRows.length ? (
+        <View style={controller.styles.inlineInfo}>
+          {derived.aiStatusRows.map((line: string, index: number) => (
+            <Text key={`${line}-${index}`} style={{ color: "#666" }}>
+              {line}
+            </Text>
+          ))}
+        </View>
+      ) : null}
       {derived.aiSuggestions.length ? (
         <View style={{ gap: 8 }}>
           <Text style={{ fontSize: 13, color: "#666", fontWeight: "700" }}>Suggested</Text>

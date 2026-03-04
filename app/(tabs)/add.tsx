@@ -1,5 +1,6 @@
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo, useRef } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -23,6 +24,18 @@ export default function AddItemScreen() {
   const editItemId = useMemo(() => (Array.isArray(editId) ? editId[0] : editId) || null, [editId]);
   const controller = useAddItemController({ editItemId });
   const { state, derived, actions, styles } = controller;
+  const onScreenFocus = actions.onScreenFocus;
+  const onScreenBlur = actions.onScreenBlur;
+  const sectionListRef = useRef<SectionList<{ key: string }> | null>(null);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      onScreenFocus();
+      return () => {
+        onScreenBlur();
+      };
+    }, [onScreenBlur, onScreenFocus])
+  );
 
   const formRows = useMemo(() => {
     const rows: { key: string }[] = [{ key: "photo" }];
@@ -58,6 +71,26 @@ export default function AddItemScreen() {
     state.sizeExpanded,
   ]);
 
+  const scrollToChecklistRow = useCallback(
+    (rowId: string) => {
+      const keyMap: Record<string, string> = {
+        photo: "photo",
+        category: "details",
+        colors: "details",
+      };
+      const targetKey = keyMap[rowId] ?? rowId;
+      const index = formRows[0]?.data.findIndex((row) => row.key === targetKey) ?? -1;
+      if (index < 0) return;
+      sectionListRef.current?.scrollToLocation({
+        sectionIndex: 0,
+        itemIndex: index,
+        animated: true,
+        viewPosition: 0.12,
+      });
+    },
+    [formRows]
+  );
+
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <KeyboardAvoidingView
@@ -66,6 +99,7 @@ export default function AddItemScreen() {
       >
         <View style={styles.container}>
           <SectionList
+            ref={sectionListRef}
             sections={formRows}
             keyExtractor={(item) => item.key}
             renderItem={({ item }) => renderAddRow({ rowKey: item.key, controller })}
@@ -132,6 +166,39 @@ export default function AddItemScreen() {
                         Duplicated — replace photo to finish.
                       </Text>
                     ) : null}
+                    <View style={{ gap: 6 }}>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        {derived.requiredChecklist.map((item: any) => (
+                          <Pressable
+                            key={item.id}
+                            onPress={() => scrollToChecklistRow(item.rowId)}
+                            style={{
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: item.done ? "#111" : "#ddd",
+                              backgroundColor: item.done ? "#111" : "#fff",
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 12,
+                                fontWeight: "700",
+                                color: item.done ? "#fff" : "#555",
+                              }}
+                            >
+                              {item.label}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                      {derived.nextMissing ? (
+                        <Text style={{ color: "#666", fontSize: 12 }}>
+                          Next: {derived.nextMissing.label}
+                        </Text>
+                      ) : null}
+                    </View>
                   </View>
                 ) : null}
               </View>

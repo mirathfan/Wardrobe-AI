@@ -6,11 +6,14 @@ import {
   Alert,
   FlatList,
   Image,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "../../src/hooks/useAuth";
 import { app, db } from "../../src/lib/firebase";
@@ -19,6 +22,7 @@ import { listenToItems } from "../../src/lib/items";
 import { clearLatestChatCache, loadLatestChatCache, saveLatestChatCache } from "../../src/lib/localChatCache";
 import { toDateKey } from "../../src/lib/outfits";
 import { ClothingItem } from "../../src/types/ClothingItem";
+import { dockSpace } from "../constants/dock";
 
 type ChatOutfit = {
   id: string;
@@ -47,6 +51,10 @@ function displayName(item: ClothingItem) {
 export default function AIScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  const insets = useSafeAreaInsets();
+  const bottomDockSpace = dockSpace(insets.bottom);
+  const composerBottom = bottomDockSpace + 10;
+  const composerHeight = 142;
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -295,7 +303,12 @@ export default function AIScreen() {
   }
 
   return (
-    <View style={{flex: 1, padding: 16, gap: 12}}>
+    <View style={{ flex: 1, padding: 16 }}>
+      <KeyboardAvoidingView
+        style={{ flex: 1, gap: 12 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={bottomDockSpace}
+      >
       <View
         style={{
           flexDirection: "row",
@@ -312,7 +325,7 @@ export default function AIScreen() {
       <FlatList
         data={messages}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{gap: 12, paddingBottom: 12}}
+        contentContainerStyle={{gap: 12, paddingBottom: composerHeight + bottomDockSpace + 16}}
         renderItem={({item}) => (
           <View
             style={{
@@ -358,55 +371,76 @@ export default function AIScreen() {
         <Text style={{color: "#666", fontWeight: "700"}}>Thinking…</Text>
       ) : null}
 
-      <View style={{flexDirection: "row", flexWrap: "wrap", gap: 8}}>
-        {quickChips.map((chip) => (
-          <Pressable
-            key={chip}
-            onPress={() => onChipPress(chip)}
+      <View
+        style={{
+          position: "absolute",
+          left: 16,
+          right: 16,
+          bottom: composerBottom,
+          borderRadius: 18,
+          backgroundColor: "#fff",
+          borderWidth: 1,
+          borderColor: "#e5e7eb",
+          padding: 10,
+          gap: 8,
+          shadowColor: "#000",
+          shadowOpacity: 0.08,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 4,
+        }}
+      >
+        <View style={{flexDirection: "row", flexWrap: "wrap", gap: 8}}>
+          {quickChips.map((chip) => (
+            <Pressable
+              key={chip}
+              onPress={() => onChipPress(chip)}
+              style={{
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: "#ddd",
+                backgroundColor: "#fff",
+              }}
+            >
+              <Text style={{fontWeight: "700", color: "#111", fontSize: 12}}>{chip}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={{flexDirection: "row", gap: 8, alignItems: "flex-end"}}>
+          <TextInput
+            value={input}
+            onChangeText={setInput}
+            placeholder="Ask for an outfit, a swap, or a tweak"
+            multiline
             style={{
-              paddingVertical: 8,
-              paddingHorizontal: 12,
-              borderRadius: 999,
+              flex: 1,
               borderWidth: 1,
               borderColor: "#ddd",
-              backgroundColor: "#fff",
+              borderRadius: 14,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              maxHeight: 120,
+            }}
+          />
+          <Pressable
+            onPress={() => void onSend()}
+            disabled={loading || !input.trim()}
+            style={{
+              paddingVertical: 12,
+              paddingHorizontal: 16,
+              borderRadius: 12,
+              backgroundColor: "#111",
+              opacity: loading || !input.trim() ? 0.6 : 1,
             }}
           >
-            <Text style={{fontWeight: "700", color: "#111"}}>{chip}</Text>
+            <Text style={{color: "#fff", fontWeight: "900"}}>Send</Text>
           </Pressable>
-        ))}
+        </View>
       </View>
-
-      <View style={{flexDirection: "row", gap: 8, alignItems: "flex-end"}}>
-        <TextInput
-          value={input}
-          onChangeText={setInput}
-          placeholder="Ask for an outfit, a swap, or a tweak"
-          multiline
-          style={{
-            flex: 1,
-            borderWidth: 1,
-            borderColor: "#ddd",
-            borderRadius: 14,
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-            maxHeight: 120,
-          }}
-        />
-        <Pressable
-          onPress={() => void onSend()}
-          disabled={loading || !input.trim()}
-          style={{
-            paddingVertical: 12,
-            paddingHorizontal: 16,
-            borderRadius: 12,
-            backgroundColor: "#111",
-            opacity: loading || !input.trim() ? 0.6 : 1,
-          }}
-        >
-          <Text style={{color: "#fff", fontWeight: "900"}}>Send</Text>
-        </Pressable>
-      </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }

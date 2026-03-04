@@ -15,9 +15,11 @@ import {
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { useAuth } from "../../src/hooks/useAuth";
 import { db } from "../../src/lib/firebase";
+import { dockSpace } from "../constants/dock";
 
 type Status = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 
@@ -41,6 +43,8 @@ const TABS: { key: "NEEDS_WASH" | "IN_LAUNDRY" | "CLEAN"; label: string }[] = [
 export default function LaundryScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  const insets = useSafeAreaInsets();
+  const floatingTabSpace = dockSpace(insets.bottom) + 18;
   const [allItems, setAllItems] = useState<ClothingItem[]>([]);
   const [tab, setTab] = useState<"NEEDS_WASH" | "IN_LAUNDRY" | "CLEAN">(
     "IN_LAUNDRY"
@@ -262,6 +266,7 @@ export default function LaundryScreen() {
       <FlatList
         data={listItems}
         keyExtractor={(item) => item.id}
+        contentContainerStyle={{ paddingBottom: floatingTabSpace + 16 }}
         ListHeaderComponent={Header}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         ListEmptyComponent={

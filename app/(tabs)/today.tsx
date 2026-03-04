@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Image, Pressable, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "../../src/hooks/useAuth";
 import { db } from "../../src/lib/firebase";
@@ -19,6 +20,7 @@ import { getItemImageUrl } from "../../src/lib/itemImage";
 import { MAX_WEARS_BEFORE_WASH, toCanonicalCategory } from "../../src/lib/items";
 import { toDateKey } from "../../src/lib/outfits";
 import { ClothingItem } from "../../src/types/ClothingItem";
+import { dockSpace } from "../constants/dock";
 
 type OutfitDoc = {
   dateKey: string;
@@ -59,6 +61,8 @@ function isSameLocalDate(a: Date, b: Date) {
 export default function TodayScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  const insets = useSafeAreaInsets();
+  const floatingTabSpace = dockSpace(insets.bottom) + 18;
 
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [outfit, setOutfit] = useState<OutfitDoc | null>(null);
@@ -353,6 +357,7 @@ export default function TodayScreen() {
           <FlatList
             data={items}
             keyExtractor={(x) => x.id}
+            contentContainerStyle={{ paddingBottom: floatingTabSpace + 16 }}
             ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
             renderItem={({ item }) => {
               const selected = selectedIds.includes(item.id);
@@ -398,7 +403,7 @@ export default function TodayScreen() {
         </>
       )}
 
-      <View style={{ height: 18 }} />
+      <View style={{ height: floatingTabSpace + 16 }} />
     </View>
   );
 }

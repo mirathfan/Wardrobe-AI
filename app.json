@@ -11,7 +11,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.closet",
-      "deploymentTarget": "17.0"
+      "deploymentTarget": "17.0",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We use your location to show local weather in your wardrobe insights.",
+        "NSCalendarsUsageDescription": "We use your calendar to show today’s events in your wardrobe insights."
+      }
     },
     "android": {
       "adaptiveIcon": {

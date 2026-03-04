@@ -1,5 +1,5 @@
 import * as ImagePicker from "expo-image-picker";
-import { router, useFocusEffect } from "expo-router";
+import { router } from "expo-router";
 import {
   collection,
   deleteDoc,
@@ -250,6 +250,7 @@ export function useAddItemController({
   const userEditedKeysRef = useRef<Set<string>>(new Set());
   const syncedPreviewUriRef = useRef<string | null>(null);
   const prevEditItemIdRef = useRef<string | null>(null);
+  const isFinalizingRef = useRef(false);
   const createSessionRef = useRef({
     sessionId: makeCreateSessionId(),
     requestId: 0,
@@ -352,6 +353,30 @@ export function useAddItemController({
       draftSubscriptionRef.current = null;
     }
   }, []);
+
+  const attachDraftSubscription = useCallback(
+    (itemId: string, sessionId?: string) => {
+      if (!uid) return;
+      stopDraftSubscription();
+      const ref = doc(db, "users", uid, "items", itemId);
+      const activeSessionId = sessionId ?? createSessionRef.current.sessionId;
+      draftSubscriptionRef.current = onSnapshot(ref, (snap) => {
+        if (
+          createSessionRef.current.sessionId !== activeSessionId ||
+          createSessionRef.current.draftId !== itemId
+        ) {
+          if (__DEV__) {
+            console.log("[AddFlow] ignoring stale async result (session mismatch)");
+          }
+          return;
+        }
+        if (!snap.exists()) return;
+        maybeApplyAutofillFromDraft(snap.data() as any);
+      });
+      createSessionRef.current.unsub = draftSubscriptionRef.current;
+    },
+    [maybeApplyAutofillFromDraft, stopDraftSubscription, uid]
+  );
 
   const beginAsyncRequest = useCallback(() => {
     createSessionRef.current.requestId += 1;
@@ -480,7 +505,7 @@ export function useAddItemController({
     [cleanupDraftDoc, draftItemId, isEdit, stopDraftSubscription]
   );
 
-  function maybeApplyAutofillFromDraft(data: any) {
+  const maybeApplyAutofillFromDraft = useCallback((data: any) => {
     setIngestionStatus(normalizeIngestionStatus(data?.ingestion?.status));
     setAiPattern(norm(data?.pattern) || null);
     setAiMaterial(norm(data?.material) || null);
@@ -556,7 +581,17 @@ export function useAddItemController({
         setSelectedColors(incomingColors);
       }
     }
-  }
+  }, [
+    category,
+    fit,
+    material,
+    occasionTags.length,
+    pattern,
+    seasonTags.length,
+    selectedCategory,
+    selectedColors.length,
+    subCategory,
+  ]);
 
   async function startDraftAutofill(params: {
     photoHash: string;
@@ -655,20 +690,7 @@ export function useAddItemController({
       syncedPreviewUriRef.current = localPreviewUri;
 
       const draftSessionId = token.sessionId;
-      draftSubscriptionRef.current = onSnapshot(draftRef, (snap) => {
-        if (
-          createSessionRef.current.sessionId !== draftSessionId ||
-          createSessionRef.current.draftId !== draftRef.id
-        ) {
-          if (__DEV__) {
-            console.log("[AddFlow] ignoring stale async result (session mismatch)");
-          }
-          return;
-        }
-        if (!snap.exists()) return;
-        maybeApplyAutofillFromDraft(snap.data() as any);
-      });
-      createSessionRef.current.unsub = draftSubscriptionRef.current;
+      attachDraftSubscription(draftRef.id, draftSessionId);
 
       if (previousDraftId && previousDraftId !== draftRef.id) {
         void cleanupDraftDoc(previousDraftId);
@@ -782,28 +804,135 @@ export function useAddItemController({
     };
   }, [stopDraftSubscription]);
 
-  useFocusEffect(
-    useCallback(() => {
-      const prevEdit = prevEditItemIdRef.current;
-      const nowEdit = editItemId ?? null;
+  const syncDraftProgress = useCallback(async () => {
+    if (!uid || isEdit || !draftItemId) return;
+    try {
+      const draftRef = doc(db, "users", uid, "items", draftItemId);
+      await updateDoc(draftRef, {
+        brand: norm(brand) || "",
+        name: norm(name) || "",
+        category: category ?? Category.TOP,
+        subCategory: isValidCategorySubCategory(selectedCategory, subCategory)
+          ? subCategory
+          : null,
+        colors: selectedColors.map(normColor).filter(Boolean),
+        pattern: norm(pattern) || null,
+        material: norm(material) || null,
+        size: norm(size) || null,
+        notes: norm(notes) || null,
+        priceAmount: parsePriceToNumber(priceAmount),
+        priceCurrency,
+        purchaseDate: parsePurchaseDate(purchaseDate) === "INVALID" ? null : parsePurchaseDate(purchaseDate),
+        ...(occasionTags.length ? { occasionTags } : {}),
+        ...(seasonTags.length ? { seasonTags } : {}),
+        ...(fit ? { fit } : {}),
+        ...(rise ? { rise } : {}),
+        ...(legShape ? { legShape } : {}),
+        ...(warmthPreference != null ? { warmthPreference } : {}),
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      console.log("[AddFlow] draft sync on blur failed", error);
+    }
+  }, [
+    brand,
+    category,
+    draftItemId,
+    fit,
+    isEdit,
+    legShape,
+    material,
+    name,
+    notes,
+    occasionTags,
+    pattern,
+    priceAmount,
+    priceCurrency,
+    purchaseDate,
+    rise,
+    seasonTags,
+    selectedCategory,
+    selectedColors,
+    size,
+    subCategory,
+    uid,
+    warmthPreference,
+  ]);
 
-      prevEditItemIdRef.current = nowEdit;
+  const onScreenFocus = useCallback(() => {
+    const prevEdit = prevEditItemIdRef.current;
+    const nowEdit = editItemId ?? null;
+    prevEditItemIdRef.current = nowEdit;
 
-      if (nowEdit) {
-        return undefined;
-      }
+    setShowCurrencyPicker(false);
+    setShowAttributeSheet(null);
 
-      if (hasActiveCreateState) {
-        return undefined;
-      }
+    if (nowEdit) return;
+    if (!hasActiveCreateState && prevEdit && !nowEdit) {
+      void resetCreateFlow("focus-create-after-edit");
+      return;
+    }
 
-      if (prevEdit && !nowEdit) {
-        void resetCreateFlow("focus-create-after-edit");
-      }
+    const existingDraftId = createSessionRef.current.draftId ?? draftItemId;
+    if (existingDraftId && uid) {
+      createSessionRef.current.draftId = existingDraftId;
+      const sessionId = createSessionRef.current.sessionId;
+      void getDoc(doc(db, "users", uid, "items", existingDraftId)).then((snap) => {
+        if (!snap.exists()) return;
+        if (createSessionRef.current.sessionId !== sessionId) return;
+        maybeApplyAutofillFromDraft(snap.data() as any);
+      });
+      attachDraftSubscription(existingDraftId, sessionId);
+    }
+  }, [
+    attachDraftSubscription,
+    draftItemId,
+    editItemId,
+    hasActiveCreateState,
+    maybeApplyAutofillFromDraft,
+    resetCreateFlow,
+    uid,
+  ]);
 
-      return undefined;
-    }, [editItemId, hasActiveCreateState, resetCreateFlow])
-  );
+  const onScreenBlur = useCallback(() => {
+    createSessionRef.current.requestId += 1;
+    if (refineTimeoutRef.current) {
+      clearTimeout(refineTimeoutRef.current);
+      refineTimeoutRef.current = null;
+    }
+    setShowCurrencyPicker(false);
+    setShowAttributeSheet(null);
+    setRefiningCutout(false);
+    stopDraftSubscription();
+
+    const isDirty =
+      !!pendingPhotoUri ||
+      !!brand ||
+      !!name ||
+      !!category ||
+      !!subCategory ||
+      selectedColors.length > 0 ||
+      !!pattern ||
+      !!material ||
+      !!size ||
+      !!notes;
+    if (isDirty && !isFinalizingRef.current) {
+      void syncDraftProgress();
+    }
+  }, [
+    brand,
+    category,
+    material,
+    name,
+    notes,
+    pattern,
+    pendingPhotoUri,
+    selectedColors.length,
+    size,
+    stopDraftSubscription,
+    subCategory,
+    syncDraftProgress,
+  ]);
 
   const colorOptions = useMemo(() => {
     const set = new Set<string>(DEFAULT_COLORS.map(normColor));
@@ -861,6 +990,20 @@ export function useAddItemController({
       percent: Math.round(ratio * 100),
     };
   }, [aiHasCategory, aiHasColors, brand, hasPhoto, material, name, pattern]);
+
+  const requiredChecklist = useMemo(
+    () => [
+      { id: "photo", label: "Photo", done: hasPhoto, rowId: "photo" },
+      { id: "category", label: "Category", done: aiHasCategory, rowId: "category" },
+      { id: "colors", label: "Color", done: aiHasColors, rowId: "colors" },
+    ],
+    [aiHasCategory, aiHasColors, hasPhoto]
+  );
+
+  const nextMissing = useMemo(
+    () => requiredChecklist.find((item) => !item.done) ?? null,
+    [requiredChecklist]
+  );
 
   const aiSuggestions = useMemo(() => {
     const items: { key: string; label: string; onPress: () => void }[] = [];
@@ -921,8 +1064,30 @@ export function useAddItemController({
           : "⚠️ Material/pattern missing",
       ];
     }
-    return ["Waiting for AI autofill…"];
+    return [];
   }, [aiHasCategory, aiHasColors, aiMaterial, aiPattern, ingestionStatus]);
+
+  const aiStatusPill = useMemo(() => {
+    if (ingestionStatus === "failed") {
+      return { label: "AI failed — fill manually", tone: "error" as const };
+    }
+    if (ingestionStatus === "pending" || ingestionStatus === "processing") {
+      return { label: "AI filling details…", tone: "running" as const };
+    }
+    if (ingestionStatus === "done" && aiSuggestions.length > 0) {
+      return { label: "AI suggestions ready", tone: "ready" as const };
+    }
+    if (ingestionStatus === "done") {
+      return { label: "AI ready", tone: "ready" as const };
+    }
+    return { label: "AI idle", tone: "idle" as const };
+  }, [aiSuggestions.length, ingestionStatus]);
+
+  const canApplyAiSuggestions = ingestionStatus === "done" && aiSuggestions.length > 0;
+
+  const applyAiSuggestions = useCallback(() => {
+    aiSuggestions.forEach((suggestion) => suggestion.onPress());
+  }, [aiSuggestions]);
 
   function toggleColor(c: string) {
     const color = normColor(c);
@@ -1267,6 +1432,7 @@ export function useAddItemController({
   }
 
   async function saveItem() {
+    isFinalizingRef.current = true;
     const b = norm(brand);
     const n = norm(name);
 
@@ -1424,6 +1590,7 @@ export function useAddItemController({
     } finally {
       setUploadingPhoto(false);
       setLoading(false);
+      isFinalizingRef.current = false;
     }
   }
 
@@ -1560,12 +1727,27 @@ export function useAddItemController({
     showDetails,
     showAdvanced,
     setupProgress,
+    requiredChecklist,
+    nextMissing,
     aiSuggestions,
     aiStatusRows,
+    aiStatusPill,
+    canApplyAiSuggestions,
     hasRequiredPhoto,
     canSave,
     ctaStatusText,
     rowKeys,
+    isDirty:
+      !!pendingPhotoUri ||
+      !!brand ||
+      !!name ||
+      !!category ||
+      !!subCategory ||
+      selectedColors.length > 0 ||
+      !!pattern ||
+      !!material ||
+      !!size ||
+      !!notes,
   };
 
   const actions = {
@@ -1602,6 +1784,7 @@ export function useAddItemController({
     clearUserEdited,
     toggleSection,
     toggleColor,
+    applyAiSuggestions,
     handleRefineValueChange,
     handleRefineValueComplete,
     handleRefineReset,
@@ -1610,6 +1793,8 @@ export function useAddItemController({
     resetCreateFlow,
     duplicateLastItem,
     stopDraftSubscription,
+    onScreenFocus,
+    onScreenBlur,
   };
 
   return { state, derived, actions, styles };
