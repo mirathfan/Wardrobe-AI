@@ -5,8 +5,15 @@ export type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 export type ClothingPattern =
   | "solid"
   | "striped"
+  | "plaid"
   | "graphic"
   | "checked"
+  | "logo"
+  | "text"
+  | "floral"
+  | "dots"
+  | "camouflage"
+  | "other"
   | "textured"
   | "unknown";
 
@@ -61,6 +68,8 @@ export type ClothingItem = {
   size?: string | null;
   notes?: string | null;
   price?: number | null;
+  priceAmount?: number | null;
+  priceCurrency?: string | null;
   purchaseDate?: string | null;
   photoUrl?: string | null;
   photoUri?: string | null;
@@ -72,4 +81,5 @@ export type ClothingItem = {
   createdAt: number;
   lastWornDate?: number | null;
   lastWashedDate?: number | null;
+  lastWashedAt?: number | null;
 };

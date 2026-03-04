@@ -44,6 +44,7 @@ type ItemDoc = {
   photos?: {
     primaryUrl?: string | null;
     urls?: string[];
+    cleanedPhotoUrl?: string | null;
     croppedUrl?: string;
     thumbUrl?: string;
   };
@@ -200,6 +201,7 @@ function toMillis(value: LastRunAtValue): number | null {
 
 function extractPhotoUrls(item: ItemDoc): string[] {
   const values = [
+    item.photos?.cleanedPhotoUrl ?? "",
     item.photos?.primaryUrl ?? "",
     ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
     item.photoUrl ?? "",
@@ -545,21 +547,27 @@ async function uploadImageAndGetUrl(path: string, bytes: Buffer, contentType = "
   return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
 }
 
-async function detectPixelColor(croppedBytes: Buffer): Promise<{ pixelColor: AllowedColor; pixelHex: string }> {
+async function detectPixelColor(
+  croppedBytes: Buffer
+): Promise<{ pixelColor: AllowedColor; pixelHex: string }> {
   const tiny = await sharp(croppedBytes)
     .resize({width: 64, height: 64, fit: "inside"})
-    .removeAlpha()
+    .ensureAlpha()
     .raw()
     .toBuffer({resolveWithObject: true});
 
   const histogram = new Map<string, {count: number; r: number; g: number; b: number}>();
   const channels = tiny.info.channels;
   const data = tiny.data;
+  let opaquePixels = 0;
 
   for (let i = 0; i < data.length; i += channels) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
+    const a = channels >= 4 ? data[i + 3] : 255;
+    if (a < 20) continue;
+    opaquePixels += 1;
     const key = `${Math.floor(r / 16)}-${Math.floor(g / 16)}-${Math.floor(b / 16)}`;
     const existing = histogram.get(key);
     if (existing) {
@@ -579,7 +587,11 @@ async function detectPixelColor(croppedBytes: Buffer): Promise<{ pixelColor: All
     }
   }
 
-  if (!dominant) {
+  if (!dominant || opaquePixels < 24) {
+    logger.warn("Pixel color fallback: too few opaque pixels", {
+      opaquePixels,
+      histogramBuckets: histogram.size,
+    });
     return {pixelColor: "grey", pixelHex: "#808080"};
   }
 
@@ -883,13 +895,16 @@ export const ingestItemFromPhotos = onDocumentWritten(
       }
 
       const cropRect = clampBbox(extracted.bbox, imageWidth, imageHeight);
-      const croppedBytes = await sharp(originalBytes)
+      const croppedForColorBytes = await sharp(originalBytes)
         .extract({
           left: cropRect.left,
           top: cropRect.top,
           width: cropRect.cropWidth,
           height: cropRect.cropHeight,
         })
+        .png()
+        .toBuffer();
+      const croppedBytes = await sharp(croppedForColorBytes)
         .jpeg({quality: 85})
         .toBuffer();
       const thumbBytes = await sharp(croppedBytes)
@@ -902,7 +917,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const croppedUrl = await uploadImageAndGetUrl(croppedStoragePath, croppedBytes);
       const thumbUrl = await uploadImageAndGetUrl(thumbStoragePath, thumbBytes);
 
-      const pixelResult = await detectPixelColor(croppedBytes);
+      const pixelResult = await detectPixelColor(croppedForColorBytes);
       const pixelPrimary = pixelResult.pixelColor;
       const pixelColors: AllowedColor[] = [pixelPrimary];
 

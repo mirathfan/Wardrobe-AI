@@ -102,6 +102,11 @@ service cloud.firestore {
         && (!changed.hasAny(["colorNeedsReview"]) || validOptionalBool(data.colorNeedsReview))
         && (!changed.hasAny(["crop"]) || validCrop(data.crop))
         && (!changed.hasAny(["cleanedUpdatedAt"]) || data.cleanedUpdatedAt is number)
+        && (!changed.hasAny(["priceAmount"]) || validOptionalNumber(data.priceAmount))
+        && (!changed.hasAny(["priceCurrency"]) || validOptionalString(data.priceCurrency))
+        && (!changed.hasAny(["lastWashedAt"]) || validOptionalNumber(data.lastWashedAt))
+        && (!changed.hasAny(["pattern"]) || validOptionalString(data.pattern))
+        && (!changed.hasAny(["material"]) || validOptionalString(data.material))
         && (!changed.hasAny(["photos"]) || validPhotosMap(data.photos))
         && (!changed.hasAny(["uid"]) || data.uid == uid)
         && noForeignUidField(data, uid);

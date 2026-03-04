@@ -1,7 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { deleteDoc, deleteField, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
@@ -28,6 +28,11 @@ function formatDate(value?: any | null) {
     return new Date(value).toLocaleDateString();
   }
   return "—";
+}
+
+function formatDateOrNotSet(value?: any | null) {
+  if (!value) return "Not set";
+  return formatDate(value);
 }
 
 function ingestionStatusLabel(item: ItemDetails) {
@@ -58,6 +63,9 @@ export default function ItemDetailsScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [colorSaving, setColorSaving] = useState(false);
   const [colorSavedAt, setColorSavedAt] = useState<number | null>(null);
+  const [detailImageOpen, setDetailImageOpen] = useState(false);
+  const [patternDraft, setPatternDraft] = useState("");
+  const [materialDraft, setMaterialDraft] = useState("");
   const itemImageUri = getItemImageUrl(item, { variant: "hero" });
 
   useEffect(() => {
@@ -74,6 +82,8 @@ export default function ItemDetailsScreen() {
 
   useEffect(() => {
     if (!item) return;
+    setPatternDraft(item.pattern ?? "");
+    setMaterialDraft(item.material ?? "");
     console.log("[ItemScreen] image fields:", {
       itemId: item.id,
       photos: item.photos ?? null,
@@ -237,8 +247,25 @@ export default function ItemDetailsScreen() {
     }
   }
 
+  async function saveField(field: "pattern" | "material", value: string | null) {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+    try {
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
+        [field]: value,
+      });
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? `Failed to update ${field}`);
+    }
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }} edges={["top"]}>
+      <ItemImageModal
+        visible={detailImageOpen}
+        uri={itemImageUri}
+        onClose={() => setDetailImageOpen(false)}
+      />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <Pressable onPress={() => router.back()} style={pill}>
@@ -256,7 +283,8 @@ export default function ItemDetailsScreen() {
           <>
             <View style={card}>
               {itemImageUri ? (
-                <View
+                <Pressable
+                  onPress={() => setDetailImageOpen(true)}
                   style={{ width: "100%", height: 260, borderRadius: 14 }}
                 >
                   <View
@@ -264,7 +292,7 @@ export default function ItemDetailsScreen() {
                       width: "100%",
                       height: 260,
                       borderRadius: 14,
-                      backgroundColor: "#ff4d4f",
+                      backgroundColor: "#fff",
                       overflow: "hidden",
                       alignItems: "center",
                       justifyContent: "center",
@@ -276,7 +304,7 @@ export default function ItemDetailsScreen() {
                       resizeMode="contain"
                     />
                   </View>
-                </View>
+                </Pressable>
               ) : (
                 <View style={{ height: 260, borderRadius: 14, backgroundColor: "#f3f3f3", alignItems: "center", justifyContent: "center" }}>
                   <Text style={{ color: "#777", fontWeight: "800" }}>No photo</Text>
@@ -340,12 +368,58 @@ export default function ItemDetailsScreen() {
                   Wears since wash: {item.wearCountSinceWash ?? 0}
                 </Text>
                 <Text style={{ color: "#666" }}>Last worn: {formatDate(item.lastWornDate)}</Text>
-                <Text style={{ color: "#666" }}>Last washed: {formatDate(item.lastWashedDate)}</Text>
+                <Text style={{ color: "#666" }}>
+                  Last washed: {formatDateOrNotSet(item.lastWashedAt ?? item.lastWashedDate)}
+                </Text>
 
                 {item.size ? <Text style={{ color: "#666" }}>Size: {item.size}</Text> : null}
-                {typeof item.price === "number" ? <Text style={{ color: "#666" }}>Price: {item.price}</Text> : null}
+                {typeof item.priceAmount === "number" || typeof item.price === "number" ? (
+                  <Text style={{ color: "#666" }}>
+                    Price: {item.priceCurrency || "USD"} {item.priceAmount ?? item.price}
+                  </Text>
+                ) : null}
                 {item.purchaseDate ? <Text style={{ color: "#666" }}>Purchase date: {item.purchaseDate}</Text> : null}
                 {item.notes ? <Text style={{ color: "#666" }}>Notes: {item.notes}</Text> : null}
+                <View style={{ gap: 8, marginTop: 6 }}>
+                  <Text style={{ color: "#222", fontWeight: "800" }}>Pattern</Text>
+                  <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                    <Pressable
+                      onPress={() => {
+                        setPatternDraft("");
+                        void saveField("pattern", null);
+                      }}
+                      style={pill}
+                    >
+                      <Text style={pillText}>Auto (AI)</Text>
+                    </Pressable>
+                    <TextInput
+                      value={patternDraft}
+                      onChangeText={setPatternDraft}
+                      onEndEditing={() => void saveField("pattern", patternDraft.trim() || null)}
+                      placeholder={item.pattern || "Auto (AI)"}
+                      style={[textInput, { flex: 1 }]}
+                    />
+                  </View>
+                  <Text style={{ color: "#222", fontWeight: "800" }}>Material</Text>
+                  <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                    <Pressable
+                      onPress={() => {
+                        setMaterialDraft("");
+                        void saveField("material", null);
+                      }}
+                      style={pill}
+                    >
+                      <Text style={pillText}>Auto (AI)</Text>
+                    </Pressable>
+                    <TextInput
+                      value={materialDraft}
+                      onChangeText={setMaterialDraft}
+                      onEndEditing={() => void saveField("material", materialDraft.trim() || null)}
+                      placeholder={item.material || "Auto (AI)"}
+                      style={[textInput, { flex: 1 }]}
+                    />
+                  </View>
+                </View>
 
                 {ingestionStatusLabel(item) === "done" ? (
                   <View style={{ marginTop: 10, gap: 8 }}>
@@ -501,3 +575,71 @@ const pill = {
 const pillText = {
   fontWeight: "900",
 } as const;
+
+const textInput = {
+  borderWidth: 1,
+  borderColor: "#ddd",
+  borderRadius: 12,
+  paddingHorizontal: 12,
+  paddingVertical: 10,
+  fontSize: 16,
+} as const;
+
+function ItemImageModal(props: {
+  visible: boolean;
+  uri: string | null;
+  onClose: () => void;
+}) {
+  const { visible, uri, onClose } = props;
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: "#111" }}>
+        <View
+          style={{
+            paddingTop: 18,
+            paddingHorizontal: 16,
+            paddingBottom: 12,
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }}>Photo</Text>
+          <Pressable onPress={onClose}>
+            <Text style={{ color: "#fff", fontWeight: "800" }}>Close</Text>
+          </Pressable>
+        </View>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{
+            flexGrow: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+          minimumZoomScale={1}
+          maximumZoomScale={4}
+          bouncesZoom={false}
+          centerContent
+        >
+          {uri ? (
+            <View
+              style={{
+                width: "100%",
+                minHeight: 360,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "#fff",
+                borderRadius: 20,
+                overflow: "hidden",
+              }}
+            >
+              <Image source={{ uri }} style={{ width: "100%", height: 520 }} resizeMode="contain" />
+            </View>
+          ) : null}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}

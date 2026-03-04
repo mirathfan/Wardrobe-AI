@@ -202,8 +202,8 @@ function RefineControls(props: RefineControlsProps) {
   );
 }
 
-function PreviewCanvas(props: { uri: string; large?: boolean }) {
-  const { uri, large = false } = props;
+function PreviewCanvas(props: { uri: string; large?: boolean; showAlphaBg: boolean }) {
+  const { uri, large = false, showAlphaBg } = props;
 
   return (
     <View
@@ -213,7 +213,7 @@ function PreviewCanvas(props: { uri: string; large?: boolean }) {
         borderRadius: large ? 20 : 16,
         borderWidth: 1,
         borderColor: "#e7e7e7",
-        backgroundColor: "#ff4d4f",
+        backgroundColor: showAlphaBg ? "#ff4d4f" : "#fff",
         overflow: "hidden",
         alignItems: "center",
         justifyContent: "center",
@@ -244,6 +244,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   } = props;
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [sliderErrored, setSliderErrored] = useState(false);
+  const [showAlphaBg, setShowAlphaBg] = useState(false);
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
 
   useEffect(() => {
@@ -282,7 +283,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
 
         {previewUri ? (
           <Pressable onPress={() => setIsModalVisible(true)}>
-            <PreviewCanvas uri={previewUri} large />
+            <PreviewCanvas uri={previewUri} large showAlphaBg={showAlphaBg} />
           </Pressable>
         ) : (
           <View
@@ -322,6 +323,25 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
           <Text style={{ color: "#666" }}>
             New photo selected. It will upload to Firebase Storage when you save.
           </Text>
+        ) : null}
+
+        {previewUri ? (
+          <Pressable
+            onPress={() => setShowAlphaBg((prev) => !prev)}
+            style={{
+              alignSelf: "flex-start",
+              paddingVertical: 8,
+              paddingHorizontal: 12,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: "#ddd",
+              backgroundColor: "#fff",
+            }}
+          >
+            <Text style={{ color: "#111", fontWeight: "700" }}>
+              {showAlphaBg ? "Hide alpha background" : "Show alpha background"}
+            </Text>
+          </Pressable>
         ) : null}
 
         {canRefine ? (
@@ -388,7 +408,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
                   height: Math.max(360, screenHeight * 0.55),
                   borderRadius: 24,
                   overflow: "hidden",
-                  backgroundColor: "#ff4d4f",
+                  backgroundColor: showAlphaBg ? "#ff4d4f" : "#fff",
                   alignItems: "center",
                   justifyContent: "center",
                 }}

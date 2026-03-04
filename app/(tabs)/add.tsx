@@ -12,6 +12,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -53,6 +54,7 @@ const DEFAULT_COLORS = [
 ];
 
 const DEFAULT_REFINE_VALUE = 1 / 3;
+const CURRENCIES = ["USD", "INR", "EUR", "GBP", "CAD", "AUD"] as const;
 
 function makeCreateSessionId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -131,6 +133,8 @@ export default function AddItemScreen() {
   const [name, setName] = useState("");
   const [category, setCategory] = useState<Category | null>(null);
   const [subCategory, setSubCategory] = useState("");
+  const [pattern, setPattern] = useState<string | null>(null);
+  const [material, setMaterial] = useState<string | null>(null);
 
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [customColor, setCustomColor] = useState("");
@@ -138,7 +142,9 @@ export default function AddItemScreen() {
 
   const [size, setSize] = useState("");
   const [notes, setNotes] = useState("");
-  const [price, setPrice] = useState("");
+  const [priceAmount, setPriceAmount] = useState("");
+  const [priceCurrency, setPriceCurrency] = useState<string>("USD");
+  const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [purchaseDate, setPurchaseDate] = useState("");
 
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
@@ -190,8 +196,8 @@ export default function AddItemScreen() {
     !!originalPickedPhotoUri &&
     !!(pendingPhotoUri || pendingCleanedPhotoUri);
   const selectedCategory = category ?? Category.TOP;
-  const displayedPattern = aiPattern || "Auto (AI)";
-  const displayedMaterial = aiMaterial || "Auto (AI)";
+  const displayedPattern = pattern ?? aiPattern ?? "Auto (AI)";
+  const displayedMaterial = material ?? aiMaterial ?? "Auto (AI)";
 
   function markUserEdited(...keys: string[]) {
     keys.forEach((key) => userEditedKeysRef.current.add(key));
@@ -285,12 +291,16 @@ export default function AddItemScreen() {
       setName("");
       setCategory(null);
       setSubCategory("");
+      setPattern(null);
+      setMaterial(null);
       setSelectedColors([]);
       setCustomColor("");
       setAddingCustomColor(false);
       setSize("");
       setNotes("");
-      setPrice("");
+      setPriceAmount("");
+      setPriceCurrency("USD");
+      setShowCurrencyPicker(false);
       setPurchaseDate("");
       setPhotoUrl(null);
       setPhotoUri(null);
@@ -335,6 +345,12 @@ export default function AddItemScreen() {
 
     if (!userEditedKeysRef.current.has("category") && !category && data?.category) {
       setCategory(normalizeCategoryForStorage(data.category));
+    }
+    if (!userEditedKeysRef.current.has("pattern") && !pattern && norm(data?.pattern)) {
+      setPattern(norm(data.pattern));
+    }
+    if (!userEditedKeysRef.current.has("material") && !material && norm(data?.material)) {
+      setMaterial(norm(data.material));
     }
 
     const normalizedCategory = normalizeCategoryForStorage(
@@ -427,7 +443,8 @@ export default function AddItemScreen() {
         category: Category.TOP,
         wearCountSinceWash: 0,
         lastWornDate: null,
-        lastWashedDate: now,
+        lastWashedDate: null,
+        lastWashedAt: null,
         isDraft: true,
         photos: {
           primaryUrl: uploaded.primaryUrl,
@@ -514,6 +531,8 @@ export default function AddItemScreen() {
         setName(data.name ?? "");
         const loadedCategory = normalizeCategoryForStorage(data.category);
         setCategory(loadedCategory);
+        setPattern(norm(data.pattern) || null);
+        setMaterial(norm(data.material) || null);
         setSubCategory(
           isValidCategorySubCategory(loadedCategory, data.subCategory)
             ? data.subCategory
@@ -533,7 +552,14 @@ export default function AddItemScreen() {
 
         setSize(data.size ?? "");
         setNotes(data.notes ?? "");
-        setPrice(data.price != null ? String(data.price) : "");
+        setPriceAmount(
+          data.priceAmount != null
+            ? String(data.priceAmount)
+            : data.price != null
+              ? String(data.price)
+              : ""
+        );
+        setPriceCurrency(data.priceCurrency ?? "USD");
         setPurchaseDate(data.purchaseDate ?? "");
 
         setPhotoUrl(data.photoUrl ?? null);
@@ -590,7 +616,8 @@ export default function AddItemScreen() {
     if (!canRefineCutout || !originalPickedPhotoUri) return;
 
     const normalizedValue = Math.max(0, Math.min(1, value));
-    const { threshold, cleanupRadius, feather } = getRefineOptions(normalizedValue);
+    const { threshold, cleanupRadius, feather, edgeTighten, maskToAlpha } =
+      getRefineOptions(normalizedValue);
     const requestKey = getRefineRequestKey(originalPickedPhotoUri, normalizedValue);
     if (lastCompletedRefineKeyRef.current === requestKey) return;
 
@@ -610,6 +637,8 @@ export default function AddItemScreen() {
           threshold,
           cleanupRadius,
           feather,
+          edgeTighten,
+          maskToAlpha,
         });
         if (
           requestId !== latestRefineRequestIdRef.current ||
@@ -868,7 +897,7 @@ export default function AddItemScreen() {
       router.replace("/(auth)/login");
       return Alert.alert("Not signed in", "Please sign in first.");
     }
-    const priceNum = parsePriceToNumber(price);
+    const priceNum = parsePriceToNumber(priceAmount);
     const date = parsePurchaseDate(purchaseDate);
     if (date === "INVALID") {
       return Alert.alert(
@@ -893,9 +922,12 @@ export default function AddItemScreen() {
       wearSlot: wearSlot(category ?? Category.TOP),
       colors: selectedColors.map(normColor).filter(Boolean),
       primaryColor: normColor(selectedColors[0] ?? ""),
+      pattern: norm(pattern) || null,
+      material: norm(material) || null,
       size: norm(size) || null,
       notes: norm(notes) || null,
-      price: priceNum,
+      priceAmount: priceNum,
+      priceCurrency,
       purchaseDate: date,
       updatedAt: Date.now(),
     };
@@ -981,7 +1013,8 @@ export default function AddItemScreen() {
         wearCountSinceWash: 0,
         createdAt: Date.now(),
         lastWornDate: null,
-        lastWashedDate: Date.now(),
+        lastWashedDate: null,
+        lastWashedAt: null,
         ingestion: {
           status: "pending",
           lastRunAt: Date.now(),
@@ -1253,11 +1286,47 @@ export default function AddItemScreen() {
       </View>
 
       <Field label="Pattern">
-        <Text style={{ color: "#666" }}>{displayedPattern}</Text>
+        <View style={{ gap: 8 }}>
+          <Pill
+            label="Auto (AI)"
+            active={!pattern}
+            onPress={() => {
+              clearUserEdited("pattern");
+              setPattern(null);
+            }}
+          />
+          <TextInput
+            value={pattern ?? ""}
+            onChangeText={(value) => {
+              markUserEdited("pattern");
+              setPattern(norm(value) || null);
+            }}
+            placeholder={displayedPattern}
+            style={input}
+          />
+        </View>
       </Field>
 
       <Field label="Material">
-        <Text style={{ color: "#666" }}>{displayedMaterial}</Text>
+        <View style={{ gap: 8 }}>
+          <Pill
+            label="Auto (AI)"
+            active={!material}
+            onPress={() => {
+              clearUserEdited("material");
+              setMaterial(null);
+            }}
+          />
+          <TextInput
+            value={material ?? ""}
+            onChangeText={(value) => {
+              markUserEdited("material");
+              setMaterial(norm(value) || null);
+            }}
+            placeholder={displayedMaterial}
+            style={input}
+          />
+        </View>
       </Field>
 
       <Field label="Size">
@@ -1270,13 +1339,28 @@ export default function AddItemScreen() {
       </Field>
 
       <Field label="Price">
-        <TextInput
-          value={price}
-          onChangeText={setPrice}
-          placeholder="e.g., 220"
-          keyboardType="numeric"
-          style={input}
-        />
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <TextInput
+            value={priceAmount}
+            onChangeText={setPriceAmount}
+            placeholder="e.g., 220"
+            keyboardType="numeric"
+            style={[input, { flex: 1 }]}
+          />
+          <Pressable
+            onPress={() => setShowCurrencyPicker(true)}
+            style={[
+              input,
+              {
+                minWidth: 88,
+                alignItems: "center",
+                justifyContent: "center",
+              },
+            ]}
+          >
+            <Text style={{ fontSize: 16 }}>{priceCurrency}</Text>
+          </Pressable>
+        </View>
       </Field>
 
       <Field label="Purchase date">
@@ -1309,6 +1393,63 @@ export default function AddItemScreen() {
       </Pressable>
 
       <View style={{ height: 30 }} />
+
+      <Modal
+        visible={showCurrencyPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCurrencyPicker(false)}
+      >
+        <Pressable
+          onPress={() => setShowCurrencyPicker(false)}
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.2)",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <View
+            style={{
+              width: "100%",
+              maxWidth: 320,
+              borderRadius: 16,
+              backgroundColor: "#fff",
+              padding: 14,
+              gap: 8,
+            }}
+          >
+            <Text style={{ fontSize: 16, fontWeight: "800" }}>Select currency</Text>
+            {CURRENCIES.map((currency) => (
+              <Pressable
+                key={currency}
+                onPress={() => {
+                  setPriceCurrency(currency);
+                  setShowCurrencyPicker(false);
+                }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: priceCurrency === currency ? "#111" : "#ddd",
+                  backgroundColor: priceCurrency === currency ? "#111" : "#fff",
+                }}
+              >
+                <Text
+                  style={{
+                    color: priceCurrency === currency ? "#fff" : "#111",
+                    fontWeight: "700",
+                  }}
+                >
+                  {currency}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }
