@@ -3,44 +3,68 @@ import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
 import {
+  applyFollowupToIntent,
   clampNumOutfits,
   inferRequestedOutfitCount,
   MODEL,
   OutfitChatConstraints,
+  OutfitFollowup,
   OutfitIntentV1,
   OutfitResult,
   Slot,
+  WardrobeItem,
   fetchWardrobeItems,
   generateOutfitCandidates,
   normalizeColorList,
   normalizeParsedIntent,
   persistGeneratedOutfits,
+  resolveItemHints,
   safeJsonExtract,
   swapOutfitSlot,
 } from "./shared/outfitEngine";
+import { getOrRefreshWardrobeSummary } from "./shared/wardrobeSummary";
 
 if (!getApps().length) {
   initializeApp();
 }
 
-type ChatAction = "none" | "generate_outfits" | "swap_item" | "ask_clarify";
+type ChatAction = "none" | "generate_outfits" | "swap_item" | "tweak" | "ask_clarify";
 
 type ChatResponseShape = {
   assistantText?: string;
   action?: ChatAction;
-  intentText?: string;
-  numOutfits?: number | null;
+  intentText?: string | null;
+  outfitCount?: number | null;
   constraints?: OutfitChatConstraints;
-  swap?: {
+  references?: {
     outfitId?: string | null;
     slot?: Slot | null;
   };
+  followup?: OutfitFollowup;
 };
 
 type ChatMessageDoc = {
   role: "user" | "assistant";
   text: string;
   createdAt?: Timestamp | {toMillis?: () => number} | null;
+  outfits?: OutfitResult[];
+  action?: string;
+  debug?: Record<string, unknown> | null;
+};
+
+type UserProfile = {
+  heightCm?: number;
+  weightKg?: number;
+  genderPresentation?: "masc" | "fem" | "neutral" | null;
+  styleVibe?: string[];
+  fitPref?: "slim" | "regular" | "oversized" | null;
+  colorWanted?: string[];
+  colorAvoid?: string[];
+  brandLiked?: string[];
+  brandAvoid?: string[];
+  climatePref?: "runs_cold" | "neutral" | "runs_hot" | null;
+  dressCode?: string[];
+  shoeSize?: string | null;
 };
 
 function toMillis(value: ChatMessageDoc["createdAt"]): number {
@@ -57,6 +81,7 @@ function normalizeAction(value: unknown): ChatAction {
     raw === "none" ||
     raw === "generate_outfits" ||
     raw === "swap_item" ||
+    raw === "tweak" ||
     raw === "ask_clarify"
   ) {
     return raw;
@@ -71,26 +96,115 @@ function normalizeSlot(value: unknown): Slot | null {
     : null;
 }
 
-function buildProfileSummary(profile: Record<string, unknown> | null | undefined): string {
-  if (!profile) {
-    return "User prefers black often, leans casual to smart-casual, and is based in Chicago.";
+function normalizeFollowup(value: unknown): OutfitFollowup {
+  const raw = String((value as {type?: unknown})?.type ?? "").trim().toLowerCase();
+  if (
+    raw === "warmer" ||
+    raw === "cooler" ||
+    raw === "more_formal" ||
+    raw === "more_casual" ||
+    raw === "more_colorful" ||
+    raw === "more_minimal"
+  ) {
+    return {type: raw};
   }
+  return {};
+}
 
-  const parts: string[] = [];
-  const location = String(profile.location ?? "").trim();
-  const style = String(profile.stylePreference ?? profile.style ?? "").trim();
-  const colors = Array.isArray(profile.favoriteColors)
-    ? profile.favoriteColors.map((value) => String(value).trim()).filter(Boolean).slice(0, 3)
-    : [];
+function normalizeProfile(profile: unknown): UserProfile | null {
+  if (!profile || typeof profile !== "object") return null;
+  const value = profile as Record<string, unknown>;
+  return {
+    heightCm: typeof value.heightCm === "number" ? value.heightCm : undefined,
+    weightKg: typeof value.weightKg === "number" ? value.weightKg : undefined,
+    genderPresentation:
+      value.genderPresentation === "masc" ||
+      value.genderPresentation === "fem" ||
+      value.genderPresentation === "neutral"
+        ? value.genderPresentation
+        : null,
+    styleVibe: Array.isArray(value.styleVibe)
+      ? value.styleVibe.map((item) => String(item).trim()).filter(Boolean).slice(0, 4)
+      : [],
+    fitPref:
+      value.fitPref === "slim" || value.fitPref === "regular" || value.fitPref === "oversized"
+        ? value.fitPref
+        : null,
+    colorWanted: Array.isArray(value.colorWanted)
+      ? value.colorWanted.map((item) => String(item).trim()).filter(Boolean).slice(0, 3)
+      : [],
+    colorAvoid: Array.isArray(value.colorAvoid)
+      ? value.colorAvoid.map((item) => String(item).trim()).filter(Boolean).slice(0, 3)
+      : [],
+    brandLiked: Array.isArray(value.brandLiked)
+      ? value.brandLiked.map((item) => String(item).trim()).filter(Boolean).slice(0, 4)
+      : [],
+    brandAvoid: Array.isArray(value.brandAvoid)
+      ? value.brandAvoid.map((item) => String(item).trim()).filter(Boolean).slice(0, 4)
+      : [],
+    climatePref:
+      value.climatePref === "runs_cold" ||
+      value.climatePref === "neutral" ||
+      value.climatePref === "runs_hot"
+        ? value.climatePref
+        : null,
+    dressCode: Array.isArray(value.dressCode)
+      ? value.dressCode.map((item) => String(item).trim()).filter(Boolean).slice(0, 4)
+      : [],
+    shoeSize: value.shoeSize == null ? null : String(value.shoeSize),
+  };
+}
 
-  if (style) parts.push(`Style: ${style}.`);
-  if (colors.length > 0) parts.push(`Favorite colors: ${colors.join(", ")}.`);
-  if (location) parts.push(`Location: ${location}.`);
-
-  if (parts.length === 0) {
-    return "User prefers black often, leans casual to smart-casual, and is based in Chicago.";
+function countSlots(items: WardrobeItem[]): Record<Slot, number> {
+  const counts: Record<Slot, number> = {top: 0, bottom: 0, footwear: 0, outerwear: 0};
+  for (const item of items) {
+    const category = String(item.category ?? "").trim().toLowerCase();
+    if (category === "top" || category === "one_piece") counts.top += 1;
+    else if (category === "bottom") counts.bottom += 1;
+    else if (category === "footwear" || category === "shoes") counts.footwear += 1;
+    else if (category === "outerwear") counts.outerwear += 1;
   }
-  return parts.join(" ");
+  return counts;
+}
+
+function recentHistory(messages: ChatMessageDoc[]): string {
+  return messages
+    .sort((a, b) => toMillis(a.createdAt) - toMillis(b.createdAt))
+    .slice(-10)
+    .map((message) => `${message.role}: ${message.text}`)
+    .join("\n");
+}
+
+function latestAssistantWithOutfits(messages: ChatMessageDoc[]): ChatMessageDoc | null {
+  return [...messages]
+    .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt))
+    .find((message) => message.role === "assistant" && Array.isArray(message.outfits) && message.outfits.length > 0) ?? null;
+}
+
+function buildRecentOutfitRefs(messages: ChatMessageDoc[]): string {
+  const latest = latestAssistantWithOutfits(messages);
+  if (!latest?.outfits?.length) return "none";
+  return latest.outfits
+    .slice(0, 6)
+    .map((outfit, index) => `${index + 1}:${outfit.id}`)
+    .join(", ");
+}
+
+function inferRelativeOutfitCount(
+  latestUserMessage: string,
+  messages: ChatMessageDoc[]
+): number | null {
+  const normalized = latestUserMessage.toLowerCase();
+  const latest = latestAssistantWithOutfits(messages);
+  const currentCount = latest?.outfits?.length ?? 0;
+  if (!currentCount) return null;
+  if (normalized.includes("less outfits") || normalized.includes("fewer outfits")) {
+    return Math.max(1, currentCount - 1);
+  }
+  if (normalized.includes("more outfits")) {
+    return Math.min(8, currentCount + 1);
+  }
+  return null;
 }
 
 function buildAssistantTextForEmptyWardrobe(base: string): string {
@@ -99,39 +213,109 @@ function buildAssistantTextForEmptyWardrobe(base: string): string {
   return "I need a few fully analyzed wardrobe items before I can build outfits. Add tops, bottoms, and shoes first.";
 }
 
+function mergeProfileDefaults(
+  constraints: OutfitChatConstraints,
+  profile: UserProfile | null
+): OutfitChatConstraints {
+  if (!profile) return constraints;
+  return {
+    ...constraints,
+    ...(constraints.colorsWanted?.length ? {} : {colorsWanted: profile.colorWanted ?? []}),
+    ...(constraints.colorsAvoid?.length ? {} : {colorsAvoid: profile.colorAvoid ?? []}),
+    avoidItems: [
+      ...(Array.isArray(constraints.avoidItems) ? constraints.avoidItems : []),
+      ...((profile.brandAvoid ?? []).map((itemHint) => ({itemHint}))),
+    ],
+  };
+}
+
+function resolveReferencedOutfitId(
+  parsedOutfitId: string | null,
+  latestUserMessage: string,
+  messages: ChatMessageDoc[]
+): string | null {
+  if (parsedOutfitId) return parsedOutfitId;
+  const latest = latestAssistantWithOutfits(messages);
+  if (!latest?.outfits?.length) return null;
+  const ordinalMatch = latestUserMessage.toLowerCase().match(/\boutfit\s+(\d)\b/);
+  if (!ordinalMatch) return latest.outfits[0]?.id ?? null;
+  const index = Number(ordinalMatch[1]) - 1;
+  return latest.outfits[index]?.id ?? null;
+}
+
+function buildFollowupFromText(text: string): OutfitFollowup {
+  const normalized = text.toLowerCase();
+  if (normalized.includes("warmer")) return {type: "warmer"};
+  if (normalized.includes("cooler")) return {type: "cooler"};
+  if (normalized.includes("more formal")) return {type: "more_formal"};
+  if (normalized.includes("more casual")) return {type: "more_casual"};
+  if (normalized.includes("more colorful")) return {type: "more_colorful"};
+  if (normalized.includes("more minimal")) return {type: "more_minimal"};
+  return {};
+}
+
+function buildThreadMemorySummary(messages: ChatMessageDoc[]): string {
+  const userTexts = messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.text.toLowerCase());
+  const parts: string[] = [];
+  if (userTexts.some((text) => text.includes("black"))) parts.push("often asks for black looks");
+  if (userTexts.some((text) => text.includes("cold") || text.includes("warmer"))) {
+    parts.push("frequently prioritizes warmth");
+  }
+  if (userTexts.some((text) => text.includes("formal"))) parts.push("sometimes shifts formal");
+  return parts.length > 0 ? `User ${parts.join(", ")}.` : "User prefers concise outfit recommendations.";
+}
+
 async function parseChatAction(params: {
-  profileSummary: string;
+  profile: UserProfile | null;
+  wardrobeSummary: {summaryText: string; stats: Record<string, unknown>};
+  slotCounts: Record<Slot, number>;
   messages: ChatMessageDoc[];
   latestUserMessage: string;
-}): Promise<
-  Required<Omit<ChatResponseShape, "intentText" | "numOutfits">> & {
-    intentText: string | null;
-    numOutfits: number | null;
-    requestedNumOutfits: number;
-    clampedNumOutfits: number;
-  }
-> {
-  const {profileSummary, messages, latestUserMessage} = params;
+}): Promise<{
+  assistantText: string;
+  action: ChatAction;
+  intentText: string | null;
+  rawOutfitCount: number | null;
+  requestedOutfitCount: number;
+  clampedOutfitCount: number;
+  constraints: OutfitChatConstraints;
+  references: {outfitId: string | null; slot: Slot | null};
+  followup: OutfitFollowup;
+}> {
+  const {profile, wardrobeSummary, slotCounts, messages, latestUserMessage} = params;
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    const requestedNumOutfits = inferRequestedOutfitCount(latestUserMessage) ?? 3;
+    const requestedOutfitCount =
+      inferRequestedOutfitCount(latestUserMessage) ??
+      inferRelativeOutfitCount(latestUserMessage, messages) ??
+      3;
     return {
-      assistantText: "Tell me what you need and I’ll put together outfit options from your wardrobe.",
+      assistantText: "Tell me what you need and I’ll plan from your wardrobe.",
       action: "generate_outfits",
       intentText: latestUserMessage,
-      numOutfits: inferRequestedOutfitCount(latestUserMessage),
-      requestedNumOutfits,
-      clampedNumOutfits: clampNumOutfits(requestedNumOutfits, 3),
+      rawOutfitCount: inferRequestedOutfitCount(latestUserMessage),
+      requestedOutfitCount,
+      clampedOutfitCount: clampNumOutfits(requestedOutfitCount, 3),
       constraints: {},
-      swap: {outfitId: null, slot: null},
+      references: {outfitId: null, slot: null},
+      followup: buildFollowupFromText(latestUserMessage),
     };
   }
 
-  const history = messages
-    .sort((a, b) => toMillis(a.createdAt) - toMillis(b.createdAt))
-    .slice(-12)
-    .map((message) => `${message.role}: ${message.text}`)
-    .join("\n");
+  const contextPacket = {
+    profile: profile ?? {
+      styleVibe: ["minimal", "smart-casual"],
+      colorWanted: ["black"],
+      climatePref: "neutral",
+      location: "Chicago",
+    },
+    wardrobeSummary,
+    slotCounts,
+    recentOutfitRefs: buildRecentOutfitRefs(messages),
+    lastMessages: recentHistory(messages) || "none",
+  };
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -147,26 +331,22 @@ async function parseChatAction(params: {
         {
           role: "system",
           content: [
-            "You are Athfan's personal wardrobe assistant.",
-            "Be concise, helpful, and practical.",
-            "Return strict JSON only with keys: assistantText, action, intentText, numOutfits, constraints, swap.",
-            "action must be one of: none, generate_outfits, swap_item, ask_clarify.",
-            "If the user asks for a count of outfits, set numOutfits to that number. Otherwise set numOutfits to null.",
-            "constraints keys only: occasion, formalityTarget, warmthTarget, colorsWanted, colorsAvoid, includeItemIds, excludeItemIds, avoidLogos, notes.",
-            "swap keys only: outfitId, slot.",
-            "If the user asks to make an outfit, use generate_outfits.",
-            "If the user asks to replace one part of an existing outfit, use swap_item and set swap.slot.",
-            "If the request is unclear, use ask_clarify.",
-            "Profile summary:",
-            profileSummary,
-            "Conversation so far:",
-            history || "No previous messages.",
+            "You are a wardrobe assistant. Output strict JSON only. Do not invent items.",
+            "Use one of these actions: generate_outfits, swap_item, tweak, ask_clarify, none.",
+            "Return JSON keys only: assistantText, action, intentText, outfitCount, constraints, references, followup.",
+            "constraints keys only: occasion, formalityTarget, warmthTarget, colorsWanted, colorsAvoid, avoidLogos, excludeLaundry, mustInclude, avoidItems, notes.",
+            "mustInclude entries may contain slot and itemHint. avoidItems entries may contain itemHint.",
+            "references keys only: outfitId, slot.",
+            "followup keys only: type.",
+            "Determine outfitCount from the request: 'give me 2 outfits' => 2, 'just one' => 1, 'a bunch' => 5, 'less outfits' should lower the count.",
+            "If the user says 'make it warmer', use action=tweak and followup.type=warmer.",
+            "If the user says 'swap shoes in outfit 2', use action=swap_item, references.slot=footwear, and references.outfitId from recentOutfitRefs if possible.",
+            "Ask clarifying questions if a request is ambiguous or impossible.",
+            "Context packet:",
+            JSON.stringify(contextPacket),
           ].join(" "),
         },
-        {
-          role: "user",
-          content: latestUserMessage,
-        },
+        {role: "user", content: latestUserMessage},
       ],
     }),
   });
@@ -180,11 +360,12 @@ async function parseChatAction(params: {
   };
   const content = data.choices?.[0]?.message?.content ?? "";
   const parsed = safeJsonExtract<ChatResponseShape>(content) ?? {};
-  const requestedNumOutfits =
-    parsed.numOutfits == null
-      ? inferRequestedOutfitCount(latestUserMessage) ?? 3
-      : Number(parsed.numOutfits);
-  const clampedNumOutfits = clampNumOutfits(requestedNumOutfits, 3);
+  const requestedOutfitCount =
+    parsed.outfitCount == null
+      ? inferRequestedOutfitCount(latestUserMessage) ??
+        inferRelativeOutfitCount(latestUserMessage, messages) ??
+        3
+      : Number(parsed.outfitCount);
 
   return {
     assistantText:
@@ -192,15 +373,26 @@ async function parseChatAction(params: {
       "I can help you plan an outfit from what you already own.",
     action: normalizeAction(parsed.action),
     intentText: String(parsed.intentText ?? "").trim() || null,
-    numOutfits: parsed.numOutfits == null ? null : Number(parsed.numOutfits),
-    requestedNumOutfits,
-    clampedNumOutfits,
+    rawOutfitCount: parsed.outfitCount == null ? null : Number(parsed.outfitCount),
+    requestedOutfitCount,
+    clampedOutfitCount: clampNumOutfits(requestedOutfitCount, 3),
     constraints: parsed.constraints ?? {},
-    swap: {
-      outfitId: String(parsed.swap?.outfitId ?? "").trim() || null,
-      slot: normalizeSlot(parsed.swap?.slot),
+    references: {
+      outfitId: String(parsed.references?.outfitId ?? "").trim() || null,
+      slot: normalizeSlot(parsed.references?.slot),
     },
+    followup: normalizeFollowup(parsed.followup),
   };
+}
+
+function buildIncompleteWardrobeMessage(slotCounts: Record<Slot, number>): string {
+  const missing = (Object.keys(slotCounts) as Slot[])
+    .filter((slot) => slot !== "outerwear" && slotCounts[slot] === 0)
+    .map((slot) => slot.replace(/_/g, " "));
+  if (missing.length === 0) {
+    return "I can only build partial outfits right now. Add more analyzed items and try again.";
+  }
+  return `I need ${missing.join(", ")} items before I can make a full outfit. Add those pieces first.`;
 }
 
 export const outfitChatV1 = onCall(
@@ -217,6 +409,7 @@ export const outfitChatV1 = onCall(
       throw new HttpsError("invalid-argument", "message is required");
     }
 
+    const startedAt = Date.now();
     const db = getFirestore();
     const userRef = db.collection("users").doc(uid);
     const threadRef = incomingThreadId
@@ -239,24 +432,35 @@ export const outfitChatV1 = onCall(
     ]);
 
     const recentMessages = recentMessagesSnap.docs.map((docSnap) => docSnap.data() as ChatMessageDoc);
-    const profileSummary = buildProfileSummary(
-      userSnap.exists ? ((userSnap.data() as {profile?: Record<string, unknown>}).profile ?? null) : null
-    );
+    const profile = normalizeProfile(userSnap.exists ? (userSnap.data() as {profile?: unknown}).profile : null);
+    const slotCounts = countSlots(allItems);
+    const wardrobeSummary = await getOrRefreshWardrobeSummary(db, uid, allItems);
 
     const parsed = await parseChatAction({
-      profileSummary,
+      profile,
+      wardrobeSummary: {summaryText: wardrobeSummary.summaryText, stats: wardrobeSummary.stats},
+      slotCounts,
       messages: recentMessages,
       latestUserMessage: message,
     });
+
+    const mergedConstraints = mergeProfileDefaults(parsed.constraints, profile);
+    const resolvedOutfitId = resolveReferencedOutfitId(
+      parsed.references.outfitId,
+      message,
+      recentMessages
+    );
 
     logger.info("outfitChatV1 parsed action", {
       uid,
       threadId,
       action: parsed.action,
-      requestedNumOutfits: parsed.requestedNumOutfits,
-      numOutfits: parsed.clampedNumOutfits,
-      constraints: parsed.constraints,
-      swap: parsed.swap,
+      requestedOutfitCount: parsed.requestedOutfitCount,
+      outfitCount: parsed.clampedOutfitCount,
+      constraints: mergedConstraints,
+      references: {...parsed.references, outfitId: resolvedOutfitId},
+      followup: parsed.followup,
+      slotCounts,
     });
 
     const userMessageRef = threadRef.collection("messages").doc();
@@ -272,88 +476,139 @@ export const outfitChatV1 = onCall(
     let assistantText = parsed.assistantText;
     let outfits: OutfitResult[] = [];
 
-    const baseIntent = normalizeParsedIntent(
+    let baseIntent = normalizeParsedIntent(
       {
-        occasion: parsed.constraints.occasion as OutfitIntentV1["occasion"],
-        formalityTarget: parsed.constraints.formalityTarget ?? undefined,
-        warmthTarget: parsed.constraints.warmthTarget ?? undefined,
-        colorsWanted: normalizeColorList(parsed.constraints.colorsWanted, 2),
-        colorsAvoid: normalizeColorList(parsed.constraints.colorsAvoid, 2),
-        avoidLogos: parsed.constraints.avoidLogos ?? false,
+        occasion: mergedConstraints.occasion as OutfitIntentV1["occasion"],
+        formalityTarget: mergedConstraints.formalityTarget ?? undefined,
+        warmthTarget: mergedConstraints.warmthTarget ?? undefined,
+        colorsWanted: normalizeColorList(mergedConstraints.colorsWanted, 2),
+        colorsAvoid: normalizeColorList(mergedConstraints.colorsAvoid, 2),
+        avoidLogos: mergedConstraints.avoidLogos ?? false,
+        excludeLaundry: mergedConstraints.excludeLaundry ?? true,
       },
-      `${message} ${parsed.constraints.notes ?? ""}`.trim()
+      `${parsed.intentText ?? message} ${mergedConstraints.notes ?? ""}`.trim()
     );
+    if (profile?.climatePref === "runs_cold") {
+      baseIntent.warmthTarget = Math.min(1, baseIntent.warmthTarget + 0.05);
+    } else if (profile?.climatePref === "runs_hot") {
+      baseIntent.warmthTarget = Math.max(0, baseIntent.warmthTarget - 0.05);
+    }
+    baseIntent = applyFollowupToIntent(baseIntent, parsed.followup);
+
+    const mustIncludeHints = Array.isArray(mergedConstraints.mustInclude)
+      ? mergedConstraints.mustInclude
+      : [];
+    const mustIncludeResolution = resolveItemHints(allItems, mustIncludeHints);
+    let blockedByClarify = false;
+    if (mustIncludeResolution.ambiguous.length > 0) {
+      const ambiguous = mustIncludeResolution.ambiguous[0];
+      const options = ambiguous.candidates
+        .map((item) => item.name || `${item.brand ?? ""} ${item.subCategory ?? item.category ?? item.id}`.trim())
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(", ");
+      assistantText = `I found multiple matches for "${ambiguous.hint}". Pick one of these: ${options}.`;
+      blockedByClarify = true;
+    } else if (mustIncludeResolution.unmatched.length > 0) {
+      assistantText = `I couldn't find "${mustIncludeResolution.unmatched[0]}" in your wardrobe. Try a different item.`;
+      blockedByClarify = true;
+    }
+
+    const avoidItemsResolved = resolveItemHints(
+      allItems,
+      Array.isArray(mergedConstraints.avoidItems)
+        ? mergedConstraints.avoidItems.map((value) => ({itemHint: value.itemHint}))
+        : []
+    );
+    const explicitExcludes = [
+      ...(Array.isArray(mergedConstraints.excludeItemIds) ? mergedConstraints.excludeItemIds : []),
+      ...avoidItemsResolved.resolved.map((value) => value.itemId),
+    ];
+    const lockedItemsBySlot = Object.fromEntries(
+      mustIncludeResolution.resolved.map((value) => [value.slot, value.item])
+    ) as Partial<Record<Slot, WardrobeItem>>;
 
     if (allItems.length === 0) {
       assistantText = buildAssistantTextForEmptyWardrobe(
         parsed.action === "ask_clarify" ? parsed.assistantText : ""
       );
-    } else if (parsed.action === "generate_outfits") {
-      const generated = generateOutfitCandidates(allItems, baseIntent, {
-        numOutfits: parsed.clampedNumOutfits,
-        constraints: parsed.constraints,
-      });
-
-      logger.info("outfitChatV1 slot counts", {
-        uid,
-        threadId,
-        eligible: generated.eligibleCount,
-        ...generated.slotCounts,
-      });
-
-      if (generated.outfits.length === 0) {
-        assistantText =
-          "I couldn't build a complete outfit from your available items yet. Add or wash a top, bottom, and footwear item first.";
-      } else {
-        outfits = await persistGeneratedOutfits({
-          db,
-          uid,
-          intentText: message,
-          intent: generated.intent,
-          outfits: generated.outfits,
+    } else if (!blockedByClarify) {
+      const action = parsed.action === "tweak" ? "generate_outfits" : parsed.action;
+      if (action === "generate_outfits") {
+        const generated = generateOutfitCandidates(allItems, baseIntent, {
+          numOutfits: parsed.clampedOutfitCount,
+          constraints: mergedConstraints,
+          excludeItemIds: explicitExcludes,
+          lockedItemsBySlot,
         });
-      }
-    } else if (parsed.action === "swap_item") {
-      const slot = parsed.swap.slot;
-      const outfitId = parsed.swap.outfitId;
-      if (!slot || !outfitId) {
-        assistantText = "Tell me which slot to swap and which outfit you want to change.";
-      } else {
-        const outfitSnap = await userRef.collection("outfits").doc(outfitId).get();
-        const outfitData = outfitSnap.exists
-          ? (outfitSnap.data() as {picks?: Array<{slot: Slot; itemId: string}>} | undefined)
-          : null;
 
-        const currentPicks = Array.isArray(outfitData?.picks)
-          ? outfitData!.picks.filter((pick) => normalizeSlot(pick.slot))
-          : [];
+        logger.info("outfitChatV1 slot counts", {
+          uid,
+          threadId,
+          eligible: generated.eligibleCount,
+          ...generated.slotCounts,
+        });
 
-        if (currentPicks.length === 0) {
-          assistantText = "I couldn't find that outfit to swap. Generate a new outfit first.";
+        if (generated.outfits.length === 0) {
+          assistantText = buildIncompleteWardrobeMessage(generated.slotCounts);
         } else {
-          const swapped = swapOutfitSlot(
-            allItems,
-            baseIntent,
-            currentPicks,
-            slot,
-            parsed.constraints
-          );
-          if (!swapped) {
-            assistantText = `I couldn't find a better ${slot} option right now.`;
+          outfits = await persistGeneratedOutfits({
+            db,
+            uid,
+            intentText: parsed.intentText ?? message,
+            intent: generated.intent,
+            outfits: generated.outfits,
+          });
+        }
+      } else if (parsed.action === "swap_item") {
+        const slot = parsed.references.slot;
+        if (!slot || !resolvedOutfitId) {
+          assistantText = "Tell me which slot to swap and which outfit you want to change.";
+        } else {
+          const outfitSnap = await userRef.collection("outfits").doc(resolvedOutfitId).get();
+          const outfitData = outfitSnap.exists
+            ? (outfitSnap.data() as {picks?: Array<{slot: Slot; itemId: string}>} | undefined)
+            : null;
+          const currentPicks = Array.isArray(outfitData?.picks)
+            ? outfitData!.picks.filter((pick) => normalizeSlot(pick.slot))
+            : [];
+
+          if (currentPicks.length === 0) {
+            assistantText = "I couldn't find that outfit to swap. Generate a new outfit first.";
           } else {
-            outfits = await persistGeneratedOutfits({
-              db,
-              uid,
-              intentText: `${message} (swap ${slot})`,
-              intent: baseIntent,
-              outfits: [swapped],
-            });
+            const swapped = swapOutfitSlot(
+              allItems,
+              baseIntent,
+              currentPicks,
+              slot,
+              {
+                ...mergedConstraints,
+                excludeItemIds: explicitExcludes,
+              }
+            );
+            if (!swapped) {
+              assistantText = `I couldn't find a better ${slot} option right now.`;
+            } else {
+              outfits = await persistGeneratedOutfits({
+                db,
+                uid,
+                intentText: `${message} (swap ${slot})`,
+                intent: baseIntent,
+                outfits: [swapped],
+              });
+            }
           }
         }
+      } else if (parsed.action === "ask_clarify") {
+        assistantText = parsed.assistantText;
       }
-    } else if (parsed.action === "ask_clarify") {
-      assistantText = parsed.assistantText;
     }
+
+    const totalUserMessages = recentMessages.filter((entry) => entry.role === "user").length + 1;
+    const lastAssistantSummary =
+      totalUserMessages % 10 === 0
+        ? buildThreadMemorySummary([...recentMessages, {role: "user", text: message}])
+        : undefined;
 
     await assistantMessageRef.set({
       role: "assistant",
@@ -363,10 +618,12 @@ export const outfitChatV1 = onCall(
       ...(outfits.length > 0 ? {outfits} : {}),
       debug: {
         intentText: parsed.intentText,
-        numOutfits: parsed.clampedNumOutfits,
-        requestedNumOutfits: parsed.requestedNumOutfits,
-        constraints: parsed.constraints,
-        swap: parsed.swap,
+        rawOutfitCount: parsed.rawOutfitCount,
+        requestedOutfitCount: parsed.requestedOutfitCount,
+        outfitCount: parsed.clampedOutfitCount,
+        constraints: mergedConstraints,
+        references: {...parsed.references, outfitId: resolvedOutfitId},
+        followup: parsed.followup,
       },
     });
 
@@ -374,7 +631,16 @@ export const outfitChatV1 = onCall(
       updatedAt: FieldValue.serverTimestamp(),
       ...(incomingThreadId ? {} : {createdAt: FieldValue.serverTimestamp()}),
       title: message.slice(0, 80),
+      ...(lastAssistantSummary ? {lastAssistantSummary} : {}),
     }, {merge: true});
+
+    logger.info("outfitChatV1 completed", {
+      uid,
+      threadId,
+      action: parsed.action,
+      outfitCount: outfits.length,
+      elapsedMs: Date.now() - startedAt,
+    });
 
     return {
       threadId,

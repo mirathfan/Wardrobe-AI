@@ -1,134 +1,63 @@
 import { router } from "expo-router";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import React, { useMemo, useState } from "react";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import React, { useMemo, useRef, useState } from "react";
 import {
   Alert,
+  FlatList,
   Image,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
 } from "react-native";
 
 import { useAuth } from "../../src/hooks/useAuth";
-import { db } from "../../src/lib/firebase";
+import { app, db } from "../../src/lib/firebase";
 import { getItemImageUrl } from "../../src/lib/itemImage";
 import { listenToItems } from "../../src/lib/items";
-import {
-  OutfitIntent,
-  OutfitSuggestion,
-  generateOutfits,
-} from "../../src/lib/outfitGenerator";
+import { clearLatestChatCache, loadLatestChatCache, saveLatestChatCache } from "../../src/lib/localChatCache";
 import { toDateKey } from "../../src/lib/outfits";
 import { ClothingItem } from "../../src/types/ClothingItem";
 
-const INTENT_ENDPOINT = process.env.EXPO_PUBLIC_OUTFIT_INTENT_URL;
-const KNOWN_COLORS = [
-  "black",
-  "white",
-  "blue",
-  "navy",
-  "green",
-  "red",
-  "grey",
-  "gray",
-  "beige",
-  "brown",
-  "pink",
-  "purple",
-  "yellow",
-  "orange",
-];
+type ChatOutfit = {
+  id: string;
+  picks: {slot: string; itemId: string}[];
+  score: number;
+  reason: string;
+};
 
-function norm(v: string) {
-  return v.toLowerCase().trim();
-}
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  outfits?: ChatOutfit[];
+};
 
-function fallbackIntent(prompt: string): OutfitIntent {
-  const p = norm(prompt);
-  const colors = KNOWN_COLORS.filter((c) => p.includes(c));
-
-  return {
-    occasion: p.includes("work")
-      ? "work"
-      : p.includes("gym")
-        ? "gym"
-        : p.includes("date")
-          ? "date"
-          : undefined,
-    vibe:
-      p.includes("party") || p.includes("date") || p.includes("club")
-        ? "party"
-        : undefined,
-    colorPreference: colors,
-    includeOuterwear:
-      p.includes("jacket") ||
-      p.includes("hoodie") ||
-      p.includes("coat") ||
-      p.includes("outerwear"),
-    includeAccessory:
-      p.includes("accessory") ||
-      p.includes("hat") ||
-      p.includes("watch") ||
-      p.includes("belt"),
-    allowRewearToday: p.includes("reuse") || p.includes("rewear"),
-    allowOverWearLimit:
-      p.includes("don't care about wash") ||
-      p.includes("dont care about wash") ||
-      p.includes("ignore wash"),
-  };
-}
-
-async function parseIntent(prompt: string): Promise<OutfitIntent> {
-  if (!INTENT_ENDPOINT) {
-    return fallbackIntent(prompt);
-  }
-
-  try {
-    const response = await fetch(INTENT_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    });
-
-    if (!response.ok) {
-      return fallbackIntent(prompt);
-    }
-
-    const data = (await response.json()) as OutfitIntent;
-    return {
-      occasion: data.occasion,
-      vibe: data.vibe,
-      colorPreference: Array.isArray(data.colorPreference)
-        ? data.colorPreference.map((v) => String(v).toLowerCase())
-        : undefined,
-      includeOuterwear: !!data.includeOuterwear,
-      includeAccessory: !!data.includeAccessory,
-      allowRewearToday: !!data.allowRewearToday,
-      allowOverWearLimit: !!data.allowOverWearLimit,
-    };
-  } catch {
-    return fallbackIntent(prompt);
-  }
-}
+type OutfitChatResponse = {
+  threadId: string;
+  assistantMessage: {text: string};
+  outfits?: ChatOutfit[];
+};
 
 function displayName(item: ClothingItem) {
   return item.name || `${item.primaryColor ?? ""} ${item.category}`.trim();
 }
 
 export default function AIScreen() {
-  const INTENT_ENDPOINT = process.env.EXPO_PUBLIC_OUTFIT_INTENT_URL;
-
-  console.log("AI URL:", INTENT_ENDPOINT);
   const { user } = useAuth();
   const uid = user?.uid ?? null;
-
   const [items, setItems] = useState<ClothingItem[]>([]);
-  const [prompt, setPrompt] = useState("");
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<OutfitSuggestion[]>([]);
+  const requestIdRef = useRef(0);
+  const quickChips = useMemo(
+    () => ["warmer", "more formal", "swap shoes", "2 outfits", "5 outfits"],
+    []
+  );
 
   React.useEffect(() => {
     if (!uid) {
@@ -144,73 +73,131 @@ export default function AIScreen() {
         status: "ALL",
         sort: "NEWEST",
         onError: (message) => Alert.alert("Firestore error", message),
-      },
+      }
     );
 
     return () => unsub();
   }, [uid]);
 
+  React.useEffect(() => {
+    let active = true;
+    void (async () => {
+      const cached = await loadLatestChatCache<ChatMessage>();
+      if (!active || !cached) return;
+      setThreadId(cached.threadId);
+      setMessages(Array.isArray(cached.messages) ? cached.messages : []);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    void saveLatestChatCache(threadId, messages);
+  }, [threadId, messages]);
+
   const itemsById = useMemo(() => {
-    return new Map(items.map((i) => [i.id, i]));
+    return new Map(items.map((item) => [item.id, item]));
   }, [items]);
 
-  async function onGenerate() {
+  function startNewChat() {
+    setThreadId(null);
+    setMessages([]);
+    setInput("");
+    requestIdRef.current += 1;
+    void clearLatestChatCache();
+  }
+
+  async function onSend() {
     if (!uid) {
       router.replace("/(auth)/login");
       return;
     }
 
-    if (!prompt.trim()) {
-      Alert.alert("Add a prompt", "Tell AI what you're dressing for.");
-      return;
-    }
+    const message = input.trim();
+    if (!message) return;
+
+    const pendingId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const token = requestIdRef.current + 1;
+    requestIdRef.current = token;
+
+    setMessages((prev) => [
+      ...prev,
+      {id: pendingId, role: "user", text: message},
+    ]);
+    setInput("");
+    setLoading(true);
 
     try {
-      setLoading(true);
-      const intent = await parseIntent(prompt);
-      const next = generateOutfits(items, intent);
-      setSuggestions(next);
+      const functions = getFunctions(app);
+      const chat = httpsCallable<
+        {threadId?: string; message: string},
+        OutfitChatResponse
+      >(functions, "outfitChatV1");
+      const result = await chat({
+        ...(threadId ? {threadId} : {}),
+        message,
+      });
 
-      if (next.length === 0) {
-        Alert.alert(
-          "No valid outfits",
-          "Try a broader prompt or wash/refresh some items.",
-        );
+      if (token !== requestIdRef.current) {
+        return;
       }
+
+      const nextThreadId = String(result.data?.threadId ?? "").trim() || null;
+      if (nextThreadId) {
+        setThreadId(nextThreadId);
+      }
+      const assistantText =
+        String(result.data?.assistantMessage?.text ?? "").trim() ||
+        "I’m ready for the next outfit request.";
+      const outfits = Array.isArray(result.data?.outfits) ? result.data.outfits : undefined;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `${pendingId}-assistant`,
+          role: "assistant",
+          text: assistantText,
+          ...(outfits && outfits.length > 0 ? {outfits} : {}),
+        },
+      ]);
     } catch (e: any) {
-      Alert.alert("Error", e?.message ?? "Failed to generate outfits");
+      if (token === requestIdRef.current) {
+        Alert.alert("Error", e?.message ?? "Failed to chat with Outfit AI");
+      }
     } finally {
-      setLoading(false);
+      if (token === requestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
-  async function onSaveToToday(suggestion: OutfitSuggestion) {
+  function onChipPress(chip: string) {
+    if (loading) return;
+    setInput((prev) => (prev.trim() ? `${prev.trim()} ${chip}` : chip));
+  }
+
+  async function onSaveToToday(outfit: ChatOutfit) {
     if (!uid) {
       router.replace("/(auth)/login");
       return;
     }
 
     try {
-      setSavingId(suggestion.itemIds.join("|"));
+      setSavingId(outfit.id);
       const dateKey = toDateKey(new Date());
+      const itemIds = outfit.picks.map((pick) => pick.itemId);
       await setDoc(
         doc(db, "users", uid, "outfits", dateKey),
         {
           dateKey,
-          itemIds: suggestion.itemIds,
+          itemIds,
           planned: true,
           updatedAt: serverTimestamp(),
         },
-        { merge: true },
+        {merge: true}
       );
-
-      Alert.alert("Saved", "Outfit saved to Today.", [
-        {
-          text: "View Today",
-          onPress: () => router.push("/(tabs)/today"),
-        },
-        { text: "OK" },
-      ]);
+      Alert.alert("Saved", "Outfit saved to Today.");
     } catch (e: any) {
       Alert.alert("Error", e?.message ?? "Failed to save outfit");
     } finally {
@@ -218,131 +205,208 @@ export default function AIScreen() {
     }
   }
 
-  return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 22, fontWeight: "800" }}>AI Outfits</Text>
+  function renderOutfitCard(outfit: ChatOutfit, index: number) {
+    const pickedItems = outfit.picks
+      .map((pick) => ({
+        slot: pick.slot,
+        item: itemsById.get(pick.itemId),
+      }))
+      .filter((value): value is {slot: string; item: ClothingItem} => !!value.item);
 
-      <TextInput
-        value={prompt}
-        onChangeText={setPrompt}
-        placeholder="What are you dressing for?"
+    return (
+      <View
+        key={`${outfit.id}-${index}`}
         style={{
+          marginTop: 10,
           borderWidth: 1,
           borderColor: "#ddd",
-          borderRadius: 12,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
-        }}
-      />
-
-      <Pressable
-        onPress={onGenerate}
-        disabled={loading}
-        style={{
-          paddingVertical: 12,
-          borderRadius: 12,
-          backgroundColor: "#111",
-          alignItems: "center",
-          opacity: loading ? 0.6 : 1,
+          borderRadius: 14,
+          padding: 12,
+          gap: 10,
+          backgroundColor: "#fff",
         }}
       >
-        <Text style={{ color: "#fff", fontWeight: "900" }}>
-          {loading ? "Generating..." : "Generate outfits"}
-        </Text>
-      </Pressable>
-
-      {suggestions.map((s, idx) => (
         <View
-          key={`${s.itemIds.join("|")}-${idx}`}
           style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <Text style={{fontSize: 16, fontWeight: "800"}}>Outfit {index + 1}</Text>
+          <Text style={{color: "#666"}}>Score {outfit.score.toFixed(2)}</Text>
+        </View>
+
+        <Text style={{color: "#666"}}>{outfit.reason}</Text>
+
+        <View style={{gap: 10}}>
+          {pickedItems.map(({slot, item}) => {
+            const imageUri = getItemImageUrl(item, {variant: "thumb"});
+            return (
+              <View
+                key={`${outfit.id}-${slot}-${item.id}`}
+                style={{flexDirection: "row", gap: 10, alignItems: "center"}}
+              >
+                {imageUri ? (
+                  <Image
+                    source={{uri: imageUri}}
+                    style={{width: 56, height: 56, borderRadius: 10}}
+                  />
+                ) : (
+                  <View
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 10,
+                      backgroundColor: "#f2f2f2",
+                    }}
+                  />
+                )}
+
+                <View style={{flex: 1}}>
+                  <Text style={{fontWeight: "700"}}>
+                    {slot.replace(/_/g, " ")}
+                  </Text>
+                  <Text>{displayName(item)}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        <Pressable
+          onPress={() => void onSaveToToday(outfit)}
+          disabled={savingId === outfit.id}
+          style={{
+            paddingVertical: 10,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: "#111",
+            alignItems: "center",
+            opacity: savingId === outfit.id ? 0.6 : 1,
+          }}
+        >
+          <Text style={{fontWeight: "800", color: "#111"}}>
+            {savingId === outfit.id ? "Saving..." : "Save to Today"}
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{flex: 1, padding: 16, gap: 12}}>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Text style={{fontSize: 22, fontWeight: "800"}}>Outfit Chat AI</Text>
+        <Pressable onPress={startNewChat}>
+          <Text style={{fontWeight: "800", color: "#111"}}>New chat</Text>
+        </Pressable>
+      </View>
+
+      <FlatList
+        data={messages}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={{gap: 12, paddingBottom: 12}}
+        renderItem={({item}) => (
+          <View
+            style={{
+              alignSelf: item.role === "user" ? "flex-end" : "stretch",
+              maxWidth: item.role === "user" ? "85%" : "100%",
+            }}
+          >
+            <View
+              style={{
+                alignSelf: item.role === "user" ? "flex-end" : "stretch",
+                backgroundColor: item.role === "user" ? "#111" : "#f5f5f5",
+                borderRadius: 16,
+                padding: 12,
+              }}
+            >
+              <Text style={{color: item.role === "user" ? "#fff" : "#111"}}>
+                {item.text}
+              </Text>
+            </View>
+            {item.role === "assistant"
+              ? item.outfits?.map((outfit, index) => renderOutfitCard(outfit, index))
+              : null}
+          </View>
+        )}
+        ListEmptyComponent={
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: "#e5e5e5",
+              borderRadius: 16,
+              padding: 14,
+              backgroundColor: "#fafafa",
+            }}
+          >
+            <Text style={{color: "#666"}}>
+              Ask for an outfit like “Give me 3 casual black looks for cold Chicago weather.”
+            </Text>
+          </View>
+        }
+      />
+
+      {loading ? (
+        <Text style={{color: "#666", fontWeight: "700"}}>Thinking…</Text>
+      ) : null}
+
+      <View style={{flexDirection: "row", flexWrap: "wrap", gap: 8}}>
+        {quickChips.map((chip) => (
+          <Pressable
+            key={chip}
+            onPress={() => onChipPress(chip)}
+            style={{
+              paddingVertical: 8,
+              paddingHorizontal: 12,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: "#ddd",
+              backgroundColor: "#fff",
+            }}
+          >
+            <Text style={{fontWeight: "700", color: "#111"}}>{chip}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={{flexDirection: "row", gap: 8, alignItems: "flex-end"}}>
+        <TextInput
+          value={input}
+          onChangeText={setInput}
+          placeholder="Ask for an outfit, a swap, or a tweak"
+          multiline
+          style={{
+            flex: 1,
             borderWidth: 1,
             borderColor: "#ddd",
             borderRadius: 14,
-            padding: 12,
-            gap: 10,
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            maxHeight: 120,
+          }}
+        />
+        <Pressable
+          onPress={() => void onSend()}
+          disabled={loading || !input.trim()}
+          style={{
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            borderRadius: 12,
+            backgroundColor: "#111",
+            opacity: loading || !input.trim() ? 0.6 : 1,
           }}
         >
-          <Text style={{ fontWeight: "900", fontSize: 16 }}>{s.title}</Text>
-          <Text style={{ color: "#666" }}>{s.reason}</Text>
-
-          <View style={{ gap: 8 }}>
-            {s.itemIds.map((itemId) => {
-              const item = itemsById.get(itemId);
-              if (!item) return null;
-              const uri = getItemImageUrl(item, { variant: "thumb" });
-              return (
-                <View
-                  key={itemId}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 10,
-                    borderWidth: 1,
-                    borderColor: "#eee",
-                    borderRadius: 10,
-                    padding: 8,
-                  }}
-                >
-                  {uri ? (
-                    <Image
-                      source={{ uri }}
-                      style={{ width: 48, height: 48, borderRadius: 8 }}
-                    />
-                  ) : (
-                    <View
-                      style={{
-                        width: 48,
-                        height: 48,
-                        borderRadius: 8,
-                        backgroundColor: "#f3f3f3",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Text style={{ fontSize: 10, color: "#888" }}>
-                        No photo
-                      </Text>
-                    </View>
-                  )}
-
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: "800" }}>
-                      {displayName(item)}
-                    </Text>
-                    <Text style={{ color: "#666" }}>
-                      {item.brand || "Unknown brand"}
-                    </Text>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-
-          <Pressable
-            onPress={() => onSaveToToday(s)}
-            disabled={savingId === s.itemIds.join("|")}
-            style={{
-              marginTop: 2,
-              paddingVertical: 10,
-              borderRadius: 10,
-              borderWidth: 1,
-              borderColor: "#111",
-              alignItems: "center",
-              opacity: savingId === s.itemIds.join("|") ? 0.6 : 1,
-            }}
-          >
-            <Text style={{ fontWeight: "900" }}>
-              {savingId === s.itemIds.join("|") ? "Saving..." : "Save to Today"}
-            </Text>
-          </Pressable>
-        </View>
-      ))}
-
-      {suggestions.length === 0 && !loading ? (
-        <Text style={{ color: "#666" }}>
-          No suggestions yet. Enter a prompt to start.
-        </Text>
-      ) : null}
-    </ScrollView>
+          <Text style={{color: "#fff", fontWeight: "900"}}>Send</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }

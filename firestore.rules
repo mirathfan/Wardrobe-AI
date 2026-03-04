@@ -125,6 +125,18 @@ service cloud.firestore {
         && noForeignUidField(data, uid);
     }
 
+    function validThreadDoc(data, uid) {
+      return data is map && noForeignUidField(data, uid);
+    }
+
+    function validMessageDoc(data, uid) {
+      return data is map
+        && data.keys().hasAll(["role", "text"])
+        && data.role in ["user", "assistant"]
+        && data.text is string
+        && noForeignUidField(data, uid);
+    }
+
     match /users/{uid} {
       allow read, write: if isOwner(uid);
 
@@ -140,6 +152,22 @@ service cloud.firestore {
         allow create: if isOwner(uid) && validOutfitCreate(request.resource.data, uid);
         allow update: if isOwner(uid) && validOutfitUpdate(request.resource.data, uid);
         allow delete: if isOwner(uid);
+      }
+
+      match /threads/{threadId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validThreadDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+
+        match /messages/{messageId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid) && validMessageDoc(request.resource.data, uid);
+          allow delete: if isOwner(uid);
+        }
+      }
+
+      match /ai/{docId} {
+        allow read, write: if isOwner(uid);
       }
     }
 

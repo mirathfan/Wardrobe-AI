@@ -65,7 +65,21 @@ export type OutfitChatConstraints = {
   includeItemIds?: string[];
   excludeItemIds?: string[];
   avoidLogos?: boolean;
+  excludeLaundry?: boolean;
+  mustInclude?: Array<{slot?: Slot | null; itemHint?: string | null}>;
+  avoidItems?: Array<{itemHint?: string | null}>;
   notes?: string | null;
+};
+
+export type OutfitFollowup = {
+  type?:
+    | "warmer"
+    | "cooler"
+    | "more_formal"
+    | "more_casual"
+    | "more_colorful"
+    | "more_minimal"
+    | null;
 };
 
 const SOFT_COUNT_HINTS: Array<{words: string[]; count: number}> = [
@@ -74,6 +88,7 @@ const SOFT_COUNT_HINTS: Array<{words: string[]; count: number}> = [
   {words: ["few"], count: 3},
   {words: ["some"], count: 4},
   {words: ["many", "lots"], count: 6},
+  {words: ["bunch"], count: 5},
 ];
 
 export type WardrobeItem = {
@@ -84,6 +99,8 @@ export type WardrobeItem = {
   primaryColor?: string;
   status?: string;
   brand?: string | null;
+  name?: string | null;
+  colorLabel?: string | null;
   ingestion?: {status?: string};
   formalityScore?: number;
   warmthScore?: number;
@@ -101,6 +118,7 @@ export type WardrobeItem = {
     urls?: string[];
   };
   photoUrl?: string | null;
+  updatedAt?: number | {toMillis?: () => number} | null;
 };
 
 export type OutfitResult = {
@@ -132,10 +150,10 @@ function clamp01(value: unknown, fallback = 0.5): number {
 export function inferRequestedOutfitCount(text: string): number | null {
   const normalized = String(text ?? "").toLowerCase();
   const explicitMatch = normalized.match(
-    /\b(\d{1,2})\b\s+(?:outfits?|looks?|options?)\b/
+    /\b(\d{1,2})\b\s+(?:outfits?|looks?|options?)\b|\b(?:give|show|need|want)\s+me\s+(\d{1,2})\b/
   );
   if (explicitMatch) {
-    const numeric = Number(explicitMatch[1]);
+    const numeric = Number(explicitMatch[1] ?? explicitMatch[2]);
     return Number.isFinite(numeric) ? numeric : null;
   }
 
@@ -283,6 +301,7 @@ function normalizeItemColors(item: WardrobeItem): AllowedColor[] {
   const values = [
     ...(Array.isArray(item.colors) ? item.colors : []),
     item.primaryColor ?? "",
+    item.colorLabel ?? "",
   ];
   const out: AllowedColor[] = [];
   for (const value of values) {
@@ -300,6 +319,129 @@ function bucketForItem(item: WardrobeItem): Slot | null {
   if (category === Category.FOOTWEAR || category === "shoes") return "footwear";
   if (category === Category.OUTERWEAR) return "outerwear";
   return null;
+}
+
+export function getSlotForItem(item: WardrobeItem): Slot | null {
+  return bucketForItem(item);
+}
+
+function normalizedText(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(value: string): string[] {
+  return normalizedText(value).split(" ").filter(Boolean);
+}
+
+function itemHintScore(item: WardrobeItem, hint: string): number {
+  const normalizedHint = normalizedText(hint);
+  if (!normalizedHint) return 0;
+
+  const haystacks = [
+    item.name,
+    item.brand,
+    item.subCategory,
+    item.category,
+    item.primaryColor,
+    item.colorLabel,
+    ...(Array.isArray(item.colors) ? item.colors : []),
+  ]
+    .map((value) => normalizedText(value))
+    .filter(Boolean);
+
+  let score = 0;
+  for (const haystack of haystacks) {
+    if (haystack === normalizedHint) score = Math.max(score, 1);
+    else if (haystack.includes(normalizedHint)) score = Math.max(score, 0.9);
+    else {
+      const hintTokens = tokenize(normalizedHint);
+      const matched = hintTokens.filter((token) => haystack.includes(token)).length;
+      if (matched > 0) {
+        score = Math.max(score, Math.min(0.8, matched / Math.max(1, hintTokens.length)));
+      }
+    }
+  }
+
+  return score;
+}
+
+export function resolveItemHints(
+  items: WardrobeItem[],
+  hints: Array<{slot?: Slot | null; itemHint?: string | null}> | undefined
+): {
+  resolved: Array<{slot: Slot; itemId: string; item: WardrobeItem}>;
+  ambiguous: Array<{hint: string; candidates: WardrobeItem[]}>;
+  unmatched: string[];
+} {
+  const resolved: Array<{slot: Slot; itemId: string; item: WardrobeItem}> = [];
+  const ambiguous: Array<{hint: string; candidates: WardrobeItem[]}> = [];
+  const unmatched: string[] = [];
+
+  for (const hintDef of hints ?? []) {
+    const hint = String(hintDef?.itemHint ?? "").trim();
+    if (!hint) continue;
+    const preferredSlot = hintDef?.slot ?? null;
+    const scored = items
+      .map((item) => ({
+        item,
+        slot: bucketForItem(item),
+        score: itemHintScore(item, hint),
+      }))
+      .filter((value) => value.slot && (!preferredSlot || value.slot === preferredSlot) && value.score >= 0.45)
+      .sort((a, b) => b.score - a.score);
+
+    if (scored.length === 0) {
+      unmatched.push(hint);
+      continue;
+    }
+
+    const top = scored[0];
+    const nearMatches = scored.filter((value) => value.score >= top.score - 0.1).slice(0, 3);
+    if (nearMatches.length > 1 && top.score < 0.95) {
+      ambiguous.push({
+        hint,
+        candidates: nearMatches.map((value) => value.item),
+      });
+      continue;
+    }
+
+    resolved.push({
+      slot: top.slot as Slot,
+      itemId: top.item.id,
+      item: top.item,
+    });
+  }
+
+  return {resolved, ambiguous, unmatched};
+}
+
+export function applyFollowupToIntent(
+  intent: OutfitIntentV1,
+  followup?: OutfitFollowup | null
+): OutfitIntentV1 {
+  const type = followup?.type ?? null;
+  if (!type) return intent;
+
+  const next = {...intent};
+  if (type === "warmer") {
+    next.warmthTarget = clamp01(next.warmthTarget + 0.15, next.warmthTarget);
+    if (!next.niceToHave.includes("outerwear")) next.niceToHave = [...next.niceToHave, "outerwear"];
+  } else if (type === "cooler") {
+    next.warmthTarget = clamp01(next.warmthTarget - 0.15, next.warmthTarget);
+  } else if (type === "more_formal") {
+    next.formalityTarget = clamp01(next.formalityTarget + 0.15, next.formalityTarget);
+  } else if (type === "more_casual") {
+    next.formalityTarget = clamp01(next.formalityTarget - 0.15, next.formalityTarget);
+  } else if (type === "more_colorful") {
+    next.avoidLogos = false;
+  } else if (type === "more_minimal") {
+    next.avoidLogos = true;
+  }
+  return next;
 }
 
 function closeness(a: number, b: number): number {
@@ -349,7 +491,7 @@ function scoreItem(item: WardrobeItem, intent: OutfitIntentV1): number {
   const formalityScore = clamp01(item.formalityScore, 0.5);
   const warmthScore = clamp01(item.warmthScore, 0.5);
   const itemColors = normalizeItemColors(item);
-  const logoPenalty = intent.avoidLogos && item.hasLogo ? 0.35 : 0;
+  const logoPenalty = intent.avoidLogos && item.hasLogo ? 0.5 : 0;
   const missingPenalty =
     item.formalityScore == null || item.warmthScore == null ? 0.05 : 0;
 
@@ -426,12 +568,21 @@ function assembleOutfits(
   footwearItems: ScoredItem[],
   outerwearItems: ScoredItem[],
   intent: OutfitIntentV1,
-  count: number
+  count: number,
+  lockedBySlot?: Partial<Record<Slot, WardrobeItem>>
 ): OutfitCandidate[] {
-  const topCandidates = topItems.slice(0, 10);
-  const bottomCandidates = bottomItems.slice(0, 10);
-  const footwearCandidates = footwearItems.slice(0, 10);
-  const outerwearCandidates = outerwearItems.slice(0, 5);
+  const topCandidates = lockedBySlot?.top
+    ? topItems.filter((item) => item.item.id === lockedBySlot.top?.id).slice(0, 1)
+    : topItems.slice(0, 10);
+  const bottomCandidates = lockedBySlot?.bottom
+    ? bottomItems.filter((item) => item.item.id === lockedBySlot.bottom?.id).slice(0, 1)
+    : bottomItems.slice(0, 10);
+  const footwearCandidates = lockedBySlot?.footwear
+    ? footwearItems.filter((item) => item.item.id === lockedBySlot.footwear?.id).slice(0, 1)
+    : footwearItems.slice(0, 10);
+  const outerwearCandidates = lockedBySlot?.outerwear
+    ? outerwearItems.filter((item) => item.item.id === lockedBySlot.outerwear?.id).slice(0, 1)
+    : outerwearItems.slice(0, 5);
 
   const combos: OutfitCandidate[] = [];
   for (const top of topCandidates) {
@@ -479,12 +630,15 @@ function assembleOutfits(
   const selected: OutfitCandidate[] = [];
   const usedTops = new Set<string>();
   const usedBottoms = new Set<string>();
+  const usedFootwear = new Set<string>();
   for (const combo of combos) {
     const topId = combo.picks.find((pick) => pick.slot === "top")?.itemId ?? "";
     const bottomId = combo.picks.find((pick) => pick.slot === "bottom")?.itemId ?? "";
+    const footwearId = combo.picks.find((pick) => pick.slot === "footwear")?.itemId ?? "";
     const canUseFresh =
       (!usedTops.has(topId) || selected.length >= combos.length - 1) &&
-      (!usedBottoms.has(bottomId) || selected.length >= combos.length - 1);
+      (!usedBottoms.has(bottomId) || selected.length >= combos.length - 1) &&
+      (!usedFootwear.has(footwearId) || selected.length >= combos.length - 1);
     if (!canUseFresh && selected.length < count - 1) {
       continue;
     }
@@ -492,6 +646,7 @@ function assembleOutfits(
     selected.push(combo);
     usedTops.add(topId);
     usedBottoms.add(bottomId);
+    usedFootwear.add(footwearId);
     if (selected.length >= count) break;
   }
 
@@ -557,6 +712,10 @@ function applyConstraints(
       typeof constraints.avoidLogos === "boolean"
         ? constraints.avoidLogos
         : intent.avoidLogos,
+    excludeLaundry:
+      typeof constraints.excludeLaundry === "boolean"
+        ? constraints.excludeLaundry
+        : intent.excludeLaundry,
   };
 
   return {items: filteredItems, intent: nextIntent};
@@ -593,6 +752,7 @@ export function generateOutfitCandidates(
     constraints?: OutfitChatConstraints;
     preferredSlot?: Slot | null;
     excludeItemIds?: string[];
+    lockedItemsBySlot?: Partial<Record<Slot, WardrobeItem>>;
   }
 ): {
   outfits: OutfitCandidate[];
@@ -633,7 +793,8 @@ export function generateOutfitCandidates(
     scoredFootwear,
     scoredOuterwear,
     constrained.intent,
-    count
+    count,
+    options?.lockedItemsBySlot
   );
 
   if (options?.preferredSlot) {

@@ -13,7 +13,7 @@ const firebaseConfig = {
   appId: "1:1043970871162:web:87c7eb1a6ffcf5b9ad50c3",
 };
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(AsyncStorage),
