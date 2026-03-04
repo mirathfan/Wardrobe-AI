@@ -14,11 +14,23 @@ export type RemoveBackgroundOptions = {
   maskToAlpha?: boolean;
 };
 
+export type BrandCandidate = {
+  brand: string;
+  confidence: number;
+};
+
+export type BrandDetectionResult = {
+  brand: string | null;
+  confidence: number | null;
+  candidates?: BrandCandidate[];
+};
+
 type ExpoVisionBgModuleType = {
   removeBackground(
     uri: string,
     options?: RemoveBackgroundOptions
   ): Promise<RemoveBackgroundResult>;
+  detectBrandLogo(uri: string): Promise<BrandDetectionResult>;
 };
 
 const nativeModule =

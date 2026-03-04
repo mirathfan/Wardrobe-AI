@@ -21,8 +21,26 @@ if (!getApps().length) {
 type IngestionStatus = "pending" | "processing" | "done" | "failed";
 
 type ItemDoc = {
+  brand?: string | null;
+  brandConfidence?: number;
+  brandEvidence?: string;
+  brandCandidates?: string[];
+  brandSource?: "ai" | "user";
+  brandUpdatedAt?: number;
   category?: string;
   subCategory?: string;
+  fit?: string;
+  style?: string;
+  sleeveLength?: string;
+  neckline?: string;
+  closure?: string;
+  length?: string;
+  rise?: string;
+  legShape?: string;
+  hasLogo?: boolean;
+  logoPlacement?: string;
+  occasionTags?: string[];
+  seasonTags?: string[];
   photos?: {
     primaryUrl?: string | null;
     urls?: string[];
@@ -52,11 +70,33 @@ type ItemDoc = {
 };
 
 type RawExtraction = {
+  brand?: string | null;
+  brandConfidence?: number;
+  brandEvidence?: "text" | "logo" | "tag" | "unknown";
+  brandCandidates?: string[];
   category?: string;
   subCategory?: string;
   colors?: string[];
   pattern?: string;
   material?: string;
+  fit?: "slim" | "regular" | "relaxed" | "oversized" | "unknown";
+  style?: "casual" | "smart_casual" | "formal" | "athleisure" | "streetwear" | "workwear" | "unknown";
+  sleeveLength?: "sleeveless" | "short" | "three_quarter" | "long" | "unknown";
+  neckline?: "crew" | "v_neck" | "collar" | "hood" | "unknown";
+  closure?: "pullover" | "zip" | "button" | "none" | "unknown";
+  length?: "cropped" | "regular" | "long" | "unknown";
+  rise?: "low" | "mid" | "high" | "unknown";
+  legShape?: "skinny" | "slim" | "straight" | "tapered" | "wide" | "unknown";
+  hasLogo?: boolean;
+  logoPlacement?: "chest" | "sleeve" | "back" | "waist" | "leg" | "unknown";
+  occasionTags?: string[];
+  seasonTags?: string[];
+  confidence?: {
+    category?: number;
+    subCategory?: number;
+    colors?: number;
+    brand?: number;
+  };
   formalityScore?: number;
   warmthScore?: number;
   bbox?: { x?: number; y?: number; w?: number; h?: number };
@@ -68,10 +108,84 @@ const HOUR_MS = 60 * 60 * 1000;
 const ALLOWED_PATTERNS = new Set([
   "solid",
   "striped",
+  "plaid",
   "graphic",
   "checked",
+  "logo",
+  "text",
+  "floral",
+  "dots",
+  "camouflage",
   "textured",
+  "other",
   "unknown",
+]);
+const ALLOWED_MATERIALS = new Set([
+  "cotton",
+  "denim",
+  "polyester",
+  "wool",
+  "leather",
+  "linen",
+  "nylon",
+  "silk",
+  "rayon",
+  "fleece",
+  "unknown",
+]);
+const ALLOWED_FITS = new Set(["slim", "regular", "relaxed", "oversized", "unknown"]);
+const ALLOWED_STYLES = new Set([
+  "casual",
+  "smart_casual",
+  "formal",
+  "athleisure",
+  "streetwear",
+  "workwear",
+  "unknown",
+]);
+const ALLOWED_SLEEVE_LENGTHS = new Set([
+  "sleeveless",
+  "short",
+  "three_quarter",
+  "long",
+  "unknown",
+]);
+const ALLOWED_NECKLINES = new Set(["crew", "v_neck", "collar", "hood", "unknown"]);
+const ALLOWED_CLOSURES = new Set(["pullover", "zip", "button", "none", "unknown"]);
+const ALLOWED_LENGTHS = new Set(["cropped", "regular", "long", "unknown"]);
+const ALLOWED_RISES = new Set(["low", "mid", "high", "unknown"]);
+const ALLOWED_LEG_SHAPES = new Set([
+  "skinny",
+  "slim",
+  "straight",
+  "tapered",
+  "wide",
+  "unknown",
+]);
+const ALLOWED_BRAND_EVIDENCE = new Set(["text", "logo", "tag", "unknown"]);
+const ALLOWED_LOGO_PLACEMENTS = new Set([
+  "chest",
+  "sleeve",
+  "back",
+  "waist",
+  "leg",
+  "unknown",
+]);
+const ALLOWED_OCCASION_TAGS = new Set([
+  "work",
+  "gym",
+  "party",
+  "date",
+  "travel",
+  "lounge",
+  "formal_event",
+  "streetwear",
+]);
+const ALLOWED_SEASON_TAGS = new Set([
+  "summer",
+  "winter",
+  "spring_fall",
+  "all_season",
 ]);
 const ALLOWED_COLOR_SET = new Set<string>(ALLOWED_COLORS);
 const MIN_CROP_RATIO = 0.3;
@@ -106,6 +220,12 @@ function clampScore(value: unknown): number {
   return Math.max(0, Math.min(1, n));
 }
 
+function clamp01(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(1, n));
+}
+
 function normalizePattern(value: unknown): string {
   const raw = String(value ?? "").trim().toLowerCase();
   if (ALLOWED_PATTERNS.has(raw)) return raw;
@@ -114,7 +234,8 @@ function normalizePattern(value: unknown): string {
 
 function normalizeMaterial(value: unknown): string {
   const raw = String(value ?? "").trim().toLowerCase();
-  return raw || "unknown";
+  if (ALLOWED_MATERIALS.has(raw)) return raw;
+  return "unknown";
 }
 
 function normalizeCategory(value: unknown): Category | null {
@@ -129,6 +250,78 @@ function normalizeCategory(value: unknown): Category | null {
 function normalizeSubCategory(value: unknown): string | null {
   const raw = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "_");
   return raw || null;
+}
+
+function normalizeEnum(value: unknown, allowed: Set<string>, fallback = "unknown"): string {
+  const raw = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+  if (allowed.has(raw)) return raw;
+  return fallback;
+}
+
+function normalizeOptionalTagList(
+  value: unknown,
+  allowed: Set<string>,
+  maxLength: number
+): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const entry of value) {
+    const normalized = String(entry ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+    if (!allowed.has(normalized)) continue;
+    if (!out.includes(normalized)) out.push(normalized);
+    if (out.length >= maxLength) break;
+  }
+  return out;
+}
+
+function slugifyForCompare(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[®'’.]/g, "")
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function normalizeBrand(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const slug = slugifyForCompare(raw);
+  if (!slug) return null;
+  if (slug.includes("justdoit") || slug.includes("nike")) return "Nike";
+  if (slug.includes("adidas")) return "Adidas";
+  if (slug.includes("puma")) return "Puma";
+  if (slug === "hm" || slug.includes("handm")) return "H&M";
+  if (slug.includes("uniqlo")) return "Uniqlo";
+  if (slug.includes("zara")) return "Zara";
+  if (slug.includes("levis")) return "Levi’s";
+  if (slug.includes("ralphlauren") || slug === "polo" || slug.includes("poloralphlauren")) {
+    return "Polo Ralph Lauren";
+  }
+  return null;
+}
+
+function normalizeBrandCandidates(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const entry of value) {
+    const normalized = normalizeBrand(entry);
+    if (!normalized) continue;
+    if (!out.includes(normalized)) out.push(normalized);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
+function inferCategoryFromSubCategory(subCategory: string | null): Category | null {
+  if (!subCategory) return null;
+  for (const category of Object.values(Category) as Category[]) {
+    const subCategories = SUB_CATEGORIES[category] as readonly string[];
+    if (subCategories.includes(subCategory)) {
+      return category;
+    }
+  }
+  return null;
 }
 
 function toTitleCase(value: string): string {
@@ -459,19 +652,38 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
         {
           role: "system",
           content: [
-            "Classify one clothing item from the image.",
-            "Return strict JSON only with keys:",
-            "category, subCategory, colors, pattern, material, formalityScore, warmthScore, bbox.",
-            "No markdown, no extra keys, no prose.",
-            "Do not hallucinate brand names or logos.",
-            "Extract garment color only; ignore background objects, lighting casts, shadows, and skin tones.",
-            "If uncertain about material or pattern, return 'unknown'.",
-            "Return up to 2 concrete garment color names in colors. Do NOT output multicolor.",
-            "bbox must be normalized 0..1 with x,y,w,h and tightly cover garment region while excluding most background.",
-            "If unsure, use a safe central garment crop.",
-            "Use strict scoring rubric with anchors:",
-            "formalityScore: 0.0 gym/lounge tee, 0.3 casual everyday, 0.5 smart-casual knit, 0.7 business-casual shirt/blazer mix, 0.9 formal tailoring.",
-            "warmthScore: 0.0 very light sleeveless/summer fabric, 0.3 light short-sleeve cotton, 0.5 midweight long-sleeve, 0.7 hoodie/sweater, 0.9 heavy coat/insulated outerwear.",
+            "Classify one clothing item from the image and output ONLY JSON matching the schema. No markdown. No prose. No additional keys.",
+            "Schema keys only: category, subCategory, colors, pattern, material, brand, brandConfidence, brandEvidence, brandCandidates, fit, style, sleeveLength, neckline, closure, length, rise, legShape, hasLogo, logoPlacement, occasionTags, seasonTags, confidence, formalityScore, warmthScore, bbox.",
+            "HARD category disambiguation priority:",
+            "1) If two leg openings, inseam, crotch seam, fly, waistband, belt loops, or drawstring at the waist are visible, category MUST be bottom.",
+            "2) If collar or neckline plus sleeves are visible, category is top unless it is clearly open-front outerwear.",
+            "3) If zipper/open front coat/jacket/blazer/cardigan/overshirt is visible, category is outerwear.",
+            "4) If a single one-piece garment such as jumpsuit/dress/romper is visible, category is one_piece.",
+            "5) If shoes/boots/sandals are visible, category is footwear.",
+            "For pants vs top, prioritize waistband/fly/two-leg evidence over upper-body fabric cues.",
+            "Brand detection: detect only when clear visible text, logo, or tag is present. If unsure, return brand=null and brandConfidence <= 0.4. Canonical brands: Nike, Adidas, Puma, Uniqlo, Zara, H&M, Levi’s, Polo Ralph Lauren. brandCandidates max 5.",
+            "Brand evidence enum: text, logo, tag, unknown.",
+            "Extract garment colors only; ignore background, lighting casts, shadows, and skin.",
+            "Return up to 2 simple garment color names. Do NOT output multicolor.",
+            "Prefer unknown or null over guessing for uncertain fields.",
+            "Pattern enum: solid, striped, plaid, checked, graphic, logo, text, floral, dots, camouflage, textured, other, unknown.",
+            "Material enum: cotton, denim, polyester, wool, leather, linen, nylon, silk, rayon, fleece, unknown.",
+            "Fit enum: slim, regular, relaxed, oversized, unknown.",
+            "Style enum: casual, smart_casual, formal, athleisure, streetwear, workwear, unknown.",
+            "Sleeve enum: sleeveless, short, three_quarter, long, unknown.",
+            "Neckline enum: crew, v_neck, collar, hood, unknown.",
+            "Closure enum: pullover, zip, button, none, unknown.",
+            "Length enum: cropped, regular, long, unknown.",
+            "Rise enum: low, mid, high, unknown.",
+            "Leg shape enum: skinny, slim, straight, tapered, wide, unknown.",
+            "Logo placement enum: chest, sleeve, back, waist, leg, unknown.",
+            "occasionTags max 4 from: work, gym, party, date, travel, lounge, formal_event, streetwear.",
+            "seasonTags max 2 from: summer, winter, spring_fall, all_season.",
+            "confidence is optional and may contain category, subCategory, colors, brand, each 0..1.",
+            "bbox must be normalized 0..1 with x,y,w,h and tightly cover the garment while excluding most background. If unsure, use a safe central crop.",
+            "Use strict scoring rubric with anchors.",
+            "formalityScore anchors: 0.0 gym/lounge tee, 0.3 casual everyday, 0.5 smart-casual knit, 0.7 business-casual shirt/blazer, 0.9 formal tailoring.",
+            "warmthScore anchors: 0.0 very light sleeveless/summer fabric, 0.3 light short-sleeve cotton, 0.5 midweight long-sleeve, 0.7 hoodie/sweater, 0.9 heavy coat/insulated outerwear.",
             "Hard constraints: if subCategory is tshirt then formalityScore <= 0.5 and warmthScore <= 0.4.",
             "Hard constraints: if category is top and subCategory is hoodie, sweatshirt, or sweater then warmthScore >= 0.6.",
             `Valid categories: ${Object.values(Category).join(", ")}.`,
@@ -485,8 +697,9 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
               type: "text",
               text: [
                 "Analyze this garment photo.",
-                "Prefer visible garment type.",
-                "If uncertain, pick the closest valid category/subCategory and use unknown for uncertain fields.",
+                "Prefer visible garment type and visible logo/text/tag only.",
+                "Use waistband/fly/two-leg cues to avoid misclassifying pants as tops.",
+                "If uncertain, return unknown or null instead of guessing.",
                 "Colors must describe the garment only, not the background.",
                 "Return bbox values between 0 and 1.",
               ].join(" "),
@@ -546,6 +759,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
     const status = String(after.ingestion?.status ?? "").trim() as IngestionStatus | "";
     const existingColorSource = String(after.colorSource ?? "").trim().toLowerCase();
     const hasUserColorOverride = existingColorSource === "user";
+    const existingBrandSource = String(after.brandSource ?? "").trim().toLowerCase();
+    const hasUserBrandOverride = existingBrandSource === "user";
     const lastRunAtMs = toMillis(after.ingestion?.lastRunAt);
     const lastHash = after.ingestion?.lastProcessedPhotoHash ?? before?.ingestion?.lastProcessedPhotoHash ?? "";
     const hasNewPhoto = lastHash !== photoHash;
@@ -589,21 +804,72 @@ export const ingestItemFromPhotos = onDocumentWritten(
 
       let category = normalizeCategory(extracted.category);
       let subCategory = normalizeSubCategory(extracted.subCategory);
+      const inferredCategory = inferCategoryFromSubCategory(subCategory);
 
       if (!category) {
-        category = Category.TOP;
-        subCategory = "tshirt";
-        warning = "Invalid category from classifier; fallback applied.";
+        if (inferredCategory) {
+          category = inferredCategory;
+          warning = "Invalid category from classifier; inferred category from sub-category.";
+        } else {
+          category = Category.TOP;
+          warning = "Invalid category from classifier; fallback applied.";
+        }
       } else if (!subCategory) {
         subCategory = SUB_CATEGORIES[category][0];
         warning = "Sub-category missing; defaulted by category.";
       } else if (!isValidCategorySubCategory(category, subCategory)) {
-        subCategory = SUB_CATEGORIES[category][0];
-        warning = "Invalid sub-category from classifier; defaulted by category.";
+        if (inferredCategory) {
+          category = inferredCategory;
+          if (!isValidCategorySubCategory(category, subCategory)) {
+            subCategory = SUB_CATEGORIES[category][0];
+          }
+          warning = "Invalid category/sub-category pairing; reconciled from sub-category.";
+        } else {
+          subCategory = SUB_CATEGORIES[category][0];
+          warning = "Invalid sub-category from classifier; defaulted by category.";
+        }
       }
+      subCategory = subCategory ?? SUB_CATEGORIES[category][0];
 
       const pattern = normalizePattern(extracted.pattern);
       const material = normalizeMaterial(extracted.material);
+      const fit = normalizeEnum(extracted.fit, ALLOWED_FITS);
+      const style = normalizeEnum(extracted.style, ALLOWED_STYLES);
+      const sleeveLength = normalizeEnum(extracted.sleeveLength, ALLOWED_SLEEVE_LENGTHS);
+      const neckline = normalizeEnum(extracted.neckline, ALLOWED_NECKLINES);
+      const closure = normalizeEnum(extracted.closure, ALLOWED_CLOSURES);
+      const itemLength = normalizeEnum(extracted.length, ALLOWED_LENGTHS);
+      const rise = normalizeEnum(extracted.rise, ALLOWED_RISES);
+      const legShape = normalizeEnum(extracted.legShape, ALLOWED_LEG_SHAPES);
+      const hasLogo = typeof extracted.hasLogo === "boolean" ? extracted.hasLogo : false;
+      const logoPlacement = normalizeEnum(
+        extracted.logoPlacement,
+        ALLOWED_LOGO_PLACEMENTS
+      );
+      const occasionTags = normalizeOptionalTagList(
+        extracted.occasionTags,
+        ALLOWED_OCCASION_TAGS,
+        4
+      );
+      const seasonTags = normalizeOptionalTagList(
+        extracted.seasonTags,
+        ALLOWED_SEASON_TAGS,
+        2
+      );
+      const rawBrand = normalizeBrand(extracted.brand);
+      const brandCandidates = normalizeBrandCandidates(extracted.brandCandidates);
+      const brand = rawBrand ?? brandCandidates[0] ?? null;
+      const brandConfidenceRaw = clamp01(
+        extracted.brandConfidence ?? extracted.confidence?.brand ?? 0
+      );
+      const brandConfidence = brand ? brandConfidenceRaw : Math.min(brandConfidenceRaw, 0.4);
+      const brandEvidence = normalizeEnum(
+        extracted.brandEvidence,
+        ALLOWED_BRAND_EVIDENCE
+      );
+      const categoryConfidence = clamp01(extracted.confidence?.category ?? 0);
+      const subCategoryConfidence = clamp01(extracted.confidence?.subCategory ?? 0);
+      const colorsConfidence = clamp01(extracted.confidence?.colors ?? 0);
       const {colors: aiColorsRaw, colorLabel} = normalizeColors(extracted.colors);
       const aiColors = aiColorsRaw.slice(0, 2);
       const safeAiColorLabel = colorLabel?.trim() ? colorLabel.trim() : null;
@@ -700,9 +966,31 @@ export const ingestItemFromPhotos = onDocumentWritten(
         normalized: {
           category,
           subCategory,
+          confidence: {
+            category: categoryConfidence,
+            subCategory: subCategoryConfidence,
+            colors: colorsConfidence,
+            brand: brandConfidence,
+          },
+          brand: hasUserBrandOverride ? after.brand ?? null : brand,
+          brandConfidence,
+          brandEvidence,
+          brandCandidates,
           wearSlot: wearSlot(category),
           pattern,
           material,
+          fit,
+          style,
+          sleeveLength,
+          neckline,
+          closure,
+          length: itemLength,
+          rise,
+          legShape,
+          hasLogo,
+          logoPlacement,
+          occasionTags,
+          seasonTags,
           aiColors,
           ...(safeAiColorLabel ? {aiColorLabel: safeAiColorLabel} : {}),
           pixelColors,
@@ -723,6 +1011,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           formalityScore,
           warmthScore,
           warning,
+          userBrandOverridePreserved: hasUserBrandOverride,
           userColorOverridePreserved: hasUserColorOverride,
         },
       });
@@ -733,6 +1022,18 @@ export const ingestItemFromPhotos = onDocumentWritten(
         wearSlot: wearSlot(category),
         pattern,
         material,
+        fit,
+        style,
+        sleeveLength,
+        neckline,
+        closure,
+        length: itemLength,
+        rise,
+        legShape,
+        hasLogo,
+        logoPlacement,
+        ...(occasionTags.length > 0 ? {occasionTags} : {}),
+        ...(seasonTags.length > 0 ? {seasonTags} : {}),
         ...(safeAiColorLabel ? {aiColorLabel: safeAiColorLabel} : {}),
         ...(aiColors.length > 0 ? {aiColors} : {}),
         ...(pixelColors.length > 0 ? {pixelColors} : {}),
@@ -747,6 +1048,20 @@ export const ingestItemFromPhotos = onDocumentWritten(
           colorSource: "ai",
           colorUpdatedAt: Date.now(),
         } : {}),
+        ...(!hasUserBrandOverride
+          ? {
+              brand,
+              brandConfidence,
+              brandEvidence,
+              ...(brandCandidates.length > 0 ? {brandCandidates} : {}),
+              brandSource: "ai",
+              brandUpdatedAt: Date.now(),
+            }
+          : {
+              brandConfidence,
+              brandEvidence,
+              ...(brandCandidates.length > 0 ? {brandCandidates} : {}),
+            }),
         formalityScore,
         warmthScore,
         photos: {
