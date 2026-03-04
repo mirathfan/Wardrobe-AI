@@ -25,6 +25,10 @@ type PhotoEditorSectionProps = {
   onRefineChange: (value: number) => void;
   onRefineComplete: (value: number) => void;
   onResetRefine: () => void;
+  onReplace?: () => void;
+  onRotate?: () => void;
+  onAdjust?: () => void;
+  onRefineOpen?: () => void;
 };
 
 type RefineControlsProps = {
@@ -241,6 +245,10 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     onRefineChange,
     onRefineComplete,
     onResetRefine,
+    onReplace,
+    onRotate,
+    onAdjust,
+    onRefineOpen,
   } = props;
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [sliderErrored, setSliderErrored] = useState(false);
@@ -304,6 +312,38 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
             </Text>
           </View>
         )}
+
+        {previewUri ? (
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable
+              onPress={() => {
+                onRefineOpen?.();
+                setIsModalVisible(true);
+              }}
+              style={[editorButton, { flex: 1 }]}
+            >
+              <Text style={editorButtonText}>Refine</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                onAdjust?.();
+                setIsModalVisible(true);
+              }}
+              style={[editorButton, { flex: 1 }]}
+            >
+              <Text style={editorButtonText}>Adjust</Text>
+            </Pressable>
+            <Pressable onPress={onRotate} style={[editorButton, { flex: 1 }]}>
+              <Text style={editorButtonText}>Rotate</Text>
+            </Pressable>
+            <Pressable
+              onPress={onReplace ?? onPickLibrary}
+              style={[editorButton, { flex: 1 }]}
+            >
+              <Text style={editorButtonText}>Replace</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <View style={{ flexDirection: "row", gap: 8 }}>
           <Pressable onPress={onPickLibrary} style={[editorButton, { flex: 1 }]}>
