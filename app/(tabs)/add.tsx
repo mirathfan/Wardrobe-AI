@@ -33,6 +33,7 @@ import {
   isVisionBackgroundRemovalAvailable,
   removeBackground,
 } from "../../src/bg/removeBackground";
+import { detectBrandLogo } from "../../src/lib/detectBrandLogo";
 import { uploadItemPhoto } from "../../src/lib/uploadImage";
 
 const CATEGORIES: Category[] = Object.values(Category);
@@ -52,6 +53,10 @@ const DEFAULT_COLORS = [
 ];
 
 const DEFAULT_REFINE_VALUE = 1 / 3;
+
+function makeCreateSessionId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 function norm(s: string) {
   return (s || "").trim();
@@ -151,6 +156,9 @@ export default function AddItemScreen() {
   const [ingestionStatus, setIngestionStatus] = useState<string | null>(null);
   const [aiPattern, setAiPattern] = useState<string | null>(null);
   const [aiMaterial, setAiMaterial] = useState<string | null>(null);
+  const [detectedBrand, setDetectedBrand] = useState<string | null>(null);
+  const [detectedBrandConfidence, setDetectedBrandConfidence] = useState<number | null>(null);
+  const [createSessionId, setCreateSessionId] = useState(() => makeCreateSessionId());
   const lastCompletedRefineKeyRef = useRef("");
   const latestRefineRequestIdRef = useRef(0);
   const refineTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -158,6 +166,16 @@ export default function AddItemScreen() {
   const draftSubscriptionRef = useRef<(() => void) | null>(null);
   const userEditedKeysRef = useRef<Set<string>>(new Set());
   const syncedPreviewUriRef = useRef<string | null>(null);
+  const createSessionRef = useRef({
+    sessionId: makeCreateSessionId(),
+    requestId: 0,
+    draftId: null as string | null,
+    unsub: null as (() => void) | null,
+  });
+
+  if (createSessionRef.current.sessionId !== createSessionId) {
+    createSessionRef.current.sessionId = createSessionId;
+  }
 
   const previewPhotoUri =
     pendingPhotoUri ??
@@ -184,20 +202,41 @@ export default function AddItemScreen() {
   }
 
   const stopDraftSubscription = useCallback(() => {
-    if (draftSubscriptionRef.current) {
-      draftSubscriptionRef.current();
+    const unsubscribe =
+      createSessionRef.current.unsub ?? draftSubscriptionRef.current;
+    if (unsubscribe) {
+      unsubscribe();
+      createSessionRef.current.unsub = null;
       draftSubscriptionRef.current = null;
     }
   }, []);
 
-  async function cleanupDraftDoc(itemId: string | null) {
+  const beginAsyncRequest = useCallback(() => {
+    createSessionRef.current.requestId += 1;
+    return {
+      sessionId: createSessionRef.current.sessionId,
+      requestId: createSessionRef.current.requestId,
+    };
+  }, []);
+
+  const isActiveRequest = useCallback(
+    (token: { sessionId: string; requestId: number }) => {
+      return (
+        createSessionRef.current.sessionId === token.sessionId &&
+        createSessionRef.current.requestId === token.requestId
+      );
+    },
+    []
+  );
+
+  const cleanupDraftDoc = useCallback(async (itemId: string | null) => {
     if (!uid || !itemId || isEdit) return;
     try {
       await deleteDoc(doc(db, "users", uid, "items", itemId));
     } catch (error) {
       console.log("[AddItem] best-effort draft cleanup failed:", error);
     }
-  }
+  }, [isEdit, uid]);
 
   const resetDraftTracking = useCallback(() => {
     stopDraftSubscription();
@@ -206,8 +245,79 @@ export default function AddItemScreen() {
     setIngestionStatus(null);
     setAiPattern(null);
     setAiMaterial(null);
+    createSessionRef.current.draftId = null;
     syncedPreviewUriRef.current = null;
   }, [stopDraftSubscription]);
+
+  const resetCreateFlow = useCallback(
+    async (
+      reason: string,
+      options?: {
+        deleteActiveDraft?: boolean;
+      }
+    ) => {
+      if (isEdit) return;
+
+      if (__DEV__) {
+        console.log(`[AddFlow] reset reason=${reason}`);
+      }
+
+      const previousDraftId = createSessionRef.current.draftId ?? draftItemId;
+      stopDraftSubscription();
+
+      if (refineTimeoutRef.current) {
+        clearTimeout(refineTimeoutRef.current);
+        refineTimeoutRef.current = null;
+      }
+
+      createSessionRef.current.requestId += 1;
+      createSessionRef.current.draftId = null;
+      const nextSessionId = makeCreateSessionId();
+      createSessionRef.current.sessionId = nextSessionId;
+      setCreateSessionId(nextSessionId);
+
+      setDraftItemId(null);
+      setDraftPhotoHash(null);
+      setIngestionStatus(null);
+      setAiPattern(null);
+      setAiMaterial(null);
+      setBrand("");
+      setName("");
+      setCategory(null);
+      setSubCategory("");
+      setSelectedColors([]);
+      setCustomColor("");
+      setAddingCustomColor(false);
+      setSize("");
+      setNotes("");
+      setPrice("");
+      setPurchaseDate("");
+      setPhotoUrl(null);
+      setPhotoUri(null);
+      setCleanedPhotoUrl(null);
+      setServerCleanedUrl(null);
+      setPendingPhotoUri(null);
+      setPendingCleanedPhotoUri(null);
+      setPendingPhotoWidth(null);
+      setOriginalPickedPhotoUri(null);
+      setRefineValue(DEFAULT_REFINE_VALUE);
+      setRefiningCutout(false);
+      setUploadingPhoto(false);
+      setLoading(false);
+      setDetectedBrand(null);
+      setDetectedBrandConfidence(null);
+      lastCompletedRefineKeyRef.current = "";
+      latestRefineRequestIdRef.current = 0;
+      latestPhotoSelectionIdRef.current = 0;
+      syncedPreviewUriRef.current = null;
+      userEditedKeysRef.current.clear();
+
+      if (options?.deleteActiveDraft && previousDraftId) {
+        await cleanupDraftDoc(previousDraftId);
+      }
+    },
+    [cleanupDraftDoc, draftItemId, isEdit, stopDraftSubscription]
+  );
 
   function maybeApplyAutofillFromDraft(data: any) {
     setIngestionStatus(normalizeIngestionStatus(data?.ingestion?.status));
@@ -264,7 +374,7 @@ export default function AddItemScreen() {
     localPreviewUri: string;
     cleanedLocalUri: string | null;
     originalWidth: number | null;
-    selectionId: number;
+    token: { sessionId: string; requestId: number };
   }) {
     if (!uid || isEdit) return;
     let failingStep = "upload";
@@ -274,7 +384,7 @@ export default function AddItemScreen() {
         localPreviewUri,
         cleanedLocalUri,
         originalWidth,
-        selectionId,
+        token,
       } = params;
 
       if (draftPhotoHash === photoHash && draftItemId) {
@@ -293,7 +403,10 @@ export default function AddItemScreen() {
         originalWidth,
       });
 
-      if (selectionId !== latestPhotoSelectionIdRef.current) {
+      if (!isActiveRequest(token)) {
+        if (__DEV__) {
+          console.log("[AddFlow] ignoring stale async result (session mismatch)");
+        }
         return;
       }
 
@@ -335,22 +448,37 @@ export default function AddItemScreen() {
         },
       });
 
-      if (selectionId !== latestPhotoSelectionIdRef.current) {
+      if (!isActiveRequest(token)) {
+        if (__DEV__) {
+          console.log("[AddFlow] ignoring stale async result (session mismatch)");
+        }
         void cleanupDraftDoc(draftRef.id);
         return;
       }
 
       setDraftItemId(draftRef.id);
       setDraftPhotoHash(photoHash);
+      createSessionRef.current.draftId = draftRef.id;
       setIngestionStatus("pending");
       setPhotoUrl(uploaded.primaryUrl);
       setCleanedPhotoUrl(nextCleanedPhotoUrl);
       syncedPreviewUriRef.current = localPreviewUri;
 
+      const draftSessionId = token.sessionId;
       draftSubscriptionRef.current = onSnapshot(draftRef, (snap) => {
+        if (
+          createSessionRef.current.sessionId !== draftSessionId ||
+          createSessionRef.current.draftId !== draftRef.id
+        ) {
+          if (__DEV__) {
+            console.log("[AddFlow] ignoring stale async result (session mismatch)");
+          }
+          return;
+        }
         if (!snap.exists()) return;
         maybeApplyAutofillFromDraft(snap.data() as any);
       });
+      createSessionRef.current.unsub = draftSubscriptionRef.current;
 
       if (previousDraftId && previousDraftId !== draftRef.id) {
         void cleanupDraftDoc(previousDraftId);
@@ -417,15 +545,7 @@ export default function AddItemScreen() {
         setPendingPhotoWidth(null);
         setOriginalPickedPhotoUri(null);
         setRefineValue(DEFAULT_REFINE_VALUE);
-        resetDraftTracking();
-        userEditedKeysRef.current.clear();
-        lastCompletedRefineKeyRef.current = "";
-        latestRefineRequestIdRef.current = 0;
-        latestPhotoSelectionIdRef.current = 0;
-        if (refineTimeoutRef.current) {
-          clearTimeout(refineTimeoutRef.current);
-          refineTimeoutRef.current = null;
-        }
+        await resetCreateFlow("load-edit-item");
       } catch (e: any) {
         console.log(e);
         Alert.alert("Error", e?.message ?? "Failed to load item");
@@ -433,7 +553,7 @@ export default function AddItemScreen() {
         setLoading(false);
       }
     })();
-  }, [isEdit, editItemId, uid, resetDraftTracking]);
+  }, [isEdit, editItemId, uid, resetCreateFlow]);
 
   useEffect(() => {
     return () => {
@@ -476,6 +596,7 @@ export default function AddItemScreen() {
 
     const requestId = latestRefineRequestIdRef.current + 1;
     latestRefineRequestIdRef.current = requestId;
+    const token = beginAsyncRequest();
 
     if (refineTimeoutRef.current) {
       clearTimeout(refineTimeoutRef.current);
@@ -490,7 +611,15 @@ export default function AddItemScreen() {
           cleanupRadius,
           feather,
         });
-        if (requestId !== latestRefineRequestIdRef.current) return;
+        if (
+          requestId !== latestRefineRequestIdRef.current ||
+          !isActiveRequest(token)
+        ) {
+          if (__DEV__) {
+            console.log("[AddFlow] ignoring stale async result (session mismatch)");
+          }
+          return;
+        }
         lastCompletedRefineKeyRef.current = requestKey;
         setPendingPhotoUri(cutoutUri);
         setPendingCleanedPhotoUri(cutoutUri);
@@ -577,24 +706,39 @@ export default function AddItemScreen() {
 
       const previousSelectionId = latestPhotoSelectionIdRef.current + 1;
       latestPhotoSelectionIdRef.current = previousSelectionId;
+      const token = beginAsyncRequest();
       const originalUri = asset.uri;
       if (refineTimeoutRef.current) {
         clearTimeout(refineTimeoutRef.current);
         refineTimeoutRef.current = null;
       }
-      const previousDraftId = draftItemId;
+      const previousDraftId = createSessionRef.current.draftId ?? draftItemId;
       stopDraftSubscription();
       setDraftItemId(null);
       setDraftPhotoHash(null);
       setIngestionStatus(null);
       setAiPattern(null);
       setAiMaterial(null);
+      createSessionRef.current.draftId = null;
       syncedPreviewUriRef.current = null;
       latestRefineRequestIdRef.current = 0;
       setRefiningCutout(false);
       const initialOptions = getRefineOptions(DEFAULT_REFINE_VALUE);
-      const cutoutUri = await removeBackground(originalUri, initialOptions);
-      if (previousSelectionId !== latestPhotoSelectionIdRef.current) return;
+      setDetectedBrand(null);
+      setDetectedBrandConfidence(null);
+      const [cutoutUri, brandResult] = await Promise.all([
+        removeBackground(originalUri, initialOptions),
+        detectBrandLogo(originalUri),
+      ]);
+      if (
+        previousSelectionId !== latestPhotoSelectionIdRef.current ||
+        !isActiveRequest(token)
+      ) {
+        if (__DEV__) {
+          console.log("[AddFlow] ignoring stale async result (session mismatch)");
+        }
+        return;
+      }
       console.log("[AddItem] original image URI:", originalUri);
       console.log("[AddItem] final display/upload URI:", cutoutUri);
       lastCompletedRefineKeyRef.current = getRefineRequestKey(
@@ -610,6 +754,15 @@ export default function AddItemScreen() {
       setServerCleanedUrl(null);
       setIngestionStatus(isEdit ? null : "pending");
       setPendingPhotoWidth(asset.width ?? null);
+      if (brandResult?.brand) {
+        setDetectedBrand(brandResult.brand);
+        setDetectedBrandConfidence(
+          typeof brandResult.confidence === "number" ? brandResult.confidence : null
+        );
+        if (!userEditedKeysRef.current.has("brand")) {
+          setBrand(brandResult.brand);
+        }
+      }
 
       if (!isEdit && uid) {
         setUploadingPhoto(true);
@@ -619,10 +772,13 @@ export default function AddItemScreen() {
             localPreviewUri: cutoutUri,
             cleanedLocalUri: cutoutUri !== originalUri ? cutoutUri : null,
             originalWidth: asset.width ?? null,
-            selectionId: previousSelectionId,
+            token,
           });
         } finally {
-          if (previousSelectionId === latestPhotoSelectionIdRef.current) {
+          if (
+            previousSelectionId === latestPhotoSelectionIdRef.current &&
+            isActiveRequest(token)
+          ) {
             setUploadingPhoto(false);
           }
         }
@@ -802,7 +958,10 @@ export default function AddItemScreen() {
         }
         await updateDoc(itemRef, updatePayload);
         Alert.alert("Added ✅", "Item added to wardrobe.");
-        router.back();
+        if (__DEV__) {
+          console.log("[AddFlow] save success; resetting");
+        }
+        await resetCreateFlow("post-save");
         return;
       }
 
@@ -830,36 +989,10 @@ export default function AddItemScreen() {
       });
 
       Alert.alert("Added ✅", "Item added to wardrobe.");
-
-      setBrand("");
-      setName("");
-      setCategory(null);
-      setSubCategory("");
-      setSelectedColors([]);
-      setCustomColor("");
-      setAddingCustomColor(false);
-      setSize("");
-      setNotes("");
-      setPrice("");
-      setPurchaseDate("");
-      setPhotoUrl(null);
-      setPhotoUri(null);
-      setCleanedPhotoUrl(null);
-      setServerCleanedUrl(null);
-      setPendingPhotoUri(null);
-      setPendingCleanedPhotoUri(null);
-      setPendingPhotoWidth(null);
-      setOriginalPickedPhotoUri(null);
-      setRefineValue(DEFAULT_REFINE_VALUE);
-      resetDraftTracking();
-      userEditedKeysRef.current.clear();
-      lastCompletedRefineKeyRef.current = "";
-      latestRefineRequestIdRef.current = 0;
-      latestPhotoSelectionIdRef.current = 0;
-      if (refineTimeoutRef.current) {
-        clearTimeout(refineTimeoutRef.current);
-        refineTimeoutRef.current = null;
+      if (__DEV__) {
+        console.log("[AddFlow] save success; resetting");
       }
+      await resetCreateFlow("post-save");
     } catch (e: any) {
       console.log(`[Draft] failed step=${failingStep}`, e);
       console.log(e);
@@ -907,28 +1040,7 @@ export default function AddItemScreen() {
         onPickLibrary={() => void pickPhoto("library")}
         onUseCamera={() => void pickPhoto("camera")}
         onRemove={() => {
-          const previousDraftId = draftItemId;
-          setPendingPhotoUri(null);
-          setPendingCleanedPhotoUri(null);
-          setPendingPhotoWidth(null);
-          setPhotoUrl(null);
-          setPhotoUri(null);
-          setCleanedPhotoUrl(null);
-          setServerCleanedUrl(null);
-          setOriginalPickedPhotoUri(null);
-          setRefineValue(DEFAULT_REFINE_VALUE);
-          resetDraftTracking();
-          userEditedKeysRef.current.clear();
-          lastCompletedRefineKeyRef.current = "";
-          latestRefineRequestIdRef.current = 0;
-          latestPhotoSelectionIdRef.current = 0;
-          if (refineTimeoutRef.current) {
-            clearTimeout(refineTimeoutRef.current);
-            refineTimeoutRef.current = null;
-          }
-          if (previousDraftId) {
-            void cleanupDraftDoc(previousDraftId);
-          }
+          void resetCreateFlow("remove-photo", {deleteActiveDraft: true});
         }}
         onRefineChange={handleRefineValueChange}
         onRefineComplete={handleRefineValueComplete}
@@ -975,6 +1087,14 @@ export default function AddItemScreen() {
           placeholder="e.g., Nike"
           style={input}
         />
+        {detectedBrand ? (
+          <Text style={{ color: "#666" }}>
+            Auto (AI): {detectedBrand}
+            {typeof detectedBrandConfidence === "number"
+              ? ` (${Math.round(detectedBrandConfidence * 100)}%)`
+              : ""}
+          </Text>
+        ) : null}
       </Field>
 
       <Field label="Product name">
