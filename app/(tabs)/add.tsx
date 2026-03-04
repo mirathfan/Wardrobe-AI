@@ -1,5 +1,5 @@
 import * as ImagePicker from "expo-image-picker";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import {
   collection,
   deleteDoc,
@@ -172,6 +172,7 @@ export default function AddItemScreen() {
   const draftSubscriptionRef = useRef<(() => void) | null>(null);
   const userEditedKeysRef = useRef<Set<string>>(new Set());
   const syncedPreviewUriRef = useRef<string | null>(null);
+  const prevEditItemIdRef = useRef<string | null>(null);
   const createSessionRef = useRef({
     sessionId: makeCreateSessionId(),
     requestId: 0,
@@ -198,6 +199,34 @@ export default function AddItemScreen() {
   const selectedCategory = category ?? Category.TOP;
   const displayedPattern = pattern ?? aiPattern ?? "Auto (AI)";
   const displayedMaterial = material ?? aiMaterial ?? "Auto (AI)";
+  const hasActiveCreateState = useMemo(() => {
+    return Boolean(
+      draftItemId ||
+      createSessionRef.current.draftId ||
+      originalPickedPhotoUri ||
+      pendingPhotoUri ||
+      pendingCleanedPhotoUri ||
+      cleanedPhotoUrl ||
+      serverCleanedUrl ||
+      photoUrl ||
+      photoUri ||
+      refiningCutout ||
+      loading ||
+      uploadingPhoto
+    );
+  }, [
+    cleanedPhotoUrl,
+    draftItemId,
+    loading,
+    originalPickedPhotoUri,
+    pendingCleanedPhotoUri,
+    pendingPhotoUri,
+    photoUri,
+    photoUrl,
+    refiningCutout,
+    serverCleanedUrl,
+    uploadingPhoto,
+  ]);
 
   function markUserEdited(...keys: string[]) {
     keys.forEach((key) => userEditedKeysRef.current.add(key));
@@ -589,6 +618,29 @@ export default function AddItemScreen() {
       }
     };
   }, [stopDraftSubscription]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const prevEdit = prevEditItemIdRef.current;
+      const nowEdit = editItemId ?? null;
+
+      prevEditItemIdRef.current = nowEdit;
+
+      if (nowEdit) {
+        return undefined;
+      }
+
+      if (hasActiveCreateState) {
+        return undefined;
+      }
+
+      if (prevEdit && !nowEdit) {
+        void resetCreateFlow("focus-create-after-edit");
+      }
+
+      return undefined;
+    }, [editItemId, hasActiveCreateState, resetCreateFlow])
+  );
 
   const colorOptions = useMemo(() => {
     const set = new Set<string>(DEFAULT_COLORS.map(normColor));
