@@ -140,11 +140,21 @@ function ItemPhotoCard({
       }}
     >
       {itemImageUri ? (
-        <Image
-          source={{ uri: itemImageUri }}
-          style={{ width: "100%", height: 140 }}
-          resizeMode="cover"
-        />
+        <View
+          style={{
+            width: "100%",
+            height: 140,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#fff",
+          }}
+        >
+          <Image
+            source={{ uri: itemImageUri }}
+            style={{ width: "100%", height: 140 }}
+            resizeMode="contain"
+          />
+        </View>
       ) : (
         <View
           style={{
@@ -170,7 +180,9 @@ function ItemPhotoCard({
             }}
           />
           <Text style={{ fontSize: 14, fontWeight: "900", flex: 1 }} numberOfLines={1}>
-            {item.name ? item.name : `${item.primaryColor} ${item.category}`}
+            {item.name
+              ? item.name
+              : `${item.primaryColor ?? ""} ${item.subCategory ?? item.category ?? ""}`.trim()}
           </Text>
         </View>
 

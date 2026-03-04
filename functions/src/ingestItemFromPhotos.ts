@@ -22,6 +22,7 @@ type IngestionStatus = "pending" | "processing" | "done" | "failed";
 
 type ItemDoc = {
   brand?: string | null;
+  name?: string | null;
   brandConfidence?: number;
   brandEvidence?: string;
   brandCandidates?: string[];
@@ -332,6 +333,10 @@ function toTitleCase(value: string): string {
     .filter(Boolean)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(" ");
+}
+
+function humanizeLabel(value: string): string {
+  return toTitleCase(String(value ?? "").replace(/_/g, " ").trim());
 }
 
 function normalizeColorToken(raw: string): AllowedColor | null {
@@ -1022,6 +1027,10 @@ export const ingestItemFromPhotos = onDocumentWritten(
           finalColors,
           ...(finalColorLabel ? {finalColorLabel} : {}),
           finalPrimaryColor,
+          generatedName:
+            !(String(after.name ?? "").trim()) && finalPrimaryColor
+              ? `${finalPrimaryColor} ${humanizeLabel(subCategory || category)}`
+              : null,
           colorSource: hasUserColorOverride ? "user" : "ai",
           formalityScore,
           warmthScore,
@@ -1032,6 +1041,11 @@ export const ingestItemFromPhotos = onDocumentWritten(
       });
 
       await ref.set({
+        ...(!String(after.name ?? "").trim() && finalPrimaryColor
+          ? {
+              name: `${finalPrimaryColor} ${humanizeLabel(subCategory || category)}`.trim(),
+            }
+          : {}),
         category,
         subCategory,
         wearSlot: wearSlot(category),

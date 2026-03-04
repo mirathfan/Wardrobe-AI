@@ -2,7 +2,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { deleteDoc, deleteField, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
 import { useAuth } from "../../../src/hooks/useAuth";
@@ -591,25 +591,37 @@ function ItemImageModal(props: {
   onClose: () => void;
 }) {
   const { visible, uri, onClose } = props;
+  const insets = useSafeAreaInsets();
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: "#111" }}>
-        <View
+        <Text
           style={{
-            paddingTop: 18,
-            paddingHorizontal: 16,
-            paddingBottom: 12,
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
+            color: "#fff",
+            fontSize: 18,
+            fontWeight: "800",
+            textAlign: "center",
+            paddingTop: insets.top + 16,
           }}
         >
-          <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }}>Photo</Text>
-          <Pressable onPress={onClose}>
-            <Text style={{ color: "#fff", fontWeight: "800" }}>Close</Text>
-          </Pressable>
-        </View>
+          Photo
+        </Text>
+        <Pressable
+          onPress={onClose}
+          style={{
+            position: "absolute",
+            top: insets.top + 12,
+            right: 12,
+            zIndex: 10,
+            paddingVertical: 10,
+            paddingHorizontal: 12,
+            borderRadius: 999,
+            backgroundColor: "rgba(0,0,0,0.55)",
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "800" }}>Close</Text>
+        </Pressable>
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{
