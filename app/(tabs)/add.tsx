@@ -1,7 +1,15 @@
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import { collection, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  onSnapshot,
+  setDoc,
+  updateDoc,
+} from "firebase/firestore";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Pressable,
@@ -79,6 +87,28 @@ function getRefineRequestKey(uri: string, value: number) {
   ].join("|");
 }
 
+function normalizeIngestionStatus(value: unknown) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (
+    normalized === "pending" ||
+    normalized === "processing" ||
+    normalized === "done" ||
+    normalized === "failed"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function buildPhotoHash(asset: ImagePicker.ImagePickerAsset) {
+  return [
+    asset.fileSize ?? 0,
+    `${asset.width ?? 0}x${asset.height ?? 0}`,
+    asset.fileName ?? "",
+    asset.assetId ?? "",
+  ].join("-");
+}
+
 export default function AddItemScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
@@ -94,7 +124,7 @@ export default function AddItemScreen() {
 
   const [brand, setBrand] = useState("");
   const [name, setName] = useState("");
-  const [category, setCategory] = useState<Category>(Category.TOP);
+  const [category, setCategory] = useState<Category | null>(null);
   const [subCategory, setSubCategory] = useState("");
 
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
@@ -116,9 +146,18 @@ export default function AddItemScreen() {
   const [originalPickedPhotoUri, setOriginalPickedPhotoUri] = useState<string | null>(null);
   const [refineValue, setRefineValue] = useState(DEFAULT_REFINE_VALUE);
   const [refiningCutout, setRefiningCutout] = useState(false);
+  const [draftItemId, setDraftItemId] = useState<string | null>(null);
+  const [draftPhotoHash, setDraftPhotoHash] = useState<string | null>(null);
+  const [ingestionStatus, setIngestionStatus] = useState<string | null>(null);
+  const [aiPattern, setAiPattern] = useState<string | null>(null);
+  const [aiMaterial, setAiMaterial] = useState<string | null>(null);
   const lastCompletedRefineKeyRef = useRef("");
   const latestRefineRequestIdRef = useRef(0);
   const refineTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestPhotoSelectionIdRef = useRef(0);
+  const draftSubscriptionRef = useRef<(() => void) | null>(null);
+  const userEditedKeysRef = useRef<Set<string>>(new Set());
+  const syncedPreviewUriRef = useRef<string | null>(null);
 
   const previewPhotoUri =
     pendingPhotoUri ??
@@ -132,6 +171,195 @@ export default function AddItemScreen() {
     isVisionBackgroundRemovalAvailable() &&
     !!originalPickedPhotoUri &&
     !!(pendingPhotoUri || pendingCleanedPhotoUri);
+  const selectedCategory = category ?? Category.TOP;
+  const displayedPattern = aiPattern || "Auto (AI)";
+  const displayedMaterial = aiMaterial || "Auto (AI)";
+
+  function markUserEdited(...keys: string[]) {
+    keys.forEach((key) => userEditedKeysRef.current.add(key));
+  }
+
+  function clearUserEdited(...keys: string[]) {
+    keys.forEach((key) => userEditedKeysRef.current.delete(key));
+  }
+
+  const stopDraftSubscription = useCallback(() => {
+    if (draftSubscriptionRef.current) {
+      draftSubscriptionRef.current();
+      draftSubscriptionRef.current = null;
+    }
+  }, []);
+
+  async function cleanupDraftDoc(itemId: string | null) {
+    if (!uid || !itemId || isEdit) return;
+    try {
+      await deleteDoc(doc(db, "users", uid, "items", itemId));
+    } catch (error) {
+      console.log("[AddItem] best-effort draft cleanup failed:", error);
+    }
+  }
+
+  const resetDraftTracking = useCallback(() => {
+    stopDraftSubscription();
+    setDraftItemId(null);
+    setDraftPhotoHash(null);
+    setIngestionStatus(null);
+    setAiPattern(null);
+    setAiMaterial(null);
+    syncedPreviewUriRef.current = null;
+  }, [stopDraftSubscription]);
+
+  function maybeApplyAutofillFromDraft(data: any) {
+    setIngestionStatus(normalizeIngestionStatus(data?.ingestion?.status));
+    setAiPattern(norm(data?.pattern) || null);
+    setAiMaterial(norm(data?.material) || null);
+
+    const serverPrimaryUrl = data?.photos?.primaryUrl ?? data?.photoUrl ?? null;
+    const serverCleanedPhotoUrl =
+      data?.photos?.cleanedPhotoUrl ?? data?.photos?.cleanedUrl ?? null;
+    const serverGeneratedCleanedUrl = data?.photos?.cleanedUrl ?? null;
+
+    if (serverPrimaryUrl) setPhotoUrl(serverPrimaryUrl);
+    if (serverCleanedPhotoUrl) setCleanedPhotoUrl(serverCleanedPhotoUrl);
+    if (serverGeneratedCleanedUrl) setServerCleanedUrl(serverGeneratedCleanedUrl);
+
+    if (!userEditedKeysRef.current.has("category") && !category && data?.category) {
+      setCategory(normalizeCategoryForStorage(data.category));
+    }
+
+    const normalizedCategory = normalizeCategoryForStorage(
+      data?.category ?? selectedCategory
+    );
+    const serverSubCategory = norm(data?.subCategory);
+    if (
+      !userEditedKeysRef.current.has("subCategory") &&
+      !subCategory &&
+      serverSubCategory &&
+      isValidCategorySubCategory(normalizedCategory, serverSubCategory)
+    ) {
+      setSubCategory(serverSubCategory);
+    }
+
+    const colorSource = String(data?.colorSource ?? "").trim().toLowerCase();
+    if (
+      colorSource !== "user" &&
+      !userEditedKeysRef.current.has("colors") &&
+      selectedColors.length === 0
+    ) {
+      const incomingColors: string[] =
+        Array.isArray(data?.colors) && data.colors.length
+          ? data.colors.map(normColor).filter(Boolean)
+          : data?.primaryColor
+            ? [normColor(data.primaryColor)]
+            : [];
+
+      if (incomingColors.length > 0) {
+        setSelectedColors(incomingColors);
+      }
+    }
+  }
+
+  async function startDraftAutofill(params: {
+    photoHash: string;
+    localPreviewUri: string;
+    cleanedLocalUri: string | null;
+    originalWidth: number | null;
+    selectionId: number;
+  }) {
+    if (!uid || isEdit) return;
+    let failingStep = "upload";
+    try {
+      const {
+        photoHash,
+        localPreviewUri,
+        cleanedLocalUri,
+        originalWidth,
+        selectionId,
+      } = params;
+
+      if (draftPhotoHash === photoHash && draftItemId) {
+        return;
+      }
+
+      const previousDraftId = draftItemId;
+      resetDraftTracking();
+
+      const draftRef = doc(collection(db, "users", uid, "items"));
+      const uploaded = await uploadItemPhoto({
+        uid,
+        itemId: draftRef.id,
+        localUri: localPreviewUri,
+        cleanedLocalUri,
+        originalWidth,
+      });
+
+      if (selectionId !== latestPhotoSelectionIdRef.current) {
+        return;
+      }
+
+      const now = Date.now();
+      const nextCleanedPhotoUrl = uploaded.cleanedUrl;
+      failingStep = "create";
+      console.log("[Draft] create", {
+        itemId: draftRef.id,
+        photoHash,
+        hasCleanedUrl: !!nextCleanedPhotoUrl,
+      });
+      await setDoc(draftRef, {
+        photoUrl: uploaded.primaryUrl,
+        photoUri: null,
+        createdAt: now,
+        updatedAt: now,
+        status: "AVAILABLE",
+        category: Category.TOP,
+        wearCountSinceWash: 0,
+        lastWornDate: null,
+        lastWashedDate: now,
+        isDraft: true,
+        photos: {
+          primaryUrl: uploaded.primaryUrl,
+          urls: [uploaded.primaryUrl],
+          ...(nextCleanedPhotoUrl
+            ? {
+                cleanedPhotoUrl: nextCleanedPhotoUrl,
+              }
+            : {}),
+        },
+        ingestion: {
+          status: "pending",
+          lastRunAt: now,
+        },
+        ingestionSource: {
+          sourceHash: photoHash,
+          sourceType: nextCleanedPhotoUrl ? "ios_vision" : "original",
+        },
+      });
+
+      if (selectionId !== latestPhotoSelectionIdRef.current) {
+        void cleanupDraftDoc(draftRef.id);
+        return;
+      }
+
+      setDraftItemId(draftRef.id);
+      setDraftPhotoHash(photoHash);
+      setIngestionStatus("pending");
+      setPhotoUrl(uploaded.primaryUrl);
+      setCleanedPhotoUrl(nextCleanedPhotoUrl);
+      syncedPreviewUriRef.current = localPreviewUri;
+
+      draftSubscriptionRef.current = onSnapshot(draftRef, (snap) => {
+        if (!snap.exists()) return;
+        maybeApplyAutofillFromDraft(snap.data() as any);
+      });
+
+      if (previousDraftId && previousDraftId !== draftRef.id) {
+        void cleanupDraftDoc(previousDraftId);
+      }
+    } catch (error) {
+      console.log(`[Draft] failed step=${failingStep}`, error);
+      throw error;
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -189,8 +417,11 @@ export default function AddItemScreen() {
         setPendingPhotoWidth(null);
         setOriginalPickedPhotoUri(null);
         setRefineValue(DEFAULT_REFINE_VALUE);
+        resetDraftTracking();
+        userEditedKeysRef.current.clear();
         lastCompletedRefineKeyRef.current = "";
         latestRefineRequestIdRef.current = 0;
+        latestPhotoSelectionIdRef.current = 0;
         if (refineTimeoutRef.current) {
           clearTimeout(refineTimeoutRef.current);
           refineTimeoutRef.current = null;
@@ -202,15 +433,16 @@ export default function AddItemScreen() {
         setLoading(false);
       }
     })();
-  }, [isEdit, editItemId, uid]);
+  }, [isEdit, editItemId, uid, resetDraftTracking]);
 
   useEffect(() => {
     return () => {
+      stopDraftSubscription();
       if (refineTimeoutRef.current) {
         clearTimeout(refineTimeoutRef.current);
       }
     };
-  }, []);
+  }, [stopDraftSubscription]);
 
   const colorOptions = useMemo(() => {
     const set = new Set<string>(DEFAULT_COLORS.map(normColor));
@@ -323,13 +555,13 @@ export default function AddItemScreen() {
       const res =
         source === "camera"
           ? await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: ["images"],
               quality: 1,
               allowsEditing: true,
               aspect: [1, 1],
             })
           : await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: ["images"],
               quality: 1,
               allowsEditing: true,
               aspect: [1, 1],
@@ -338,15 +570,31 @@ export default function AddItemScreen() {
       if (res.canceled || !res.assets[0]) return;
 
       const asset = res.assets[0];
+      const nextPhotoHash = buildPhotoHash(asset);
+      if (!isEdit && draftPhotoHash === nextPhotoHash && draftItemId) {
+        return;
+      }
+
+      const previousSelectionId = latestPhotoSelectionIdRef.current + 1;
+      latestPhotoSelectionIdRef.current = previousSelectionId;
       const originalUri = asset.uri;
       if (refineTimeoutRef.current) {
         clearTimeout(refineTimeoutRef.current);
         refineTimeoutRef.current = null;
       }
+      const previousDraftId = draftItemId;
+      stopDraftSubscription();
+      setDraftItemId(null);
+      setDraftPhotoHash(null);
+      setIngestionStatus(null);
+      setAiPattern(null);
+      setAiMaterial(null);
+      syncedPreviewUriRef.current = null;
       latestRefineRequestIdRef.current = 0;
       setRefiningCutout(false);
       const initialOptions = getRefineOptions(DEFAULT_REFINE_VALUE);
       const cutoutUri = await removeBackground(originalUri, initialOptions);
+      if (previousSelectionId !== latestPhotoSelectionIdRef.current) return;
       console.log("[AddItem] original image URI:", originalUri);
       console.log("[AddItem] final display/upload URI:", cutoutUri);
       lastCompletedRefineKeyRef.current = getRefineRequestKey(
@@ -359,7 +607,28 @@ export default function AddItemScreen() {
       setPendingPhotoUri(cutoutUri);
       setPendingCleanedPhotoUri(cutoutUri);
       setCleanedPhotoUrl(null);
+      setServerCleanedUrl(null);
+      setIngestionStatus(isEdit ? null : "pending");
       setPendingPhotoWidth(asset.width ?? null);
+
+      if (!isEdit && uid) {
+        setUploadingPhoto(true);
+        try {
+          await startDraftAutofill({
+            photoHash: nextPhotoHash,
+            localPreviewUri: cutoutUri,
+            cleanedLocalUri: cutoutUri !== originalUri ? cutoutUri : null,
+            originalWidth: asset.width ?? null,
+            selectionId: previousSelectionId,
+          });
+        } finally {
+          if (previousSelectionId === latestPhotoSelectionIdRef.current) {
+            setUploadingPhoto(false);
+          }
+        }
+      } else if (previousDraftId) {
+        void cleanupDraftDoc(previousDraftId);
+      }
     } catch (e: any) {
       console.log(e);
       Alert.alert("Error", e?.message ?? "Failed to pick image");
@@ -367,7 +636,14 @@ export default function AddItemScreen() {
   }
 
   async function resolvePhotoFields(currentUid: string, itemId: string) {
-    if (pendingPhotoUri) {
+    const needsUpload =
+      !!pendingPhotoUri &&
+      (!photoUrl || syncedPreviewUriRef.current !== pendingPhotoUri);
+
+    if (needsUpload) {
+      if (draftItemId) {
+        console.log("[Draft] update photos", { itemId });
+      }
       setUploadingPhoto(true);
       const uploadedUrl = await uploadItemPhoto({
         uid: currentUid,
@@ -378,6 +654,9 @@ export default function AddItemScreen() {
       });
       console.log("[AddItem] saved photos.cleanedPhotoUrl:", uploadedUrl.cleanedUrl);
       console.log("[AddItem] saved photos.cleanedUrl:", serverCleanedUrl);
+      setPhotoUrl(uploadedUrl.primaryUrl);
+      setCleanedPhotoUrl(uploadedUrl.cleanedUrl);
+      syncedPreviewUriRef.current = pendingPhotoUri;
       return {
         photoUrl: uploadedUrl.primaryUrl,
         photoUri: null,
@@ -443,18 +722,19 @@ export default function AddItemScreen() {
     }
 
     const itemsRef = collection(db, "users", uid, "items");
-    const itemRef = isEdit
-      ? doc(db, "users", uid, "items", String(editItemId))
-      : doc(itemsRef);
+    const itemRef =
+      isEdit || draftItemId
+        ? doc(db, "users", uid, "items", String(editItemId ?? draftItemId))
+        : doc(itemsRef);
 
     const payloadBase = {
       brand: b || "",
       name: n || "",
-      category,
-      subCategory: isValidCategorySubCategory(category, subCategory)
+      category: category ?? Category.TOP,
+      subCategory: isValidCategorySubCategory(selectedCategory, subCategory)
         ? subCategory
         : null,
-      wearSlot: wearSlot(category),
+      wearSlot: wearSlot(category ?? Category.TOP),
       colors: selectedColors.map(normColor).filter(Boolean),
       primaryColor: normColor(selectedColors[0] ?? ""),
       size: norm(size) || null,
@@ -464,6 +744,7 @@ export default function AddItemScreen() {
       updatedAt: Date.now(),
     };
 
+    let failingStep = "upload";
     try {
       setLoading(true);
 
@@ -477,6 +758,7 @@ export default function AddItemScreen() {
       console.log("[AddItem] writing photos.cleanedUrl:", nextPhoto.cleanedUrl ?? null);
 
       if (isEdit) {
+        failingStep = "finalize";
         const updatePayload: Record<string, any> = {
           ...payload,
           "photos.primaryUrl": nextPhoto.photoUrl,
@@ -499,6 +781,32 @@ export default function AddItemScreen() {
         return;
       }
 
+      if (draftItemId) {
+        console.log("[Draft] finalize", { itemId: itemRef.id });
+        failingStep = "finalize";
+        const updatePayload: Record<string, any> = {
+          ...payload,
+          "photos.primaryUrl": nextPhoto.photoUrl,
+          "photos.urls": nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
+          isDraft: false,
+          updatedAt: Date.now(),
+        };
+        if (nextPhoto.cleanedPhotoUrl) {
+          updatePayload["photos.cleanedPhotoUrl"] = nextPhoto.cleanedPhotoUrl;
+        }
+        if (pendingPhotoUri && syncedPreviewUriRef.current !== pendingPhotoUri) {
+          updatePayload.ingestion = {
+            status: "pending",
+            lastRunAt: Date.now(),
+          };
+        }
+        await updateDoc(itemRef, updatePayload);
+        Alert.alert("Added ✅", "Item added to wardrobe.");
+        router.back();
+        return;
+      }
+
+      failingStep = "create";
       await setDoc(itemRef, {
         ...payload,
         photos: {
@@ -525,7 +833,7 @@ export default function AddItemScreen() {
 
       setBrand("");
       setName("");
-      setCategory(Category.TOP);
+      setCategory(null);
       setSubCategory("");
       setSelectedColors([]);
       setCustomColor("");
@@ -543,13 +851,17 @@ export default function AddItemScreen() {
       setPendingPhotoWidth(null);
       setOriginalPickedPhotoUri(null);
       setRefineValue(DEFAULT_REFINE_VALUE);
+      resetDraftTracking();
+      userEditedKeysRef.current.clear();
       lastCompletedRefineKeyRef.current = "";
       latestRefineRequestIdRef.current = 0;
+      latestPhotoSelectionIdRef.current = 0;
       if (refineTimeoutRef.current) {
         clearTimeout(refineTimeoutRef.current);
         refineTimeoutRef.current = null;
       }
     } catch (e: any) {
+      console.log(`[Draft] failed step=${failingStep}`, e);
       console.log(e);
       Alert.alert(
         "Error",
@@ -562,7 +874,7 @@ export default function AddItemScreen() {
   }
 
   const canAddCustomColor = customColor.trim().length > 0;
-  const canSave = !!category && !!(pendingPhotoUri || photoUrl || photoUri) && !loading;
+  const canSave = !!(pendingPhotoUri || photoUrl || photoUri) && !loading;
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
@@ -595,6 +907,7 @@ export default function AddItemScreen() {
         onPickLibrary={() => void pickPhoto("library")}
         onUseCamera={() => void pickPhoto("camera")}
         onRemove={() => {
+          const previousDraftId = draftItemId;
           setPendingPhotoUri(null);
           setPendingCleanedPhotoUri(null);
           setPendingPhotoWidth(null);
@@ -604,11 +917,17 @@ export default function AddItemScreen() {
           setServerCleanedUrl(null);
           setOriginalPickedPhotoUri(null);
           setRefineValue(DEFAULT_REFINE_VALUE);
+          resetDraftTracking();
+          userEditedKeysRef.current.clear();
           lastCompletedRefineKeyRef.current = "";
           latestRefineRequestIdRef.current = 0;
+          latestPhotoSelectionIdRef.current = 0;
           if (refineTimeoutRef.current) {
             clearTimeout(refineTimeoutRef.current);
             refineTimeoutRef.current = null;
+          }
+          if (previousDraftId) {
+            void cleanupDraftDoc(previousDraftId);
           }
         }}
         onRefineChange={handleRefineValueChange}
@@ -616,10 +935,43 @@ export default function AddItemScreen() {
         onResetRefine={handleRefineReset}
       />
 
+      {!isEdit && draftItemId ? (
+        <View
+          style={{
+            gap: 6,
+            padding: 12,
+            borderRadius: 16,
+            borderWidth: 1,
+            borderColor: "#e5e5e5",
+            backgroundColor: "#fafafa",
+          }}
+        >
+          <Text style={{ fontSize: 14, fontWeight: "800" }}>
+            AI Autofill: {ingestionStatus ? ingestionStatus : "starting"}
+          </Text>
+          <Text style={{ color: "#666" }}>
+            {[
+              `Category: ${category ?? "Auto (AI)"}`,
+              subCategory ? `Sub-category: ${subCategory}` : "",
+              selectedColors.length
+                ? `Colors: ${selectedColors.join(" / ")}`
+                : "Colors: Auto (AI)",
+              `Pattern: ${displayedPattern}`,
+              `Material: ${displayedMaterial}`,
+            ]
+              .filter(Boolean)
+              .join(" • ") || "Waiting for ingestion…"}
+          </Text>
+        </View>
+      ) : null}
+
       <Field label="Brand">
         <TextInput
           value={brand}
-          onChangeText={setBrand}
+          onChangeText={(value) => {
+            markUserEdited("brand");
+            setBrand(value);
+          }}
           placeholder="e.g., Nike"
           style={input}
         />
@@ -628,7 +980,10 @@ export default function AddItemScreen() {
       <Field label="Product name">
         <TextInput
           value={name}
-          onChangeText={setName}
+          onChangeText={(value) => {
+            markUserEdited("name");
+            setName(value);
+          }}
           placeholder="e.g., Air Jordan 2"
           style={input}
         />
@@ -637,12 +992,23 @@ export default function AddItemScreen() {
       <View style={{ gap: 8 }}>
         <Text style={{ fontSize: 16, fontWeight: "700" }}>Category</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          <Pill
+            key="auto-category"
+            label="Auto (AI)"
+            active={!category}
+            onPress={() => {
+              clearUserEdited("category", "subCategory");
+              setCategory(null);
+              setSubCategory("");
+            }}
+          />
           {CATEGORIES.map((cat) => (
             <Pill
               key={cat}
               label={cat}
               active={category === cat}
               onPress={() => {
+                markUserEdited("category", "subCategory");
                 setCategory(cat);
                 setSubCategory("");
               }}
@@ -658,16 +1024,22 @@ export default function AddItemScreen() {
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           <Pill
             key="auto"
-            label="Auto"
+            label="Auto (AI)"
             active={!subCategory}
-            onPress={() => setSubCategory("")}
+            onPress={() => {
+              clearUserEdited("subCategory");
+              setSubCategory("");
+            }}
           />
-          {SUB_CATEGORIES[category].map((sub) => (
+          {SUB_CATEGORIES[selectedCategory].map((sub) => (
             <Pill
               key={sub}
               label={sub}
               active={subCategory === sub}
-              onPress={() => setSubCategory(sub)}
+              onPress={() => {
+                markUserEdited("subCategory");
+                setSubCategory(sub);
+              }}
             />
           ))}
         </View>
@@ -677,12 +1049,26 @@ export default function AddItemScreen() {
         <Text style={{ fontSize: 16, fontWeight: "700" }}>Colors</Text>
 
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          <Pill
+            key="auto-colors"
+            label="Auto (AI)"
+            active={selectedColors.length === 0}
+            onPress={() => {
+              clearUserEdited("colors");
+              setSelectedColors([]);
+              setCustomColor("");
+              setAddingCustomColor(false);
+            }}
+          />
           {colorOptions.map((c) => (
             <Pill
               key={c}
               label={c}
               active={selectedColors.includes(c)}
-              onPress={() => toggleColor(c)}
+              onPress={() => {
+                markUserEdited("colors");
+                toggleColor(c);
+              }}
             />
           ))}
 
@@ -728,6 +1114,7 @@ export default function AddItemScreen() {
                 label="Cancel"
                 active={false}
                 onPress={() => {
+                  markUserEdited("colors");
                   setCustomColor("");
                   setAddingCustomColor(false);
                 }}
@@ -740,8 +1127,18 @@ export default function AddItemScreen() {
 
         {selectedColors.length > 0 ? (
           <Text style={{ color: "#666" }}>Selected: {selectedColors.join(" / ")}</Text>
-        ) : null}
+        ) : (
+          <Text style={{ color: "#666" }}>Selected: Auto (AI)</Text>
+        )}
       </View>
+
+      <Field label="Pattern">
+        <Text style={{ color: "#666" }}>{displayedPattern}</Text>
+      </Field>
+
+      <Field label="Material">
+        <Text style={{ color: "#666" }}>{displayedMaterial}</Text>
+      </Field>
 
       <Field label="Size">
         <TextInput

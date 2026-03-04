@@ -31,7 +31,7 @@ service cloud.firestore {
     }
 
     function validColorSource(source) {
-      return source in ["ai", "user"];
+      return source in ["ai", "user", "pixel"];
     }
 
     function validOptionalString(value) {
@@ -63,8 +63,9 @@ service cloud.firestore {
         && (!("croppedUrl" in value) || validOptionalString(value.croppedUrl))
         && (!("thumbUrl" in value) || validOptionalString(value.thumbUrl))
         && (!("cleanedUrl" in value) || validOptionalString(value.cleanedUrl))
+        && (!("cleanedPhotoUrl" in value) || validOptionalString(value.cleanedPhotoUrl))
         && (!("cleanedThumbUrl" in value) || validOptionalString(value.cleanedThumbUrl))
-        && (!("cleanedSource" in value) || value.cleanedSource == "placeholder")
+        && (!("cleanedSource" in value) || value.cleanedSource in ["placeholder", "onnx", "vision"])
         && (!("cleanedFromHash" in value) || validOptionalString(value.cleanedFromHash))
         && (!("urls" in value) || value.urls is list);
     }
