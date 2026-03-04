@@ -107,6 +107,12 @@ service cloud.firestore {
         && (!changed.hasAny(["lastWashedAt"]) || validOptionalNumber(data.lastWashedAt))
         && (!changed.hasAny(["pattern"]) || validOptionalString(data.pattern))
         && (!changed.hasAny(["material"]) || validOptionalString(data.material))
+        && (!changed.hasAny(["occasionTags"]) || data.occasionTags == null || data.occasionTags is list)
+        && (!changed.hasAny(["seasonTags"]) || data.seasonTags == null || data.seasonTags is list)
+        && (!changed.hasAny(["fit"]) || validOptionalString(data.fit))
+        && (!changed.hasAny(["rise"]) || validOptionalString(data.rise))
+        && (!changed.hasAny(["legShape"]) || validOptionalString(data.legShape))
+        && (!changed.hasAny(["warmthPreference"]) || validOptionalNumber(data.warmthPreference))
         && (!changed.hasAny(["photos"]) || validPhotosMap(data.photos))
         && (!changed.hasAny(["uid"]) || data.uid == uid)
         && noForeignUidField(data, uid);

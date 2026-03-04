@@ -1,4 +1,5 @@
 import * as ImagePicker from "expo-image-picker";
+import Slider from "@react-native-community/slider";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import {
   collection,
@@ -12,13 +13,20 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  LayoutAnimation,
   Modal,
+  Platform,
   Pressable,
-  ScrollView,
+  SectionList,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
+  UIManager,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { PhotoEditorSection } from "../../src/components/PhotoEditorSection";
 import { useAuth } from "../../src/hooks/useAuth";
@@ -52,6 +60,35 @@ const DEFAULT_COLORS = [
   "Cream",
   "Silver",
 ];
+
+const OCCASION_OPTIONS = [
+  "work",
+  "gym",
+  "party",
+  "date",
+  "travel",
+  "lounge",
+  "formal_event",
+  "streetwear",
+] as const;
+
+const SEASON_OPTIONS = [
+  "summer",
+  "winter",
+  "spring_fall",
+  "all_season",
+] as const;
+
+const FIT_OPTIONS = ["slim", "regular", "oversized", "relaxed", "unknown"] as const;
+const RISE_OPTIONS = ["low", "mid", "high", "unknown"] as const;
+const LEG_SHAPE_OPTIONS = [
+  "skinny",
+  "tapered",
+  "straight",
+  "wide",
+  "flare",
+  "unknown",
+] as const;
 
 const DEFAULT_REFINE_VALUE = 1 / 3;
 const CURRENCIES = ["USD", "INR", "EUR", "GBP", "CAD", "AUD"] as const;
@@ -119,6 +156,7 @@ function buildPhotoHash(asset: ImagePicker.ImagePickerAsset) {
 export default function AddItemScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  const insets = useSafeAreaInsets();
   const { editId } = useLocalSearchParams<{ editId?: string }>();
   const editItemId = useMemo(
     () => (Array.isArray(editId) ? editId[0] : editId),
@@ -146,6 +184,12 @@ export default function AddItemScreen() {
   const [priceCurrency, setPriceCurrency] = useState<string>("USD");
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [purchaseDate, setPurchaseDate] = useState("");
+  const [occasionTags, setOccasionTags] = useState<string[]>([]);
+  const [seasonTags, setSeasonTags] = useState<string[]>([]);
+  const [fit, setFit] = useState<string | null>(null);
+  const [rise, setRise] = useState<string | null>(null);
+  const [legShape, setLegShape] = useState<string | null>(null);
+  const [warmthPreference, setWarmthPreference] = useState<number | null>(null);
 
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -164,6 +208,12 @@ export default function AddItemScreen() {
   const [aiMaterial, setAiMaterial] = useState<string | null>(null);
   const [detectedBrand, setDetectedBrand] = useState<string | null>(null);
   const [detectedBrandConfidence, setDetectedBrandConfidence] = useState<number | null>(null);
+  const [fabricExpanded, setFabricExpanded] = useState(false);
+  const [sizeExpanded, setSizeExpanded] = useState(false);
+  const [notesExpanded, setNotesExpanded] = useState(false);
+  const [occasionExpanded, setOccasionExpanded] = useState(false);
+  const [seasonExpanded, setSeasonExpanded] = useState(false);
+  const [fitExpanded, setFitExpanded] = useState(false);
   const [createSessionId, setCreateSessionId] = useState(() => makeCreateSessionId());
   const lastCompletedRefineKeyRef = useRef("");
   const latestRefineRequestIdRef = useRef(0);
@@ -199,6 +249,8 @@ export default function AddItemScreen() {
   const selectedCategory = category ?? Category.TOP;
   const displayedPattern = pattern ?? aiPattern ?? "Auto (AI)";
   const displayedMaterial = material ?? aiMaterial ?? "Auto (AI)";
+  const isPatternAuto = !userEditedKeysRef.current.has("pattern") && !pattern;
+  const isMaterialAuto = !userEditedKeysRef.current.has("material") && !material;
   const hasActiveCreateState = useMemo(() => {
     return Boolean(
       draftItemId ||
@@ -234,6 +286,34 @@ export default function AddItemScreen() {
 
   function clearUserEdited(...keys: string[]) {
     keys.forEach((key) => userEditedKeysRef.current.delete(key));
+  }
+
+  function toggleSection(
+    section: "fabric" | "size" | "notes" | "occasion" | "season" | "fit",
+    nextValue?: boolean
+  ) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    if (section === "fabric") {
+      setFabricExpanded(nextValue ?? !fabricExpanded);
+      return;
+    }
+    if (section === "size") {
+      setSizeExpanded(nextValue ?? !sizeExpanded);
+      return;
+    }
+    if (section === "occasion") {
+      setOccasionExpanded(nextValue ?? !occasionExpanded);
+      return;
+    }
+    if (section === "season") {
+      setSeasonExpanded(nextValue ?? !seasonExpanded);
+      return;
+    }
+    if (section === "fit") {
+      setFitExpanded(nextValue ?? !fitExpanded);
+      return;
+    }
+    setNotesExpanded(nextValue ?? !notesExpanded);
   }
 
   const stopDraftSubscription = useCallback(() => {
@@ -331,6 +411,12 @@ export default function AddItemScreen() {
       setPriceCurrency("USD");
       setShowCurrencyPicker(false);
       setPurchaseDate("");
+      setOccasionTags([]);
+      setSeasonTags([]);
+      setFit(null);
+      setRise(null);
+      setLegShape(null);
+      setWarmthPreference(null);
       setPhotoUrl(null);
       setPhotoUri(null);
       setCleanedPhotoUrl(null);
@@ -345,6 +431,9 @@ export default function AddItemScreen() {
       setLoading(false);
       setDetectedBrand(null);
       setDetectedBrandConfidence(null);
+      setOccasionExpanded(false);
+      setSeasonExpanded(false);
+      setFitExpanded(false);
       lastCompletedRefineKeyRef.current = "";
       latestRefineRequestIdRef.current = 0;
       latestPhotoSelectionIdRef.current = 0;
@@ -590,6 +679,14 @@ export default function AddItemScreen() {
         );
         setPriceCurrency(data.priceCurrency ?? "USD");
         setPurchaseDate(data.purchaseDate ?? "");
+        setOccasionTags(Array.isArray(data.occasionTags) ? data.occasionTags : []);
+        setSeasonTags(Array.isArray(data.seasonTags) ? data.seasonTags : []);
+        setFit(norm(data.fit) || null);
+        setRise(norm(data.rise) || null);
+        setLegShape(norm(data.legShape) || null);
+        setWarmthPreference(
+          typeof data.warmthPreference === "number" ? data.warmthPreference : null
+        );
 
         setPhotoUrl(data.photoUrl ?? null);
         setPhotoUri(data.photoUri ?? null);
@@ -600,7 +697,6 @@ export default function AddItemScreen() {
         setPendingPhotoWidth(null);
         setOriginalPickedPhotoUri(null);
         setRefineValue(DEFAULT_REFINE_VALUE);
-        await resetCreateFlow("load-edit-item");
       } catch (e: any) {
         console.log(e);
         Alert.alert("Error", e?.message ?? "Failed to load item");
@@ -609,6 +705,15 @@ export default function AddItemScreen() {
       }
     })();
   }, [isEdit, editItemId, uid, resetCreateFlow]);
+
+  useEffect(() => {
+    if (
+      Platform.OS === "android" &&
+      UIManager.setLayoutAnimationEnabledExperimental
+    ) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -647,6 +752,58 @@ export default function AddItemScreen() {
     selectedColors.forEach((c) => set.add(normColor(c)));
     return Array.from(set);
   }, [selectedColors]);
+
+  const warmthLabel = useMemo(() => {
+    if (warmthPreference == null) return "Auto";
+    if (warmthPreference < 0.34) return "Light";
+    if (warmthPreference < 0.67) return "Balanced";
+    return "Warm";
+  }, [warmthPreference]);
+
+  const handleBrandChange = useCallback((value: string) => {
+    markUserEdited("brand");
+    setBrand(value);
+  }, []);
+
+  const handleNameChange = useCallback((value: string) => {
+    markUserEdited("name");
+    setName(value);
+  }, []);
+
+  const handleSizeChange = useCallback((value: string) => {
+    setSize(value);
+  }, []);
+
+  const handlePriceAmountChange = useCallback((value: string) => {
+    setPriceAmount(value);
+  }, []);
+
+  const handlePurchaseDateChange = useCallback((value: string) => {
+    setPurchaseDate(value);
+  }, []);
+
+  const handleNotesChange = useCallback((value: string) => {
+    setNotes(value);
+  }, []);
+
+  const handlePatternChange = useCallback((value: string) => {
+    markUserEdited("pattern");
+    setPattern(norm(value) || null);
+  }, []);
+
+  const handleMaterialChange = useCallback((value: string) => {
+    markUserEdited("material");
+    setMaterial(norm(value) || null);
+  }, []);
+
+  const toggleMultiValue = useCallback(
+    (value: string, current: string[], setter: React.Dispatch<React.SetStateAction<string[]>>) => {
+      setter((prev) =>
+        prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]
+      );
+    },
+    []
+  );
 
   function toggleColor(c: string) {
     const color = normColor(c);
@@ -981,6 +1138,12 @@ export default function AddItemScreen() {
       priceAmount: priceNum,
       priceCurrency,
       purchaseDate: date,
+      ...(occasionTags.length ? { occasionTags } : {}),
+      ...(seasonTags.length ? { seasonTags } : {}),
+      ...(fit ? { fit } : {}),
+      ...(rise ? { rise } : {}),
+      ...(legShape ? { legShape } : {}),
+      ...(warmthPreference != null ? { warmthPreference } : {}),
       updatedAt: Date.now(),
     };
 
@@ -1092,430 +1255,811 @@ export default function AddItemScreen() {
   }
 
   const canAddCustomColor = customColor.trim().length > 0;
-  const canSave = !!(pendingPhotoUri || photoUrl || photoUri) && !loading;
+  const hasRequiredPhoto = !!previewPhotoUri;
+  const canSave = hasRequiredPhoto && !loading && !uploadingPhoto;
+  const ctaStatusText = uploadingPhoto
+    ? "Uploading photo…"
+    : refiningCutout || (draftItemId && ingestionStatus && ingestionStatus !== "done" && ingestionStatus !== "failed")
+      ? "AI autofill running…"
+      : canSave
+        ? "Ready to save"
+        : "Add a photo to continue";
+
+  const formRows = useMemo(() => {
+    const rows: { key: string }[] = [
+      { key: "photo" },
+      { key: "basics" },
+      { key: "details" },
+      { key: "advanced-header" },
+      { key: "fabric-header" },
+    ];
+
+    if (fabricExpanded) rows.push({ key: "fabric-content" });
+    rows.push({ key: "size-header" });
+    if (sizeExpanded) rows.push({ key: "size-content" });
+    rows.push({ key: "occasion-header" });
+    if (occasionExpanded) rows.push({ key: "occasion-content" });
+    rows.push({ key: "season-header" });
+    if (seasonExpanded) rows.push({ key: "season-content" });
+    rows.push({ key: "fit-header" });
+    if (fitExpanded) rows.push({ key: "fit-content" });
+    rows.push({ key: "notes-header" });
+    if (notesExpanded) rows.push({ key: "notes-content" });
+
+    return [{ key: "form", data: rows }];
+  }, [
+    fabricExpanded,
+    fitExpanded,
+    notesExpanded,
+    occasionExpanded,
+    seasonExpanded,
+    sizeExpanded,
+  ]);
+
+  const renderFormRow = ({ item }: { item: { key: string } }) => {
+      switch (item.key) {
+        case "photo":
+          return (
+            <SectionCard>
+              <SectionTitle
+                title="Photo"
+                right={<RequiredBadge />}
+                subtitle="Start with a clean photo. AI autofill runs in the background while you keep going."
+              />
+              {loading ? (
+                <Text>{uploadingPhoto ? "Uploading photo..." : "Loading..."}</Text>
+              ) : null}
+              <PhotoEditorSection
+                previewUri={previewPhotoUri}
+                refineValue={refineValue}
+                isProcessing={refiningCutout}
+                canRefine={canRefineCutout}
+                showPendingNote={!!pendingPhotoUri}
+                onPickLibrary={() => void pickPhoto("library")}
+                onUseCamera={() => void pickPhoto("camera")}
+                onRemove={() => {
+                  void resetCreateFlow("remove-photo", { deleteActiveDraft: true });
+                }}
+                onRefineChange={handleRefineValueChange}
+                onRefineComplete={handleRefineValueComplete}
+                onResetRefine={handleRefineReset}
+              />
+              {!isEdit && draftItemId ? (
+                <View style={inlineInfo}>
+                  <Text style={{ fontSize: 14, fontWeight: "800" }}>
+                    AI Autofill: {ingestionStatus ? ingestionStatus : "starting"}
+                  </Text>
+                  <Text style={{ color: "#666" }}>
+                    {[
+                      `Category: ${category ?? "Auto (AI)"}`,
+                      subCategory ? `Sub-category: ${subCategory}` : "",
+                      selectedColors.length
+                        ? `Colors: ${selectedColors.join(" / ")}`
+                        : "Colors: Auto (AI)",
+                      `Pattern: ${displayedPattern}`,
+                      `Material: ${displayedMaterial}`,
+                    ]
+                      .filter(Boolean)
+                      .join(" • ") || "Waiting for ingestion…"}
+                  </Text>
+                </View>
+              ) : null}
+            </SectionCard>
+          );
+        case "basics":
+          return (
+            <SectionCard>
+              <SectionTitle title="Basics" />
+              <Field label="Brand">
+                <MemoTextInputField
+                  value={brand}
+                  onCommit={handleBrandChange}
+                  placeholder="e.g., Nike"
+                />
+                {detectedBrand ? (
+                  <Text style={{ color: "#666" }}>
+                    Auto (AI): {detectedBrand}
+                    {typeof detectedBrandConfidence === "number"
+                      ? ` (${Math.round(detectedBrandConfidence * 100)}%)`
+                      : ""}
+                  </Text>
+                ) : null}
+              </Field>
+              <Field label="Product name">
+                <MemoTextInputField
+                  value={name}
+                  onCommit={handleNameChange}
+                  placeholder="e.g., Air Jordan 2"
+                />
+              </Field>
+            </SectionCard>
+          );
+        case "details":
+          return (
+            <SectionCard>
+              <SectionTitle title="Details" />
+              <View style={{ gap: 8 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={{ fontSize: 16, fontWeight: "700" }}>Category</Text>
+                  <RequiredBadge />
+                </View>
+                <ChipRow>
+                  <Pill
+                    label="Auto (AI)"
+                    active={!category}
+                    onPress={() => {
+                      clearUserEdited("category", "subCategory");
+                      setCategory(null);
+                      setSubCategory("");
+                    }}
+                  />
+                  {CATEGORIES.map((cat) => (
+                    <Pill
+                      key={cat}
+                      label={cat}
+                      active={category === cat}
+                      onPress={() => {
+                        markUserEdited("category", "subCategory");
+                        setCategory(cat);
+                        setSubCategory("");
+                      }}
+                    />
+                  ))}
+                </ChipRow>
+              </View>
+              <View style={{ gap: 8 }}>
+                <Text style={{ fontSize: 16, fontWeight: "700" }}>
+                  Sub-category (optional)
+                </Text>
+                <ChipRow>
+                  <Pill
+                    label="Auto (AI)"
+                    active={!subCategory}
+                    onPress={() => {
+                      clearUserEdited("subCategory");
+                      setSubCategory("");
+                    }}
+                  />
+                  {SUB_CATEGORIES[selectedCategory].map((sub) => (
+                    <Pill
+                      key={sub}
+                      label={sub}
+                      active={subCategory === sub}
+                      onPress={() => {
+                        markUserEdited("subCategory");
+                        setSubCategory(sub);
+                      }}
+                    />
+                  ))}
+                </ChipRow>
+              </View>
+              <View style={{ gap: 8 }}>
+                <Text style={{ fontSize: 16, fontWeight: "700" }}>Colors</Text>
+                <ChipRow>
+                  <Pill
+                    label="Auto (AI)"
+                    active={selectedColors.length === 0}
+                    onPress={() => {
+                      clearUserEdited("colors");
+                      setSelectedColors([]);
+                      setCustomColor("");
+                      setAddingCustomColor(false);
+                    }}
+                  />
+                  {colorOptions.map((c) => (
+                    <Pill
+                      key={c}
+                      label={c}
+                      active={selectedColors.includes(c)}
+                      onPress={() => {
+                        markUserEdited("colors");
+                        toggleColor(c);
+                      }}
+                    />
+                  ))}
+                </ChipRow>
+                {addingCustomColor ? (
+                  <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                    <MemoTextInputField
+                      value={customColor}
+                      onCommit={setCustomColor}
+                      placeholder="Type color"
+                      containerStyle={{ width: 160 }}
+                      inputStyle={{ paddingVertical: 8 }}
+                    />
+                    <Pressable
+                      onPress={addCustomColorNow}
+                      disabled={!canAddCustomColor}
+                      style={{
+                        paddingVertical: 8,
+                        paddingHorizontal: 14,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        borderColor: canAddCustomColor ? "#111" : "#ddd",
+                        backgroundColor: canAddCustomColor ? "#111" : "transparent",
+                        opacity: canAddCustomColor ? 1 : 0.5,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: canAddCustomColor ? "#fff" : "#111",
+                          fontWeight: "800",
+                        }}
+                      >
+                        Add
+                      </Text>
+                    </Pressable>
+                    <Pill
+                      label="Cancel"
+                      active={false}
+                      onPress={() => {
+                        markUserEdited("colors");
+                        setCustomColor("");
+                        setAddingCustomColor(false);
+                      }}
+                    />
+                  </View>
+                ) : (
+                  <Pill
+                    label="+"
+                    active={false}
+                    onPress={() => setAddingCustomColor(true)}
+                  />
+                )}
+                <Text style={{ color: "#666" }}>
+                  Selected: {selectedColors.length ? selectedColors.join(" / ") : "Auto (AI)"}
+                </Text>
+              </View>
+            </SectionCard>
+          );
+        case "advanced-header":
+          return (
+            <SectionTitle
+              title="Advanced"
+              subtitle="Optional details you can fill in later."
+            />
+          );
+        case "fabric-header":
+          return (
+            <SectionCard>
+              <CollapsibleHeader
+                title="Fabric & Style"
+                expanded={fabricExpanded}
+                onPress={() => toggleSection("fabric")}
+              />
+            </SectionCard>
+          );
+        case "fabric-content":
+          return (
+            <SectionCard>
+              <View style={{ gap: 12 }}>
+                <Field
+                  label="Pattern"
+                  right={
+                    <AutoToggleChip
+                      active={isPatternAuto}
+                      onPress={() => {
+                        if (isPatternAuto) {
+                          markUserEdited("pattern");
+                          setPattern(aiPattern ?? "");
+                        } else {
+                          clearUserEdited("pattern");
+                          setPattern(null);
+                        }
+                      }}
+                    />
+                  }
+                >
+                  {isPatternAuto ? (
+                    <Text style={autoPreviewText}>{aiPattern || "Auto (AI)"}</Text>
+                  ) : (
+                    <MemoTextInputField
+                      value={pattern ?? ""}
+                      onCommit={handlePatternChange}
+                      placeholder={displayedPattern}
+                    />
+                  )}
+                </Field>
+                <Field
+                  label="Material"
+                  right={
+                    <AutoToggleChip
+                      active={isMaterialAuto}
+                      onPress={() => {
+                        if (isMaterialAuto) {
+                          markUserEdited("material");
+                          setMaterial(aiMaterial ?? "");
+                        } else {
+                          clearUserEdited("material");
+                          setMaterial(null);
+                        }
+                      }}
+                    />
+                  }
+                >
+                  {isMaterialAuto ? (
+                    <Text style={autoPreviewText}>{aiMaterial || "Auto (AI)"}</Text>
+                  ) : (
+                    <MemoTextInputField
+                      value={material ?? ""}
+                      onCommit={handleMaterialChange}
+                      placeholder={displayedMaterial}
+                    />
+                  )}
+                </Field>
+              </View>
+            </SectionCard>
+          );
+        case "size-header":
+          return (
+            <SectionCard>
+              <CollapsibleHeader
+                title="Size & Purchase"
+                expanded={sizeExpanded}
+                onPress={() => toggleSection("size")}
+              />
+            </SectionCard>
+          );
+        case "size-content":
+          return (
+            <SectionCard>
+              <View style={{ gap: 12 }}>
+                <Field label="Size">
+                  <MemoTextInputField
+                    value={size}
+                    onCommit={handleSizeChange}
+                    placeholder="e.g., US 10 / M / 32"
+                  />
+                </Field>
+                <Field label="Price">
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <MemoTextInputField
+                      value={priceAmount}
+                      onCommit={handlePriceAmountChange}
+                      placeholder="e.g., 220"
+                      keyboardType="numeric"
+                      containerStyle={{ flex: 1 }}
+                    />
+                    <Pressable
+                      onPress={() => setShowCurrencyPicker(true)}
+                      style={[
+                        input,
+                        {
+                          minWidth: 88,
+                          alignItems: "center",
+                          justifyContent: "center",
+                        },
+                      ]}
+                    >
+                      <Text style={{ fontSize: 16 }}>{priceCurrency}</Text>
+                    </Pressable>
+                  </View>
+                </Field>
+                <Field label="Purchase date">
+                  <MemoTextInputField
+                    value={purchaseDate}
+                    onCommit={handlePurchaseDateChange}
+                    placeholder="YYYY-MM-DD"
+                  />
+                </Field>
+              </View>
+            </SectionCard>
+          );
+        case "occasion-header":
+          return (
+            <SectionCard>
+              <CollapsibleHeader
+                title="Occasion"
+                expanded={occasionExpanded}
+                onPress={() => toggleSection("occasion")}
+              />
+            </SectionCard>
+          );
+        case "occasion-content":
+          return (
+            <SectionCard>
+              <ChipRow>
+                {OCCASION_OPTIONS.map((option) => (
+                  <Pill
+                    key={option}
+                    label={option.replace(/_/g, " ")}
+                    active={occasionTags.includes(option)}
+                    onPress={() => toggleMultiValue(option, occasionTags, setOccasionTags)}
+                  />
+                ))}
+              </ChipRow>
+            </SectionCard>
+          );
+        case "season-header":
+          return (
+            <SectionCard>
+              <CollapsibleHeader
+                title="Season & Warmth"
+                expanded={seasonExpanded}
+                onPress={() => toggleSection("season")}
+              />
+            </SectionCard>
+          );
+        case "season-content":
+          return (
+            <SectionCard>
+              <View style={{ gap: 12 }}>
+                <ChipRow>
+                  {SEASON_OPTIONS.map((option) => (
+                    <Pill
+                      key={option}
+                      label={option.replace(/_/g, " ")}
+                      active={seasonTags.includes(option)}
+                      onPress={() => toggleMultiValue(option, seasonTags, setSeasonTags)}
+                    />
+                  ))}
+                </ChipRow>
+                <Field
+                  label="Warmth"
+                  right={<Text style={{ color: "#666", fontWeight: "700" }}>{warmthLabel}</Text>}
+                >
+                  <View style={{ gap: 6 }}>
+                    <Slider
+                      value={warmthPreference ?? 0.5}
+                      minimumValue={0}
+                      maximumValue={1}
+                      step={0.05}
+                      onValueChange={(value) => setWarmthPreference(value)}
+                      minimumTrackTintColor="#111"
+                      maximumTrackTintColor="#e5e5e5"
+                      thumbTintColor="#111"
+                    />
+                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                      <Text style={{ color: "#666", fontSize: 12 }}>Light</Text>
+                      <Text style={{ color: "#666", fontSize: 12 }}>Warm</Text>
+                    </View>
+                  </View>
+                </Field>
+              </View>
+            </SectionCard>
+          );
+        case "fit-header":
+          return (
+            <SectionCard>
+              <CollapsibleHeader
+                title="Fit & Silhouette"
+                expanded={fitExpanded}
+                onPress={() => toggleSection("fit")}
+              />
+            </SectionCard>
+          );
+        case "fit-content":
+          return (
+            <SectionCard>
+              <View style={{ gap: 12 }}>
+                <Field label="Fit">
+                  <ChipRow>
+                    {FIT_OPTIONS.map((option) => (
+                      <Pill
+                        key={option}
+                        label={option}
+                        active={fit === option}
+                        onPress={() => setFit(fit === option ? null : option)}
+                      />
+                    ))}
+                  </ChipRow>
+                </Field>
+                {selectedCategory === Category.BOTTOM ? (
+                  <>
+                    <Field label="Rise">
+                      <ChipRow>
+                        {RISE_OPTIONS.map((option) => (
+                          <Pill
+                            key={option}
+                            label={option}
+                            active={rise === option}
+                            onPress={() => setRise(rise === option ? null : option)}
+                          />
+                        ))}
+                      </ChipRow>
+                    </Field>
+                    <Field label="Leg shape">
+                      <ChipRow>
+                        {LEG_SHAPE_OPTIONS.map((option) => (
+                          <Pill
+                            key={option}
+                            label={option}
+                            active={legShape === option}
+                            onPress={() =>
+                              setLegShape(legShape === option ? null : option)
+                            }
+                          />
+                        ))}
+                      </ChipRow>
+                    </Field>
+                  </>
+                ) : null}
+              </View>
+            </SectionCard>
+          );
+        case "notes-header":
+          return (
+            <SectionCard>
+              <CollapsibleHeader
+                title="Notes"
+                expanded={notesExpanded}
+                onPress={() => toggleSection("notes")}
+              />
+            </SectionCard>
+          );
+        case "notes-content":
+          return (
+            <SectionCard>
+              <Field label="Notes">
+                <MemoTextInputField
+                  value={notes}
+                  onCommit={handleNotesChange}
+                  placeholder="e.g., Limited edition, gift from friend..."
+                  multiline
+                  containerStyle={{ minHeight: 90 }}
+                  inputStyle={{ minHeight: 90, textAlignVertical: "top" }}
+                />
+              </Field>
+            </SectionCard>
+          );
+        default:
+          return null;
+      }
+  };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <Pressable onPress={() => router.back()} style={btnSecondary}>
-          <Text style={btnSecondaryText}>Back</Text>
-        </Pressable>
-
-        <Text style={{ fontSize: 22, fontWeight: "800" }}>
-          {isEdit ? "Edit Item" : "Add Item"}
-        </Text>
-
-        <View style={{ width: 60 }} />
-      </View>
-
-      {loading ? <Text>{uploadingPhoto ? "Uploading photo..." : "Loading..."}</Text> : null}
-
-      <PhotoEditorSection
-        previewUri={previewPhotoUri}
-        refineValue={refineValue}
-        isProcessing={refiningCutout}
-        canRefine={canRefineCutout}
-        showPendingNote={!!pendingPhotoUri}
-        onPickLibrary={() => void pickPhoto("library")}
-        onUseCamera={() => void pickPhoto("camera")}
-        onRemove={() => {
-          void resetCreateFlow("remove-photo", {deleteActiveDraft: true});
-        }}
-        onRefineChange={handleRefineValueChange}
-        onRefineComplete={handleRefineValueComplete}
-        onResetRefine={handleRefineReset}
-      />
-
-      {!isEdit && draftItemId ? (
-        <View
-          style={{
-            gap: 6,
-            padding: 12,
-            borderRadius: 16,
-            borderWidth: 1,
-            borderColor: "#e5e5e5",
-            backgroundColor: "#fafafa",
-          }}
-        >
-          <Text style={{ fontSize: 14, fontWeight: "800" }}>
-            AI Autofill: {ingestionStatus ? ingestionStatus : "starting"}
-          </Text>
-          <Text style={{ color: "#666" }}>
-            {[
-              `Category: ${category ?? "Auto (AI)"}`,
-              subCategory ? `Sub-category: ${subCategory}` : "",
-              selectedColors.length
-                ? `Colors: ${selectedColors.join(" / ")}`
-                : "Colors: Auto (AI)",
-              `Pattern: ${displayedPattern}`,
-              `Material: ${displayedMaterial}`,
-            ]
-              .filter(Boolean)
-              .join(" • ") || "Waiting for ingestion…"}
-          </Text>
-        </View>
-      ) : null}
-
-      <Field label="Brand">
-        <TextInput
-          value={brand}
-          onChangeText={(value) => {
-            markUserEdited("brand");
-            setBrand(value);
-          }}
-          placeholder="e.g., Nike"
-          style={input}
-        />
-        {detectedBrand ? (
-          <Text style={{ color: "#666" }}>
-            Auto (AI): {detectedBrand}
-            {typeof detectedBrandConfidence === "number"
-              ? ` (${Math.round(detectedBrandConfidence * 100)}%)`
-              : ""}
-          </Text>
-        ) : null}
-      </Field>
-
-      <Field label="Product name">
-        <TextInput
-          value={name}
-          onChangeText={(value) => {
-            markUserEdited("name");
-            setName(value);
-          }}
-          placeholder="e.g., Air Jordan 2"
-          style={input}
-        />
-      </Field>
-
-      <View style={{ gap: 8 }}>
-        <Text style={{ fontSize: 16, fontWeight: "700" }}>Category</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          <Pill
-            key="auto-category"
-            label="Auto (AI)"
-            active={!category}
-            onPress={() => {
-              clearUserEdited("category", "subCategory");
-              setCategory(null);
-              setSubCategory("");
+        <View style={{ flex: 1 }}>
+          <SectionList
+            sections={formRows}
+            keyExtractor={(item) => item.key}
+            renderItem={renderFormRow}
+            keyboardShouldPersistTaps="handled"
+            stickySectionHeadersEnabled={false}
+            contentContainerStyle={{
+              padding: 16,
+              gap: 14,
+              paddingBottom: 160 + insets.bottom,
             }}
-          />
-          {CATEGORIES.map((cat) => (
-            <Pill
-              key={cat}
-              label={cat}
-              active={category === cat}
-              onPress={() => {
-                markUserEdited("category", "subCategory");
-                setCategory(cat);
-                setSubCategory("");
-              }}
-            />
-          ))}
-        </View>
-      </View>
-
-      <View style={{ gap: 8 }}>
-        <Text style={{ fontSize: 16, fontWeight: "700" }}>
-          Sub-category (optional)
-        </Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          <Pill
-            key="auto"
-            label="Auto (AI)"
-            active={!subCategory}
-            onPress={() => {
-              clearUserEdited("subCategory");
-              setSubCategory("");
-            }}
-          />
-          {SUB_CATEGORIES[selectedCategory].map((sub) => (
-            <Pill
-              key={sub}
-              label={sub}
-              active={subCategory === sub}
-              onPress={() => {
-                markUserEdited("subCategory");
-                setSubCategory(sub);
-              }}
-            />
-          ))}
-        </View>
-      </View>
-
-      <View style={{ gap: 8 }}>
-        <Text style={{ fontSize: 16, fontWeight: "700" }}>Colors</Text>
-
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          <Pill
-            key="auto-colors"
-            label="Auto (AI)"
-            active={selectedColors.length === 0}
-            onPress={() => {
-              clearUserEdited("colors");
-              setSelectedColors([]);
-              setCustomColor("");
-              setAddingCustomColor(false);
-            }}
-          />
-          {colorOptions.map((c) => (
-            <Pill
-              key={c}
-              label={c}
-              active={selectedColors.includes(c)}
-              onPress={() => {
-                markUserEdited("colors");
-                toggleColor(c);
-              }}
-            />
-          ))}
-
-          {addingCustomColor ? (
-            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-              <TextInput
-                value={customColor}
-                onChangeText={setCustomColor}
-                placeholder="Type color"
-                style={[input, { paddingVertical: 8, width: 160 }]}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={() => {
-                  if (!canAddCustomColor) return;
-                  addCustomColorNow();
-                }}
-              />
-
-              <Pressable
-                onPress={addCustomColorNow}
-                disabled={!canAddCustomColor}
+            ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
+            ListHeaderComponent={
+              <View
                 style={{
-                  paddingVertical: 8,
-                  paddingHorizontal: 14,
-                  borderRadius: 999,
-                  borderWidth: 1,
-                  borderColor: canAddCustomColor ? "#111" : "#ddd",
-                  backgroundColor: canAddCustomColor ? "#111" : "transparent",
-                  opacity: canAddCustomColor ? 1 : 0.5,
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 14,
                 }}
               >
-                <Text
-                  style={{
-                    color: canAddCustomColor ? "#fff" : "#111",
-                    fontWeight: "800",
-                  }}
-                >
-                  Add
+                <Pressable onPress={() => router.back()} style={btnSecondary}>
+                  <Text style={btnSecondaryText}>Back</Text>
+                </Pressable>
+
+                <Text style={{ fontSize: 22, fontWeight: "800" }}>
+                  {isEdit ? "Edit Item" : "Add Item"}
                 </Text>
-              </Pressable>
 
-              <Pill
-                label="Cancel"
-                active={false}
-                onPress={() => {
-                  markUserEdited("colors");
-                  setCustomColor("");
-                  setAddingCustomColor(false);
-                }}
-              />
-            </View>
-          ) : (
-            <Pill label="+" active={false} onPress={() => setAddingCustomColor(true)} />
-          )}
-        </View>
-
-        {selectedColors.length > 0 ? (
-          <Text style={{ color: "#666" }}>Selected: {selectedColors.join(" / ")}</Text>
-        ) : (
-          <Text style={{ color: "#666" }}>Selected: Auto (AI)</Text>
-        )}
-      </View>
-
-      <Field label="Pattern">
-        <View style={{ gap: 8 }}>
-          <Pill
-            label="Auto (AI)"
-            active={!pattern}
-            onPress={() => {
-              clearUserEdited("pattern");
-              setPattern(null);
-            }}
+                <View style={{ width: 60 }} />
+              </View>
+            }
           />
-          <TextInput
-            value={pattern ?? ""}
-            onChangeText={(value) => {
-              markUserEdited("pattern");
-              setPattern(norm(value) || null);
-            }}
-            placeholder={displayedPattern}
-            style={input}
-          />
-        </View>
-      </Field>
 
-      <Field label="Material">
-        <View style={{ gap: 8 }}>
-          <Pill
-            label="Auto (AI)"
-            active={!material}
-            onPress={() => {
-              clearUserEdited("material");
-              setMaterial(null);
-            }}
-          />
-          <TextInput
-            value={material ?? ""}
-            onChangeText={(value) => {
-              markUserEdited("material");
-              setMaterial(norm(value) || null);
-            }}
-            placeholder={displayedMaterial}
-            style={input}
-          />
-        </View>
-      </Field>
-
-      <Field label="Size">
-        <TextInput
-          value={size}
-          onChangeText={setSize}
-          placeholder="e.g., US 10 / M / 32"
-          style={input}
-        />
-      </Field>
-
-      <Field label="Price">
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          <TextInput
-            value={priceAmount}
-            onChangeText={setPriceAmount}
-            placeholder="e.g., 220"
-            keyboardType="numeric"
-            style={[input, { flex: 1 }]}
-          />
-          <Pressable
-            onPress={() => setShowCurrencyPicker(true)}
-            style={[
-              input,
-              {
-                minWidth: 88,
-                alignItems: "center",
-                justifyContent: "center",
-              },
-            ]}
-          >
-            <Text style={{ fontSize: 16 }}>{priceCurrency}</Text>
-          </Pressable>
-        </View>
-      </Field>
-
-      <Field label="Purchase date">
-        <TextInput
-          value={purchaseDate}
-          onChangeText={setPurchaseDate}
-          placeholder="YYYY-MM-DD"
-          style={input}
-        />
-      </Field>
-
-      <Field label="Notes">
-        <TextInput
-          value={notes}
-          onChangeText={setNotes}
-          placeholder="e.g., Limited edition, gift from friend..."
-          style={[input, { height: 90, textAlignVertical: "top" }]}
-          multiline
-        />
-      </Field>
-
-      <Pressable
-        onPress={saveItem}
-        style={[btnPrimary, !canSave ? { opacity: 0.6 } : null]}
-        disabled={!canSave}
-      >
-        <Text style={{ color: "#fff", fontSize: 16, fontWeight: "900" }}>
-          {isEdit ? "Save Changes" : "Add to Wardrobe"}
-        </Text>
-      </Pressable>
-
-      <View style={{ height: 30 }} />
-
-      <Modal
-        visible={showCurrencyPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowCurrencyPicker(false)}
-      >
-        <Pressable
-          onPress={() => setShowCurrencyPicker(false)}
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.2)",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-          }}
-        >
           <View
             style={{
-              width: "100%",
-              maxWidth: 320,
-              borderRadius: 16,
+              borderTopWidth: 1,
+              borderTopColor: "#ececec",
               backgroundColor: "#fff",
-              padding: 14,
+              paddingHorizontal: 16,
+              paddingTop: 10,
+              paddingBottom: Math.max(12, insets.bottom + 8),
               gap: 8,
             }}
           >
-            <Text style={{ fontSize: 16, fontWeight: "800" }}>Select currency</Text>
-            {CURRENCIES.map((currency) => (
-              <Pressable
-                key={currency}
-                onPress={() => {
-                  setPriceCurrency(currency);
-                  setShowCurrencyPicker(false);
-                }}
+            <Text style={{ color: "#666", fontSize: 13 }}>
+              {ctaStatusText}
+            </Text>
+            <Pressable
+              onPress={saveItem}
+              style={[btnPrimary, !canSave ? { opacity: 0.6 } : null]}
+              disabled={!canSave}
+            >
+              <Text style={{ color: "#fff", fontSize: 16, fontWeight: "900" }}>
+                {isEdit ? "Save Changes" : "Add to Wardrobe"}
+              </Text>
+            </Pressable>
+          </View>
+
+          <Modal
+            visible={showCurrencyPicker}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowCurrencyPicker(false)}
+          >
+            <Pressable
+              onPress={() => setShowCurrencyPicker(false)}
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.2)",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 24,
+              }}
+            >
+              <View
                 style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: priceCurrency === currency ? "#111" : "#ddd",
-                  backgroundColor: priceCurrency === currency ? "#111" : "#fff",
+                  width: "100%",
+                  maxWidth: 320,
+                  borderRadius: 16,
+                  backgroundColor: "#fff",
+                  padding: 14,
+                  gap: 8,
                 }}
               >
-                <Text
-                  style={{
-                    color: priceCurrency === currency ? "#fff" : "#111",
-                    fontWeight: "700",
-                  }}
-                >
-                  {currency}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </Pressable>
-      </Modal>
-    </ScrollView>
+                <Text style={{ fontSize: 16, fontWeight: "800" }}>Select currency</Text>
+                {CURRENCIES.map((currency) => (
+                  <Pressable
+                    key={currency}
+                    onPress={() => {
+                      setPriceCurrency(currency);
+                      setShowCurrencyPicker(false);
+                    }}
+                    style={{
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: priceCurrency === currency ? "#111" : "#ddd",
+                      backgroundColor: priceCurrency === currency ? "#111" : "#fff",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: priceCurrency === currency ? "#fff" : "#111",
+                        fontWeight: "700",
+                      }}
+                    >
+                      {currency}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </Pressable>
+          </Modal>
+        </View>
+      </KeyboardAvoidingView>
+    </TouchableWithoutFeedback>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+const Field = React.memo(function Field({
+  label,
+  children,
+  right,
+}: {
+  label: string;
+  children: React.ReactNode;
+  right?: React.ReactNode;
+}) {
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ fontSize: 16, fontWeight: "700" }}>{label}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <Text style={{ fontSize: 16, fontWeight: "700" }}>{label}</Text>
+        {right}
+      </View>
       {children}
     </View>
   );
-}
+});
 
-function Pill({
+const SectionCard = React.memo(function SectionCard({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <View
+      style={{
+        gap: 12,
+        padding: 14,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: "#ececec",
+        backgroundColor: "#fff",
+      }}
+    >
+      {children}
+    </View>
+  );
+});
+
+const SectionTitle = React.memo(function SectionTitle({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <View style={{ gap: subtitle ? 4 : 0 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <Text style={{ fontSize: 18, fontWeight: "800" }}>{title}</Text>
+        {right}
+      </View>
+      {subtitle ? <Text style={{ color: "#666", lineHeight: 18 }}>{subtitle}</Text> : null}
+    </View>
+  );
+});
+
+const CollapsibleHeader = React.memo(function CollapsibleHeader({
+  title,
+  expanded,
+  onPress,
+}: {
+  title: string;
+  expanded: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+    >
+      <Text style={{ fontSize: 18, fontWeight: "800" }}>{title}</Text>
+      <Text style={{ color: "#666", fontWeight: "800" }}>{expanded ? "⌃" : "⌄"}</Text>
+    </Pressable>
+  );
+});
+
+const RequiredBadge = React.memo(function RequiredBadge() {
+  return (
+    <View
+      style={{
+        paddingVertical: 4,
+        paddingHorizontal: 8,
+        borderRadius: 999,
+        backgroundColor: "#f4f4f5",
+        borderWidth: 1,
+        borderColor: "#e4e4e7",
+      }}
+    >
+      <Text style={{ color: "#444", fontSize: 11, fontWeight: "800" }}>Required</Text>
+    </View>
+  );
+});
+
+const AutoToggleChip = React.memo(function AutoToggleChip({
+  active,
+  onPress,
+}: {
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: active ? "#111" : "#ddd",
+        backgroundColor: active ? "#111" : "#fff",
+      }}
+    >
+      <Text style={{ color: active ? "#fff" : "#111", fontSize: 12, fontWeight: "700" }}>
+        Auto (AI)
+      </Text>
+    </Pressable>
+  );
+});
+
+const Pill = React.memo(function Pill({
   label,
   active,
   onPress,
@@ -1541,7 +2085,82 @@ function Pill({
       </Text>
     </Pressable>
   );
-}
+});
+
+const ChipRow = React.memo(function ChipRow({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>{children}</View>;
+});
+
+const MemoTextInputField = React.memo(function MemoTextInputField({
+  value,
+  onCommit,
+  placeholder,
+  multiline,
+  keyboardType,
+  containerStyle,
+  inputStyle,
+}: {
+  value: string;
+  onCommit: (value: string) => void;
+  placeholder?: string;
+  multiline?: boolean;
+  keyboardType?: "default" | "numeric";
+  containerStyle?: any;
+  inputStyle?: any;
+}) {
+  const [localValue, setLocalValue] = useState(value);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  const commitNow = useCallback(
+    (nextValue: string) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      onCommit(nextValue);
+    },
+    [onCommit]
+  );
+
+  return (
+    <View style={containerStyle}>
+      <TextInput
+        value={localValue}
+        onChangeText={(nextValue) => {
+          setLocalValue(nextValue);
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+          }
+          timeoutRef.current = setTimeout(() => {
+            timeoutRef.current = null;
+            onCommit(nextValue);
+          }, 160);
+        }}
+        onBlur={() => commitNow(localValue)}
+        placeholder={placeholder}
+        multiline={multiline}
+        keyboardType={keyboardType}
+        style={[input, inputStyle]}
+      />
+    </View>
+  );
+});
 
 const input = {
   borderWidth: 1,
@@ -1550,6 +2169,20 @@ const input = {
   paddingHorizontal: 12,
   paddingVertical: 10,
   fontSize: 16,
+} as const;
+
+const inlineInfo = {
+  gap: 6,
+  padding: 12,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "#e5e5e5",
+  backgroundColor: "#fafafa",
+} as const;
+
+const autoPreviewText = {
+  color: "#666",
+  fontSize: 15,
 } as const;
 
 const btnPrimary = {

@@ -71,6 +71,12 @@ export type ClothingItem = {
   priceAmount?: number | null;
   priceCurrency?: string | null;
   purchaseDate?: string | null;
+  occasionTags?: string[] | null;
+  seasonTags?: string[] | null;
+  fit?: "slim" | "regular" | "oversized" | "relaxed" | "unknown" | null;
+  rise?: "low" | "mid" | "high" | "unknown" | null;
+  legShape?: "skinny" | "tapered" | "straight" | "wide" | "flare" | "unknown" | null;
+  warmthPreference?: number | null;
   photoUrl?: string | null;
   photoUri?: string | null;
 
