@@ -1,4 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -11,17 +13,9 @@ import {
   DOCK_SIDE_MARGIN,
 } from '../constants/dock';
 
-let BlurViewComp: React.ComponentType<any> = View;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  BlurViewComp = require('expo-blur').BlurView;
-} catch {
-  BlurViewComp = View;
-}
-
 const TAB_META: Record<string, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
   index: { label: 'Home', icon: 'home-outline' },
-  today: { label: 'Today', icon: 'calendar-outline' },
+  calendar: { label: 'Calendar', icon: 'calendar-outline' },
   ai: { label: 'AI', icon: 'sparkles-outline' },
   laundry: { label: 'Laundry', icon: 'shirt-outline' },
   profile: { label: 'Profile', icon: 'person-circle-outline' },
@@ -40,6 +34,7 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
   const insets = useSafeAreaInsets();
   const [dockWidth, setDockWidth] = useState(0);
   const bubbleX = useRef(new Animated.Value(0)).current;
+  const dockBottom = Math.max(16, insets.bottom * 0.35);
 
   const visibleRoutes = useMemo(
     () =>
@@ -74,8 +69,15 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
 
   return (
     <View pointerEvents="box-none" style={StyleSheet.absoluteFillObject}>
+      <LinearGradient
+        pointerEvents="none"
+        colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.20)', 'rgba(255,255,255,0.36)']}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={[styles.scrim, { bottom: dockBottom }]}
+      />
       <View
-        style={[styles.container, { bottom: Math.max(16, insets.bottom * 0.35) }]}
+        style={[styles.container, { bottom: dockBottom }]}
         onLayout={(event) => {
           const width = event.nativeEvent.layout.width;
           if (Math.abs(width - dockWidth) > 1) {
@@ -83,10 +85,11 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
           }
         }}
       >
-        <BlurViewComp intensity={100} tint="light" style={StyleSheet.absoluteFill} />
+        <BlurView intensity={70} tint="light" style={StyleSheet.absoluteFill} />
         <View style={styles.overlay} />
         <View style={styles.glassBorder} />
         <View style={styles.innerBorder} />
+        <View style={styles.glassEdge} />
 
         {bubbleWidth > 0 ? (
           <Animated.View
@@ -165,6 +168,12 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
 }
 
 const styles = StyleSheet.create({
+  scrim: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: DOCK_HEIGHT,
+  },
   container: {
     position: 'absolute',
     left: DOCK_SIDE_MARGIN,
@@ -194,6 +203,14 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(0,0,0,0.06)',
     borderRadius: 25,
+  },
+  glassEdge: {
+    position: 'absolute',
+    top: 0,
+    left: 12,
+    right: 12,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.6)',
   },
   activeLens: {
     position: 'absolute',
