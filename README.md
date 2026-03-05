@@ -1,82 +1,198 @@
-# Welcome to your Expo app 👋
+# Wardrobe AI
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+**Wardrobe AI** is an AI-powered mobile application that helps users digitize their wardrobe and receive outfit recommendations based on their clothing inventory, occasion, and context.
 
-## Get started
+The app combines **computer vision, mobile development, and AI intent parsing** to create a personal styling assistant that suggests outfits directly from a user's closet.
 
-1. Install dependencies
+---
 
-   ```bash
-   npm install
-   ```
+## Demo
 
-2. Start the app
+**
 
-   ```bash
-   npx expo start
-   ```
+Example flow:
 
-In the output, you'll find options to open the app in a
+1. User adds clothing items by taking photos  
+2. Background is automatically removed using iOS Vision  
+3. Items are stored in a digital wardrobe  
+4. User can ask the AI for outfit suggestions  
+5. Suggested outfits are logged into a calendar planner  
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+---
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## Features
 
-## Get a fresh project
+### Digital Wardrobe
+- Add clothing items with photos
+- Store and organize wardrobe items
+- Filter and search clothing
 
-When you're ready, run:
+### AI Outfit Suggestions
+- Parse user prompts such as  
+  `"suggest a work outfit"`
+- Convert natural language into structured outfit intent
+- Generate outfit suggestions from the user's closet
 
-```bash
-npm run reset-project
+### Clothing Image Processing
+- Background removal using **Apple Vision Framework**
+- Clean segmentation of clothing items
+
+### Outfit Planner
+- Calendar-based outfit logging
+- Track previously worn outfits
+
+### Secure Cloud Backend
+- Firebase Authentication
+- Firestore database
+- Secure storage rules
+
+---
+
+## Tech Stack
+
+### Mobile
+- React Native
+- Expo
+- TypeScript
+- Expo Router
+
+### Backend
+- Firebase Authentication
+- Firestore
+- Firebase Cloud Functions
+- Firebase Storage
+
+### AI / Vision
+- iOS Vision Framework (`VNGenerateForegroundInstanceMaskRequest`)
+- AI intent parsing for outfit requests
+
+---
+
+## Architecture Overview
+
+User Flow
+
+```
+User Photo
+      ↓
+Vision Framework (Background Removal)
+      ↓
+Clothing Item Stored in Firestore
+      ↓
+User Prompt → AI Intent Parser
+      ↓
+Outfit Generator
+      ↓
+Suggested Outfit
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-## Learn more
+## Project Structure
 
-To learn more about developing your project with Expo, look at the following resources:
+```
+app/
+  (tabs)/
+    add/
+    closet/
+    today/
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+components/
+hooks/
+constants/
+scripts/
 
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
-
-## Firebase Storage Rules (Example)
-
-Use rules like this so each authenticated user can only access their own files under `users/{uid}/**`:
-
-```txt
-rules_version = '2';
-service firebase.storage {
-  match /b/{bucket}/o {
-    match /users/{uid}/{allPaths=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-  }
-}
+firebase rules/
+firestore indexes
 ```
 
-If upload fails with a permission error, verify your Storage rules and that the app is signed in before uploading.
+The project uses a **modular architecture** to separate UI components, business logic, and backend integration.
 
-## Firestore Rules (Example)
+---
 
-Use rules like this so each authenticated user can only read/write their own `users/{uid}` documents and nested collections (including `items` and `outfits`):
+## Getting Started
 
-```txt
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-  }
-}
+### Install Dependencies
+
 ```
+npm install
+```
+
+### Run the App
+
+```
+npx expo start
+```
+
+Then open the project using:
+
+- iOS Simulator
+- Android Emulator
+- Expo Go
+
+---
+
+## Environment Setup
+
+This project requires Firebase configuration.
+
+Create environment variables for:
+
+```
+FIREBASE_API_KEY
+FIREBASE_AUTH_DOMAIN
+FIREBASE_PROJECT_ID
+FIREBASE_STORAGE_BUCKET
+FIREBASE_MESSAGING_SENDER_ID
+FIREBASE_APP_ID
+```
+
+---
+
+## Roadmap
+
+### V1
+- Digital wardrobe inventory
+- Clothing image segmentation
+- AI outfit intent parsing
+- Basic outfit suggestion engine
+- Outfit planner calendar
+
+### Future Features
+- Automatic clothing metadata extraction
+- Brand detection
+- Weather-aware outfit suggestions
+- Style learning AI
+- Outfit visualization
+
+---
+
+## Why This Project
+
+Most wardrobe apps only store clothing items.
+
+**Wardrobe AI focuses on building an intelligent wardrobe assistant that understands context and generates outfit suggestions using AI.**
+
+This project explores the intersection of:
+
+- Mobile engineering
+- Computer vision
+- AI-powered user experiences
+
+---
+
+## Author
+
+**Mir Athfan Ali**
+
+Illinois Institute of Technology  
+MAS Computer Science  
+
+GitHub:  
+https://github.com/mirathfan
+
+---
+
+## License
+
+MIT License
