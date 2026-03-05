@@ -33,6 +33,32 @@ Example flow:
 - Convert natural language into structured outfit intent
 - Generate outfit suggestions from the user's closet
 
+
+---
+
+## AI Outfit Suggestion Pipeline
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant App as Wardrobe AI App
+  participant Fn as Cloud Function (parseOutfitIntent)
+  participant DB as Firestore
+  U->>App: "date night outfit, it's cold"
+  App->>Fn: prompt text
+  Fn-->>App: intent JSON (occasion, color, layering...)
+  App->>DB: fetch closet items + metadata
+  DB-->>App: items list
+  App-->>U: outfit suggestion (top picks)
+  U->>App: save to calendar
+  App->>DB: write outfit log
+```
+**Key engineering notes**
+- On-device segmentation keeps photos private and reduces server cost.
+- Firebase rules enforce user-scoped access (`users/{uid}/...`).
+- Cloud Function converts free-text to structured intent for deterministic outfit logic.
+- 
 ### Clothing Image Processing
 - Background removal using **Apple Vision Framework**
 - Clean segmentation of clothing items
@@ -67,6 +93,46 @@ Example flow:
 - AI intent parsing for outfit requests
 
 ---
+## System Architecture
+
+```mermaid
+flowchart TD
+  %% ============ Client ============
+  subgraph Client["Mobile App (Expo + React Native)"]
+    A1["Add Item Screen\n(camera / gallery)"]
+    A2["Vision BG Removal\n(iOS Vision: VNGenerateForegroundInstanceMaskRequest)"]
+    A3["Metadata Form\n(type, color, season, notes)"]
+    A4["Closet View\n(search / filters)"]
+    A5["AI Outfits\n(prompt → intent)"]
+    A6["Calendar Planner\nlog outfits / history"]
+  end
+
+  %% ============ Backend ============
+  subgraph Firebase["Firebase Backend"]
+    B1["Auth\n(Firebase Auth)"]
+    B2["Firestore\n(wardrobe items, outfits, logs)"]
+    B3["Storage\n(images, cutouts)"]
+    B4["Cloud Functions\nparseOutfitIntent"]
+    B5["Security Rules\nFirestore + Storage"]
+  end
+
+  %% ============ Flows ============
+  A1 --> A2 --> A3
+  A3 -->|save item| B2
+  A2 -->|upload cutout| B3
+
+  A4 -->|query items| B2
+  A5 -->|prompt| B4 -->|intent JSON| A5
+  A5 -->|fetch closet| B2
+
+  A6 -->|save log| B2
+  B1 --> A4
+  B1 --> A5
+  B1 --> A6
+
+  B5 -. protects .-> B2
+  B5 -. protects .-> B3
+```
 
 ## Architecture Overview
 
