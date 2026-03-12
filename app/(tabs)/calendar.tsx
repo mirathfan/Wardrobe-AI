@@ -6,21 +6,21 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import AgendaCard from "../components/AgendaCard";
-import DailyOutfitCard from "../components/DailyOutfitCard";
-import WhyModal from "../components/WhyModal";
-import CalendarHeader from "../components/calendar/CalendarHeader";
-import DateRail from "../components/calendar/DateRail";
-import DayContextCard from "../components/calendar/DayContextCard";
-import SwapSheet from "../components/calendar/SwapSheet";
-import TimelineCard from "../components/calendar/TimelineCard";
-import WeatherStrip from "../components/calendar/WeatherStrip";
-import { dockSpace } from "../constants/dock";
-import { useDayEvents } from "../hooks/useDayEvents";
-import { useDayWeather } from "../hooks/useDayWeather";
-import { useNow } from "../hooks/useNow";
-import { useSelectedDate } from "../hooks/useSelectedDate";
-import { addDays, formatHeaderDate, parseDateValue, toDayKey } from "../utils/date";
+import AgendaCard from "@/src/components/AgendaCard";
+import DailyOutfitCard from "@/src/components/DailyOutfitCard";
+import WhyModal from "@/src/components/WhyModal";
+import CalendarHeader from "@/src/components/calendar/CalendarHeader";
+import DateRail from "@/src/components/calendar/DateRail";
+import DayContextCard from "@/src/components/calendar/DayContextCard";
+import SwapSheet from "@/src/components/calendar/SwapSheet";
+import TimelineCard from "@/src/components/calendar/TimelineCard";
+import WeatherStrip from "@/src/components/calendar/WeatherStrip";
+import { dockSpace } from "@/src/constants/dock";
+import { useDayEvents } from "@/src/hooks/useDayEvents";
+import { useDayWeather } from "@/src/hooks/useDayWeather";
+import { useNow } from "@/src/hooks/useNow";
+import { useSelectedDate } from "@/src/hooks/useSelectedDate";
+import { addDays, formatHeaderDate, parseDateValue, toDayKey } from "@/src/utils/date";
 import {
   DailyOutfitRecord,
   OutfitItemsByCategory,
@@ -31,14 +31,14 @@ import {
   getRecordsForDateKeys,
   setPlanned,
   setWorn,
-} from "../utils/dailyOutfits";
-import { generateDailyPlan, inferTimelineVibe, PlannedLook, weatherSuggestion } from "../utils/outfitPlanning";
-import { getDailyWeather } from "../utils/weatherDaily";
-import { getLoggedOutfitDays, getOutfitStreak, logOutfitDay } from "../utils/streak";
-import { useAuth } from "../../src/hooks/useAuth";
-import { db } from "../../src/lib/firebase";
-import { MAX_WEARS_BEFORE_WASH, toCanonicalCategory } from "../../src/lib/items";
-import { ClothingItem } from "../../src/types/ClothingItem";
+} from "@/src/utils/dailyOutfits";
+import { generateDailyPlan, inferTimelineVibe, PlannedLook, weatherSuggestion } from "@/src/utils/outfitPlanning";
+import { getDailyWeather } from "@/src/utils/weatherDaily";
+import { getLoggedOutfitDays, getOutfitStreak, logOutfitDay } from "@/src/utils/streak";
+import { useAuth } from "@/src/hooks/useAuth";
+import { db } from "@/src/lib/firebase";
+import { MAX_WEARS_BEFORE_WASH, toCanonicalCategory } from "@/src/lib/items";
+import { ClothingItem } from "@/src/types/ClothingItem";
 
 type SectionIconName = "calendar" | "sparkles" | "chart.bar.xaxis";
 type SlotKey = keyof OutfitItemsByCategory;

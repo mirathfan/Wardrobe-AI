@@ -1,4 +1,6 @@
 import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
+import * as FileSystem from "expo-file-system";
 import { router } from "expo-router";
 import {
   collection,
@@ -16,26 +18,28 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  InteractionManager,
   LayoutAnimation,
   Platform,
   UIManager,
+  unstable_batchedUpdates,
 } from "react-native";
 import { styles } from "./styles";
-import { useAuth } from "../../../src/hooks/useAuth";
-import { db } from "../../../src/lib/firebase";
-import { normalizeCategoryForStorage } from "../../../src/lib/items";
+import { useAuth } from "../hooks/useAuth";
+import { db } from "../lib/firebase";
+import { normalizeCategoryForStorage } from "../lib/items";
 import {
   Category,
   SUB_CATEGORIES,
   isValidCategorySubCategory,
   wearSlot,
-} from "../../../src/shared/wardrobeTaxonomy";
+} from "../shared/wardrobeTaxonomy";
 import {
   isVisionBackgroundRemovalAvailable,
   removeBackground,
-} from "../../../src/bg/removeBackground";
-import { detectBrandLogo } from "../../../src/lib/detectBrandLogo";
-import { uploadItemPhoto } from "../../../src/lib/uploadImage";
+} from "../bg/removeBackground";
+import { detectBrandLogo } from "../lib/detectBrandLogo";
+import { uploadItemPhoto } from "../lib/uploadImage";
 
 const CATEGORIES: Category[] = Object.values(Category);
 
@@ -113,6 +117,13 @@ const PATTERN_OPTIONS = [
 
 const DEFAULT_REFINE_VALUE = 1 / 3;
 const CURRENCIES = ["USD", "INR", "EUR", "GBP", "CAD", "AUD"] as const;
+const UPLOAD_TIMEOUT_MS = 25_000;
+const CUTOUT_TIMEOUT_MS = 55_000;
+const AUTOFILL_TIMEOUT_MS = 20_000;
+const AUTOFILL_DEBOUNCE_MS = 500;
+
+type AiStatus = "idle" | "running" | "ready" | "error";
+type AutofillSource = "original" | "cutout";
 
 function makeCreateSessionId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -165,6 +176,105 @@ function normalizeIngestionStatus(value: unknown) {
   return null;
 }
 
+function parseHexRgb(hexValue: string | null | undefined) {
+  const hex = String(hexValue ?? "").trim().replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  return { r, g, b };
+}
+
+function nearestColorLabel(rgb: { r: number; g: number; b: number }) {
+  const { r, g, b } = rgb;
+  const brightness = (r + g + b) / 3;
+  if (brightness < 20) return "black";
+
+  // Brown correction: dark warm tones were often misread as red.
+  if (r > 80 && g > 40 && b < 60 && r > g && g > b) return "brown";
+
+  // Only classify red when red channel is clearly dominant.
+  if (r > g * 1.35 && r > b * 1.35 && r > 70) return "red";
+
+  const anchors: { label: string; rgb: [number, number, number] }[] = [
+    { label: "black", rgb: [20, 20, 20] },
+    { label: "white", rgb: [235, 235, 235] },
+    { label: "grey", rgb: [130, 130, 130] },
+    { label: "blue", rgb: [60, 90, 170] },
+    { label: "green", rgb: [70, 140, 80] },
+    { label: "brown", rgb: [120, 75, 45] },
+    { label: "beige", rgb: [200, 175, 130] },
+    { label: "cream", rgb: [230, 220, 190] },
+    { label: "gold", rgb: [190, 155, 70] },
+    { label: "silver", rgb: [180, 185, 195] },
+  ];
+  let best = anchors[0];
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const anchor of anchors) {
+    const dr = r - anchor.rgb[0];
+    const dg = g - anchor.rgb[1];
+    const db = b - anchor.rgb[2];
+    const dist = dr * dr + dg * dg + db * db;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = anchor;
+    }
+  }
+  return best.label;
+}
+
+function normalizeColorList(values: unknown) {
+  if (!Array.isArray(values)) return [] as string[];
+  return values.map((v) => normColor(String(v))).filter(Boolean).slice(0, 2);
+}
+
+function hasTwoLegRegionCue(data: any) {
+  const text = [
+    norm(data?.subCategory),
+    norm(data?.name),
+    norm(data?.title),
+    norm(data?.productName),
+  ]
+    .join(" ")
+    .toLowerCase();
+  const cues = [
+    "pants",
+    "trackpants",
+    "trousers",
+    "joggers",
+    "jeans",
+    "leggings",
+    "sweatpants",
+    "cargo",
+  ];
+  return cues.some((cue) => text.includes(cue));
+}
+
+async function uploadWithTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+  label: string
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
+    }, ms);
+  });
+
+  try {
+    return await Promise.race([work, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function shortenUri(uri: string | null | undefined) {
+  const value = String(uri ?? "");
+  if (!value) return "";
+  return value.length > 88 ? `...${value.slice(-88)}` : value;
+}
+
 function buildPhotoHash(asset: ImagePicker.ImagePickerAsset) {
   return [
     asset.fileSize ?? 0,
@@ -179,12 +289,22 @@ export function useAddItemController({
 }: {
   editItemId: string | null;
 }) {
+  // Performance fixes:
+  // 1) slider now commits expensive refine only on release (no per-drag removeBackground work)
+  // 2) snapshot updates are batched with unstable_batchedUpdates to avoid render storms
+  // 3) single-flight + debounce + cache keeps autofill stable and prevents duplicate async churn
   const { user } = useAuth();
   const uid = user?.uid ?? null;
   const isEdit = !!editItemId;
+  const renderStartMs =
+    typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
 
   const [loading, setLoading] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [bgRemovalError, setBgRemovalError] = useState<string | null>(null);
 
   const [brand, setBrand] = useState("");
   const [name, setName] = useState("");
@@ -219,13 +339,36 @@ export function useAddItemController({
   const [serverCleanedUrl, setServerCleanedUrl] = useState<string | null>(null);
   const [pendingPhotoUri, setPendingPhotoUri] = useState<string | null>(null);
   const [pendingCleanedPhotoUri, setPendingCleanedPhotoUri] = useState<string | null>(null);
+  const [autofillCutoutUri, setAutofillCutoutUri] = useState<string | null>(null);
   const [pendingPhotoWidth, setPendingPhotoWidth] = useState<number | null>(null);
   const [originalPickedPhotoUri, setOriginalPickedPhotoUri] = useState<string | null>(null);
   const [refineValue, setRefineValue] = useState(DEFAULT_REFINE_VALUE);
   const [refiningCutout, setRefiningCutout] = useState(false);
   const [draftItemId, setDraftItemId] = useState<string | null>(null);
   const [draftPhotoHash, setDraftPhotoHash] = useState<string | null>(null);
+  const [pendingPhotoHash, setPendingPhotoHash] = useState<string | null>(null);
+  const [autofillKick, setAutofillKick] = useState(0);
   const [ingestionStatus, setIngestionStatus] = useState<string | null>(null);
+  const [aiStatus, setAiStatus] = useState<AiStatus>("idle");
+  const [aiStage, setAiStage] = useState<"Color" | "Category" | "Details" | null>(null);
+  const [autofillStatus, setAutofillStatus] = useState<string>("AI idle");
+  const [isAutofillRunning, setIsAutofillRunning] = useState(false);
+  const [lastAutofillSummary, setLastAutofillSummary] = useState<string>("");
+  const [autofillError, setAutofillError] = useState<string | null>(null);
+  const [aiPrediction, setAiPrediction] = useState<{
+    category: string | null;
+    colors: string[];
+  }>({ category: null, colors: [] });
+  const [finalPrediction, setFinalPrediction] = useState<{
+    category: string | null;
+    colors: string[];
+  }>({ category: null, colors: [] });
+  const [aiDebugRunId, setAiDebugRunId] = useState<number>(0);
+  const [aiDebugInputUri, setAiDebugInputUri] = useState<string>("");
+  const [aiDebugInputSource, setAiDebugInputSource] = useState<"cutout" | "original" | "">("");
+  const [aiDebugAspectRatio, setAiDebugAspectRatio] = useState<number | null>(null);
+  const [aiDebugDominantRgb, setAiDebugDominantRgb] = useState<string>("");
+  const [aiDebugCorrectedCategory, setAiDebugCorrectedCategory] = useState<string>("");
   const [aiPattern, setAiPattern] = useState<string | null>(null);
   const [aiMaterial, setAiMaterial] = useState<string | null>(null);
   const [detectedBrand, setDetectedBrand] = useState<string | null>(null);
@@ -246,11 +389,62 @@ export function useAddItemController({
   const latestRefineRequestIdRef = useRef(0);
   const refineTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestPhotoSelectionIdRef = useRef(0);
+  const latestUploadAttemptIdRef = useRef(0);
+  const aiRunIdRef = useRef(0);
+  const lastAutofillStartedHashRef = useRef<string | null>(null);
+  const aiDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aiInteractionTaskRef = useRef<{ cancel?: () => void } | null>(null);
+  const aiCacheRef = useRef(
+    new Map<
+      string,
+      {
+        at: number;
+        summary: string;
+      }
+    >()
+  );
+  const aiRunMetaRef = useRef(
+    new Map<
+      number,
+      {
+        source: AutofillSource;
+        inputUri: string;
+      }
+    >()
+  );
+  const aiCommittedRef = useRef<{
+    source: AutofillSource;
+    category: string | null;
+    categoryConfidence: number;
+    colors: string[];
+    colorsConfidence: number;
+  } | null>(null);
+  const aiLockedValuesRef = useRef<{
+    runId: number;
+    category?: Category;
+    subCategory?: string;
+    colors?: string[];
+    brand?: string;
+    pattern?: string;
+    material?: string;
+  }>({ runId: 0 });
   const draftSubscriptionRef = useRef<(() => void) | null>(null);
+  const isSubscribedRef = useRef(false);
+  const subscriptionKeyRef = useRef<string>("");
+  const lastDraftFingerprintRef = useRef<string>("");
   const userEditedKeysRef = useRef<Set<string>>(new Set());
   const syncedPreviewUriRef = useRef<string | null>(null);
   const prevEditItemIdRef = useRef<string | null>(null);
   const isFinalizingRef = useRef(false);
+  const controllerRenderMetricsRef = useRef({
+    lastLogAt: 0,
+    renders: 0,
+    lastDurationMs: 0,
+  });
+  const refineExecCountRef = useRef(0);
+  const snapshotUpdateCountRef = useRef(0);
+  const autofillStatusDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAutofillStatusRef = useRef<string | null>(null);
   const createSessionRef = useRef({
     sessionId: makeCreateSessionId(),
     requestId: 0,
@@ -263,9 +457,9 @@ export function useAddItemController({
   }
 
   const previewPhotoUri =
+    pendingCleanedPhotoUri ??
     pendingPhotoUri ??
     cleanedPhotoUrl ??
-    pendingCleanedPhotoUri ??
     serverCleanedUrl ??
     photoUrl ??
     photoUri ??
@@ -312,9 +506,169 @@ export function useAddItemController({
     keys.forEach((key) => userEditedKeysRef.current.add(key));
   }
 
+  const setAutofillStatusThrottled = useCallback((value: string) => {
+    pendingAutofillStatusRef.current = value;
+    if (autofillStatusDebounceRef.current) return;
+    autofillStatusDebounceRef.current = setTimeout(() => {
+      autofillStatusDebounceRef.current = null;
+      if (pendingAutofillStatusRef.current != null) {
+        setAutofillStatus(pendingAutofillStatusRef.current);
+      }
+    }, 180);
+  }, []);
+
+  const beginUploadAttempt = useCallback((label: string) => {
+    const attemptId = latestUploadAttemptIdRef.current + 1;
+    latestUploadAttemptIdRef.current = attemptId;
+    setUploadingPhoto(true);
+    setUploadError(null);
+    console.log(`[AddItem] upload start: ${label}`, { attemptId });
+    return attemptId;
+  }, []);
+
+  const endUploadAttempt = useCallback((attemptId: number, label: string) => {
+    console.log(`[AddItem] upload finally: ${label}`, { attemptId });
+    if (latestUploadAttemptIdRef.current === attemptId) {
+      setUploadingPhoto(false);
+    }
+  }, []);
+
   function clearUserEdited(...keys: string[]) {
     keys.forEach((key) => userEditedKeysRef.current.delete(key));
   }
+
+  const estimateFileSizeBytes = useCallback(async (uri: string) => {
+    try {
+      const info = await FileSystem.getInfoAsync(uri);
+      return info.exists && typeof (info as any).size === "number"
+        ? Number((info as any).size)
+        : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  async function normalizeImageForCutout(params: {
+    uri: string;
+    width?: number | null;
+    height?: number | null;
+  }) {
+    const { uri, width, height } = params;
+    const maxDimension = 1536;
+    const sourceW = width ?? 0;
+    const sourceH = height ?? 0;
+    const largest = Math.max(sourceW, sourceH);
+    if (!largest || largest <= maxDimension) {
+      return {
+        uri,
+        width: sourceW || null,
+        height: sourceH || null,
+      };
+    }
+    const scale = maxDimension / largest;
+    const nextW = Math.max(1, Math.round(sourceW * scale));
+    const nextH = Math.max(1, Math.round(sourceH * scale));
+    const normalized = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: nextW, height: nextH } }],
+      { compress: 0.92, format: ImageManipulator.SaveFormat.JPEG }
+    );
+    return {
+      uri: normalized.uri,
+      width: normalized.width ?? nextW,
+      height: normalized.height ?? nextH,
+    };
+  }
+
+  const runBackgroundRemoval = useCallback(async (params: {
+    inputUri: string;
+    width?: number | null;
+    height?: number | null;
+    options: ReturnType<typeof getRefineOptions>;
+    tag: string;
+  }) => {
+    const { inputUri, width, height, options, tag } = params;
+    const startedAt = Date.now();
+    const inputBytes = await estimateFileSizeBytes(inputUri);
+    console.log("[AddItem] cutout start", {
+      tag,
+      inputUri,
+      width: width ?? null,
+      height: height ?? null,
+      fileSize: inputBytes,
+      options,
+      timeoutMs: CUTOUT_TIMEOUT_MS,
+    });
+    const outputUri = await uploadWithTimeout(
+      removeBackground(inputUri, options),
+      CUTOUT_TIMEOUT_MS,
+      "Background removal"
+    );
+    const durationMs = Date.now() - startedAt;
+    const outputBytes = await estimateFileSizeBytes(outputUri);
+    console.log("[AddItem] cutout done", {
+      tag,
+      inputUri,
+      outputUri,
+      durationMs,
+      outputBytes,
+      changed: outputUri !== inputUri,
+      outputLooksPng: outputUri.toLowerCase().includes(".png"),
+    });
+    const isPngOutput = /\.png(\?|$)/i.test(outputUri);
+    if (!outputUri || outputUri === inputUri || !isPngOutput) {
+      throw new Error("BG removal failed");
+    }
+    return outputUri;
+  }, [estimateFileSizeBytes]);
+
+  const retryBackgroundRemoval = useCallback(async () => {
+    if (!originalPickedPhotoUri || !canRefineCutout) return;
+    const options = getRefineOptions(refineValue);
+    const requestId = latestRefineRequestIdRef.current + 1;
+    latestRefineRequestIdRef.current = requestId;
+    const token = beginAsyncRequest();
+    setRefiningCutout(true);
+    setBgRemovalError(null);
+    try {
+      const cutoutUri = await runBackgroundRemoval({
+        inputUri: originalPickedPhotoUri,
+        width: pendingPhotoWidth,
+        height: null,
+        options,
+        tag: "retry",
+      });
+      if (requestId !== latestRefineRequestIdRef.current || !isActiveRequest(token)) {
+        if (__DEV__) {
+          console.log("[AddFlow] ignoring stale async result (session mismatch)");
+        }
+        return;
+      }
+      setPendingPhotoUri(cutoutUri);
+      setPendingCleanedPhotoUri(cutoutUri);
+      setAutofillCutoutUri(cutoutUri);
+      setCleanedPhotoUrl(null);
+      lastCompletedRefineKeyRef.current = getRefineRequestKey(
+        originalPickedPhotoUri,
+        refineValue
+      );
+    } catch (error) {
+      setBgRemovalError("BG removal failed");
+      console.log("[AddItem] retry background removal failed", error);
+    } finally {
+      if (requestId === latestRefineRequestIdRef.current) {
+        setRefiningCutout(false);
+      }
+    }
+  }, [
+    beginAsyncRequest,
+    canRefineCutout,
+    isActiveRequest,
+    originalPickedPhotoUri,
+    pendingPhotoWidth,
+    refineValue,
+    runBackgroundRemoval,
+  ]);
 
   function toggleSection(
     section: "fabric" | "size" | "notes" | "occasion" | "season" | "fit",
@@ -351,29 +705,47 @@ export function useAddItemController({
       unsubscribe();
       createSessionRef.current.unsub = null;
       draftSubscriptionRef.current = null;
+      isSubscribedRef.current = false;
+      subscriptionKeyRef.current = "";
     }
   }, []);
 
   const attachDraftSubscription = useCallback(
-    (itemId: string, sessionId?: string) => {
+    (itemId: string, sessionId?: string, runId?: number) => {
       if (!uid) return;
-      stopDraftSubscription();
-      const ref = doc(db, "users", uid, "items", itemId);
       const activeSessionId = sessionId ?? createSessionRef.current.sessionId;
+      const nextKey = `${itemId}:${activeSessionId}`;
+      if (isSubscribedRef.current && subscriptionKeyRef.current === nextKey) {
+        if (__DEV__) {
+          console.log("[AddFlow] skip duplicate subscription attach", { nextKey });
+        }
+        return;
+      }
+      stopDraftSubscription();
+      if (__DEV__) {
+        console.log("[AddFlow] attach subscription", { itemId, sessionId: activeSessionId, runId });
+      }
+      const ref = doc(db, "users", uid, "items", itemId);
+      const activeRunId = runId ?? aiRunIdRef.current;
       draftSubscriptionRef.current = onSnapshot(ref, (snap) => {
         if (
           createSessionRef.current.sessionId !== activeSessionId ||
           createSessionRef.current.draftId !== itemId
         ) {
-          if (__DEV__) {
-            console.log("[AddFlow] ignoring stale async result (session mismatch)");
-          }
-          return;
+        if (__DEV__) {
+          console.log("[AddFlow] ignoring stale async result (session mismatch)");
         }
-        if (!snap.exists()) return;
-        maybeApplyAutofillFromDraft(snap.data() as any);
+        return;
+      }
+      if (!snap.exists()) return;
+      snapshotUpdateCountRef.current += 1;
+      unstable_batchedUpdates(() => {
+        maybeApplyAutofillFromDraft(snap.data() as any, activeRunId);
+      });
       });
       createSessionRef.current.unsub = draftSubscriptionRef.current;
+      isSubscribedRef.current = true;
+      subscriptionKeyRef.current = nextKey;
     },
     [maybeApplyAutofillFromDraft, stopDraftSubscription, uid]
   );
@@ -409,6 +781,7 @@ export function useAddItemController({
     stopDraftSubscription();
     setDraftItemId(null);
     setDraftPhotoHash(null);
+    lastDraftFingerprintRef.current = "";
     setIngestionStatus(null);
     setAiPattern(null);
     setAiMaterial(null);
@@ -445,7 +818,24 @@ export function useAddItemController({
 
       setDraftItemId(null);
       setDraftPhotoHash(null);
+      setPendingPhotoHash(null);
+      setAutofillKick(0);
+      lastDraftFingerprintRef.current = "";
       setIngestionStatus(null);
+      setAiStatus("idle");
+      setAiStage(null);
+      setAutofillStatus("AI idle");
+      setIsAutofillRunning(false);
+      setLastAutofillSummary("");
+      setAutofillError(null);
+      setAiPrediction({ category: null, colors: [] });
+      setFinalPrediction({ category: null, colors: [] });
+      setAiDebugRunId(0);
+      setAiDebugInputUri("");
+      setAiDebugInputSource("");
+      setAiDebugAspectRatio(null);
+      setAiDebugDominantRgb("");
+      setAiDebugCorrectedCategory("");
       setAiPattern(null);
       setAiMaterial(null);
       setBrand("");
@@ -476,11 +866,14 @@ export function useAddItemController({
       setServerCleanedUrl(null);
       setPendingPhotoUri(null);
       setPendingCleanedPhotoUri(null);
+      setAutofillCutoutUri(null);
       setPendingPhotoWidth(null);
       setOriginalPickedPhotoUri(null);
       setRefineValue(DEFAULT_REFINE_VALUE);
       setRefiningCutout(false);
       setUploadingPhoto(false);
+      setUploadError(null);
+      setBgRemovalError(null);
       setLoading(false);
       setDetectedBrand(null);
       setDetectedBrandConfidence(null);
@@ -495,6 +888,22 @@ export function useAddItemController({
       lastCompletedRefineKeyRef.current = "";
       latestRefineRequestIdRef.current = 0;
       latestPhotoSelectionIdRef.current = 0;
+      aiRunIdRef.current += 1;
+      aiLockedValuesRef.current = { runId: aiRunIdRef.current };
+      lastAutofillStartedHashRef.current = null;
+      aiRunMetaRef.current.clear();
+      aiCommittedRef.current = null;
+      if (aiDebounceTimerRef.current) {
+        clearTimeout(aiDebounceTimerRef.current);
+        aiDebounceTimerRef.current = null;
+      }
+      if (autofillStatusDebounceRef.current) {
+        clearTimeout(autofillStatusDebounceRef.current);
+        autofillStatusDebounceRef.current = null;
+      }
+      if (aiInteractionTaskRef.current?.cancel) {
+        aiInteractionTaskRef.current.cancel();
+      }
       syncedPreviewUriRef.current = null;
       userEditedKeysRef.current.clear();
 
@@ -505,8 +914,54 @@ export function useAddItemController({
     [cleanupDraftDoc, draftItemId, isEdit, stopDraftSubscription]
   );
 
-  const maybeApplyAutofillFromDraft = useCallback((data: any) => {
-    setIngestionStatus(normalizeIngestionStatus(data?.ingestion?.status));
+  const maybeApplyAutofillFromDraft = useCallback((data: any, runId?: number) => {
+    const activeRunId = runId ?? aiRunIdRef.current;
+    if (activeRunId !== aiRunIdRef.current) {
+      console.log(`[AddFlow] ai stale result discarded runId=${activeRunId}`);
+      return;
+    }
+    const fingerprint = JSON.stringify({
+      ingestionStatus: normalizeIngestionStatus(data?.ingestion?.status),
+      category: norm(data?.category),
+      subCategory: norm(data?.subCategory),
+      colors: normalizeColorList(data?.colors),
+      pattern: norm(data?.pattern),
+      material: norm(data?.material),
+      fit: norm(data?.fit),
+      occasionTags: Array.isArray(data?.occasionTags) ? data.occasionTags : [],
+      seasonTags: Array.isArray(data?.seasonTags) ? data.seasonTags : [],
+      primaryUrl: norm(data?.photos?.primaryUrl ?? data?.photoUrl),
+      cleanedPhotoUrl: norm(data?.photos?.cleanedPhotoUrl ?? data?.photos?.cleanedUrl),
+    });
+    if (fingerprint === lastDraftFingerprintRef.current) {
+      return;
+    }
+    lastDraftFingerprintRef.current = fingerprint;
+    if (aiLockedValuesRef.current.runId !== activeRunId) {
+      aiLockedValuesRef.current = { runId: activeRunId };
+    }
+    const locked = aiLockedValuesRef.current;
+    const normalizedStatus = normalizeIngestionStatus(data?.ingestion?.status);
+    setIngestionStatus(normalizedStatus);
+    if (normalizedStatus === "pending" || normalizedStatus === "processing") {
+      setAiStatus("running");
+      setAutofillStatusThrottled("AI autofill running…");
+      setIsAutofillRunning(true);
+      setAutofillError(null);
+      setAiStage("Details");
+    } else if (normalizedStatus === "done") {
+      setAiStatus("ready");
+      setAutofillStatusThrottled("AI done");
+      setIsAutofillRunning(false);
+      setAutofillError(null);
+      setAiStage(null);
+    } else if (normalizedStatus === "failed") {
+      setAiStatus("error");
+      setAutofillStatusThrottled("AI couldn’t autofill—continue manually");
+      setIsAutofillRunning(false);
+      setAutofillError("AI autofill failed");
+      setAiStage(null);
+    }
     setAiPattern(norm(data?.pattern) || null);
     setAiMaterial(norm(data?.material) || null);
     setAiFit(norm(data?.fit) || null);
@@ -522,14 +977,90 @@ export function useAddItemController({
     if (serverCleanedPhotoUrl) setCleanedPhotoUrl(serverCleanedPhotoUrl);
     if (serverGeneratedCleanedUrl) setServerCleanedUrl(serverGeneratedCleanedUrl);
 
-    if (!userEditedKeysRef.current.has("category") && !category && data?.category) {
-      setCategory(normalizeCategoryForStorage(data.category));
+    const rawIncomingCategory = data?.category
+      ? normalizeCategoryForStorage(data.category)
+      : null;
+    const bboxW = Number(data?.bbox?.w ?? data?.bbox?.width ?? 0);
+    const bboxH = Number(data?.bbox?.h ?? data?.bbox?.height ?? 0);
+    const aspectRatio = bboxW > 0 && bboxH > 0 ? bboxH / bboxW : null;
+    const twoLegCue = hasTwoLegRegionCue(data);
+    let finalCategoryCandidate = rawIncomingCategory;
+    if (
+      rawIncomingCategory &&
+      rawIncomingCategory !== Category.BOTTOM &&
+      aspectRatio != null &&
+      aspectRatio > 1.6 &&
+      twoLegCue
+    ) {
+      finalCategoryCandidate = Category.BOTTOM;
+      setAiDebugCorrectedCategory(Category.BOTTOM);
+      console.log("[AddFlow] category corrected by silhouette heuristic");
+    } else {
+      setAiDebugCorrectedCategory("");
     }
-    if (!userEditedKeysRef.current.has("pattern") && !pattern && norm(data?.pattern)) {
-      setPattern(norm(data.pattern));
+    setAiDebugAspectRatio(aspectRatio);
+
+    const rawColors = normalizeColorList(data?.colors);
+    const rawPrimary = normColor(String(data?.primaryColor ?? ""));
+    const pixelHex = norm(String(data?.pixelColorHex ?? data?.pixelHex ?? ""));
+    const dominantRgb = parseHexRgb(pixelHex);
+    const dominantColor = dominantRgb ? nearestColorLabel(dominantRgb) : "";
+    const finalColors = [
+      ...(dominantColor ? [normColor(dominantColor)] : []),
+      ...rawColors,
+      ...(rawPrimary ? [rawPrimary] : []),
+    ].filter((value, index, arr) => value && arr.indexOf(value) === index).slice(0, 2);
+    const incomingCategoryConfidence = Number(data?.confidence?.category ?? 0);
+    const incomingColorsConfidence = Number(data?.confidence?.colors ?? 0);
+    const runMeta = aiRunMetaRef.current.get(activeRunId);
+    const incomingSource: AutofillSource = runMeta?.source ?? "original";
+    const committed = aiCommittedRef.current;
+    const categoryConfDelta = Math.abs(
+      incomingCategoryConfidence - (committed?.categoryConfidence ?? 0)
+    );
+    if (dominantRgb) {
+      setAiDebugDominantRgb(`${dominantRgb.r},${dominantRgb.g},${dominantRgb.b}`);
+    } else {
+      setAiDebugDominantRgb("");
     }
-    if (!userEditedKeysRef.current.has("material") && !material && norm(data?.material)) {
-      setMaterial(norm(data.material));
+
+    setAiPrediction({
+      category: rawIncomingCategory,
+      colors: rawColors.length ? rawColors : rawPrimary ? [rawPrimary] : [],
+    });
+    setFinalPrediction({
+      category: finalCategoryCandidate,
+      colors: finalColors,
+    });
+
+    if (!userEditedKeysRef.current.has("category") && !category && finalCategoryCandidate) {
+      const categoryConflict =
+        !!committed?.category && committed.category !== finalCategoryCandidate;
+      const shouldKeepCommittedCategory =
+        categoryConflict &&
+        ((incomingSource === "original" && committed.source === "cutout") ||
+          categoryConfDelta < 0.18);
+      if (shouldKeepCommittedCategory) {
+        finalCategoryCandidate = committed?.category as Category;
+      }
+      if (!locked.category || locked.category === finalCategoryCandidate) {
+        setCategory(finalCategoryCandidate);
+        locked.category = finalCategoryCandidate;
+      }
+    }
+    const incomingPattern = norm(data?.pattern);
+    if (!userEditedKeysRef.current.has("pattern") && !pattern && incomingPattern) {
+      if (!locked.pattern || locked.pattern === incomingPattern) {
+        setPattern(incomingPattern);
+        locked.pattern = incomingPattern;
+      }
+    }
+    const incomingMaterial = norm(data?.material);
+    if (!userEditedKeysRef.current.has("material") && !material && incomingMaterial) {
+      if (!locked.material || locked.material === incomingMaterial) {
+        setMaterial(incomingMaterial);
+        locked.material = incomingMaterial;
+      }
     }
     if (!userEditedKeysRef.current.has("fit") && !fit && norm(data?.fit)) {
       setFit(norm(data.fit));
@@ -551,9 +1082,7 @@ export function useAddItemController({
       setSeasonTags(data.seasonTags);
     }
 
-    const normalizedCategory = normalizeCategoryForStorage(
-      data?.category ?? selectedCategory
-    );
+    const normalizedCategory = finalCategoryCandidate ?? selectedCategory;
     const serverSubCategory = norm(data?.subCategory);
     if (
       !userEditedKeysRef.current.has("subCategory") &&
@@ -561,7 +1090,10 @@ export function useAddItemController({
       serverSubCategory &&
       isValidCategorySubCategory(normalizedCategory, serverSubCategory)
     ) {
-      setSubCategory(serverSubCategory);
+      if (!locked.subCategory || locked.subCategory === serverSubCategory) {
+        setSubCategory(serverSubCategory);
+        locked.subCategory = serverSubCategory;
+      }
     }
 
     const colorSource = String(data?.colorSource ?? "").trim().toLowerCase();
@@ -570,18 +1102,90 @@ export function useAddItemController({
       !userEditedKeysRef.current.has("colors") &&
       selectedColors.length === 0
     ) {
-      const incomingColors: string[] =
-        Array.isArray(data?.colors) && data.colors.length
-          ? data.colors.map(normColor).filter(Boolean)
-          : data?.primaryColor
-            ? [normColor(data.primaryColor)]
-            : [];
+      const incomingColors = finalColors;
+      const colorsConflict =
+        !!committed?.colors?.length &&
+        incomingColors.length > 0 &&
+        incomingColors.join("|") !== committed.colors.join("|");
+      const colorsConfDelta = Math.abs(
+        incomingColorsConfidence - (committed?.colorsConfidence ?? 0)
+      );
+      const shouldKeepCommittedColors =
+        colorsConflict &&
+        ((incomingSource === "original" && committed?.source === "cutout") ||
+          colorsConfDelta < 0.18);
+      const resolvedColors = shouldKeepCommittedColors
+        ? committed?.colors ?? incomingColors
+        : incomingColors;
 
-      if (incomingColors.length > 0) {
-        setSelectedColors(incomingColors);
+      if (resolvedColors.length > 0) {
+        const lockedColorKey = locked.colors?.join("|") ?? "";
+        const incomingColorKey = resolvedColors.join("|");
+        if (!locked.colors || lockedColorKey === incomingColorKey) {
+          setSelectedColors(resolvedColors);
+          locked.colors = resolvedColors;
+        }
       }
     }
+
+    const summaryParts: string[] = [];
+    const summaryBrand = norm(data?.brand);
+    if (summaryBrand && !userEditedKeysRef.current.has("brand") && !brand) {
+      if (!locked.brand || locked.brand === summaryBrand) {
+        setBrand(summaryBrand);
+        locked.brand = summaryBrand;
+      }
+    }
+    const summaryCategory = norm(locked.category ?? finalCategoryCandidate ?? data?.category);
+    const summaryColors: string[] =
+      locked.colors && locked.colors.length
+        ? locked.colors
+        : finalColors;
+    if (summaryBrand) summaryParts.push(summaryBrand);
+    if (summaryCategory) summaryParts.push(summaryCategory);
+    if (summaryColors.length) summaryParts.push(summaryColors.slice(0, 2).join("/"));
+    if (summaryParts.length) {
+      const summary = `AI found: ${summaryParts.join(" • ")}`;
+      setLastAutofillSummary(summary);
+      if (normalizedStatus === "pending" || normalizedStatus === "processing") {
+        setAutofillStatusThrottled(summary);
+      } else if (normalizedStatus === "done") {
+        const doneBits = [summaryCategory, summaryColors[0]].filter(Boolean).join(" • ");
+        const doneStatus = `AI done: ${doneBits || "ready"}`;
+        setAutofillStatusThrottled(doneStatus);
+        setAiStatus("ready");
+        setAiStage(null);
+        const runMetaForCache = aiRunMetaRef.current.get(activeRunId);
+        if (runMetaForCache) {
+          const cacheKey = `${runMetaForCache.source}:${runMetaForCache.inputUri}`;
+          aiCacheRef.current.set(cacheKey, {
+            at: Date.now(),
+            summary,
+          });
+        }
+        console.log(`[AddFlow] ai done runId=${activeRunId} result=${doneStatus}`);
+      }
+      if (__DEV__) {
+        console.log("[AddItem] partial field updates", {
+          summary,
+          status: normalizedStatus,
+          runId: activeRunId,
+        });
+      }
+    }
+    aiCommittedRef.current = {
+      source: incomingSource,
+      category: finalCategoryCandidate,
+      categoryConfidence: Number.isFinite(incomingCategoryConfidence)
+        ? incomingCategoryConfidence
+        : 0,
+      colors: locked.colors ?? finalColors,
+      colorsConfidence: Number.isFinite(incomingColorsConfidence)
+        ? incomingColorsConfidence
+        : 0,
+    };
   }, [
+    brand,
     category,
     fit,
     material,
@@ -591,115 +1195,153 @@ export function useAddItemController({
     selectedCategory,
     selectedColors.length,
     subCategory,
+    setAutofillStatusThrottled,
   ]);
 
-  async function startDraftAutofill(params: {
-    photoHash: string;
-    localPreviewUri: string;
-    cleanedLocalUri: string | null;
-    originalWidth: number | null;
-    token: { sessionId: string; requestId: number };
-  }) {
-    if (!uid || isEdit) return;
-    let failingStep = "upload";
-    try {
-      const {
-        photoHash,
-        localPreviewUri,
-        cleanedLocalUri,
-        originalWidth,
-        token,
-      } = params;
-
-      if (draftPhotoHash === photoHash && draftItemId) {
+  const startDraftAutofill = useCallback(
+    async (params: {
+      photoHash: string;
+      localPreviewUri: string;
+      cleanedLocalUri: string | null;
+      originalWidth: number | null;
+      token: { sessionId: string; requestId: number };
+      runId?: number;
+    }) => {
+      if (!uid || isEdit) return;
+      const runId = params.runId ?? aiRunIdRef.current;
+      if (runId !== aiRunIdRef.current) {
+        console.log(`[AddFlow] ai stale result discarded runId=${runId}`);
         return;
       }
-
-      const previousDraftId = draftItemId;
-      resetDraftTracking();
-
-      const draftRef = doc(collection(db, "users", uid, "items"));
-      const uploaded = await uploadItemPhoto({
-        uid,
-        itemId: draftRef.id,
-        localUri: localPreviewUri,
-        cleanedLocalUri,
-        originalWidth,
+      let failingStep = "upload";
+      console.log("[Draft] start autofill", {
+        hasCleanedLocalUri: !!params.cleanedLocalUri,
+        photoHash: params.photoHash,
+        sessionId: params.token.sessionId,
+        requestId: params.token.requestId,
+        runId,
       });
+      try {
+        const {
+          photoHash,
+          localPreviewUri,
+          cleanedLocalUri,
+          originalWidth,
+          token,
+        } = params;
 
-      if (!isActiveRequest(token)) {
-        if (__DEV__) {
-          console.log("[AddFlow] ignoring stale async result (session mismatch)");
+        if (draftPhotoHash === photoHash && draftItemId) {
+          return;
         }
-        return;
-      }
 
-      const now = Date.now();
-      const nextCleanedPhotoUrl = uploaded.cleanedUrl;
-      failingStep = "create";
-      console.log("[Draft] create", {
-        itemId: draftRef.id,
-        photoHash,
-        hasCleanedUrl: !!nextCleanedPhotoUrl,
-      });
-      await setDoc(draftRef, {
-        photoUrl: uploaded.primaryUrl,
-        photoUri: null,
-        createdAt: now,
-        updatedAt: now,
-        status: "AVAILABLE",
-        category: Category.TOP,
-        wearCountSinceWash: 0,
-        lastWornDate: null,
-        lastWashedDate: null,
-        lastWashedAt: null,
-        isDraft: true,
-        photos: {
-          primaryUrl: uploaded.primaryUrl,
-          urls: [uploaded.primaryUrl],
-          ...(nextCleanedPhotoUrl
-            ? {
-                cleanedPhotoUrl: nextCleanedPhotoUrl,
-              }
-            : {}),
-        },
-        ingestion: {
-          status: "pending",
-          lastRunAt: now,
-        },
-        ingestionSource: {
-          sourceHash: photoHash,
-          sourceType: nextCleanedPhotoUrl ? "ios_vision" : "original",
-        },
-      });
+        const previousDraftId = draftItemId;
+        resetDraftTracking();
 
-      if (!isActiveRequest(token)) {
-        if (__DEV__) {
-          console.log("[AddFlow] ignoring stale async result (session mismatch)");
+        const draftRef = doc(collection(db, "users", uid, "items"));
+        const uploaded = await uploadWithTimeout(
+          uploadItemPhoto({
+            uid,
+            itemId: draftRef.id,
+            localUri: localPreviewUri,
+            cleanedLocalUri,
+            originalWidth,
+          }),
+          UPLOAD_TIMEOUT_MS,
+          "Photo upload"
+        );
+
+        if (runId !== aiRunIdRef.current || !isActiveRequest(token)) {
+          if (__DEV__) {
+            console.log(`[AddFlow] ai stale result discarded runId=${runId}`);
+          }
+          return;
         }
-        void cleanupDraftDoc(draftRef.id);
-        return;
+
+        const now = Date.now();
+        const nextCleanedPhotoUrl = uploaded.cleanedUrl;
+        failingStep = "create";
+        console.log("[Draft] create", {
+          itemId: draftRef.id,
+          photoHash,
+          hasCleanedUrl: !!nextCleanedPhotoUrl,
+          runId,
+        });
+        await setDoc(draftRef, {
+          photoUrl: uploaded.primaryUrl,
+          photoUri: null,
+          createdAt: now,
+          updatedAt: now,
+          status: "AVAILABLE",
+          category: Category.TOP,
+          wearCountSinceWash: 0,
+          lastWornDate: null,
+          lastWashedDate: null,
+          lastWashedAt: null,
+          isDraft: true,
+          photos: {
+            primaryUrl: uploaded.primaryUrl,
+            urls: [uploaded.primaryUrl],
+            ...(nextCleanedPhotoUrl
+              ? {
+                  cleanedPhotoUrl: nextCleanedPhotoUrl,
+                }
+              : {}),
+          },
+          ingestion: {
+            status: "pending",
+            lastRunAt: now,
+          },
+          ingestionSource: {
+            sourceHash: photoHash,
+            sourceType: nextCleanedPhotoUrl ? "ios_vision" : "original",
+          },
+        });
+
+        if (runId !== aiRunIdRef.current || !isActiveRequest(token)) {
+          if (__DEV__) {
+            console.log(`[AddFlow] ai stale result discarded runId=${runId}`);
+          }
+          void cleanupDraftDoc(draftRef.id);
+          return;
+        }
+
+        setDraftItemId(draftRef.id);
+        setDraftPhotoHash(photoHash);
+        createSessionRef.current.draftId = draftRef.id;
+        setIngestionStatus("pending");
+        setPhotoUrl(uploaded.primaryUrl);
+        setCleanedPhotoUrl(nextCleanedPhotoUrl);
+        syncedPreviewUriRef.current = localPreviewUri;
+
+        const draftSessionId = token.sessionId;
+        attachDraftSubscription(draftRef.id, draftSessionId, runId);
+
+        if (previousDraftId && previousDraftId !== draftRef.id) {
+          void cleanupDraftDoc(previousDraftId);
+        }
+        console.log("[Draft] autofill success", { itemId: draftRef.id, runId });
+        setUploadError(null);
+      } catch (error) {
+        console.log(`[Draft] failed step=${failingStep}`, error);
+        const message =
+          error instanceof Error ? error.message : "Photo upload failed. Please retry.";
+        setUploadError(message);
+        throw error;
+      } finally {
+        console.log("[Draft] autofill finally");
       }
-
-      setDraftItemId(draftRef.id);
-      setDraftPhotoHash(photoHash);
-      createSessionRef.current.draftId = draftRef.id;
-      setIngestionStatus("pending");
-      setPhotoUrl(uploaded.primaryUrl);
-      setCleanedPhotoUrl(nextCleanedPhotoUrl);
-      syncedPreviewUriRef.current = localPreviewUri;
-
-      const draftSessionId = token.sessionId;
-      attachDraftSubscription(draftRef.id, draftSessionId);
-
-      if (previousDraftId && previousDraftId !== draftRef.id) {
-        void cleanupDraftDoc(previousDraftId);
-      }
-    } catch (error) {
-      console.log(`[Draft] failed step=${failingStep}`, error);
-      throw error;
-    }
-  }
+    },
+    [
+      attachDraftSubscription,
+      cleanupDraftDoc,
+      draftItemId,
+      draftPhotoHash,
+      isActiveRequest,
+      isEdit,
+      resetDraftTracking,
+      uid,
+    ]
+  );
 
   useEffect(() => {
     (async () => {
@@ -801,8 +1443,181 @@ export function useAddItemController({
       if (refineTimeoutRef.current) {
         clearTimeout(refineTimeoutRef.current);
       }
+      if (aiDebounceTimerRef.current) {
+        clearTimeout(aiDebounceTimerRef.current);
+      }
+      if (autofillStatusDebounceRef.current) {
+        clearTimeout(autofillStatusDebounceRef.current);
+      }
+      if (aiInteractionTaskRef.current?.cancel) {
+        aiInteractionTaskRef.current.cancel();
+      }
     };
   }, [stopDraftSubscription]);
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    const interval = setInterval(() => {
+      console.log(
+        `[Perf] AddController refine/min=${refineExecCountRef.current} snapshot/min=${snapshotUpdateCountRef.current}`
+      );
+      refineExecCountRef.current = 0;
+      snapshotUpdateCountRef.current = 0;
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const autofillTriggerUri = useMemo(
+    () => autofillCutoutUri ?? originalPickedPhotoUri ?? null,
+    [autofillCutoutUri, originalPickedPhotoUri]
+  );
+  const autofillInputSource = useMemo<"cutout" | "original" | "">(
+    () => (autofillCutoutUri ? "cutout" : originalPickedPhotoUri ? "original" : ""),
+    [autofillCutoutUri, originalPickedPhotoUri]
+  );
+  const autofillTriggerHash = useMemo(() => {
+    if (!autofillTriggerUri) return null;
+    return `${autofillInputSource || "original"}:${autofillTriggerUri}`;
+  }, [autofillInputSource, autofillTriggerUri]);
+
+  useEffect(() => {
+    if (!autofillTriggerUri) return;
+    console.log(`[AddFlow] photoUri=${autofillTriggerUri}`);
+  }, [autofillTriggerUri]);
+
+  useEffect(() => {
+    if (!uid || isEdit) return;
+    if (draftItemId) return;
+    if (!autofillTriggerUri) return;
+
+    const imageUri = autofillTriggerUri;
+    if (!imageUri) return;
+    const cutoutUri =
+      autofillCutoutUri && autofillCutoutUri !== originalPickedPhotoUri
+        ? autofillCutoutUri
+        : null;
+    const photoHash = autofillTriggerHash;
+    if (!photoHash) return;
+    if (lastAutofillStartedHashRef.current === photoHash) return;
+
+    lastAutofillStartedHashRef.current = photoHash;
+    const runId = aiRunIdRef.current + 1;
+    aiRunIdRef.current = runId;
+    aiLockedValuesRef.current = { runId };
+    aiRunMetaRef.current.set(runId, {
+      source: autofillInputSource || "original",
+      inputUri: imageUri,
+    });
+    setAiDebugRunId(runId);
+    setAiDebugInputUri(imageUri);
+    setAiDebugInputSource(autofillInputSource);
+    const token = beginAsyncRequest();
+
+    console.log(`[AddFlow] ai start runId=${runId} input=${imageUri}`);
+
+    const runAutofill = async () => {
+      if (!uid || isEdit) return;
+      if (aiRunIdRef.current !== runId || !isActiveRequest(token)) {
+        console.log(`[AddFlow] ai stale result discarded runId=${runId}`);
+        return;
+      }
+
+      setAutofillError(null);
+      setLastAutofillSummary("");
+      setAiStatus("running");
+      setAutofillStatusThrottled("Starting AI autofill…");
+      setIsAutofillRunning(true);
+      console.log("[AddItem] autofillStart", {
+        runId,
+        photoHash,
+        imageUri,
+        cutoutUri,
+      });
+
+      const cacheKey = `${autofillInputSource || "original"}:${imageUri}`;
+      const cached = aiCacheRef.current.get(cacheKey);
+      if (cached && Date.now() - cached.at < 5 * 60 * 1000) {
+        setAutofillStatusThrottled(cached.summary || "AI done");
+        setLastAutofillSummary(cached.summary || "");
+        setAiStatus("ready");
+        setAiStage(null);
+        setIsAutofillRunning(false);
+        console.log(`[AddFlow] ai done runId=${runId} result=cache-hit`);
+        return;
+      }
+
+      const attemptId = beginUploadAttempt("draft-autofill");
+      try {
+        setAiStage("Color");
+        await uploadWithTimeout(
+          startDraftAutofill({
+            photoHash,
+            localPreviewUri: imageUri,
+            cleanedLocalUri: cutoutUri,
+            originalWidth: pendingPhotoWidth,
+            token,
+            runId,
+          }),
+          AUTOFILL_TIMEOUT_MS,
+          "AI autofill"
+        );
+
+        if (aiRunIdRef.current !== runId || !isActiveRequest(token)) {
+          console.log(`[AddFlow] ai stale result discarded runId=${runId}`);
+          return;
+        }
+        setAiStage("Category");
+        setAutofillStatusThrottled("AI autofill running…");
+        setIsAutofillRunning(true);
+      } catch (error) {
+        if (aiRunIdRef.current !== runId || !isActiveRequest(token)) {
+          console.log(`[AddFlow] ai stale result discarded runId=${runId}`);
+          return;
+        }
+        const message =
+          error instanceof Error ? error.message : "AI autofill timed out.";
+        setAutofillStatusThrottled("AI couldn’t autofill—continue manually");
+        setAiStatus("error");
+        setAiStage(null);
+        setAutofillError(message);
+        setIsAutofillRunning(false);
+        console.log("[AddItem] autofill error", error);
+      } finally {
+        console.log("[AddItem] autofill finally", { runId });
+        endUploadAttempt(attemptId, "draft-autofill");
+      }
+    };
+    if (aiDebounceTimerRef.current) {
+      clearTimeout(aiDebounceTimerRef.current);
+      aiDebounceTimerRef.current = null;
+    }
+    aiDebounceTimerRef.current = setTimeout(() => {
+      aiDebounceTimerRef.current = null;
+      if (aiInteractionTaskRef.current?.cancel) {
+        aiInteractionTaskRef.current.cancel();
+      }
+      aiInteractionTaskRef.current = InteractionManager.runAfterInteractions(() => {
+        void runAutofill();
+      });
+    }, AUTOFILL_DEBOUNCE_MS);
+  }, [
+    beginUploadAttempt,
+    beginAsyncRequest,
+    autofillKick,
+    autofillCutoutUri,
+    autofillTriggerHash,
+    autofillInputSource,
+    autofillTriggerUri,
+    draftItemId,
+    endUploadAttempt,
+    isActiveRequest,
+    isEdit,
+    originalPickedPhotoUri,
+    pendingPhotoWidth,
+    setAutofillStatusThrottled,
+    startDraftAutofill,
+    uid,
+  ]);
 
   const syncDraftProgress = useCallback(async () => {
     if (!uid || isEdit || !draftItemId) return;
@@ -882,7 +1697,7 @@ export function useAddItemController({
         if (createSessionRef.current.sessionId !== sessionId) return;
         maybeApplyAutofillFromDraft(snap.data() as any);
       });
-      attachDraftSubscription(existingDraftId, sessionId);
+      attachDraftSubscription(existingDraftId, sessionId, aiRunIdRef.current);
     }
   }, [
     attachDraftSubscription,
@@ -969,7 +1784,7 @@ export function useAddItemController({
   const aiHasCategory = useMemo(() => !!category, [category]);
   const aiHasColors = useMemo(() => selectedColors.length > 0, [selectedColors.length]);
   const showBasics = hasPhoto;
-  const showDetails = hasPhoto && (aiHasCategory || ingestionStatus === "processing" || ingestionStatus === "done");
+  const showDetails = hasPhoto;
   const showAdvanced = showDetails && advancedExpanded;
 
   const setupProgress = useMemo(() => {
@@ -991,13 +1806,31 @@ export function useAddItemController({
     };
   }, [aiHasCategory, aiHasColors, brand, hasPhoto, material, name, pattern]);
 
+  const advancedDone = useMemo(
+    () =>
+      !!(
+        norm(pattern) ||
+        norm(material) ||
+        occasionTags.length > 0 ||
+        seasonTags.length > 0 ||
+        fit ||
+        rise ||
+        legShape ||
+        norm(size) ||
+        norm(notes)
+      ),
+    [fit, legShape, material, notes, occasionTags.length, pattern, rise, seasonTags.length, size]
+  );
+
   const requiredChecklist = useMemo(
     () => [
       { id: "photo", label: "Photo", done: hasPhoto, rowId: "photo" },
-      { id: "category", label: "Category", done: aiHasCategory, rowId: "category" },
-      { id: "colors", label: "Color", done: aiHasColors, rowId: "colors" },
+      { id: "category", label: "Category", done: aiHasCategory, rowId: "details" },
+      { id: "colors", label: "Color", done: aiHasColors, rowId: "details" },
+      { id: "details", label: "Details", done: showDetails, rowId: "details" },
+      { id: "advanced", label: "Advanced", done: advancedDone, rowId: "advanced-toggle" },
     ],
-    [aiHasCategory, aiHasColors, hasPhoto]
+    [advancedDone, aiHasCategory, aiHasColors, hasPhoto, showDetails]
   );
 
   const nextMissing = useMemo(
@@ -1043,19 +1876,19 @@ export function useAddItemController({
   }, [aiFit, aiOccasionTags, aiSeasonTags, fit, occasionTags, seasonTags]);
 
   const aiStatusRows = useMemo(() => {
-    if (ingestionStatus === "failed") {
+    if (aiStatus === "error" || ingestionStatus === "failed") {
       return ["⚠️ AI failed — you can fill manually"];
     }
-    if (ingestionStatus === "pending" || ingestionStatus === "processing") {
+    if (aiStatus === "running" || ingestionStatus === "pending" || ingestionStatus === "processing") {
       return [
-        aiHasCategory ? "✓ Category detected" : "✨ Detecting category...",
-        aiHasColors ? "✓ Colors detected" : "✨ Detecting colors...",
-        aiPattern || aiMaterial
-          ? "✓ Material/pattern detected"
-          : "✨ Detecting material/pattern...",
+        aiHasColors ? "✓ Color ready" : aiStage === "Color" ? "✨ Color…" : "✨ Detecting colors...",
+        aiHasCategory ? "✓ Category ready" : aiStage === "Category" ? "✨ Category…" : "✨ Detecting category...",
+        aiPattern || aiMaterial || aiStage === "Details"
+          ? "✓ Details ready"
+          : "✨ Details…",
       ];
     }
-    if (ingestionStatus === "done") {
+    if (aiStatus === "ready" || ingestionStatus === "done") {
       return [
         aiHasCategory ? "✓ Category detected" : "⚠️ Category missing",
         aiHasColors ? "✓ Colors detected" : "⚠️ Colors missing",
@@ -1065,25 +1898,33 @@ export function useAddItemController({
       ];
     }
     return [];
-  }, [aiHasCategory, aiHasColors, aiMaterial, aiPattern, ingestionStatus]);
+  }, [aiHasCategory, aiHasColors, aiMaterial, aiPattern, aiStage, aiStatus, ingestionStatus]);
 
   const aiStatusPill = useMemo(() => {
-    if (ingestionStatus === "failed") {
+    if (aiStatus === "error" || ingestionStatus === "failed") {
       return { label: "AI failed — fill manually", tone: "error" as const };
     }
-    if (ingestionStatus === "pending" || ingestionStatus === "processing") {
+    if (aiStatus === "running" || ingestionStatus === "pending" || ingestionStatus === "processing") {
       return { label: "AI filling details…", tone: "running" as const };
     }
-    if (ingestionStatus === "done" && aiSuggestions.length > 0) {
+    if ((aiStatus === "ready" || ingestionStatus === "done") && aiSuggestions.length > 0) {
       return { label: "AI suggestions ready", tone: "ready" as const };
     }
-    if (ingestionStatus === "done") {
+    if (aiStatus === "ready" || ingestionStatus === "done") {
       return { label: "AI ready", tone: "ready" as const };
     }
     return { label: "AI idle", tone: "idle" as const };
-  }, [aiSuggestions.length, ingestionStatus]);
+  }, [aiStatus, aiSuggestions.length, ingestionStatus]);
 
   const canApplyAiSuggestions = ingestionStatus === "done" && aiSuggestions.length > 0;
+  const touched = {
+    categoryTouched: userEditedKeysRef.current.has("category"),
+    subCategoryTouched: userEditedKeysRef.current.has("subCategory"),
+    colorsTouched: userEditedKeysRef.current.has("colors"),
+    brandTouched: userEditedKeysRef.current.has("brand"),
+    patternTouched: userEditedKeysRef.current.has("pattern"),
+    materialTouched: userEditedKeysRef.current.has("material"),
+  };
 
   const applyAiSuggestions = useCallback(() => {
     aiSuggestions.forEach((suggestion) => suggestion.onPress());
@@ -1117,13 +1958,18 @@ export function useAddItemController({
 
     const execute = async () => {
       try {
+        refineExecCountRef.current += 1;
         setRefiningCutout(true);
-        const cutoutUri = await removeBackground(originalPickedPhotoUri, {
-          threshold,
-          cleanupRadius,
-          feather,
-          edgeTighten,
-          maskToAlpha,
+        setAiStatus("running");
+        setAiStage("Color");
+        setAutofillStatusThrottled("Starting AI autofill…");
+        setBgRemovalError(null);
+        const cutoutUri = await runBackgroundRemoval({
+          inputUri: originalPickedPhotoUri,
+          width: pendingPhotoWidth,
+          height: null,
+          options: { threshold, cleanupRadius, feather, edgeTighten, maskToAlpha },
+          tag: "refine",
         });
         if (
           requestId !== latestRefineRequestIdRef.current ||
@@ -1137,12 +1983,16 @@ export function useAddItemController({
         lastCompletedRefineKeyRef.current = requestKey;
         setPendingPhotoUri(cutoutUri);
         setPendingCleanedPhotoUri(cutoutUri);
+        if (immediate) {
+          setAutofillCutoutUri(cutoutUri);
+        }
         setCleanedPhotoUrl(null);
         console.log(
           `[AddItem] refine done value=${normalizedValue.toFixed(2)}, threshold=${threshold.toFixed(2)}, radius=${cleanupRadius}, feather=${feather}, uri=${cutoutUri}`
         );
       } catch (e) {
         if (requestId === latestRefineRequestIdRef.current) {
+          setBgRemovalError("BG removal failed");
           console.log(e);
         }
       } finally {
@@ -1152,20 +2002,16 @@ export function useAddItemController({
       }
     };
 
-    if (immediate) {
-      void execute();
-      return;
-    }
-
-    refineTimeoutRef.current = setTimeout(() => {
-      refineTimeoutRef.current = null;
-      void execute();
-    }, 200);
+    if (!immediate) return;
+    void execute();
   }
 
   function handleRefineValueChange(value: number) {
-    setRefineValue(value);
-    scheduleRefine(value, false);
+    // Keep dragging lightweight; only commit/call native refine on release.
+    if (__DEV__) {
+      // no-op to keep API shape from PhotoEditorSection without re-render spam.
+      void value;
+    }
   }
 
   function handleRefineValueComplete(value: number) {
@@ -1180,6 +2026,7 @@ export function useAddItemController({
 
   async function pickPhoto(source: "library" | "camera") {
     try {
+      console.log("[AddItem] pickPhoto start", { source });
       const perm =
         source === "camera"
           ? await ImagePicker.requestCameraPermissionsAsync()
@@ -1214,14 +2061,30 @@ export function useAddItemController({
 
       const asset = res.assets[0];
       const nextPhotoHash = buildPhotoHash(asset);
+      setPendingPhotoHash(nextPhotoHash);
+      setUploadError(null);
       if (!isEdit && draftPhotoHash === nextPhotoHash && draftItemId) {
         return;
       }
 
       const previousSelectionId = latestPhotoSelectionIdRef.current + 1;
       latestPhotoSelectionIdRef.current = previousSelectionId;
+      aiRunIdRef.current += 1;
+      aiLockedValuesRef.current = { runId: aiRunIdRef.current };
       const token = beginAsyncRequest();
       const originalUri = asset.uri;
+      const normalized = await normalizeImageForCutout({
+        uri: originalUri,
+        width: asset.width,
+        height: asset.height,
+      });
+      const normalizedUri = normalized.uri || originalUri;
+      const effectiveWidth = normalized.width ?? asset.width ?? null;
+      const effectiveHeight = normalized.height ?? asset.height ?? null;
+      setOriginalPickedPhotoUri(normalizedUri);
+      setAutofillCutoutUri(null);
+      setPendingPhotoUri(normalizedUri);
+      setPendingCleanedPhotoUri(null);
       if (refineTimeoutRef.current) {
         clearTimeout(refineTimeoutRef.current);
         refineTimeoutRef.current = null;
@@ -1240,10 +2103,32 @@ export function useAddItemController({
       const initialOptions = getRefineOptions(DEFAULT_REFINE_VALUE);
       setDetectedBrand(null);
       setDetectedBrandConfidence(null);
-      const [cutoutUri, brandResult] = await Promise.all([
-        removeBackground(originalUri, initialOptions),
-        detectBrandLogo(originalUri),
-      ]);
+      setAutofillError(null);
+      setLastAutofillSummary("");
+      setAutofillStatus("Starting AI autofill…");
+      setAiStatus("running");
+      setAiStage("Color");
+      setIsAutofillRunning(!isEdit);
+      lastAutofillStartedHashRef.current = null;
+      setBgRemovalError(null);
+      const brandPromise = detectBrandLogo(originalUri).catch((error) => {
+        console.log("[BrandDetect] error", error);
+        return null;
+      });
+      let cutoutUri: string | null = null;
+      try {
+        cutoutUri = await runBackgroundRemoval({
+          inputUri: normalizedUri,
+          width: effectiveWidth,
+          height: effectiveHeight,
+          options: initialOptions,
+          tag: "pick",
+        });
+      } catch (error) {
+        setBgRemovalError("BG removal failed");
+        cutoutUri = null;
+        console.log("[AddItem] cutout failed - using original", error);
+      }
       if (
         previousSelectionId !== latestPhotoSelectionIdRef.current ||
         !isActiveRequest(token)
@@ -1253,21 +2138,33 @@ export function useAddItemController({
         }
         return;
       }
-      console.log("[AddItem] original image URI:", originalUri);
-      console.log("[AddItem] final display/upload URI:", cutoutUri);
+      const finalDisplayUri = cutoutUri || normalizedUri;
+      console.log("[AddItem] original image URI:", shortenUri(originalUri));
+      console.log("[AddItem] normalized image URI:", shortenUri(normalizedUri));
+      console.log("[AddItem] final display/upload URI:", shortenUri(finalDisplayUri));
       lastCompletedRefineKeyRef.current = getRefineRequestKey(
-        originalUri,
+        normalizedUri,
         DEFAULT_REFINE_VALUE
       );
       latestRefineRequestIdRef.current = 0;
-      setOriginalPickedPhotoUri(originalUri);
       setRefineValue(DEFAULT_REFINE_VALUE);
-      setPendingPhotoUri(cutoutUri);
+      setPendingPhotoUri(finalDisplayUri);
       setPendingCleanedPhotoUri(cutoutUri);
+      setAutofillCutoutUri(cutoutUri);
       setCleanedPhotoUrl(null);
       setServerCleanedUrl(null);
       setIngestionStatus(isEdit ? null : "pending");
-      setPendingPhotoWidth(asset.width ?? null);
+      setPendingPhotoWidth(effectiveWidth);
+      const brandResult = await brandPromise;
+      if (
+        previousSelectionId !== latestPhotoSelectionIdRef.current ||
+        !isActiveRequest(token)
+      ) {
+        if (__DEV__) {
+          console.log("[AddFlow] ignoring stale async result (session mismatch)");
+        }
+        return;
+      }
       if (brandResult?.brand) {
         setDetectedBrand(brandResult.brand);
         setDetectedBrandConfidence(
@@ -1279,29 +2176,22 @@ export function useAddItemController({
       }
 
       if (!isEdit && uid) {
-        setUploadingPhoto(true);
-        try {
-          await startDraftAutofill({
-            photoHash: nextPhotoHash,
-            localPreviewUri: cutoutUri,
-            cleanedLocalUri: cutoutUri !== originalUri ? cutoutUri : null,
-            originalWidth: asset.width ?? null,
-            token,
-          });
-        } finally {
-          if (
-            previousSelectionId === latestPhotoSelectionIdRef.current &&
-            isActiveRequest(token)
-          ) {
-            setUploadingPhoto(false);
-          }
-        }
+        console.log("[AddItem] cutoutDone", {
+          photoHash: nextPhotoHash,
+          cutoutReady: !!cutoutUri,
+          cutoutFailed: !cutoutUri,
+        });
       } else if (previousDraftId) {
         void cleanupDraftDoc(previousDraftId);
       }
     } catch (e: any) {
       console.log(e);
+      setUploadError(e?.message ?? "Failed to process selected photo.");
+      setBgRemovalError(e?.message ?? "BG removal failed.");
+      setUploadingPhoto(false);
       Alert.alert("Error", e?.message ?? "Failed to pick image");
+    } finally {
+      console.log("[AddItem] pickPhoto finally");
     }
   }
 
@@ -1314,25 +2204,41 @@ export function useAddItemController({
       if (draftItemId) {
         console.log("[Draft] update photos", { itemId });
       }
-      setUploadingPhoto(true);
-      const uploadedUrl = await uploadItemPhoto({
-        uid: currentUid,
-        itemId,
-        localUri: pendingPhotoUri,
-        cleanedLocalUri: pendingCleanedPhotoUri,
-        originalWidth: pendingPhotoWidth,
-      });
-      console.log("[AddItem] saved photos.cleanedPhotoUrl:", uploadedUrl.cleanedUrl);
-      console.log("[AddItem] saved photos.cleanedUrl:", serverCleanedUrl);
-      setPhotoUrl(uploadedUrl.primaryUrl);
-      setCleanedPhotoUrl(uploadedUrl.cleanedUrl);
-      syncedPreviewUriRef.current = pendingPhotoUri;
-      return {
-        photoUrl: uploadedUrl.primaryUrl,
-        photoUri: null,
-        cleanedPhotoUrl: uploadedUrl.cleanedUrl,
-        cleanedUrl: serverCleanedUrl,
-      };
+      const attemptId = beginUploadAttempt("resolve-photo-fields");
+      try {
+        const uploadedUrl = await uploadWithTimeout(
+          uploadItemPhoto({
+            uid: currentUid,
+            itemId,
+            localUri: pendingPhotoUri,
+            cleanedLocalUri: pendingCleanedPhotoUri,
+            originalWidth: pendingPhotoWidth,
+          }),
+          UPLOAD_TIMEOUT_MS,
+          "Photo upload"
+        );
+        console.log("[AddItem] saved photos.cleanedPhotoUrl:", uploadedUrl.cleanedUrl);
+        console.log("[AddItem] saved photos.cleanedUrl:", serverCleanedUrl);
+        setPhotoUrl(uploadedUrl.primaryUrl);
+        setCleanedPhotoUrl(uploadedUrl.cleanedUrl);
+        syncedPreviewUriRef.current = pendingPhotoUri;
+        setUploadError(null);
+        console.log("[AddItem] upload success: resolve-photo-fields");
+        return {
+          photoUrl: uploadedUrl.primaryUrl,
+          photoUri: null,
+          cleanedPhotoUrl: uploadedUrl.cleanedUrl,
+          cleanedUrl: serverCleanedUrl,
+        };
+      } catch (error) {
+        console.log("[AddItem] upload error: resolve-photo-fields", error);
+        const message =
+          error instanceof Error ? error.message : "Photo upload failed. Please retry.";
+        setUploadError(message);
+        throw error;
+      } finally {
+        endUploadAttempt(attemptId, "resolve-photo-fields");
+      }
     }
 
     if (!photoUrl && !photoUri) {
@@ -1430,6 +2336,84 @@ export function useAddItemController({
       Alert.alert("No recent items", "Could not load a recent item.");
     }
   }
+
+  async function retryPhotoUpload() {
+    if (!uid || isEdit || !pendingPhotoUri) {
+      return;
+    }
+
+    const token = beginAsyncRequest();
+    const attemptId = beginUploadAttempt("retry-upload");
+    try {
+      if (draftItemId) {
+        const uploaded = await uploadWithTimeout(
+          uploadItemPhoto({
+            uid,
+            itemId: draftItemId,
+            localUri: pendingPhotoUri,
+            cleanedLocalUri: pendingCleanedPhotoUri,
+            originalWidth: pendingPhotoWidth,
+          }),
+          UPLOAD_TIMEOUT_MS,
+          "Retry photo upload"
+        );
+        await updateDoc(doc(db, "users", uid, "items", draftItemId), {
+          photoUrl: uploaded.primaryUrl,
+          updatedAt: Date.now(),
+          "photos.primaryUrl": uploaded.primaryUrl,
+          "photos.urls": [uploaded.primaryUrl],
+          ...(uploaded.cleanedUrl
+            ? { "photos.cleanedPhotoUrl": uploaded.cleanedUrl }
+            : {}),
+          ingestion: {
+            status: "pending",
+            lastRunAt: Date.now(),
+          },
+        });
+        setPhotoUrl(uploaded.primaryUrl);
+        setCleanedPhotoUrl(uploaded.cleanedUrl);
+        syncedPreviewUriRef.current = pendingPhotoUri;
+      } else {
+        const retryHash =
+          pendingPhotoHash ??
+          `${pendingPhotoUri}-${pendingPhotoWidth ?? "unknown-width"}`;
+        const runId = aiRunIdRef.current + 1;
+        aiRunIdRef.current = runId;
+        aiLockedValuesRef.current = { runId };
+        await uploadWithTimeout(
+          startDraftAutofill({
+            photoHash: retryHash,
+            localPreviewUri: pendingPhotoUri,
+            cleanedLocalUri: pendingCleanedPhotoUri,
+            originalWidth: pendingPhotoWidth,
+            token,
+            runId,
+          }),
+          UPLOAD_TIMEOUT_MS,
+          "Retry draft autofill"
+        );
+      }
+      setUploadError(null);
+      console.log("[AddItem] retry upload success");
+    } catch (error) {
+      console.log("[AddItem] retry upload error", error);
+      const message =
+        error instanceof Error ? error.message : "Photo upload failed. Please retry.";
+      setUploadError(message);
+    } finally {
+      endUploadAttempt(attemptId, "retry-upload");
+    }
+  }
+
+  const retryAutofill = useCallback(() => {
+    if (isEdit) return;
+    lastAutofillStartedHashRef.current = null;
+    setAutofillError(null);
+    setAiStatus("running");
+    setAiStage("Color");
+    setAutofillStatus("Starting AI autofill…");
+    setAutofillKick((prev) => prev + 1);
+  }, [isEdit]);
 
   async function saveItem() {
     isFinalizingRef.current = true;
@@ -1595,11 +2579,13 @@ export function useAddItemController({
   }
 
   const hasRequiredPhoto = !!previewPhotoUri;
-  const canSave = hasRequiredPhoto && !loading && !uploadingPhoto;
-  const ctaStatusText = uploadingPhoto
-    ? "Uploading photo…"
-    : refiningCutout || (draftItemId && ingestionStatus && ingestionStatus !== "done" && ingestionStatus !== "failed")
-      ? "AI autofill running…"
+  const canSave = hasRequiredPhoto && !loading;
+  const ctaStatusText = uploadError
+    ? "Upload failed. Retry below."
+    : uploadingPhoto
+      ? "Uploading photo…"
+      : refiningCutout || isAutofillRunning || (draftItemId && ingestionStatus && ingestionStatus !== "done" && ingestionStatus !== "failed")
+        ? "AI autofill running…"
       : canSave
         ? "Ready to save"
         : "Add a photo to continue";
@@ -1639,12 +2625,31 @@ export function useAddItemController({
     notesExpanded,
   ]);
 
+  if (__DEV__) {
+    const now =
+      typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+    const metrics = controllerRenderMetricsRef.current;
+    metrics.renders += 1;
+    metrics.lastDurationMs = now - renderStartMs;
+    if (now - metrics.lastLogAt >= 1000) {
+      console.log(
+        `[Perf] AddController renders/sec=${metrics.renders} lastRender=${metrics.lastDurationMs.toFixed(1)}ms`
+      );
+      metrics.renders = 0;
+      metrics.lastLogAt = now;
+    }
+  }
+
   const state = {
     uid,
     editItemId,
     isEdit,
     loading,
     uploadingPhoto,
+    uploadError,
+    bgRemovalError,
     brand,
     name,
     category,
@@ -1673,13 +2678,30 @@ export function useAddItemController({
     serverCleanedUrl,
     pendingPhotoUri,
     pendingCleanedPhotoUri,
+    autofillCutoutUri,
     pendingPhotoWidth,
     originalPickedPhotoUri,
     refineValue,
     refiningCutout,
     draftItemId,
     draftPhotoHash,
+    pendingPhotoHash,
+    autofillKick,
     ingestionStatus,
+    aiStatus,
+    aiStage,
+    autofillStatus,
+    isAutofillRunning,
+    lastAutofillSummary,
+    autofillError,
+    aiPrediction,
+    finalPrediction,
+    aiDebugRunId,
+    aiDebugInputUri,
+    aiDebugInputSource,
+    aiDebugAspectRatio,
+    aiDebugDominantRgb,
+    aiDebugCorrectedCategory,
     aiPattern,
     aiMaterial,
     detectedBrand,
@@ -1737,6 +2759,7 @@ export function useAddItemController({
     canSave,
     ctaStatusText,
     rowKeys,
+    touched,
     isDirty:
       !!pendingPhotoUri ||
       !!brand ||
@@ -1791,6 +2814,9 @@ export function useAddItemController({
     pickPhoto,
     saveItem,
     resetCreateFlow,
+    retryPhotoUpload,
+    retryBackgroundRemoval,
+    retryAutofill,
     duplicateLastItem,
     stopDraftSubscription,
     onScreenFocus,

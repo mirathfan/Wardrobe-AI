@@ -9,24 +9,30 @@ import {
   Pressable,
   SectionList,
   Text,
-  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { renderAddRow } from "./add/renderAddRow";
-import { useAddItemController } from "./add/useAddItemController";
-import { Pill } from "./add/ui/Pill";
+import { renderAddRow } from "@/src/addItem/renderAddRow";
+import { makeDevThrottleLogger } from "@/src/addItem/devPerf";
+import { useAddItemController } from "@/src/addItem/useAddItemController";
+import { Pill } from "@/src/addItem/ui/Pill";
+import { dockSpace } from "@/src/constants/dock";
 
 export default function AddItemScreen() {
   const insets = useSafeAreaInsets();
+  const floatingDockSpace = dockSpace(insets.bottom);
   const { editId } = useLocalSearchParams<{ editId?: string }>();
   const editItemId = useMemo(() => (Array.isArray(editId) ? editId[0] : editId) || null, [editId]);
   const controller = useAddItemController({ editItemId });
+  const controllerRef = useRef(controller);
+  controllerRef.current = controller;
   const { state, derived, actions, styles } = controller;
   const onScreenFocus = actions.onScreenFocus;
   const onScreenBlur = actions.onScreenBlur;
   const sectionListRef = useRef<SectionList<{ key: string }> | null>(null);
+  const renderLog = useMemo(() => makeDevThrottleLogger("AddScreen"), []);
+  const profilerStatsRef = useRef({ commits: 0, total: 0 });
 
   useFocusEffect(
     React.useCallback(() => {
@@ -42,8 +48,8 @@ export default function AddItemScreen() {
     if (derived.showBasics) rows.push({ key: "basics" });
     if (derived.showDetails) {
       rows.push({ key: "details" });
-      rows.push({ key: "advanced-toggle" });
     }
+    rows.push({ key: "advanced-toggle" });
     if (derived.showAdvanced) {
       rows.push({ key: "fabric-header" });
       if (state.fabricExpanded) rows.push({ key: "fabric-content" });
@@ -71,12 +77,21 @@ export default function AddItemScreen() {
     state.sizeExpanded,
   ]);
 
+  renderLog({
+    rows: formRows?.[0]?.data?.length ?? 0,
+    loading: state.loading,
+    uploading: state.uploadingPhoto,
+    ai: state.aiStatus,
+  });
+
   const scrollToChecklistRow = useCallback(
     (rowId: string) => {
       const keyMap: Record<string, string> = {
         photo: "photo",
         category: "details",
         colors: "details",
+        details: "details",
+        advanced: "advanced-toggle",
       };
       const targetKey = keyMap[rowId] ?? rowId;
       const index = formRows[0]?.data.findIndex((row) => row.key === targetKey) ?? -1;
@@ -91,26 +106,53 @@ export default function AddItemScreen() {
     [formRows]
   );
 
+  const handleProfilerRender = useCallback(
+    (
+      _id: string,
+      phase: "mount" | "update" | "nested-update",
+      actualDuration: number
+    ) => {
+      if (!__DEV__) return;
+      profilerStatsRef.current.commits += 1;
+      profilerStatsRef.current.total += actualDuration;
+      if (profilerStatsRef.current.commits % 15 === 0) {
+        const avg = profilerStatsRef.current.total / profilerStatsRef.current.commits;
+        console.log(
+          `[Perf] AddScreen profiler phase=${phase} avgCommit=${avg.toFixed(1)}ms last=${actualDuration.toFixed(1)}ms`
+        );
+      }
+    },
+    []
+  );
+
+  const renderRow = useCallback(
+    ({ item }: { item: { key: string } }) =>
+      renderAddRow({ rowKey: item.key, controller: controllerRef.current }),
+    []
+  );
+
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-      <KeyboardAvoidingView
-        style={styles.screen}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <React.Profiler id="AddScreen" onRender={handleProfilerRender}>
         <View style={styles.container}>
           <SectionList
             ref={sectionListRef}
             sections={formRows}
             keyExtractor={(item) => item.key}
-            renderItem={({ item }) => renderAddRow({ rowKey: item.key, controller })}
+            renderItem={renderRow}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            onScrollBeginDrag={() => Keyboard.dismiss()}
             stickySectionHeadersEnabled={false}
             removeClippedSubviews
             windowSize={7}
             initialNumToRender={6}
             maxToRenderPerBatch={6}
             updateCellsBatchingPeriod={16}
-            contentContainerStyle={[styles.listContent, { paddingBottom: 160 + insets.bottom }]}
+            contentContainerStyle={[styles.listContent, { paddingBottom: floatingDockSpace + 180 }]}
             ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
             ListHeaderComponent={
               <View style={{ marginBottom: 14, gap: 10 }}>
@@ -205,7 +247,7 @@ export default function AddItemScreen() {
             }
           />
 
-          <View style={[styles.footer, { paddingBottom: Math.max(12, insets.bottom + 8) }]}>
+          <View style={[styles.footer, { paddingBottom: floatingDockSpace + 12 }]}>
             <Text style={styles.ctaStatus}>{derived.ctaStatusText}</Text>
             <Pressable
               onPress={actions.saveItem}
@@ -336,7 +378,7 @@ export default function AddItemScreen() {
             </Pressable>
           </Modal>
         </View>
-      </KeyboardAvoidingView>
-    </TouchableWithoutFeedback>
+      </React.Profiler>
+    </KeyboardAvoidingView>
   );
 }

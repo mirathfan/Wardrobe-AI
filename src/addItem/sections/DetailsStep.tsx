@@ -1,6 +1,7 @@
 import React from "react";
 import { Text, View } from "react-native";
-import { Category, isValidCategorySubCategory } from "../../../../src/shared/wardrobeTaxonomy";
+import { Category, isValidCategorySubCategory } from "../../shared/wardrobeTaxonomy";
+import { makeDevThrottleLogger } from "../devPerf";
 import { ChipRow } from "../ui/ChipRow";
 import { Field } from "../ui/Field";
 import { Pill } from "../ui/Pill";
@@ -10,6 +11,12 @@ import { SectionTitle } from "../ui/SectionTitle";
 
 export const DetailsStep = React.memo(function DetailsStep({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  const logRender = React.useMemo(() => makeDevThrottleLogger("DetailsStep"), []);
+  logRender({
+    aiStatus: state.aiStatus,
+    category: state.category,
+    colors: state.selectedColors.length,
+  });
   const statusPillStyles =
     derived.aiStatusPill.tone === "error"
       ? { borderColor: "#fca5a5", backgroundColor: "#fef2f2", color: "#b91c1c" }

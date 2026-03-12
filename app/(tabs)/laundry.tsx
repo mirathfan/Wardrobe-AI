@@ -17,9 +17,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { useAuth } from "../../src/hooks/useAuth";
-import { db } from "../../src/lib/firebase";
-import { dockSpace } from "../constants/dock";
+import { useAuth } from "@/src/hooks/useAuth";
+import { db } from "@/src/lib/firebase";
+import { dockSpace } from "@/src/constants/dock";
 
 type Status = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 

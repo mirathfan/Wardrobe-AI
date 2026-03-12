@@ -1,4 +1,4 @@
-import { Category } from "../../../src/shared/wardrobeTaxonomy";
+import { Category } from "../shared/wardrobeTaxonomy";
 
 export const CATEGORIES: Category[] = Object.values(Category);
 

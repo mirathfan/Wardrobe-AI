@@ -1,5 +1,6 @@
 import React from "react";
 import { Text } from "react-native";
+import { makeDevThrottleLogger } from "../devPerf";
 import { Field } from "../ui/Field";
 import { MemoTextInputField } from "../ui/MemoTextInputField";
 import { SectionCard } from "../ui/SectionCard";
@@ -7,6 +8,8 @@ import { SectionTitle } from "../ui/SectionTitle";
 
 export const BasicsStep = React.memo(function BasicsStep({ controller }: { controller: any }) {
   const { state, actions } = controller;
+  const logRender = React.useMemo(() => makeDevThrottleLogger("BasicsStep"), []);
+  logRender({ brand: !!state.brand, name: !!state.name });
 
   return (
     <SectionCard>

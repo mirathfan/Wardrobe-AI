@@ -1,1 +1,1 @@
-export { default } from "../app/components/FloatingGlassTabBar";
+export { default } from "@/src/components/FloatingGlassTabBar";

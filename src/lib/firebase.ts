@@ -5,12 +5,12 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyD1dGOddJZqr7qYYX7p0l0c5MWo-xTp5Ss",
-  authDomain: "closet-app-57146.firebaseapp.com",
-  projectId: "closet-app-57146",
-  storageBucket: "closet-app-57146.firebasestorage.app",
-  messagingSenderId: "1043970871162",
-  appId: "1:1043970871162:web:87c7eb1a6ffcf5b9ad50c3",
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);

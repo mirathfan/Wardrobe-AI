@@ -186,6 +186,14 @@ function RefineControls(props: RefineControlsProps) {
         </View>
       </View>
       <View style={{ paddingVertical: 8, marginHorizontal: -6 }}>
+        <View
+          pointerEvents="box-none"
+          onTouchStart={() => {
+            if (__DEV__) {
+              console.log("[TouchDebug] slider container touch");
+            }
+          }}
+        >
         <NativeGuard onError={onNativeError}>
           <Slider
             value={value}
@@ -196,11 +204,12 @@ function RefineControls(props: RefineControlsProps) {
             onSlidingComplete={handleSlidingComplete}
             minimumTrackTintColor="#111"
             maximumTrackTintColor="#e5e5e5"
-            tapToSeek={Platform.OS === "ios"}
+            tapToSeek={false}
             thumbImage={Platform.OS === "ios" ? sliderThumbImage : undefined}
             thumbTintColor={Platform.OS === "ios" ? undefined : "#111"}
           />
         </NativeGuard>
+        </View>
       </View>
     </View>
   );
@@ -253,7 +262,12 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [sliderErrored, setSliderErrored] = useState(false);
   const [showAlphaBg, setShowAlphaBg] = useState(false);
+  const [liveRefineValue, setLiveRefineValue] = useState(refineValue);
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+
+  useEffect(() => {
+    setLiveRefineValue(refineValue);
+  }, [refineValue]);
 
   useEffect(() => {
     if (__DEV__) {
@@ -386,15 +400,21 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
 
         {canRefine ? (
           <View style={{ gap: 8 }}>
-            <RefineControls
-              value={refineValue}
-              isProcessing={isProcessing}
-              useNativeSlider={useNativeSlider}
-              onNativeError={handleNativeSliderError}
-              onChange={onRefineChange}
-              onComplete={onRefineComplete}
-              onReset={onResetRefine}
-            />
+        <RefineControls
+          value={liveRefineValue}
+          isProcessing={isProcessing}
+          useNativeSlider={useNativeSlider}
+          onNativeError={handleNativeSliderError}
+          onChange={(value) => {
+            setLiveRefineValue(value);
+            onRefineChange(value);
+          }}
+          onComplete={(value) => {
+            setLiveRefineValue(value);
+            onRefineComplete(value);
+          }}
+          onReset={onResetRefine}
+        />
             <Text style={{ color: "#666", fontSize: 12 }}>
               Drag to remove leftover background. Release for final quality.
             </Text>
@@ -475,15 +495,21 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
           >
             {canRefine ? (
               <>
-                <RefineControls
-                  value={refineValue}
-                  isProcessing={isProcessing}
-                  useNativeSlider={useNativeSlider}
-                  onNativeError={handleNativeSliderError}
-                  onChange={onRefineChange}
-                  onComplete={onRefineComplete}
-                  onReset={onResetRefine}
-                />
+            <RefineControls
+              value={liveRefineValue}
+              isProcessing={isProcessing}
+              useNativeSlider={useNativeSlider}
+              onNativeError={handleNativeSliderError}
+              onChange={(value) => {
+                setLiveRefineValue(value);
+                onRefineChange(value);
+              }}
+              onComplete={(value) => {
+                setLiveRefineValue(value);
+                onRefineComplete(value);
+              }}
+              onReset={onResetRefine}
+            />
                 <Text style={{ color: "#666", fontSize: 12 }}>
                   Drag to remove leftover background. Release for final quality.
                 </Text>

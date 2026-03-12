@@ -1,4 +1,5 @@
 import React from "react";
+import { makeDevThrottleLogger } from "./devPerf";
 import { SectionTitle } from "./ui/SectionTitle";
 import { PhotoStep } from "./sections/PhotoStep";
 import { BasicsStep } from "./sections/BasicsStep";
@@ -19,6 +20,8 @@ import {
   NotesContentRow,
 } from "./sections/AdvancedSections";
 
+const logRenderAddRow = makeDevThrottleLogger("renderAddRow");
+
 export function renderAddRow({
   rowKey,
   controller,
@@ -26,6 +29,9 @@ export function renderAddRow({
   rowKey: string;
   controller: any;
 }) {
+  if (__DEV__) {
+    logRenderAddRow({ rowKey });
+  }
   switch (rowKey) {
     case "photo":
       return <PhotoStep controller={controller} />;

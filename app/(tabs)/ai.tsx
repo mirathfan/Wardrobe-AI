@@ -15,14 +15,14 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useAuth } from "../../src/hooks/useAuth";
-import { app, db } from "../../src/lib/firebase";
-import { getItemImageUrl } from "../../src/lib/itemImage";
-import { listenToItems } from "../../src/lib/items";
-import { clearLatestChatCache, loadLatestChatCache, saveLatestChatCache } from "../../src/lib/localChatCache";
-import { toDateKey } from "../../src/lib/outfits";
-import { ClothingItem } from "../../src/types/ClothingItem";
-import { dockSpace } from "../constants/dock";
+import { useAuth } from "@/src/hooks/useAuth";
+import { app, db } from "@/src/lib/firebase";
+import { getItemImageUrl } from "@/src/lib/itemImage";
+import { listenToItems } from "@/src/lib/items";
+import { clearLatestChatCache, loadLatestChatCache, saveLatestChatCache } from "@/src/lib/localChatCache";
+import { toDateKey } from "@/src/lib/outfits";
+import { ClothingItem } from "@/src/types/ClothingItem";
+import { dockSpace } from "@/src/constants/dock";
 
 type ChatOutfit = {
   id: string;

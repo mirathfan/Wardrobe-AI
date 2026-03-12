@@ -1,16 +1,20 @@
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 import Slider from "@react-native-community/slider";
-import { Category } from "../../../../src/shared/wardrobeTaxonomy";
+import { Category } from "../../shared/wardrobeTaxonomy";
 import { ChipRow } from "../ui/ChipRow";
 import { CollapsibleHeader } from "../ui/CollapsibleHeader";
 import { Field } from "../ui/Field";
 import { MemoTextInputField } from "../ui/MemoTextInputField";
 import { Pill } from "../ui/Pill";
 import { SectionCard } from "../ui/SectionCard";
+import { makeDevThrottleLogger } from "../devPerf";
+
+const logAdvancedRender = makeDevThrottleLogger("AdvancedSections");
 
 export const AdvancedToggleRow = React.memo(function AdvancedToggleRow({ controller }: { controller: any }) {
   const { state, actions } = controller;
+  logAdvancedRender({ row: "advanced-toggle", expanded: state.advancedExpanded });
   return (
     <SectionCard>
       <CollapsibleHeader
@@ -32,6 +36,7 @@ export const AdvancedToggleRow = React.memo(function AdvancedToggleRow({ control
 
 export const FabricHeaderRow = React.memo(function FabricHeaderRow({ controller }: { controller: any }) {
   const { state, actions } = controller;
+  logAdvancedRender({ row: "fabric-header", expanded: state.fabricExpanded });
   return (
     <SectionCard>
       <CollapsibleHeader
@@ -45,6 +50,7 @@ export const FabricHeaderRow = React.memo(function FabricHeaderRow({ controller 
 
 export const FabricContentRow = React.memo(function FabricContentRow({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  logAdvancedRender({ row: "fabric-content", material: !!state.material, pattern: !!state.pattern });
   return (
     <SectionCard>
       <View style={{ gap: 12 }}>
@@ -62,6 +68,7 @@ export const FabricContentRow = React.memo(function FabricContentRow({ controlle
 
 export const SizeHeaderRow = React.memo(function SizeHeaderRow({ controller }: { controller: any }) {
   const { state, actions } = controller;
+  logAdvancedRender({ row: "size-header", expanded: state.sizeExpanded });
   return (
     <SectionCard>
       <CollapsibleHeader title="Size & Purchase" expanded={state.sizeExpanded} onPress={() => actions.toggleSection("size")} />
@@ -71,6 +78,7 @@ export const SizeHeaderRow = React.memo(function SizeHeaderRow({ controller }: {
 
 export const SizeContentRow = React.memo(function SizeContentRow({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  logAdvancedRender({ row: "size-content", size: !!state.size, price: !!state.priceAmount });
   return (
     <SectionCard>
       <View style={{ gap: 12 }}>
@@ -115,6 +123,7 @@ export const SizeContentRow = React.memo(function SizeContentRow({ controller }:
 
 export const OccasionHeaderRow = React.memo(function OccasionHeaderRow({ controller }: { controller: any }) {
   const { state, actions } = controller;
+  logAdvancedRender({ row: "occasion-header", expanded: state.occasionExpanded });
   return (
     <SectionCard>
       <CollapsibleHeader title="Occasion" expanded={state.occasionExpanded} onPress={() => actions.toggleSection("occasion")} />
@@ -124,6 +133,7 @@ export const OccasionHeaderRow = React.memo(function OccasionHeaderRow({ control
 
 export const OccasionContentRow = React.memo(function OccasionContentRow({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  logAdvancedRender({ row: "occasion-content", count: state.occasionTags.length });
   return (
     <SectionCard>
       <ChipRow>
@@ -148,6 +158,7 @@ export const OccasionContentRow = React.memo(function OccasionContentRow({ contr
 
 export const SeasonHeaderRow = React.memo(function SeasonHeaderRow({ controller }: { controller: any }) {
   const { state, actions } = controller;
+  logAdvancedRender({ row: "season-header", expanded: state.seasonExpanded });
   return (
     <SectionCard>
       <CollapsibleHeader
@@ -161,6 +172,7 @@ export const SeasonHeaderRow = React.memo(function SeasonHeaderRow({ controller 
 
 export const SeasonContentRow = React.memo(function SeasonContentRow({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  logAdvancedRender({ row: "season-content", count: state.seasonTags.length });
   return (
     <SectionCard>
       <View style={{ gap: 12 }}>
@@ -208,6 +220,7 @@ export const SeasonContentRow = React.memo(function SeasonContentRow({ controlle
 
 export const FitHeaderRow = React.memo(function FitHeaderRow({ controller }: { controller: any }) {
   const { state, actions } = controller;
+  logAdvancedRender({ row: "fit-header", expanded: state.fitExpanded });
   return (
     <SectionCard>
       <CollapsibleHeader title="Fit & Silhouette" expanded={state.fitExpanded} onPress={() => actions.toggleSection("fit")} />
@@ -217,6 +230,7 @@ export const FitHeaderRow = React.memo(function FitHeaderRow({ controller }: { c
 
 export const FitContentRow = React.memo(function FitContentRow({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  logAdvancedRender({ row: "fit-content", fit: !!state.fit });
   return (
     <SectionCard>
       <View style={{ gap: 12 }}>
@@ -276,6 +290,7 @@ export const FitContentRow = React.memo(function FitContentRow({ controller }: {
 
 export const NotesHeaderRow = React.memo(function NotesHeaderRow({ controller }: { controller: any }) {
   const { state, actions } = controller;
+  logAdvancedRender({ row: "notes-header", expanded: state.notesExpanded });
   return (
     <SectionCard>
       <CollapsibleHeader title="Notes" expanded={state.notesExpanded} onPress={() => actions.toggleSection("notes")} />
@@ -285,6 +300,7 @@ export const NotesHeaderRow = React.memo(function NotesHeaderRow({ controller }:
 
 export const NotesContentRow = React.memo(function NotesContentRow({ controller }: { controller: any }) {
   const { state, actions } = controller;
+  logAdvancedRender({ row: "notes-content", hasNotes: !!state.notes });
   return (
     <SectionCard>
       <Field label="Notes">

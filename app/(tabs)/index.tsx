@@ -12,14 +12,14 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { dockSpace } from "../constants/dock";
+import { dockSpace } from "@/src/constants/dock";
 
-import { AI_LABEL } from "../components/AiAccent";
-import { AiInsightCard } from "../components/AiInsightCard";
-import { AiWardrobeSections } from "../components/AiWardrobeSections";
-import { WardrobeFilterSheet } from "../components/WardrobeFilterSheet";
-import { useAuth } from "../../src/hooks/useAuth";
-import { getItemImageUrl } from "../../src/lib/itemImage";
+import { AI_LABEL } from "@/src/components/AiAccent";
+import { AiInsightCard } from "@/src/components/AiInsightCard";
+import { AiWardrobeSections } from "@/src/components/AiWardrobeSections";
+import { WardrobeFilterSheet } from "@/src/components/WardrobeFilterSheet";
+import { useAuth } from "@/src/hooks/useAuth";
+import { getItemImageUrl } from "@/src/lib/itemImage";
 import {
   CategoryFilter,
   ClosetItem,
@@ -31,7 +31,7 @@ import {
   safeMarkWorn,
   sendToLaundry,
   toCanonicalCategory,
-} from "../../src/lib/items";
+} from "@/src/lib/items";
 
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "ALL", label: "All" },
