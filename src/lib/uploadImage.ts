@@ -6,6 +6,7 @@ type UploadItemPhotoParams = {
   uid: string;
   itemId: string;
   localUri: string;
+  cleanedLocalUri?: string | null;
   originalWidth?: number | null;
   maxWidth?: number;
   quality?: number;
@@ -32,15 +33,47 @@ async function processImageToJpegUri(params: {
   return result.uri;
 }
 
+function normalizeFileUri(uri: string) {
+  const value = String(uri ?? "").trim();
+  if (!value) return "";
+  if (value.startsWith("file://")) return value;
+  if (value.startsWith("/")) return `file://${value}`;
+  return value;
+}
+
+async function blobFromFileUri(localUri: string): Promise<Blob> {
+  const fileUri = normalizeFileUri(localUri);
+  if (!fileUri) throw new Error("Missing local file URI for upload.");
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onerror = () => reject(new Error("Failed to read local image file."));
+    xhr.ontimeout = () => reject(new Error("Timed out reading local image file."));
+    xhr.onload = () => resolve(xhr.response as Blob);
+    xhr.responseType = "blob";
+    xhr.timeout = 15_000;
+    xhr.open("GET", fileUri, true);
+    xhr.send(null);
+  });
+}
+
 export async function uploadItemPhoto(params: UploadItemPhotoParams) {
   const {
     uid,
     itemId,
     localUri,
+    cleanedLocalUri = null,
     originalWidth = null,
     maxWidth = 1000,
     quality = 0.7,
   } = params;
+
+  console.log("[uploadItemPhoto] start", {
+    uid,
+    itemId,
+    localUri,
+    cleanedLocalUri,
+    originalWidth,
+  });
 
   const processedUri = await processImageToJpegUri({
     localUri,
@@ -48,13 +81,37 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     maxWidth,
     quality,
   });
-
-  const response = await fetch(processedUri);
-  const blob = await response.blob();
+  const primaryBlob = await blobFromFileUri(processedUri);
 
   const storagePath = `users/${uid}/items/${itemId}.jpg`;
   const fileRef = ref(storage, storagePath);
+  await uploadBytes(fileRef, primaryBlob, {
+    contentType: "image/jpeg",
+  });
+  const primaryUrl = await getDownloadURL(fileRef);
+  console.log("[uploadItemPhoto] primary uploaded", { storagePath, primaryUrl });
 
-  await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
-  return getDownloadURL(fileRef);
+  const cleanedCandidateUri =
+    cleanedLocalUri ||
+    (String(localUri).trim().toLowerCase().endsWith(".png") ? localUri : null);
+  let cleanedUrl: string | null = null;
+  if (cleanedCandidateUri) {
+    console.log("[uploadItemPhoto] cleanedLocalUri:", cleanedCandidateUri);
+    const cleanedBlob = await blobFromFileUri(cleanedCandidateUri);
+    const cleanedPath = `users/${uid}/items/${itemId}.cleaned.png`;
+    const cleanedRef = ref(storage, cleanedPath);
+    console.log("[uploadItemPhoto] cleaned storage path:", cleanedPath);
+    await uploadBytes(cleanedRef, cleanedBlob, {
+      contentType: "image/png",
+    });
+    cleanedUrl = await getDownloadURL(cleanedRef);
+    console.log("[uploadItemPhoto] cleaned download URL:", cleanedUrl);
+  }
+
+  console.log("[uploadItemPhoto] success", { itemId, hasCleaned: !!cleanedUrl });
+  return {
+    primaryUrl,
+    cleanedUrl,
+    cleanedSource: cleanedUrl ? "ios_vision" : null,
+  };
 }

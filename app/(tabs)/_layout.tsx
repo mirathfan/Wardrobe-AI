@@ -1,27 +1,44 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import FloatingGlassTabBar from '@/components/FloatingGlassTabBar';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
+      tabBar={(props) => <FloatingGlassTabBar {...props} />}
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
-        tabBarButton: HapticTab,
+        tabBarHideOnKeyboard: true,
       }}>
       <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
+      />
+      <Tabs.Screen
+       name="calendar"
+       options={{
+       title: 'Calendar',
+       }}
+      />
+      <Tabs.Screen
+       name="ai"
+       options={{
+       title: 'AI',
+       }}
+      />
+       <Tabs.Screen
+         name="laundry"
+         options={{
+         title: 'Laundry',
+        }}
+      />
+      <Tabs.Screen
+       name="profile"
+       options={{
+       title: 'Profile',
+       }}
       />
       <Tabs.Screen
         name="add"
@@ -35,33 +52,6 @@ export default function TabLayout() {
          href: null,
         }}
         />
-       <Tabs.Screen
-         name="laundry"
-         options={{
-         title: "Laundry",
-        }}
-      />
-      <Tabs.Screen
-       name="today"
-       options={{
-       title: "Today",
-       }}
-      />
-      <Tabs.Screen
-       name="ai"
-       options={{
-       title: "AI",
-       }}
-      />
-      <Tabs.Screen
-       name="profile"
-       options={{
-       title: "Profile",
-       }}
-      />
-
-
-
     </Tabs>
   );
 }

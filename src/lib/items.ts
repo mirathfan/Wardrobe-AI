@@ -15,6 +15,7 @@ import {
 import { db } from "./firebase";
 import { addItemToOutfit, toDateKey } from "./outfits";
 import { ClothingItem, ClothingStatus } from "../types/ClothingItem";
+import { Category } from "../shared/wardrobeTaxonomy";
 
 export type ClosetItem = ClothingItem;
 export type ItemSort = "NEWEST" | "MOST_WORN";
@@ -50,7 +51,18 @@ export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
   const v = norm(raw).replace(/\s+/g, " ");
 
   if (
-    ["top", "tshirt", "t-shirt", "shirt", "tee", "polo", "sweater"].includes(v)
+    [
+      "top",
+      "tshirt",
+      "t-shirt",
+      "shirt",
+      "tee",
+      "polo",
+      "sweater",
+      "one_piece",
+      "jumpsuit",
+      "set",
+    ].includes(v)
   ) {
     return "top";
   }
@@ -61,7 +73,11 @@ export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
     return "bottom";
   }
 
-  if (["shoes", "sneakers", "boots", "slides"].includes(v)) {
+  if (
+    ["shoes", "footwear", "sneakers", "sneaker", "boots", "slides", "sandal", "loafer"].includes(
+      v
+    )
+  ) {
     return "shoes";
   }
 
@@ -89,6 +105,14 @@ export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
 export function categoryValuesFor(filter: CategoryFilter) {
   if (filter === "ALL") return [];
   return CATEGORY_MAP[filter];
+}
+
+export function normalizeCategoryForStorage(raw?: string | null): Category {
+  const v = norm(raw).replace(/\s+/g, " ");
+  if (v === "shoes") return Category.FOOTWEAR;
+  if (v === "one piece") return Category.ONE_PIECE;
+  if (Object.values(Category).includes(v as Category)) return v as Category;
+  return Category.TOP;
 }
 
 export function isInCategory(item: ClosetItem, filter: CategoryFilter) {

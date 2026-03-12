@@ -1,11 +1,13 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { deleteDoc, doc, onSnapshot } from "firebase/firestore";
+import { deleteDoc, deleteField, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
 import { useAuth } from "../../../src/hooks/useAuth";
 import { db } from "../../../src/lib/firebase";
+import { getItemImageUrl } from "../../../src/lib/itemImage";
 import {
   markWashed as markWashedItem,
   safeMarkWorn,
@@ -28,6 +30,28 @@ function formatDate(value?: any | null) {
   return "—";
 }
 
+function formatDateOrNotSet(value?: any | null) {
+  if (!value) return "Not set";
+  return formatDate(value);
+}
+
+function ingestionStatusLabel(item: ItemDetails) {
+  const status = item.ingestion?.status ?? "pending";
+  if (status === "done") return "done";
+  if (status === "failed") return "failed";
+  if (status === "processing") return "processing";
+  return "pending";
+}
+
+function toTitleCase(value: string) {
+  if (!value) return value;
+  return value
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+}
+
 export default function ItemDetailsScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
@@ -37,7 +61,39 @@ export default function ItemDetailsScreen() {
   const [item, setItem] = useState<ItemDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const itemImageUri = item?.photoUrl || item?.photoUri || null;
+  const [colorSaving, setColorSaving] = useState(false);
+  const [colorSavedAt, setColorSavedAt] = useState<number | null>(null);
+  const [detailImageOpen, setDetailImageOpen] = useState(false);
+  const [patternDraft, setPatternDraft] = useState("");
+  const [materialDraft, setMaterialDraft] = useState("");
+  const itemImageUri = getItemImageUrl(item, { variant: "hero" });
+
+  useEffect(() => {
+    if (!itemImageUri) return;
+    const baseUri = itemImageUri.split("?")[0]?.toLowerCase() ?? "";
+    const kind = baseUri.endsWith(".png")
+      ? "png"
+      : baseUri.endsWith(".jpg") || baseUri.endsWith(".jpeg")
+        ? "jpg"
+        : "unknown";
+    console.log("[ItemScreen] displaying image URI:", itemImageUri);
+    console.log("[ItemScreen] displayed image suffix:", kind);
+  }, [itemImageUri]);
+
+  useEffect(() => {
+    if (!item) return;
+    setPatternDraft(item.pattern ?? "");
+    setMaterialDraft(item.material ?? "");
+    console.log("[ItemScreen] image fields:", {
+      itemId: item.id,
+      photos: item.photos ?? null,
+      photoUrl: item.photoUrl ?? null,
+      photoUri: item.photoUri ?? null,
+      cleanedUrl: (item as any).cleanedUrl ?? null,
+      cleanedPhotoUrl: (item as any).cleanedPhotoUrl ?? null,
+      selectedImageUri: itemImageUri,
+    });
+  }, [item, itemImageUri]);
 
   useEffect(() => {
     if (!uid || !itemId) {
@@ -150,8 +206,66 @@ export default function ItemDetailsScreen() {
     });
   }
 
+  async function onSelectColor(color: string) {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+    try {
+      setColorSaving(true);
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
+        colors: [color],
+        colorLabel: toTitleCase(color),
+        primaryColor: toTitleCase(color),
+        colorSource: "user",
+        colorUpdatedAt: Date.now(),
+        colorNeedsReview: false,
+        colorConfidence: 1,
+      });
+      setColorSavedAt(Date.now());
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? "Failed to save color");
+    } finally {
+      setColorSaving(false);
+    }
+  }
+
+  async function onResetToAI() {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+    try {
+      setColorSaving(true);
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
+        colorSource: "ai",
+        colorUpdatedAt: Date.now(),
+        "ingestion.status": "pending",
+        "ingestion.lastProcessedPhotoHash": deleteField(),
+      });
+      setColorSavedAt(Date.now());
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? "Failed to reset AI color");
+    } finally {
+      setColorSaving(false);
+    }
+  }
+
+  async function saveField(field: "pattern" | "material", value: string | null) {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+    try {
+      await updateDoc(doc(db, "users", uid, "items", itemId), {
+        [field]: value,
+      });
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? `Failed to update ${field}`);
+    }
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }} edges={["top"]}>
+      <ItemImageModal
+        visible={detailImageOpen}
+        uri={itemImageUri}
+        onClose={() => setDetailImageOpen(false)}
+      />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <Pressable onPress={() => router.back()} style={pill}>
@@ -169,11 +283,28 @@ export default function ItemDetailsScreen() {
           <>
             <View style={card}>
               {itemImageUri ? (
-                <Image
-                  source={{ uri: itemImageUri }}
+                <Pressable
+                  onPress={() => setDetailImageOpen(true)}
                   style={{ width: "100%", height: 260, borderRadius: 14 }}
-                  resizeMode="cover"
-                />
+                >
+                  <View
+                    style={{
+                      width: "100%",
+                      height: 260,
+                      borderRadius: 14,
+                      backgroundColor: "#fff",
+                      overflow: "hidden",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Image
+                      source={{ uri: itemImageUri }}
+                      style={{ width: "100%", height: 260 }}
+                      resizeMode="contain"
+                    />
+                  </View>
+                </Pressable>
               ) : (
                 <View style={{ height: 260, borderRadius: 14, backgroundColor: "#f3f3f3", alignItems: "center", justifyContent: "center" }}>
                   <Text style={{ color: "#777", fontWeight: "800" }}>No photo</Text>
@@ -189,24 +320,178 @@ export default function ItemDetailsScreen() {
                 <Text style={{ color: "#666" }}>
                   Category: {item.category}
                 </Text>
+                {item.subCategory ? (
+                  <Text style={{ color: "#666" }}>Sub-category: {item.subCategory}</Text>
+                ) : null}
 
-                {item.colors?.length ? (
+                {item.colorLabel || item.colors?.length ? (
                   <Text style={{ color: "#666" }}>
-                    Colors: {item.colors.join(" / ")}
+                    Colors: {item.colorLabel || item.colors?.join(" / ") || "—"}
                   </Text>
                 ) : null}
+                {(() => {
+                  const ingestionStatus = ingestionStatusLabel(item);
+                  if (ingestionStatus === "done") {
+                    return (
+                      <View style={{ marginTop: 4, gap: 2 }}>
+                        <Text style={{ color: "#0a7", fontWeight: "800" }}>
+                          Ingestion: Complete
+                        </Text>
+                        <Text style={{ color: "#666" }}>
+                          Extracted: {item.category ?? "—"} / {item.subCategory ?? "—"}
+                        </Text>
+                        <Text style={{ color: "#666" }}>
+                          Colors: {item.colorLabel || item.colors?.join(", ") || "—"}
+                        </Text>
+                        <Text style={{ color: "#666" }}>
+                          Source: {item.colorSource || "ai"}
+                        </Text>
+                      </View>
+                    );
+                  }
+                  if (ingestionStatus === "failed") {
+                    return (
+                      <Text style={{ color: "#d11", fontWeight: "700" }}>
+                        Couldn&apos;t analyze, you can edit manually
+                      </Text>
+                    );
+                  }
+                  return (
+                    <Text style={{ color: "#666", fontWeight: "700" }}>
+                      Analyzing…
+                    </Text>
+                  );
+                })()}
 
                 {item.status ? <Text style={{ color: "#666" }}>Status: {item.status}</Text> : null}
                 <Text style={{ color: "#666" }}>
                   Wears since wash: {item.wearCountSinceWash ?? 0}
                 </Text>
                 <Text style={{ color: "#666" }}>Last worn: {formatDate(item.lastWornDate)}</Text>
-                <Text style={{ color: "#666" }}>Last washed: {formatDate(item.lastWashedDate)}</Text>
+                <Text style={{ color: "#666" }}>
+                  Last washed: {formatDateOrNotSet(item.lastWashedAt ?? item.lastWashedDate)}
+                </Text>
 
                 {item.size ? <Text style={{ color: "#666" }}>Size: {item.size}</Text> : null}
-                {typeof item.price === "number" ? <Text style={{ color: "#666" }}>Price: {item.price}</Text> : null}
+                {typeof item.priceAmount === "number" || typeof item.price === "number" ? (
+                  <Text style={{ color: "#666" }}>
+                    Price: {item.priceCurrency || "USD"} {item.priceAmount ?? item.price}
+                  </Text>
+                ) : null}
                 {item.purchaseDate ? <Text style={{ color: "#666" }}>Purchase date: {item.purchaseDate}</Text> : null}
                 {item.notes ? <Text style={{ color: "#666" }}>Notes: {item.notes}</Text> : null}
+                <View style={{ gap: 8, marginTop: 6 }}>
+                  <Text style={{ color: "#222", fontWeight: "800" }}>Pattern</Text>
+                  <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                    <Pressable
+                      onPress={() => {
+                        setPatternDraft("");
+                        void saveField("pattern", null);
+                      }}
+                      style={pill}
+                    >
+                      <Text style={pillText}>Auto (AI)</Text>
+                    </Pressable>
+                    <TextInput
+                      value={patternDraft}
+                      onChangeText={setPatternDraft}
+                      onEndEditing={() => void saveField("pattern", patternDraft.trim() || null)}
+                      placeholder={item.pattern || "Auto (AI)"}
+                      style={[textInput, { flex: 1 }]}
+                    />
+                  </View>
+                  <Text style={{ color: "#222", fontWeight: "800" }}>Material</Text>
+                  <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                    <Pressable
+                      onPress={() => {
+                        setMaterialDraft("");
+                        void saveField("material", null);
+                      }}
+                      style={pill}
+                    >
+                      <Text style={pillText}>Auto (AI)</Text>
+                    </Pressable>
+                    <TextInput
+                      value={materialDraft}
+                      onChangeText={setMaterialDraft}
+                      onEndEditing={() => void saveField("material", materialDraft.trim() || null)}
+                      placeholder={item.material || "Auto (AI)"}
+                      style={[textInput, { flex: 1 }]}
+                    />
+                  </View>
+                </View>
+
+                {ingestionStatusLabel(item) === "done" ? (
+                  <View style={{ marginTop: 10, gap: 8 }}>
+                    {item.colorNeedsReview && item.colorSource !== "user" ? (
+                      <View
+                        style={{
+                          borderWidth: 1,
+                          borderColor: "#f2c66d",
+                          backgroundColor: "#fff8e8",
+                          borderRadius: 10,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ color: "#7a5a18", fontWeight: "700" }}>
+                          Color check: AI said {item.aiColorLabel || "—"}, pixels suggest{" "}
+                          {toTitleCase(item.pixelColors?.[0] || "—")}. Tap a color to confirm.
+                        </Text>
+                      </View>
+                    ) : null}
+                    <Text style={{ color: "#222", fontWeight: "800" }}>
+                      Correct color
+                    </Text>
+                    <Text style={{ color: "#666" }}>
+                      Detected: {item.colorLabel || item.colors?.join(" / ") || "—"}. Tap to correct:
+                    </Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {ALLOWED_COLORS.map((color) => {
+                        const isSelected = (item.colors?.[0] || "").toLowerCase() === color;
+                        return (
+                          <Pressable
+                            key={color}
+                            onPress={() => onSelectColor(color)}
+                            disabled={colorSaving}
+                            style={{
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: isSelected ? "#111" : "#ddd",
+                              backgroundColor: isSelected ? "#111" : "#fff",
+                              opacity: colorSaving ? 0.65 : 1,
+                            }}
+                          >
+                            <Text style={{ color: isSelected ? "#fff" : "#111", fontWeight: "700" }}>
+                              {toTitleCase(color)}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    {item.colorSource === "user" ? (
+                      <Pressable
+                        onPress={onResetToAI}
+                        disabled={colorSaving}
+                        style={{
+                          alignSelf: "flex-start",
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: "#aaa",
+                          opacity: colorSaving ? 0.65 : 1,
+                        }}
+                      >
+                        <Text style={{ color: "#333", fontWeight: "700" }}>Reset to AI</Text>
+                      </Pressable>
+                    ) : null}
+                    {colorSavedAt ? (
+                      <Text style={{ color: "#0a7", fontSize: 12, fontWeight: "700" }}>Saved</Text>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             </View>
 
@@ -290,3 +575,83 @@ const pill = {
 const pillText = {
   fontWeight: "900",
 } as const;
+
+const textInput = {
+  borderWidth: 1,
+  borderColor: "#ddd",
+  borderRadius: 12,
+  paddingHorizontal: 12,
+  paddingVertical: 10,
+  fontSize: 16,
+} as const;
+
+function ItemImageModal(props: {
+  visible: boolean;
+  uri: string | null;
+  onClose: () => void;
+}) {
+  const { visible, uri, onClose } = props;
+  const insets = useSafeAreaInsets();
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: "#111" }}>
+        <Text
+          style={{
+            color: "#fff",
+            fontSize: 18,
+            fontWeight: "800",
+            textAlign: "center",
+            paddingTop: insets.top + 16,
+          }}
+        >
+          Photo
+        </Text>
+        <Pressable
+          onPress={onClose}
+          style={{
+            position: "absolute",
+            top: insets.top + 12,
+            right: 12,
+            zIndex: 10,
+            paddingVertical: 10,
+            paddingHorizontal: 12,
+            borderRadius: 999,
+            backgroundColor: "rgba(0,0,0,0.55)",
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "800" }}>Close</Text>
+        </Pressable>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{
+            flexGrow: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+          minimumZoomScale={1}
+          maximumZoomScale={4}
+          bouncesZoom={false}
+          centerContent
+        >
+          {uri ? (
+            <View
+              style={{
+                width: "100%",
+                minHeight: 360,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "#fff",
+                borderRadius: 20,
+                overflow: "hidden",
+              }}
+            >
+              <Image source={{ uri }} style={{ width: "100%", height: 520 }} resizeMode="contain" />
+            </View>
+          ) : null}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}

@@ -1,261 +1,446 @@
-import {
-    collection,
-    doc,
-    increment,
-    onSnapshot,
-    orderBy,
-    query,
-    updateDoc,
-} from "firebase/firestore";
 import { router } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
-import { Alert, FlatList, Pressable, Text, View } from "react-native";
-import { useAuth } from "../../src/hooks/useAuth";
-import { db } from "../../src/lib/firebase";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import React, { useMemo, useRef, useState } from "react";
+import {
+  Alert,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
+import { useAuth } from "@/src/hooks/useAuth";
+import { app, db } from "@/src/lib/firebase";
+import { getItemImageUrl } from "@/src/lib/itemImage";
+import { listenToItems } from "@/src/lib/items";
+import { clearLatestChatCache, loadLatestChatCache, saveLatestChatCache } from "@/src/lib/localChatCache";
+import { toDateKey } from "@/src/lib/outfits";
+import { ClothingItem } from "@/src/types/ClothingItem";
+import { dockSpace } from "@/src/constants/dock";
 
-type ClothingItem = {
+type ChatOutfit = {
   id: string;
-  category: string;
-  brand: string;
-  primaryColor: string;
-  status: ClothingStatus;
-  wearCountSinceWash: number;
-  createdAt: number;
-  lastWornDate?: number | null;
-  lastWashedDate?: number | null;
+  picks: {slot: string; itemId: string}[];
+  score: number;
+  reason: string;
 };
 
-function daysAgo(ts?: number | null) {
-  if (!ts) return Infinity;
-  return Math.floor((Date.now() - ts) / (24 * 60 * 60 * 1000));
-}
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  outfits?: ChatOutfit[];
+};
 
-function fmtShort(ts?: number | null) {
-  if (!ts) return "—";
-  const d = new Date(ts);
-  return d.toLocaleDateString();
+type OutfitChatResponse = {
+  threadId: string;
+  assistantMessage: {text: string};
+  outfits?: ChatOutfit[];
+};
+
+function displayName(item: ClothingItem) {
+  return item.name || `${item.primaryColor ?? ""} ${item.category}`.trim();
 }
 
 export default function AIScreen() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  const insets = useSafeAreaInsets();
+  const bottomDockSpace = dockSpace(insets.bottom);
+  const composerBottom = bottomDockSpace + 10;
+  const composerHeight = 142;
   const [items, setItems] = useState<ClothingItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const quickChips = useMemo(
+    () => ["warmer", "more formal", "swap shoes", "2 outfits", "5 outfits"],
+    []
+  );
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!uid) {
-      setLoading(false);
+      setItems([]);
       router.replace("/(auth)/login");
       return;
     }
 
-    const itemsRef = collection(db, "users", uid, "items");
-    const q = query(itemsRef, orderBy("createdAt", "desc"));
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const next: ClothingItem[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as any),
-        }));
-        setItems(next);
-        setLoading(false);
-      },
-      (err) => {
-        console.log(err);
-        Alert.alert("Firestore error", err.message);
-        setLoading(false);
+    const unsub = listenToItems(
+      uid,
+      (next) => setItems(next as ClothingItem[]),
+      {
+        status: "ALL",
+        sort: "NEWEST",
+        onError: (message) => Alert.alert("Firestore error", message),
       }
     );
 
     return () => unsub();
   }, [uid]);
 
-  async function markWorn(itemId: string) {
-    try {
-      if (!uid) return router.replace("/(auth)/login");
-      await updateDoc(doc(db, "users", uid, "items", itemId), {
-        status: "WORN",
-        wearCountSinceWash: increment(1),
-        lastWornDate: Date.now(),
-      });
-    } catch (e: any) {
-      console.log(e);
-      Alert.alert("Error", e?.message ?? "Failed");
-    }
-  }
+  React.useEffect(() => {
+    let active = true;
+    void (async () => {
+      const cached = await loadLatestChatCache<ChatMessage>();
+      if (!active || !cached) return;
+      setThreadId(cached.threadId);
+      setMessages(Array.isArray(cached.messages) ? cached.messages : []);
+    })();
 
-  async function moveToLaundry(itemId: string) {
-    try {
-      if (!uid) return router.replace("/(auth)/login");
-      await updateDoc(doc(db, "users", uid, "items", itemId), {
-        status: "IN_LAUNDRY",
-      });
-    } catch (e: any) {
-      console.log(e);
-      Alert.alert("Error", e?.message ?? "Failed");
-    }
-  }
+    return () => {
+      active = false;
+    };
+  }, []);
 
-  // “AI” logic (rule-based but feels smart)
-  const ai = useMemo(() => {
-    const available = items.filter((i) => i.status === "AVAILABLE");
+  React.useEffect(() => {
+    void saveLatestChatCache(threadId, messages);
+  }, [threadId, messages]);
 
-    // Outfit picks: prefer items not worn recently
-    const outfitPicks = [...available]
-      .sort((a, b) => daysAgo(b.lastWornDate) - daysAgo(a.lastWornDate))
-      .slice(0, 5);
-
-    // Rotation: not worn in 7+ days (or never worn)
-    const rotate = [...available]
-      .filter((i) => daysAgo(i.lastWornDate) >= 7)
-      .sort((a, b) => daysAgo(b.lastWornDate) - daysAgo(a.lastWornDate))
-      .slice(0, 8);
-
-    // Wash hints: worn 2+ times since wash (and not already in laundry)
-    const washHints = items
-      .filter((i) => i.status !== "IN_LAUNDRY" && (i.wearCountSinceWash ?? 0) >= 2)
-      .sort((a, b) => (b.wearCountSinceWash ?? 0) - (a.wearCountSinceWash ?? 0))
-      .slice(0, 8);
-
-    // Color balance hint (simple)
-    const colorCounts: Record<string, number> = {};
-    available.forEach((i) => {
-      const c = (i.primaryColor || "Unknown").toLowerCase();
-      colorCounts[c] = (colorCounts[c] || 0) + 1;
-    });
-    const mostCommon = Object.entries(colorCounts).sort((a, b) => b[1] - a[1])[0];
-    const colorTip = mostCommon
-      ? `Your most common clean color is "${mostCommon[0]}". Want variety? Pick a different color today.`
-      : "Add more items to get color insights.";
-
-    return { outfitPicks, rotate, washHints, colorTip };
+  const itemsById = useMemo(() => {
+    return new Map(items.map((item) => [item.id, item]));
   }, [items]);
 
-  return (
-    <View style={{ flex: 1, padding: 16}}>
-      <Text style={{ fontSize: 22, fontWeight: "700", marginBottom: 8 }}>AI</Text>
+  function startNewChat() {
+    setThreadId(null);
+    setMessages([]);
+    setInput("");
+    requestIdRef.current += 1;
+    void clearLatestChatCache();
+  }
 
-      {loading ? (
-        <Text>Loading…</Text>
-      ) : (
-        <>
+  async function onSend() {
+    if (!uid) {
+      router.replace("/(auth)/login");
+      return;
+    }
+
+    const message = input.trim();
+    if (!message) return;
+
+    const pendingId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const token = requestIdRef.current + 1;
+    requestIdRef.current = token;
+
+    setMessages((prev) => [
+      ...prev,
+      {id: pendingId, role: "user", text: message},
+    ]);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const functions = getFunctions(app);
+      const chat = httpsCallable<
+        {threadId?: string; message: string},
+        OutfitChatResponse
+      >(functions, "outfitChatV1");
+      const result = await chat({
+        ...(threadId ? {threadId} : {}),
+        message,
+      });
+
+      if (token !== requestIdRef.current) {
+        return;
+      }
+
+      const nextThreadId = String(result.data?.threadId ?? "").trim() || null;
+      if (nextThreadId) {
+        setThreadId(nextThreadId);
+      }
+      const assistantText =
+        String(result.data?.assistantMessage?.text ?? "").trim() ||
+        "I’m ready for the next outfit request.";
+      const outfits = Array.isArray(result.data?.outfits) ? result.data.outfits : undefined;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `${pendingId}-assistant`,
+          role: "assistant",
+          text: assistantText,
+          ...(outfits && outfits.length > 0 ? {outfits} : {}),
+        },
+      ]);
+    } catch (e: any) {
+      if (token === requestIdRef.current) {
+        Alert.alert("Error", e?.message ?? "Failed to chat with Outfit AI");
+      }
+    } finally {
+      if (token === requestIdRef.current) {
+        setLoading(false);
+      }
+    }
+  }
+
+  function onChipPress(chip: string) {
+    if (loading) return;
+    setInput((prev) => (prev.trim() ? `${prev.trim()} ${chip}` : chip));
+  }
+
+  async function onSaveToToday(outfit: ChatOutfit) {
+    if (!uid) {
+      router.replace("/(auth)/login");
+      return;
+    }
+
+    try {
+      setSavingId(outfit.id);
+      const dateKey = toDateKey(new Date());
+      const itemIds = outfit.picks.map((pick) => pick.itemId);
+      await setDoc(
+        doc(db, "users", uid, "outfits", dateKey),
+        {
+          dateKey,
+          itemIds,
+          planned: true,
+          updatedAt: serverTimestamp(),
+        },
+        {merge: true}
+      );
+      Alert.alert("Saved", "Outfit saved to Today.");
+    } catch (e: any) {
+      Alert.alert("Error", e?.message ?? "Failed to save outfit");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  function renderOutfitCard(outfit: ChatOutfit, index: number) {
+    const pickedItems = outfit.picks
+      .map((pick) => ({
+        slot: pick.slot,
+        item: itemsById.get(pick.itemId),
+      }))
+      .filter((value): value is {slot: string; item: ClothingItem} => !!value.item);
+
+    return (
+      <View
+        key={`${outfit.id}-${index}`}
+        style={{
+          marginTop: 10,
+          borderWidth: 1,
+          borderColor: "#ddd",
+          borderRadius: 14,
+          padding: 12,
+          gap: 10,
+          backgroundColor: "#fff",
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <Text style={{fontSize: 16, fontWeight: "800"}}>Outfit {index + 1}</Text>
+          <Text style={{color: "#666"}}>Score {outfit.score.toFixed(2)}</Text>
+        </View>
+
+        <Text style={{color: "#666"}}>{outfit.reason}</Text>
+
+        <View style={{gap: 10}}>
+          {pickedItems.map(({slot, item}) => {
+            const imageUri = getItemImageUrl(item, {variant: "thumb"});
+            return (
+              <View
+                key={`${outfit.id}-${slot}-${item.id}`}
+                style={{flexDirection: "row", gap: 10, alignItems: "center"}}
+              >
+                {imageUri ? (
+                  <Image
+                    source={{uri: imageUri}}
+                    style={{width: 56, height: 56, borderRadius: 10}}
+                  />
+                ) : (
+                  <View
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 10,
+                      backgroundColor: "#f2f2f2",
+                    }}
+                  />
+                )}
+
+                <View style={{flex: 1}}>
+                  <Text style={{fontWeight: "700"}}>
+                    {slot.replace(/_/g, " ")}
+                  </Text>
+                  <Text>{displayName(item)}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        <Pressable
+          onPress={() => void onSaveToToday(outfit)}
+          disabled={savingId === outfit.id}
+          style={{
+            paddingVertical: 10,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: "#111",
+            alignItems: "center",
+            opacity: savingId === outfit.id ? 0.6 : 1,
+          }}
+        >
+          <Text style={{fontWeight: "800", color: "#111"}}>
+            {savingId === outfit.id ? "Saving..." : "Save to Today"}
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1, padding: 16 }}>
+      <KeyboardAvoidingView
+        style={{ flex: 1, gap: 12 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={bottomDockSpace}
+      >
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Text style={{fontSize: 22, fontWeight: "800"}}>Outfit Chat AI</Text>
+        <Pressable onPress={startNewChat}>
+          <Text style={{fontWeight: "800", color: "#111"}}>New chat</Text>
+        </Pressable>
+      </View>
+
+      <FlatList
+        data={messages}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={{gap: 12, paddingBottom: composerHeight + bottomDockSpace + 16}}
+        renderItem={({item}) => (
           <View
             style={{
-              padding: 12,
-              borderWidth: 1,
-              borderColor: "#ddd",
-              borderRadius: 12,
-              marginBottom: 12,
+              alignSelf: item.role === "user" ? "flex-end" : "stretch",
+              maxWidth: item.role === "user" ? "85%" : "100%",
             }}
           >
-            <Text style={{ fontWeight: "700", marginBottom: 6 }}>Quick insight</Text>
-            <Text>{ai.colorTip}</Text>
-          </View>
-
-          <Section
-            title="Outfit picks (clean + least recently worn)"
-            data={ai.outfitPicks}
-            emptyText="No available items yet."
-            onWoreToday={markWorn}
-            onToLaundry={moveToLaundry}
-          />
-
-          <View style={{ height: 12 }} />
-
-          <Section
-            title="Rotate these (not worn in 7+ days)"
-            data={ai.rotate}
-            emptyText="Nice — you're rotating well."
-            onWoreToday={markWorn}
-            onToLaundry={moveToLaundry}
-          />
-
-          <View style={{ height: 12 }} />
-
-          <Section
-            title="Consider washing (worn 2+ times)"
-            data={ai.washHints}
-            emptyText="No wash suggestions right now."
-            onWoreToday={markWorn}
-            onToLaundry={moveToLaundry}
-          />
-        </>
-      )}
-    </View>
-  );
-}
-
-function Section({
-  title,
-  data,
-  emptyText,
-  onWoreToday,
-  onToLaundry,
-}: {
-  title: string;
-  data: ClothingItem[];
-  emptyText: string;
-  onWoreToday: (id: string) => void;
-  onToLaundry: (id: string) => void;
-}) {
-  return (
-    <View>
-      <Text style={{ fontSize: 16, fontWeight: "700", marginBottom: 8 }}>{title}</Text>
-
-      {data.length === 0 ? (
-        <Text style={{ color: "#666" }}>{emptyText}</Text>
-      ) : (
-        <FlatList
-          data={data}
-          keyExtractor={(i) => i.id}
-          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-          renderItem={({ item }) => (
             <View
               style={{
+                alignSelf: item.role === "user" ? "flex-end" : "stretch",
+                backgroundColor: item.role === "user" ? "#111" : "#f5f5f5",
+                borderRadius: 16,
                 padding: 12,
-                borderWidth: 1,
-                borderColor: "#ddd",
-                borderRadius: 12,
-                gap: 6,
               }}
             >
-              <Text style={{ fontSize: 16, fontWeight: "600" }}>
-                {item.primaryColor} {item.category}
+              <Text style={{color: item.role === "user" ? "#fff" : "#111"}}>
+                {item.text}
               </Text>
-              <Text>Brand: {item.brand}</Text>
-              <Text>Status: {item.status}</Text>
-              <Text>Wear count since wash: {item.wearCountSinceWash}</Text>
-              <Text>Last worn: {fmtShort(item.lastWornDate)}</Text>
-
-              <View style={{ flexDirection: "row", gap: 10, marginTop: 6 }}>
-                <PillButton label="Wore today" onPress={() => onWoreToday(item.id)} />
-                <PillButton label="To laundry" onPress={() => onToLaundry(item.id)} />
-              </View>
             </View>
-          )}
-        />
-      )}
-    </View>
-  );
-}
+            {item.role === "assistant"
+              ? item.outfits?.map((outfit, index) => renderOutfitCard(outfit, index))
+              : null}
+          </View>
+        )}
+        ListEmptyComponent={
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: "#e5e5e5",
+              borderRadius: 16,
+              padding: 14,
+              backgroundColor: "#fafafa",
+            }}
+          >
+            <Text style={{color: "#666"}}>
+              Ask for an outfit like “Give me 3 casual black looks for cold Chicago weather.”
+            </Text>
+          </View>
+        }
+      />
 
-function PillButton({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: "#111",
-      }}
-    >
-      <Text>{label}</Text>
-    </Pressable>
+      {loading ? (
+        <Text style={{color: "#666", fontWeight: "700"}}>Thinking…</Text>
+      ) : null}
+
+      <View
+        style={{
+          position: "absolute",
+          left: 16,
+          right: 16,
+          bottom: composerBottom,
+          borderRadius: 18,
+          backgroundColor: "#fff",
+          borderWidth: 1,
+          borderColor: "#e5e7eb",
+          padding: 10,
+          gap: 8,
+          shadowColor: "#000",
+          shadowOpacity: 0.08,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 4,
+        }}
+      >
+        <View style={{flexDirection: "row", flexWrap: "wrap", gap: 8}}>
+          {quickChips.map((chip) => (
+            <Pressable
+              key={chip}
+              onPress={() => onChipPress(chip)}
+              style={{
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: "#ddd",
+                backgroundColor: "#fff",
+              }}
+            >
+              <Text style={{fontWeight: "700", color: "#111", fontSize: 12}}>{chip}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={{flexDirection: "row", gap: 8, alignItems: "flex-end"}}>
+          <TextInput
+            value={input}
+            onChangeText={setInput}
+            placeholder="Ask for an outfit, a swap, or a tweak"
+            multiline
+            style={{
+              flex: 1,
+              borderWidth: 1,
+              borderColor: "#ddd",
+              borderRadius: 14,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              maxHeight: 120,
+            }}
+          />
+          <Pressable
+            onPress={() => void onSend()}
+            disabled={loading || !input.trim()}
+            style={{
+              paddingVertical: 12,
+              paddingHorizontal: 16,
+              borderRadius: 12,
+              backgroundColor: "#111",
+              opacity: loading || !input.trim() ? 0.6 : 1,
+            }}
+          >
+            <Text style={{color: "#fff", fontWeight: "900"}}>Send</Text>
+          </Pressable>
+        </View>
+      </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 }

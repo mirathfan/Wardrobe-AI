@@ -9,7 +9,13 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.closet",
+      "deploymentTarget": "17.0",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We use your location to show local weather in your wardrobe insights.",
+        "NSCalendarsUsageDescription": "We use your calendar to show today’s events in your wardrobe insights."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +25,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.closet"
     },
     "web": {
       "output": "static",
@@ -36,6 +43,14 @@
           "backgroundColor": "#ffffff",
           "dark": {
             "backgroundColor": "#000000"
+          }
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0"
           }
         }
       ]

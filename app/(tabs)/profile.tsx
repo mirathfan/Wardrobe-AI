@@ -3,8 +3,8 @@ import { signOut } from "firebase/auth";
 import React, { useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 
-import { useAuth } from "../../src/hooks/useAuth";
-import { auth } from "../../src/lib/firebase";
+import { useAuth } from "@/src/hooks/useAuth";
+import { auth } from "@/src/lib/firebase";
 
 export default function ProfileScreen() {
   const { user } = useAuth();

@@ -15,6 +15,7 @@ yarn-error.log*
 # env
 .env
 .env.*
+.env.local
 
 # OS
 .DS_Store
@@ -24,3 +25,8 @@ yarn-error.log*
 
 expo-env.d.ts
 # @end expo-cli
+
+ios/
+android/
+ios.build/
+android.build/

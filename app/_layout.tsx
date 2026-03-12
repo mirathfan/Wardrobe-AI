@@ -3,9 +3,10 @@ import { router, Stack, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import "react-native-reanimated";
 import { useEffect } from "react";
-import { ActivityIndicator, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Text, View } from "react-native";
 
 import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
+import { isVisionBackgroundRemovalAvailable } from "../src/bg/removeBackground";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
@@ -54,6 +55,13 @@ function AuthGate() {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+
+  useEffect(() => {
+    if (Platform.OS !== "ios" || !__DEV__) return;
+    console.log(
+      `[VisionBG] native module available: ${isVisionBackgroundRemovalAvailable()}`
+    );
+  }, []);
 
   return (
     <SafeAreaProvider>

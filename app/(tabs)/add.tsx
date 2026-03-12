@@ -1,647 +1,384 @@
-import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import { collection, doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
-  Alert,
-  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   Pressable,
-  ScrollView,
+  SectionList,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useAuth } from "../../src/hooks/useAuth";
-import { db } from "../../src/lib/firebase";
-import { CanonicalCategory, toCanonicalCategory } from "../../src/lib/items";
-import { uploadItemPhoto } from "../../src/lib/uploadImage";
-
-const CATEGORIES: CanonicalCategory[] = [
-  "top",
-  "bottom",
-  "shoes",
-  "outerwear",
-  "accessory",
-];
-
-const DEFAULT_COLORS = [
-  "Black",
-  "White",
-  "Blue",
-  "Grey",
-  "Brown",
-  "Green",
-  "Red",
-  "Gold",
-  "Beige",
-  "Cream",
-  "Silver",
-];
-
-function norm(s: string) {
-  return (s || "").trim();
-}
-
-function normColor(s: string) {
-  const t = norm(s);
-  if (!t) return "";
-  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
-}
+import { renderAddRow } from "@/src/addItem/renderAddRow";
+import { makeDevThrottleLogger } from "@/src/addItem/devPerf";
+import { useAddItemController } from "@/src/addItem/useAddItemController";
+import { Pill } from "@/src/addItem/ui/Pill";
+import { dockSpace } from "@/src/constants/dock";
 
 export default function AddItemScreen() {
-  const { user } = useAuth();
-  const uid = user?.uid ?? null;
+  const insets = useSafeAreaInsets();
+  const floatingDockSpace = dockSpace(insets.bottom);
   const { editId } = useLocalSearchParams<{ editId?: string }>();
-  const editItemId = useMemo(
-    () => (Array.isArray(editId) ? editId[0] : editId),
-    [editId]
-  );
-  const isEdit = !!editItemId;
+  const editItemId = useMemo(() => (Array.isArray(editId) ? editId[0] : editId) || null, [editId]);
+  const controller = useAddItemController({ editItemId });
+  const controllerRef = useRef(controller);
+  controllerRef.current = controller;
+  const { state, derived, actions, styles } = controller;
+  const onScreenFocus = actions.onScreenFocus;
+  const onScreenBlur = actions.onScreenBlur;
+  const sectionListRef = useRef<SectionList<{ key: string }> | null>(null);
+  const renderLog = useMemo(() => makeDevThrottleLogger("AddScreen"), []);
+  const profilerStatsRef = useRef({ commits: 0, total: 0 });
 
-  const [loading, setLoading] = useState(false);
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-
-  const [brand, setBrand] = useState("");
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState<CanonicalCategory>("top");
-
-  const [selectedColors, setSelectedColors] = useState<string[]>([]);
-  const [customColor, setCustomColor] = useState("");
-  const [addingCustomColor, setAddingCustomColor] = useState(false);
-
-  const [size, setSize] = useState("");
-  const [notes, setNotes] = useState("");
-  const [price, setPrice] = useState("");
-  const [purchaseDate, setPurchaseDate] = useState("");
-
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
-  const [pendingPhotoUri, setPendingPhotoUri] = useState<string | null>(null);
-  const [pendingPhotoWidth, setPendingPhotoWidth] = useState<number | null>(null);
-
-  const previewPhotoUri = pendingPhotoUri ?? photoUrl ?? photoUri ?? null;
-
-  useEffect(() => {
-    (async () => {
-      try {
-        if (!isEdit) return;
-        if (!uid) {
-          router.replace("/(auth)/login");
-          return;
-        }
-
-        setLoading(true);
-        const ref = doc(db, "users", uid, "items", String(editItemId));
-        const snap = await getDoc(ref);
-
-        if (!snap.exists()) {
-          Alert.alert("Not found", "This item no longer exists.");
-          router.back();
-          return;
-        }
-
-        const data = snap.data() as any;
-
-        setBrand(data.brand ?? "");
-        setName(data.name ?? "");
-        setCategory(toCanonicalCategory(data.category));
-
-        const loadedColors: string[] =
-          Array.isArray(data.colors) && data.colors.length
-            ? data.colors.map(normColor).filter(Boolean)
-            : data.primaryColor
-              ? [normColor(data.primaryColor)]
-              : [];
-
-        setSelectedColors(loadedColors);
-        setCustomColor("");
-        setAddingCustomColor(false);
-
-        setSize(data.size ?? "");
-        setNotes(data.notes ?? "");
-        setPrice(data.price != null ? String(data.price) : "");
-        setPurchaseDate(data.purchaseDate ?? "");
-
-        setPhotoUrl(data.photoUrl ?? null);
-        setPhotoUri(data.photoUri ?? null);
-        setPendingPhotoUri(null);
-        setPendingPhotoWidth(null);
-      } catch (e: any) {
-        console.log(e);
-        Alert.alert("Error", e?.message ?? "Failed to load item");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [isEdit, editItemId, uid]);
-
-  const colorOptions = useMemo(() => {
-    const set = new Set<string>(DEFAULT_COLORS.map(normColor));
-    selectedColors.forEach((c) => set.add(normColor(c)));
-    return Array.from(set);
-  }, [selectedColors]);
-
-  function toggleColor(c: string) {
-    const color = normColor(c);
-    if (!color) return;
-    setSelectedColors((prev) =>
-      prev.includes(color) ? prev.filter((x) => x !== color) : [...prev, color]
-    );
-  }
-
-  function addCustomColorNow() {
-    const c = normColor(customColor);
-    if (!c) return;
-    setSelectedColors((prev) => (prev.includes(c) ? prev : [...prev, c]));
-    setCustomColor("");
-    setAddingCustomColor(false);
-  }
-
-  async function pickPhoto(source: "library" | "camera") {
-    try {
-      const perm =
-        source === "camera"
-          ? await ImagePicker.requestCameraPermissionsAsync()
-          : await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-      if (!perm.granted) {
-        Alert.alert(
-          "Permission needed",
-          source === "camera"
-            ? "Allow camera access to capture an item photo."
-            : "Allow photo access to pick an item photo."
-        );
-        return;
-      }
-
-      const res =
-        source === "camera"
-          ? await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              quality: 1,
-              allowsEditing: true,
-              aspect: [1, 1],
-            })
-          : await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
-              quality: 1,
-              allowsEditing: true,
-              aspect: [1, 1],
-            });
-
-      if (res.canceled || !res.assets[0]) return;
-
-      const asset = res.assets[0];
-      setPendingPhotoUri(asset.uri);
-      setPendingPhotoWidth(asset.width ?? null);
-    } catch (e: any) {
-      console.log(e);
-      Alert.alert("Error", e?.message ?? "Failed to pick image");
-    }
-  }
-
-  async function resolvePhotoFields(currentUid: string, itemId: string) {
-    if (pendingPhotoUri) {
-      setUploadingPhoto(true);
-      const uploadedUrl = await uploadItemPhoto({
-        uid: currentUid,
-        itemId,
-        localUri: pendingPhotoUri,
-        originalWidth: pendingPhotoWidth,
-      });
-      return { photoUrl: uploadedUrl, photoUri: null };
-    }
-
-    if (!photoUrl && !photoUri) {
-      return { photoUrl: null, photoUri: null };
-    }
-
-    return { photoUrl, photoUri };
-  }
-
-  function parsePriceToNumber(s: string) {
-    const t = norm(s);
-    if (!t) return null;
-    const cleaned = t.replace(/[^0-9.]/g, "");
-    if (!cleaned) return null;
-    const num = Number(cleaned);
-    return Number.isFinite(num) ? num : null;
-  }
-
-  function parsePurchaseDate(s: string) {
-    const t = norm(s);
-    if (!t) return null;
-    const ok = /^\d{4}-\d{2}-\d{2}$/.test(t);
-    if (!ok) return "INVALID";
-    return t;
-  }
-
-  async function saveItem() {
-    const b = norm(brand);
-    const n = norm(name);
-
-    if (!b) return Alert.alert("Missing brand", "Enter a brand (e.g., Nike).");
-    if (!n) {
-      return Alert.alert(
-        "Missing product name",
-        "Enter a name (e.g., Air Jordan 2)."
-      );
-    }
-    if (selectedColors.length === 0) {
-      return Alert.alert("Missing colors", "Select at least 1 color.");
-    }
-
-    if (!uid) {
-      router.replace("/(auth)/login");
-      return Alert.alert("Not signed in", "Please sign in first.");
-    }
-    const priceNum = parsePriceToNumber(price);
-    const date = parsePurchaseDate(purchaseDate);
-    if (date === "INVALID") {
-      return Alert.alert(
-        "Bad date format",
-        "Use YYYY-MM-DD (example: 2025-12-26) or leave it empty."
-      );
-    }
-
-    const itemsRef = collection(db, "users", uid, "items");
-    const itemRef = isEdit
-      ? doc(db, "users", uid, "items", String(editItemId))
-      : doc(itemsRef);
-
-    const payloadBase = {
-      brand: b,
-      name: n,
-      category,
-      colors: selectedColors.map(normColor).filter(Boolean),
-      primaryColor: normColor(selectedColors[0] ?? ""),
-      size: norm(size) || null,
-      notes: norm(notes) || null,
-      price: priceNum,
-      purchaseDate: date,
-      updatedAt: Date.now(),
-    };
-
-    try {
-      setLoading(true);
-
-      const nextPhoto = await resolvePhotoFields(uid, itemRef.id);
-      const payload = {
-        ...payloadBase,
-        photoUrl: nextPhoto.photoUrl,
-        photoUri: nextPhoto.photoUri,
+  useFocusEffect(
+    React.useCallback(() => {
+      onScreenFocus();
+      return () => {
+        onScreenBlur();
       };
+    }, [onScreenBlur, onScreenFocus])
+  );
 
-      if (isEdit) {
-        await updateDoc(itemRef, payload);
-        Alert.alert("Saved ✅", "Item updated.");
-        router.back();
-        return;
-      }
-
-      await setDoc(itemRef, {
-        ...payload,
-        status: "AVAILABLE",
-        wearCountSinceWash: 0,
-        createdAt: Date.now(),
-        lastWornDate: null,
-        lastWashedDate: Date.now(),
-      });
-
-      Alert.alert("Added ✅", "Item added to wardrobe.");
-
-      setBrand("");
-      setName("");
-      setCategory("top");
-      setSelectedColors([]);
-      setCustomColor("");
-      setAddingCustomColor(false);
-      setSize("");
-      setNotes("");
-      setPrice("");
-      setPurchaseDate("");
-      setPhotoUrl(null);
-      setPhotoUri(null);
-      setPendingPhotoUri(null);
-      setPendingPhotoWidth(null);
-    } catch (e: any) {
-      console.log(e);
-      Alert.alert(
-        "Error",
-        e?.message ?? (isEdit ? "Failed to update item" : "Failed to add item")
-      );
-    } finally {
-      setUploadingPhoto(false);
-      setLoading(false);
+  const formRows = useMemo(() => {
+    const rows: { key: string }[] = [{ key: "photo" }];
+    if (derived.showBasics) rows.push({ key: "basics" });
+    if (derived.showDetails) {
+      rows.push({ key: "details" });
     }
-  }
+    rows.push({ key: "advanced-toggle" });
+    if (derived.showAdvanced) {
+      rows.push({ key: "fabric-header" });
+      if (state.fabricExpanded) rows.push({ key: "fabric-content" });
+      rows.push({ key: "size-header" });
+      if (state.sizeExpanded) rows.push({ key: "size-content" });
+      rows.push({ key: "occasion-header" });
+      if (state.occasionExpanded) rows.push({ key: "occasion-content" });
+      rows.push({ key: "season-header" });
+      if (state.seasonExpanded) rows.push({ key: "season-content" });
+      rows.push({ key: "fit-header" });
+      if (state.fitExpanded) rows.push({ key: "fit-content" });
+      rows.push({ key: "notes-header" });
+      if (state.notesExpanded) rows.push({ key: "notes-content" });
+    }
+    return [{ key: "form", data: rows }];
+  }, [
+    derived.showAdvanced,
+    derived.showBasics,
+    derived.showDetails,
+    state.fabricExpanded,
+    state.fitExpanded,
+    state.notesExpanded,
+    state.occasionExpanded,
+    state.seasonExpanded,
+    state.sizeExpanded,
+  ]);
 
-  const canAddCustomColor = customColor.trim().length > 0;
+  renderLog({
+    rows: formRows?.[0]?.data?.length ?? 0,
+    loading: state.loading,
+    uploading: state.uploadingPhoto,
+    ai: state.aiStatus,
+  });
 
-  return (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Pressable onPress={() => router.back()} style={btnSecondary}>
-          <Text style={btnSecondaryText}>Back</Text>
-        </Pressable>
-
-        <Text style={{ fontSize: 22, fontWeight: "800" }}>
-          {isEdit ? "Edit Item" : "Add Item"}
-        </Text>
-
-        <View style={{ width: 60 }} />
-      </View>
-
-      {loading ? <Text>{uploadingPhoto ? "Uploading photo..." : "Loading..."}</Text> : null}
-
-      <View style={{ gap: 10 }}>
-        <Text style={{ fontSize: 16, fontWeight: "700" }}>Photo</Text>
-
-        {previewPhotoUri ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <Image
-              source={{ uri: previewPhotoUri }}
-              style={{
-                width: 88,
-                height: 88,
-                borderRadius: 14,
-                borderWidth: 1,
-                borderColor: "#ddd",
-              }}
-            />
-            <View style={{ gap: 8 }}>
-              <Pressable onPress={() => pickPhoto("library")} style={btnSecondary} disabled={loading}>
-                <Text style={btnSecondaryText}>Change photo</Text>
-              </Pressable>
-              <Pressable onPress={() => pickPhoto("camera")} style={btnSecondary} disabled={loading}>
-                <Text style={btnSecondaryText}>Use camera</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  setPendingPhotoUri(null);
-                  setPendingPhotoWidth(null);
-                  setPhotoUrl(null);
-                  setPhotoUri(null);
-                }}
-                style={btnSecondary}
-                disabled={loading}
-              >
-                <Text style={btnSecondaryText}>Remove</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : (
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Pressable
-              onPress={() => pickPhoto("library")}
-              style={[btnSecondary, { flex: 1 }]}
-              disabled={loading}
-            >
-              <Text style={btnSecondaryText}>Pick from gallery</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => pickPhoto("camera")}
-              style={[btnSecondary, { flex: 1 }]}
-              disabled={loading}
-            >
-              <Text style={btnSecondaryText}>Use camera</Text>
-            </Pressable>
-          </View>
-        )}
-
-        {pendingPhotoUri ? (
-          <Text style={{ color: "#666" }}>
-            New photo selected. It will upload to Firebase Storage when you save.
-          </Text>
-        ) : null}
-      </View>
-
-      <Field label="Brand">
-        <TextInput
-          value={brand}
-          onChangeText={setBrand}
-          placeholder="e.g., Nike"
-          style={input}
-        />
-      </Field>
-
-      <Field label="Product name">
-        <TextInput
-          value={name}
-          onChangeText={setName}
-          placeholder="e.g., Air Jordan 2"
-          style={input}
-        />
-      </Field>
-
-      <View style={{ gap: 8 }}>
-        <Text style={{ fontSize: 16, fontWeight: "700" }}>Category</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {CATEGORIES.map((cat) => (
-            <Pill
-              key={cat}
-              label={cat}
-              active={category === cat}
-              onPress={() => setCategory(cat)}
-            />
-          ))}
-        </View>
-      </View>
-
-      <View style={{ gap: 8 }}>
-        <Text style={{ fontSize: 16, fontWeight: "700" }}>Colors</Text>
-
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {colorOptions.map((c) => (
-            <Pill
-              key={c}
-              label={c}
-              active={selectedColors.includes(c)}
-              onPress={() => toggleColor(c)}
-            />
-          ))}
-
-          {addingCustomColor ? (
-            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-              <TextInput
-                value={customColor}
-                onChangeText={setCustomColor}
-                placeholder="Type color"
-                style={[input, { paddingVertical: 8, width: 160 }]}
-                autoFocus
-                returnKeyType="done"
-                onSubmitEditing={() => {
-                  if (!canAddCustomColor) return;
-                  addCustomColorNow();
-                }}
-              />
-
-              <Pressable
-                onPress={addCustomColorNow}
-                disabled={!canAddCustomColor}
-                style={{
-                  paddingVertical: 8,
-                  paddingHorizontal: 14,
-                  borderRadius: 999,
-                  borderWidth: 1,
-                  borderColor: canAddCustomColor ? "#111" : "#ddd",
-                  backgroundColor: canAddCustomColor ? "#111" : "transparent",
-                  opacity: canAddCustomColor ? 1 : 0.5,
-                }}
-              >
-                <Text
-                  style={{
-                    color: canAddCustomColor ? "#fff" : "#111",
-                    fontWeight: "800",
-                  }}
-                >
-                  Add
-                </Text>
-              </Pressable>
-
-              <Pill
-                label="Cancel"
-                active={false}
-                onPress={() => {
-                  setCustomColor("");
-                  setAddingCustomColor(false);
-                }}
-              />
-            </View>
-          ) : (
-            <Pill label="+" active={false} onPress={() => setAddingCustomColor(true)} />
-          )}
-        </View>
-
-        {selectedColors.length > 0 ? (
-          <Text style={{ color: "#666" }}>Selected: {selectedColors.join(" / ")}</Text>
-        ) : null}
-      </View>
-
-      <Field label="Size">
-        <TextInput
-          value={size}
-          onChangeText={setSize}
-          placeholder="e.g., US 10 / M / 32"
-          style={input}
-        />
-      </Field>
-
-      <Field label="Price">
-        <TextInput
-          value={price}
-          onChangeText={setPrice}
-          placeholder="e.g., 220"
-          keyboardType="numeric"
-          style={input}
-        />
-      </Field>
-
-      <Field label="Purchase date">
-        <TextInput
-          value={purchaseDate}
-          onChangeText={setPurchaseDate}
-          placeholder="YYYY-MM-DD"
-          style={input}
-        />
-      </Field>
-
-      <Field label="Notes">
-        <TextInput
-          value={notes}
-          onChangeText={setNotes}
-          placeholder="e.g., Limited edition, gift from friend..."
-          style={[input, { height: 90, textAlignVertical: "top" }]}
-          multiline
-        />
-      </Field>
-
-      <Pressable
-        onPress={saveItem}
-        style={[btnPrimary, loading ? { opacity: 0.6 } : null]}
-        disabled={loading}
-      >
-        <Text style={{ color: "#fff", fontSize: 16, fontWeight: "900" }}>
-          {isEdit ? "Save Changes" : "Add to Wardrobe"}
-        </Text>
-      </Pressable>
-
-      <View style={{ height: 30 }} />
-    </ScrollView>
+  const scrollToChecklistRow = useCallback(
+    (rowId: string) => {
+      const keyMap: Record<string, string> = {
+        photo: "photo",
+        category: "details",
+        colors: "details",
+        details: "details",
+        advanced: "advanced-toggle",
+      };
+      const targetKey = keyMap[rowId] ?? rowId;
+      const index = formRows[0]?.data.findIndex((row) => row.key === targetKey) ?? -1;
+      if (index < 0) return;
+      sectionListRef.current?.scrollToLocation({
+        sectionIndex: 0,
+        itemIndex: index,
+        animated: true,
+        viewPosition: 0.12,
+      });
+    },
+    [formRows]
   );
-}
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={{ gap: 8 }}>
-      <Text style={{ fontSize: 16, fontWeight: "700" }}>{label}</Text>
-      {children}
-    </View>
+  const handleProfilerRender = useCallback(
+    (
+      _id: string,
+      phase: "mount" | "update" | "nested-update",
+      actualDuration: number
+    ) => {
+      if (!__DEV__) return;
+      profilerStatsRef.current.commits += 1;
+      profilerStatsRef.current.total += actualDuration;
+      if (profilerStatsRef.current.commits % 15 === 0) {
+        const avg = profilerStatsRef.current.total / profilerStatsRef.current.commits;
+        console.log(
+          `[Perf] AddScreen profiler phase=${phase} avgCommit=${avg.toFixed(1)}ms last=${actualDuration.toFixed(1)}ms`
+        );
+      }
+    },
+    []
   );
-}
 
-function Pill({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
+  const renderRow = useCallback(
+    ({ item }: { item: { key: string } }) =>
+      renderAddRow({ rowKey: item.key, controller: controllerRef.current }),
+    []
+  );
+
   return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        paddingVertical: 8,
-        paddingHorizontal: 14,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: active ? "#111" : "#ddd",
-        backgroundColor: active ? "#111" : "transparent",
-      }}
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <Text style={{ color: active ? "#fff" : "#111", fontWeight: "700" }}>
-        {label}
-      </Text>
-    </Pressable>
+      <React.Profiler id="AddScreen" onRender={handleProfilerRender}>
+        <View style={styles.container}>
+          <SectionList
+            ref={sectionListRef}
+            sections={formRows}
+            keyExtractor={(item) => item.key}
+            renderItem={renderRow}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            onScrollBeginDrag={() => Keyboard.dismiss()}
+            stickySectionHeadersEnabled={false}
+            removeClippedSubviews
+            windowSize={7}
+            initialNumToRender={6}
+            maxToRenderPerBatch={6}
+            updateCellsBatchingPeriod={16}
+            contentContainerStyle={[styles.listContent, { paddingBottom: floatingDockSpace + 180 }]}
+            ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
+            ListHeaderComponent={
+              <View style={{ marginBottom: 14, gap: 10 }}>
+                <View style={styles.headerRow}>
+                  <Pressable onPress={() => router.back()} style={styles.btnSecondary}>
+                    <Text style={styles.btnSecondaryText}>Back</Text>
+                  </Pressable>
+
+                  <Text style={{ fontSize: 22, fontWeight: "800" }}>
+                    {state.isEdit ? "Edit Item" : "Add Item"}
+                  </Text>
+
+                  <View style={{ width: 60 }} />
+                </View>
+
+                {!state.isEdit ? (
+                  <View style={{ gap: 8 }}>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <Text style={{ color: "#666", fontSize: 13 }}>
+                        Item setup • {derived.setupProgress.percent}%
+                      </Text>
+                      <Pressable onPress={() => void actions.duplicateLastItem()}>
+                        <Text style={{ color: "#111", fontSize: 13, fontWeight: "700" }}>
+                          Duplicate last item
+                        </Text>
+                      </Pressable>
+                    </View>
+                    <View
+                      style={{
+                        height: 6,
+                        borderRadius: 999,
+                        backgroundColor: "#ececec",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <View
+                        style={{
+                          width: `${derived.setupProgress.percent}%`,
+                          height: "100%",
+                          borderRadius: 999,
+                          backgroundColor: "#111",
+                        }}
+                      />
+                    </View>
+                    {state.duplicateBanner ? (
+                      <Text style={{ color: "#666", fontSize: 12 }}>
+                        Duplicated — replace photo to finish.
+                      </Text>
+                    ) : null}
+                    <View style={{ gap: 6 }}>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        {derived.requiredChecklist.map((item: any) => (
+                          <Pressable
+                            key={item.id}
+                            onPress={() => scrollToChecklistRow(item.rowId)}
+                            style={{
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: item.done ? "#111" : "#ddd",
+                              backgroundColor: item.done ? "#111" : "#fff",
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 12,
+                                fontWeight: "700",
+                                color: item.done ? "#fff" : "#555",
+                              }}
+                            >
+                              {item.label}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                      {derived.nextMissing ? (
+                        <Text style={{ color: "#666", fontSize: 12 }}>
+                          Next: {derived.nextMissing.label}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            }
+          />
+
+          <View style={[styles.footer, { paddingBottom: floatingDockSpace + 12 }]}>
+            <Text style={styles.ctaStatus}>{derived.ctaStatusText}</Text>
+            <Pressable
+              onPress={actions.saveItem}
+              style={[styles.btnPrimary, !derived.canSave ? { opacity: 0.6 } : null]}
+              disabled={!derived.canSave}
+            >
+              <Text style={{ color: "#fff", fontSize: 16, fontWeight: "900" }}>
+                {state.isEdit ? "Save Changes" : "Add to Wardrobe"}
+              </Text>
+            </Pressable>
+          </View>
+
+          <Modal
+            visible={state.showCurrencyPicker}
+            transparent
+            animationType="fade"
+            onRequestClose={() => actions.setShowCurrencyPicker(false)}
+          >
+            <Pressable
+              onPress={() => actions.setShowCurrencyPicker(false)}
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.2)",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 24,
+              }}
+            >
+              <View
+                style={{
+                  width: "100%",
+                  maxWidth: 320,
+                  borderRadius: 16,
+                  backgroundColor: "#fff",
+                  padding: 14,
+                  gap: 8,
+                }}
+              >
+                <Text style={{ fontSize: 16, fontWeight: "800" }}>Select currency</Text>
+                {derived.CURRENCIES.map((currency: string) => (
+                  <Pressable
+                    key={currency}
+                    onPress={() => {
+                      actions.setPriceCurrency(currency);
+                      actions.setShowCurrencyPicker(false);
+                    }}
+                    style={{
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: state.priceCurrency === currency ? "#111" : "#ddd",
+                      backgroundColor: state.priceCurrency === currency ? "#111" : "#fff",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: state.priceCurrency === currency ? "#fff" : "#111",
+                        fontWeight: "700",
+                      }}
+                    >
+                      {currency}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </Pressable>
+          </Modal>
+
+          <Modal
+            visible={state.showAttributeSheet != null}
+            transparent
+            animationType="slide"
+            onRequestClose={() => actions.setShowAttributeSheet(null)}
+          >
+            <Pressable
+              onPress={() => actions.setShowAttributeSheet(null)}
+              style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.25)", justifyContent: "flex-end" }}
+            >
+              <Pressable
+                onPress={(e) => e.stopPropagation()}
+                style={{
+                  backgroundColor: "#fff",
+                  borderTopLeftRadius: 20,
+                  borderTopRightRadius: 20,
+                  paddingHorizontal: 16,
+                  paddingTop: 14,
+                  paddingBottom: Math.max(14, insets.bottom + 6),
+                  gap: 10,
+                }}
+              >
+                <Text style={{ fontSize: 17, fontWeight: "800" }}>
+                  {state.showAttributeSheet === "material"
+                    ? "Material"
+                    : state.showAttributeSheet === "pattern"
+                      ? "Pattern"
+                      : "Care"}
+                </Text>
+                {state.showAttributeSheet === "material"
+                  ? derived.MATERIAL_OPTIONS.map((option: string) => (
+                      <Pill
+                        key={option}
+                        label={option}
+                        active={state.material === option}
+                        onPress={() => {
+                          actions.markUserEdited("material");
+                          actions.setMaterial(option);
+                          actions.setShowAttributeSheet(null);
+                        }}
+                      />
+                    ))
+                  : null}
+                {state.showAttributeSheet === "pattern"
+                  ? derived.PATTERN_OPTIONS.map((option: string) => (
+                      <Pill
+                        key={option}
+                        label={option}
+                        active={state.pattern === option}
+                        onPress={() => {
+                          actions.markUserEdited("pattern");
+                          actions.setPattern(option);
+                          actions.setShowAttributeSheet(null);
+                        }}
+                      />
+                    ))
+                  : null}
+              </Pressable>
+            </Pressable>
+          </Modal>
+        </View>
+      </React.Profiler>
+    </KeyboardAvoidingView>
   );
 }
-
-const input = {
-  borderWidth: 1,
-  borderColor: "#ddd",
-  borderRadius: 12,
-  paddingHorizontal: 12,
-  paddingVertical: 10,
-  fontSize: 16,
-} as const;
-
-const btnPrimary = {
-  marginTop: 6,
-  paddingVertical: 14,
-  borderRadius: 14,
-  backgroundColor: "#111",
-  alignItems: "center",
-} as const;
-
-const btnSecondary = {
-  paddingVertical: 10,
-  paddingHorizontal: 14,
-  borderRadius: 12,
-  borderWidth: 1,
-  borderColor: "#ddd",
-  alignItems: "center",
-} as const;
-
-const btnSecondaryText = {
-  fontWeight: "800",
-  color: "#111",
-} as const;
