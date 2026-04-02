@@ -6,6 +6,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
 import { useAuth } from "../../../src/hooks/useAuth";
+import { useAppTheme } from "../../../src/hooks/useAppTheme";
 import { db } from "../../../src/lib/firebase";
 import { getItemImageUrl } from "../../../src/lib/itemImage";
 import {
@@ -54,6 +55,7 @@ function toTitleCase(value: string) {
 
 export default function ItemDetailsScreen() {
   const { user } = useAuth();
+  const { colors } = useAppTheme();
   const uid = user?.uid ?? null;
   const { id } = useLocalSearchParams<{ id: string }>();
   const itemId = useMemo(() => (Array.isArray(id) ? id[0] : id), [id]);
@@ -260,7 +262,7 @@ export default function ItemDetailsScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
       <ItemImageModal
         visible={detailImageOpen}
         uri={itemImageUri}
@@ -268,10 +270,10 @@ export default function ItemDetailsScreen() {
       />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <Pressable onPress={() => router.back()} style={pill}>
+          <Pressable onPress={() => router.back()} style={[pill, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={pillText}>Back</Text>
           </Pressable>
-          <Text style={{ fontSize: 18, fontWeight: "900" }}>Item</Text>
+          <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text }}>Item</Text>
           <View style={{ width: 56 }} />
         </View>
 
@@ -307,15 +309,15 @@ export default function ItemDetailsScreen() {
                 </Pressable>
               ) : (
                 <View style={{ height: 260, borderRadius: 14, backgroundColor: "#f3f3f3", alignItems: "center", justifyContent: "center" }}>
-                  <Text style={{ color: "#777", fontWeight: "800" }}>No photo</Text>
+                  <Text style={{ color: colors.textSecondary, fontWeight: "800" }}>No photo</Text>
                 </View>
               )}
 
               <View style={{ gap: 6, marginTop: 12 }}>
-                <Text style={{ fontSize: 20, fontWeight: "900" }}>
+                <Text style={{ fontSize: 20, fontWeight: "900", color: colors.text }}>
                   {item.name || `${item.primaryColor ?? ""} ${item.category}`}
                 </Text>
-                <Text style={{ color: "#444", fontWeight: "700" }}>{item.brand}</Text>
+                <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>{item.brand}</Text>
 
                 <Text style={{ color: "#666" }}>
                   Category: {item.category}

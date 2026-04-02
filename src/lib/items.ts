@@ -13,7 +13,6 @@ import {
 } from "firebase/firestore";
 
 import { db } from "./firebase";
-import { addItemToOutfit, toDateKey } from "./outfits";
 import { ClothingItem, ClothingStatus } from "../types/ClothingItem";
 import { Category } from "../shared/wardrobeTaxonomy";
 
@@ -207,7 +206,6 @@ export async function safeMarkWorn(uid: string, itemId: string) {
     throw new Error("Item already worn today");
   }
 
-  await addItemToOutfit(toDateKey(new Date()), itemId, false);
   await updateDoc(ref, {
     status: "WORN",
     wearCountSinceWash: increment(1),

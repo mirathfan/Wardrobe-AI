@@ -1,6 +1,6 @@
-import { getStoredJson, setStoredJson } from "./storage";
+import { collection, getDocs, orderBy, query } from "firebase/firestore";
 
-const STREAK_KEY = "wardrobe_ai_outfit_log_days_v1";
+import { db } from "../lib/firebase";
 
 function toDateKey(date: Date) {
   const y = date.getFullYear();
@@ -9,26 +9,27 @@ function toDateKey(date: Date) {
   return `${y}-${m}-${d}`;
 }
 
-function parseDateKey(value: string) {
-  const [y, m, d] = value.split("-").map(Number);
-  if (!y || !m || !d) return null;
-  const out = new Date(y, m - 1, d);
-  if (Number.isNaN(out.getTime())) return null;
-  out.setHours(0, 0, 0, 0);
-  return out;
+async function getWornDateKeys(uid: string) {
+  const outfitsRef = collection(db, "users", uid, "outfits");
+  const snap = await getDocs(query(outfitsRef, orderBy("dateKey", "asc")));
+  return snap.docs
+    .map((docSnap) => {
+      const data = docSnap.data() as { dateKey?: string; wornOutfit?: unknown };
+      const hasWorn = !!(data?.wornOutfit && typeof data.wornOutfit === "object");
+      return hasWorn ? String(data.dateKey ?? docSnap.id) : "";
+    })
+    .filter(Boolean);
 }
 
-export async function logOutfitDay(date = new Date()) {
+export async function logOutfitDay(uid: string, date = new Date()) {
   const key = toDateKey(date);
-  const existing = (await getStoredJson<string[]>(STREAK_KEY)) ?? [];
+  const existing = await getWornDateKeys(uid);
   if (existing.includes(key)) return existing;
-  const next = [...existing, key].sort();
-  await setStoredJson(STREAK_KEY, next);
-  return next;
+  return [...existing, key].sort();
 }
 
-export async function getOutfitStreak(today = new Date()) {
-  const values = (await getStoredJson<string[]>(STREAK_KEY)) ?? [];
+export async function getOutfitStreak(uid: string, today = new Date()) {
+  const values = await getWornDateKeys(uid);
   if (values.length === 0) return 0;
 
   const logged = new Set(values);
@@ -44,12 +45,12 @@ export async function getOutfitStreak(today = new Date()) {
   return streak;
 }
 
-export async function getLoggedOutfitDays() {
-  return (await getStoredJson<string[]>(STREAK_KEY)) ?? [];
+export async function getLoggedOutfitDays(uid: string) {
+  return getWornDateKeys(uid);
 }
 
-export async function getWeeklyLoggedFlags(anchorDate = new Date()) {
-  const loggedDays = new Set(await getLoggedOutfitDays());
+export async function getWeeklyLoggedFlags(uid: string, anchorDate = new Date()) {
+  const loggedDays = new Set(await getLoggedOutfitDays(uid));
   const start = new Date(anchorDate);
   start.setHours(0, 0, 0, 0);
   start.setDate(start.getDate() - 6);
@@ -111,8 +112,6 @@ export function parseDateValue(value: unknown): Date | null {
     return Number.isNaN(value.getTime()) ? null : value;
   }
   if (typeof value === "string") {
-    const byKey = parseDateKey(value);
-    if (byKey) return byKey;
     const out = new Date(value);
     return Number.isNaN(out.getTime()) ? null : out;
   }

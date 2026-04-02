@@ -12,6 +12,7 @@ import {
   DOCK_RADIUS,
   DOCK_SIDE_MARGIN,
 } from '../constants/dock';
+import { useAppTheme } from '../hooks/useAppTheme';
 
 const TAB_META: Record<string, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
   index: { label: 'Home', icon: 'home-outline' },
@@ -31,6 +32,7 @@ function getFocusedIcon(name: keyof typeof Ionicons.glyphMap) {
 }
 
 export default function FloatingGlassTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
+  const { colors, isDark } = useAppTheme();
   const insets = useSafeAreaInsets();
   const [dockWidth, setDockWidth] = useState(0);
   const bubbleX = useRef(new Animated.Value(0)).current;
@@ -71,7 +73,7 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
     <View pointerEvents="box-none" style={StyleSheet.absoluteFillObject}>
       <LinearGradient
         pointerEvents="none"
-        colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.20)', 'rgba(255,255,255,0.36)']}
+        colors={[colors.scrimTop, colors.scrimMid, colors.scrimBottom]}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
         style={[styles.scrim, { bottom: dockBottom }]}
@@ -85,11 +87,11 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
           }
         }}
       >
-        <BlurView intensity={70} tint="light" style={StyleSheet.absoluteFill} />
-        <View style={styles.overlay} />
-        <View style={styles.glassBorder} />
-        <View style={styles.innerBorder} />
-        <View style={styles.glassEdge} />
+        <BlurView intensity={70} tint={isDark ? "dark" : "light"} style={StyleSheet.absoluteFill} />
+        <View style={[styles.overlay, { backgroundColor: colors.overlay }]} />
+        <View style={[styles.glassBorder, { borderColor: colors.glassBorder }]} />
+        <View style={[styles.innerBorder, { borderColor: colors.glassInnerBorder }]} />
+        <View style={[styles.glassEdge, { backgroundColor: colors.glassEdge }]} />
 
         {bubbleWidth > 0 ? (
           <Animated.View
@@ -98,11 +100,12 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
               styles.activeLens,
               {
                 width: bubbleWidth,
+                backgroundColor: colors.lens,
                 transform: [{ translateX: bubbleX }],
               },
             ]}
           >
-            <View style={styles.activeLensInner} />
+            <View style={[styles.activeLensInner, { backgroundColor: colors.lensInner }]} />
           </Animated.View>
         ) : null}
 
@@ -113,8 +116,8 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
               label: route.name,
               icon: 'ellipse-outline' as const,
             };
-            const activeColor = route.name === 'ai' ? '#6366f1' : '#0f172a';
-            const color = isFocused ? activeColor : 'rgba(15,23,42,0.55)';
+            const activeColor = route.name === 'ai' ? colors.aiAccent : colors.accent;
+            const color = isFocused ? activeColor : colors.dockIcon;
             const iconName = isFocused ? getFocusedIcon(meta.icon) : meta.icon;
 
             const onPress = () => {
@@ -189,19 +192,16 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.16)',
   },
   glassBorder: {
     ...StyleSheet.absoluteFillObject,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.30)',
     borderRadius: DOCK_RADIUS,
   },
   innerBorder: {
     ...StyleSheet.absoluteFillObject,
     margin: 1,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(0,0,0,0.06)',
     borderRadius: 25,
   },
   glassEdge: {
@@ -210,19 +210,16 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.6)',
   },
   activeLens: {
     position: 'absolute',
     top: 7,
     height: DOCK_HEIGHT - 14,
     borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.22)',
     overflow: 'hidden',
   },
   activeLensInner: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.10)',
   },
   row: {
     flex: 1,

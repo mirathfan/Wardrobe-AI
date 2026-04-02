@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { useAuth } from "@/src/hooks/useAuth";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { db } from "@/src/lib/firebase";
 import { dockSpace } from "@/src/constants/dock";
 
@@ -42,6 +43,7 @@ const TABS: { key: "NEEDS_WASH" | "IN_LAUNDRY" | "CLEAN"; label: string }[] = [
 
 export default function LaundryScreen() {
   const { user } = useAuth();
+  const { colors } = useAppTheme();
   const uid = user?.uid ?? null;
   const insets = useSafeAreaInsets();
   const floatingTabSpace = dockSpace(insets.bottom) + 18;
@@ -262,7 +264,7 @@ export default function LaundryScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 16 }}>
+    <View style={{ flex: 1, padding: 16, backgroundColor: colors.background }}>
       <FlatList
         data={listItems}
         keyExtractor={(item) => item.id}
@@ -284,9 +286,9 @@ export default function LaundryScreen() {
             style={{
               padding: 14,
               borderRadius: 16,
-              backgroundColor: "#fff",
+              backgroundColor: colors.card,
               borderWidth: 1,
-              borderColor: "#ECECEC",
+              borderColor: colors.border,
             }}
           >
             <View
@@ -297,13 +299,13 @@ export default function LaundryScreen() {
                 marginBottom: 6,
               }}
             >
-              <Text style={{ fontSize: 16, fontWeight: "800" }}>
+              <Text style={{ fontSize: 16, fontWeight: "800", color: colors.text }}>
                 {item.primaryColor} {item.category}
               </Text>
               <Pill text={item.status === "AVAILABLE" ? "Clean" : item.status === "IN_LAUNDRY" ? "In laundry" : "Worn"} />
             </View>
 
-            <Text style={{ opacity: 0.75, marginBottom: 6 }}>
+            <Text style={{ opacity: 0.75, marginBottom: 6, color: colors.textSecondary }}>
               Brand: {item.brand || "—"}
             </Text>
 
@@ -332,13 +334,14 @@ function SummaryCard({
   value: number;
   subtitle: string;
 }) {
+  const { colors } = useAppTheme();
   return (
     <View
       style={{
         flex: 1,
         padding: 12,
         borderRadius: 16,
-        backgroundColor: "#111",
+        backgroundColor: colors.accent,
       }}
     >
       <Text style={{ color: "#fff", opacity: 0.8, fontWeight: "700" }}>
@@ -363,6 +366,7 @@ function PrimaryButton({
   onPress: () => void;
   disabled?: boolean;
 }) {
+  const { colors } = useAppTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -371,7 +375,7 @@ function PrimaryButton({
         flex: 1,
         paddingVertical: 12,
         borderRadius: 14,
-        backgroundColor: disabled ? "#999" : "#111",
+        backgroundColor: disabled ? colors.textSecondary : colors.accent,
         alignItems: "center",
       }}
     >
@@ -389,6 +393,7 @@ function GhostButton({
   onPress: () => void;
   disabled?: boolean;
 }) {
+  const { colors } = useAppTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -397,51 +402,53 @@ function GhostButton({
         flex: 1,
         paddingVertical: 12,
         borderRadius: 14,
-        backgroundColor: "#F2F2F2",
+        backgroundColor: colors.muted,
         borderWidth: 1,
-        borderColor: "#E6E6E6",
+        borderColor: colors.border,
         alignItems: "center",
         opacity: disabled ? 0.5 : 1,
       }}
     >
-      <Text style={{ color: "#111", fontWeight: "800" }}>{title}</Text>
+      <Text style={{ color: colors.text, fontWeight: "800" }}>{title}</Text>
     </Pressable>
   );
 }
 
 function Pill({ text }: { text: string }) {
+  const { colors } = useAppTheme();
   return (
     <View
       style={{
         paddingVertical: 6,
         paddingHorizontal: 10,
         borderRadius: 999,
-        backgroundColor: "#F2F2F2",
+        backgroundColor: colors.muted,
         borderWidth: 1,
-        borderColor: "#E6E6E6",
+        borderColor: colors.border,
       }}
     >
-      <Text style={{ fontWeight: "800", fontSize: 12 }}>{text}</Text>
+      <Text style={{ fontWeight: "800", fontSize: 12, color: colors.text }}>{text}</Text>
     </View>
   );
 }
 
 function MiniStat({ label, value }: { label: string; value: string }) {
+  const { colors } = useAppTheme();
   return (
     <View
       style={{
         flex: 1,
         padding: 10,
         borderRadius: 14,
-        backgroundColor: "#FAFAFA",
+        backgroundColor: colors.surface,
         borderWidth: 1,
-        borderColor: "#EFEFEF",
+        borderColor: colors.border,
       }}
     >
-      <Text style={{ opacity: 0.7, fontWeight: "700", fontSize: 12 }}>
+      <Text style={{ opacity: 0.7, fontWeight: "700", fontSize: 12, color: colors.textSecondary }}>
         {label}
       </Text>
-      <Text style={{ fontWeight: "900", marginTop: 4 }}>{value}</Text>
+      <Text style={{ fontWeight: "900", marginTop: 4, color: colors.text }}>{value}</Text>
     </View>
   );
 }
@@ -453,6 +460,7 @@ function EmptyState({
   tab: "NEEDS_WASH" | "IN_LAUNDRY" | "CLEAN";
   onPrimary: () => void;
 }) {
+  const { colors } = useAppTheme();
   const title =
     tab === "IN_LAUNDRY"
       ? "No items in laundry"
@@ -481,12 +489,12 @@ function EmptyState({
         padding: 16,
         borderRadius: 18,
         borderWidth: 1,
-        borderColor: "#ECECEC",
-        backgroundColor: "#fff",
+        borderColor: colors.border,
+        backgroundColor: colors.card,
       }}
     >
-      <Text style={{ fontSize: 16, fontWeight: "900" }}>{title}</Text>
-      <Text style={{ marginTop: 6, opacity: 0.75 }}>{subtitle}</Text>
+      <Text style={{ fontSize: 16, fontWeight: "900", color: colors.text }}>{title}</Text>
+      <Text style={{ marginTop: 6, opacity: 0.75, color: colors.textSecondary }}>{subtitle}</Text>
 
       <View style={{ marginTop: 12 }}>
         <PrimaryButton title={action} onPress={onPrimary} />

@@ -27,14 +27,15 @@ import {
   PlannedOutfit,
   clearPlan,
   copyPlan,
-  getDailyRecord,
-  getRecordsForDateKeys,
   setPlanned,
   setWorn,
+  subscribeOutfitByDate,
+  subscribeOutfitsInRange,
 } from "@/src/utils/dailyOutfits";
 import { generateDailyPlan, inferTimelineVibe, PlannedLook, weatherSuggestion } from "@/src/utils/outfitPlanning";
 import { getDailyWeather } from "@/src/utils/weatherDaily";
-import { getLoggedOutfitDays, getOutfitStreak, logOutfitDay } from "@/src/utils/streak";
+import { getLoggedOutfitDays, getOutfitStreak } from "@/src/utils/streak";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useAuth } from "@/src/hooks/useAuth";
 import { db } from "@/src/lib/firebase";
 import { MAX_WEARS_BEFORE_WASH, toCanonicalCategory } from "@/src/lib/items";
@@ -60,10 +61,12 @@ function iconFallback(name: SectionIconName): keyof typeof Ionicons.glyphMap {
 }
 
 function SectionHeader({ icon, title }: { icon: SectionIconName; title: string }) {
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.sectionHeader}>
-      <Ionicons name={iconFallback(icon)} size={17} color="#111" />
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <Ionicons name={iconFallback(icon)} size={17} color={colors.text} />
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>{title}</Text>
     </View>
   );
 }
@@ -126,6 +129,8 @@ function DatePickerSheet({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={styles.modalBackdrop}>
@@ -159,6 +164,7 @@ function DatePickerSheet({
 
 export default function CalendarScreen() {
   const { user } = useAuth();
+  const { colors } = useAppTheme();
   const uid = user?.uid ?? null;
   const insets = useSafeAreaInsets();
   const bottomDockPadding = dockSpace(insets.bottom) + 20;
@@ -197,10 +203,15 @@ export default function CalendarScreen() {
   );
 
   const loadStreakData = useCallback(async () => {
-    const [nextStreak, logged] = await Promise.all([getOutfitStreak(), getLoggedOutfitDays()]);
+    if (!uid) {
+      setStreak(0);
+      setLoggedDaySet(new Set());
+      return;
+    }
+    const [nextStreak, logged] = await Promise.all([getOutfitStreak(uid), getLoggedOutfitDays(uid)]);
     setStreak(nextStreak);
     setLoggedDaySet(new Set(logged));
-  }, []);
+  }, [uid]);
 
   useEffect(() => {
     loadStreakData().catch(() => {
@@ -237,43 +248,47 @@ export default function CalendarScreen() {
   }, [uid]);
 
   useEffect(() => {
-    let cancelled = false;
-    async function loadDayRecord() {
-      const existing = await getDailyRecord(selectedDayKey);
-      if (!cancelled) setRecord(existing);
+    if (!uid) {
+      setRecord(null);
+      return;
     }
-    loadDayRecord().catch(() => {
-      if (!cancelled) setRecord(null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedDayKey]);
+
+    return subscribeOutfitByDate(
+      uid,
+      selectedDayKey,
+      (next) => setRecord(next),
+      () => setRecord(null)
+    );
+  }, [selectedDayKey, uid]);
 
   useEffect(() => {
-    let cancelled = false;
-    async function loadRailStatuses() {
-      const keys = buildRailDateKeys(day.selectedDate);
-      const records = await getRecordsForDateKeys(keys);
-      if (cancelled) return;
-
-      const statuses: Record<string, { planned?: boolean; worn?: boolean; streak?: boolean }> = {};
-      keys.forEach((key) => {
-        statuses[key] = {
-          planned: !!records[key]?.plannedOutfit,
-          worn: !!records[key]?.wornOutfit,
-          streak: loggedDaySet.has(key),
-        };
-      });
-      setRailStatuses(statuses);
+    if (!uid) {
+      setRailStatuses({});
+      return;
     }
-    loadRailStatuses().catch(() => {
-      if (!cancelled) setRailStatuses({});
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [day.selectedDate, loggedDaySet]);
+
+    const keys = buildRailDateKeys(day.selectedDate);
+    const startKey = keys[0];
+    const endKey = keys[keys.length - 1];
+
+    return subscribeOutfitsInRange(
+      uid,
+      startKey,
+      endKey,
+      (records) => {
+        const statuses: Record<string, { planned?: boolean; worn?: boolean; streak?: boolean }> = {};
+        keys.forEach((key) => {
+          statuses[key] = {
+            planned: !!records[key]?.plannedOutfit,
+            worn: !!records[key]?.wornOutfit,
+            streak: !!records[key]?.wornOutfit,
+          };
+        });
+        setRailStatuses(statuses);
+      },
+      () => setRailStatuses({})
+    );
+  }, [day.selectedDate, uid]);
 
   useEffect(() => {
     const weekKeys = day.weekDates.map((date) => toDayKey(date));
@@ -432,27 +447,29 @@ export default function CalendarScreen() {
   }, []);
 
   const ensurePlannedFromSelectedLook = useCallback(async () => {
+    if (!uid) return null;
     if (record?.plannedOutfit) return record.plannedOutfit;
     if (!selectedLook) return null;
     const planned = lookToPlanned(selectedLook);
-    const next = await setPlanned(selectedDayKey, planned);
+    const next = await setPlanned(uid, selectedDayKey, planned);
     setRecord(next);
     return next.plannedOutfit ?? null;
-  }, [record?.plannedOutfit, selectedDayKey, selectedLook]);
+  }, [record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
 
   const onUseOutfit = useCallback(async () => {
-    if (!selectedLook) return;
+    if (!uid || !selectedLook) return;
     const planned = lookToPlanned(selectedLook);
-    const next = await setPlanned(selectedDayKey, planned);
+    const next = await setPlanned(uid, selectedDayKey, planned);
     setRecord(next);
     setSelectedLookId(selectedLook.id);
     await hapticLight();
-  }, [selectedDayKey, selectedLook]);
+  }, [selectedDayKey, selectedLook, uid]);
 
   const onClearPlan = useCallback(async () => {
-    const next = await clearPlan(selectedDayKey);
+    if (!uid) return;
+    const next = await clearPlan(uid, selectedDayKey);
     setRecord(next);
-  }, [selectedDayKey]);
+  }, [selectedDayKey, uid]);
 
   const onOpenCopyPicker = useCallback(() => {
     setPickerDate(addDays(day.selectedDate, 1));
@@ -460,15 +477,16 @@ export default function CalendarScreen() {
   }, [day.selectedDate]);
 
   const onConfirmCopy = useCallback(async () => {
+    if (!uid) return;
     const toDateKey = toDayKey(pickerDate);
-    const copied = await copyPlan(selectedDayKey, toDateKey);
+    const copied = await copyPlan(uid, selectedDayKey, toDateKey);
     setCopyPickerOpen(false);
     if (copied) {
       Alert.alert("Copied", `Plan copied to ${toDateKey}`);
     } else {
       Alert.alert("No plan", "Save a plan first.");
     }
-  }, [pickerDate, selectedDayKey]);
+  }, [pickerDate, selectedDayKey, uid]);
 
   const onSwapSlot = useCallback(async (slot: SlotKey) => {
     if (isPast) return;
@@ -479,7 +497,7 @@ export default function CalendarScreen() {
   }, [ensurePlannedFromSelectedLook, isPast]);
 
   const onSelectSwapItem = useCallback(async (itemId: string) => {
-    if (!swapSlot) return;
+    if (!uid || !swapSlot) return;
     const planned = await ensurePlannedFromSelectedLook();
     if (!planned) return;
     const next: PlannedOutfit = {
@@ -490,15 +508,15 @@ export default function CalendarScreen() {
       },
       createdAt: Date.now(),
     };
-    const saved = await setPlanned(selectedDayKey, next);
+    const saved = await setPlanned(uid, selectedDayKey, next);
     setRecord(saved);
     setSwapOpen(false);
     setSwapSlot(null);
     await hapticLight();
-  }, [ensurePlannedFromSelectedLook, selectedDayKey, swapSlot]);
+  }, [ensurePlannedFromSelectedLook, selectedDayKey, swapSlot, uid]);
 
   const onClearSwapSlot = useCallback(async () => {
-    if (!swapSlot) return;
+    if (!uid || !swapSlot) return;
     const planned = await ensurePlannedFromSelectedLook();
     if (!planned) return;
     const next: PlannedOutfit = {
@@ -509,24 +527,24 @@ export default function CalendarScreen() {
       },
       createdAt: Date.now(),
     };
-    const saved = await setPlanned(selectedDayKey, next);
+    const saved = await setPlanned(uid, selectedDayKey, next);
     setRecord(saved);
     setSwapOpen(false);
     setSwapSlot(null);
-  }, [ensurePlannedFromSelectedLook, selectedDayKey, swapSlot]);
+  }, [ensurePlannedFromSelectedLook, selectedDayKey, swapSlot, uid]);
 
   const onNextSuggestion = useCallback(async () => {
-    if (looks.length === 0) return;
+    if (!uid || looks.length === 0) return;
     const currentIdx = looks.findIndex((look) => look.id === selectedLookId);
     const next = looks[(currentIdx + 1) % looks.length];
     if (!next) return;
     setSelectedLookId(next.id);
     if (record?.plannedOutfit) {
-      const saved = await setPlanned(selectedDayKey, lookToPlanned(next));
+      const saved = await setPlanned(uid, selectedDayKey, lookToPlanned(next));
       setRecord(saved);
     }
     await hapticLight();
-  }, [looks, record?.plannedOutfit, selectedDayKey, selectedLookId]);
+  }, [looks, record?.plannedOutfit, selectedDayKey, selectedLookId, uid]);
 
   const onMarkWorn = useCallback(async () => {
     let planned = record?.plannedOutfit ?? null;
@@ -572,12 +590,13 @@ export default function CalendarScreen() {
       }
     }
 
-    const next = await setWorn(selectedDayKey, {
+    if (!uid) return;
+
+    const next = await setWorn(uid, selectedDayKey, {
       itemsByCategory: wornItems,
       wornAt: Date.now(),
     });
     setRecord(next);
-    await logOutfitDay(day.selectedDate);
     await loadStreakData();
     await hapticLight();
   }, [day.selectedDate, itemsById, loadStreakData, record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
@@ -605,8 +624,10 @@ export default function CalendarScreen() {
     return selectedLook?.reasons ?? [];
   }, [record?.plannedOutfit?.reasons, selectedLook?.reasons]);
 
+  const themedStyles = useMemo(() => createStyles(colors), [colors]);
+
   return (
-    <View style={styles.screen}>
+    <View style={themedStyles.screen}>
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: bottomDockPadding + 16 }}
         showsVerticalScrollIndicator={false}
@@ -617,14 +638,14 @@ export default function CalendarScreen() {
           onJumpToToday={() => day.setSelectedDate(new Date())}
         />
 
-        <Pressable style={styles.monthPicker} onPress={() => {
+        <Pressable style={themedStyles.monthPicker} onPress={() => {
           setPickerDate(day.selectedDate);
           setJumpPickerOpen(true);
         }}>
-          <Text style={styles.monthPickerText}>
+          <Text style={themedStyles.monthPickerText}>
             {new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(day.selectedDate)}
           </Text>
-          <Ionicons name="chevron-down" size={14} color="#4b5563" />
+          <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
         </Pressable>
 
         <DateRail selectedDate={day.selectedDate} onSelectDate={onSelectDate} statuses={railStatuses} />
@@ -642,7 +663,7 @@ export default function CalendarScreen() {
         />
 
         {weekWeather.length > 0 ? (
-          <View style={styles.weatherStripWrap}>
+          <View style={themedStyles.weatherStripWrap}>
             <WeatherStrip days={weekWeather} />
           </View>
         ) : null}
@@ -657,16 +678,16 @@ export default function CalendarScreen() {
           onPermissionAction={onCalendarAction}
         />
 
-        <View style={styles.sectionGap} />
+        <View style={themedStyles.sectionGap} />
         <TimelineCard events={events.events} />
 
-        <View style={styles.sectionGap} />
+        <View style={themedStyles.sectionGap} />
         <SectionHeader icon="sparkles" title="Outfit for this date" />
         {isPast && !record?.wornOutfit ? (
-          <View style={styles.card}>
-            <Text style={styles.muted}>No outfit logged for {selectedDateLabel}.</Text>
-            <Pressable style={styles.planCta} onPress={() => setSelectedLookId("casual")}>
-              <Text style={styles.planCtaText}>Plan an outfit</Text>
+          <View style={themedStyles.card}>
+            <Text style={themedStyles.muted}>No outfit logged for {selectedDateLabel}.</Text>
+            <Pressable style={themedStyles.planCta} onPress={() => setSelectedLookId("casual")}>
+              <Text style={themedStyles.planCtaText}>Plan an outfit</Text>
             </Pressable>
           </View>
         ) : (
@@ -688,27 +709,27 @@ export default function CalendarScreen() {
           />
         )}
 
-        <View style={styles.sectionGap} />
+        <View style={themedStyles.sectionGap} />
         <SectionHeader icon="chart.bar.xaxis" title="Wardrobe Insights" />
-        <View style={styles.card}>
-          <View style={styles.weekBars}>
+        <View style={themedStyles.card}>
+          <View style={themedStyles.weekBars}>
             {weeklyFlags.map((value, index) => (
-              <View key={`week-${index}`} style={styles.weekBarTrack}>
-                <View style={[styles.weekBarFill, { height: value ? 18 : 6 }]} />
+              <View key={`week-${index}`} style={themedStyles.weekBarTrack}>
+                <View style={[themedStyles.weekBarFill, { height: value ? 18 : 6 }]} />
               </View>
             ))}
           </View>
-          <View style={styles.insightsList}>
+          <View style={themedStyles.insightsList}>
             {weeklyInsights.map((line) => (
               <Pressable key={line} onPress={() => router.push("/(tabs)")}>
-                <Text style={styles.muted}>• {line}</Text>
+                <Text style={themedStyles.muted}>• {line}</Text>
               </Pressable>
             ))}
           </View>
         </View>
 
-        {loadingItems ? <Text style={styles.muted}>Loading wardrobe…</Text> : null}
-        {saving ? <Text style={styles.muted}>Saving worn status…</Text> : null}
+        {loadingItems ? <Text style={themedStyles.muted}>Loading wardrobe…</Text> : null}
+        {saving ? <Text style={themedStyles.muted}>Saving worn status…</Text> : null}
       </ScrollView>
 
       <WhyModal
@@ -754,10 +775,11 @@ export default function CalendarScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ReturnType<typeof useAppTheme>["colors"]) {
+return StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#f5f5f7",
+    backgroundColor: colors.background,
   },
   sectionHeader: {
     marginTop: 16,
@@ -780,13 +802,13 @@ const styles = StyleSheet.create({
     gap: 4,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#fff",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   monthPickerText: {
-    color: "#111827",
+    color: colors.text,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -798,20 +820,20 @@ const styles = StyleSheet.create({
   },
   card: {
     borderWidth: 1,
-    borderColor: "#dedede",
+    borderColor: colors.border,
     borderRadius: 16,
     padding: 14,
-    backgroundColor: "#fff",
+    backgroundColor: colors.card,
   },
   muted: {
-    color: "#666",
+    color: colors.textSecondary,
     fontSize: 12,
   },
   planCta: {
     marginTop: 10,
     alignSelf: "flex-start",
     borderRadius: 10,
-    backgroundColor: "#111",
+    backgroundColor: colors.accent,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
@@ -830,13 +852,13 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 20,
     borderRadius: 6,
-    backgroundColor: "#eceff1",
+    backgroundColor: colors.muted,
     justifyContent: "flex-end",
     padding: 1,
   },
   weekBarFill: {
     borderRadius: 5,
-    backgroundColor: "#111",
+    backgroundColor: colors.accent,
     width: "100%",
   },
   insightsList: {
@@ -848,7 +870,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   modalSheet: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 16,
@@ -857,7 +879,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 16,
     fontWeight: "800",
-    color: "#111",
+    color: colors.text,
   },
   modalActions: {
     flexDirection: "row",
@@ -867,18 +889,18 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: colors.border,
     paddingVertical: 10,
     alignItems: "center",
   },
   modalSecondaryText: {
-    color: "#111",
+    color: colors.text,
     fontWeight: "700",
   },
   modalPrimary: {
     flex: 1,
     borderRadius: 12,
-    backgroundColor: "#111",
+    backgroundColor: colors.accent,
     paddingVertical: 10,
     alignItems: "center",
   },
@@ -887,4 +909,4 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 });
-
+}

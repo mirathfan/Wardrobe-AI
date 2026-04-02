@@ -1,4 +1,21 @@
-import { getStoredJson, setStoredJson } from "./storage";
+import {
+  collection,
+  deleteField,
+  doc,
+  documentId,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+  type QueryDocumentSnapshot,
+  type Unsubscribe,
+} from "firebase/firestore";
+
+import { db } from "../lib/firebase";
 import { toDayKey } from "./date";
 
 export type OutfitItemsByCategory = {
@@ -32,86 +49,257 @@ export type DailyOutfitRecord = {
   wornOutfit?: WornOutfit;
 };
 
-const DAILY_RECORDS_KEY = "wardrobe_ai_daily_outfit_records_v2";
+type FirestoreOutfitDoc = {
+  dateKey?: string;
+  itemIds?: string[];
+  planned?: boolean;
+  plannedOutfit?: PlannedOutfit | null;
+  wornOutfit?: WornOutfit | null;
+};
 
-async function getAllRecords() {
-  return (await getStoredJson<Record<string, DailyOutfitRecord>>(DAILY_RECORDS_KEY)) ?? {};
+function removeUndefinedFields<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => removeUndefinedFields(entry)) as T;
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, removeUndefinedFields(entry)]);
+    return Object.fromEntries(entries) as T;
+  }
+
+  return value;
 }
 
-async function saveAllRecords(records: Record<string, DailyOutfitRecord>) {
-  await setStoredJson(DAILY_RECORDS_KEY, records);
+function normalizeDateKey(dateKey: string | Date) {
+  return typeof dateKey === "string" ? dateKey : toDayKey(dateKey);
 }
 
-export async function getDailyRecord(dateKey: string | Date) {
-  const key = typeof dateKey === "string" ? dateKey : toDayKey(dateKey);
-  const all = await getAllRecords();
-  return all[key] ?? null;
+function outfitDocRef(uid: string, dateKey: string) {
+  return doc(db, "users", uid, "outfits", dateKey);
 }
 
-export async function setPlanned(dateKey: string | Date, plannedOutfit: PlannedOutfit) {
-  const key = typeof dateKey === "string" ? dateKey : toDayKey(dateKey);
-  const all = await getAllRecords();
-  const prev = all[key];
-  all[key] = {
-    dateKey: key,
-    plannedOutfit,
-    wornOutfit: prev?.wornOutfit,
+function cleanItemIds(itemsByCategory: OutfitItemsByCategory) {
+  return [
+    itemsByCategory.outerwear,
+    itemsByCategory.top,
+    itemsByCategory.bottom,
+    itemsByCategory.shoes,
+  ].filter(Boolean) as string[];
+}
+
+function toRecord(
+  snap: QueryDocumentSnapshot | { id: string; data: () => FirestoreOutfitDoc } | null
+): DailyOutfitRecord | null {
+  if (!snap) return null;
+  const data = (snap.data() as FirestoreOutfitDoc) ?? {};
+  const dateKey = String(data.dateKey ?? snap.id ?? "").trim();
+  if (!dateKey) return null;
+
+  const plannedOutfit =
+    data.plannedOutfit && typeof data.plannedOutfit === "object"
+      ? data.plannedOutfit
+      : undefined;
+  const wornOutfit =
+    data.wornOutfit && typeof data.wornOutfit === "object"
+      ? data.wornOutfit
+      : undefined;
+
+  if (!plannedOutfit && !wornOutfit) return null;
+
+  return {
+    dateKey,
+    ...(plannedOutfit ? { plannedOutfit } : {}),
+    ...(wornOutfit ? { wornOutfit } : {}),
   };
-  await saveAllRecords(all);
-  return all[key];
 }
 
-export async function setWorn(dateKey: string | Date, wornOutfit: WornOutfit) {
-  const key = typeof dateKey === "string" ? dateKey : toDayKey(dateKey);
-  const all = await getAllRecords();
-  const prev = all[key];
-  all[key] = {
-    dateKey: key,
-    plannedOutfit: prev?.plannedOutfit,
-    wornOutfit,
-  };
-  await saveAllRecords(all);
-  return all[key];
+export async function getOutfitByDate(uid: string, dateKey: string | Date) {
+  const key = normalizeDateKey(dateKey);
+  const snap = await getDoc(outfitDocRef(uid, key));
+  return snap.exists() ? toRecord(snap) : null;
 }
 
-export async function clearPlan(dateKey: string | Date) {
-  const key = typeof dateKey === "string" ? dateKey : toDayKey(dateKey);
-  const all = await getAllRecords();
-  const prev = all[key];
-  if (!prev) return null;
-  all[key] = {
-    dateKey: key,
-    wornOutfit: prev.wornOutfit,
-  };
-  await saveAllRecords(all);
-  return all[key];
+export function subscribeOutfitByDate(
+  uid: string,
+  dateKey: string | Date,
+  cb: (record: DailyOutfitRecord | null) => void,
+  onError?: (error: Error) => void
+): Unsubscribe {
+  const key = normalizeDateKey(dateKey);
+  return onSnapshot(
+    outfitDocRef(uid, key),
+    (snap) => cb(snap.exists() ? toRecord(snap) : null),
+    (error) => onError?.(error)
+  );
 }
 
-export async function copyPlan(fromDateKey: string | Date, toDateKey: string | Date) {
-  const fromKey = typeof fromDateKey === "string" ? fromDateKey : toDayKey(fromDateKey);
-  const toKey = typeof toDateKey === "string" ? toDateKey : toDayKey(toDateKey);
-  const all = await getAllRecords();
-  const source = all[fromKey]?.plannedOutfit;
-  if (!source) return null;
+export function subscribeOutfitsInRange(
+  uid: string,
+  startDateKey: string,
+  endDateKey: string,
+  cb: (records: Record<string, DailyOutfitRecord | null>) => void,
+  onError?: (error: Error) => void
+): Unsubscribe {
+  const outfitsRef = collection(db, "users", uid, "outfits");
+  const q = query(
+    outfitsRef,
+    where(documentId(), ">=", startDateKey),
+    where(documentId(), "<=", endDateKey),
+    orderBy(documentId())
+  );
 
-  all[toKey] = {
-    dateKey: toKey,
-    plannedOutfit: {
-      ...source,
-      createdAt: Date.now(),
+  return onSnapshot(
+    q,
+    (snap) => {
+      const next: Record<string, DailyOutfitRecord | null> = {};
+      snap.docs.forEach((docSnap) => {
+        next[docSnap.id] = toRecord(docSnap);
+      });
+      cb(next);
     },
-    wornOutfit: all[toKey]?.wornOutfit,
-  };
-
-  await saveAllRecords(all);
-  return all[toKey];
+    (error) => onError?.(error)
+  );
 }
 
-export async function getRecordsForDateKeys(dateKeys: string[]) {
-  const all = await getAllRecords();
-  const out: Record<string, DailyOutfitRecord | null> = {};
-  dateKeys.forEach((key) => {
-    out[key] = all[key] ?? null;
+export async function savePlannedOutfit(
+  uid: string,
+  dateKey: string | Date,
+  itemIds: string[],
+  extraFields?: {
+    plannedOutfit?: PlannedOutfit;
+    [key: string]: unknown;
+  }
+) {
+  const key = normalizeDateKey(dateKey);
+  const ref = outfitDocRef(uid, key);
+  const payload = removeUndefinedFields({
+    dateKey: key,
+    itemIds: itemIds.filter(Boolean),
+    planned: true,
+    ...(extraFields ?? {}),
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
   });
+
+  await setDoc(
+    ref,
+    payload,
+    { merge: true }
+  );
+  return getOutfitByDate(uid, key);
+}
+
+export async function savePlannedRecord(
+  uid: string,
+  dateKey: string | Date,
+  plannedOutfit: PlannedOutfit
+) {
+  const key = normalizeDateKey(dateKey);
+  return savePlannedOutfit(uid, key, cleanItemIds(plannedOutfit.itemsByCategory), {
+    plannedOutfit,
+  });
+}
+
+export async function markOutfitWorn(
+  uid: string,
+  dateKey: string | Date,
+  wornOutfit: WornOutfit
+) {
+  const key = normalizeDateKey(dateKey);
+  const ref = outfitDocRef(uid, key);
+  const payload = removeUndefinedFields({
+    dateKey: key,
+    itemIds: cleanItemIds(wornOutfit.itemsByCategory),
+    planned: false,
+    wornOutfit,
+    wornAtMs: wornOutfit.wornAt,
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
+  });
+
+  await setDoc(
+    ref,
+    payload,
+    { merge: true }
+  );
+  return getOutfitByDate(uid, key);
+}
+
+export async function clearPlannedOutfit(uid: string, dateKey: string | Date) {
+  const key = normalizeDateKey(dateKey);
+  const ref = outfitDocRef(uid, key);
+  await setDoc(
+    ref,
+    {
+      planned: false,
+      itemIds: deleteField(),
+      plannedOutfit: deleteField(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return getOutfitByDate(uid, key);
+}
+
+export async function copyPlannedOutfit(
+  uid: string,
+  fromDateKey: string | Date,
+  toDateKey: string | Date
+) {
+  const source = await getOutfitByDate(uid, fromDateKey);
+  if (!source?.plannedOutfit) return null;
+
+  return savePlannedRecord(uid, toDateKey, {
+    ...source.plannedOutfit,
+    createdAt: Date.now(),
+  });
+}
+
+export async function getRecordsForDateKeys(uid: string, dateKeys: string[]) {
+  const keys = Array.from(new Set(dateKeys.map((key) => String(key).trim()).filter(Boolean)));
+  const out: Record<string, DailyOutfitRecord | null> = {};
+  keys.forEach((key) => {
+    out[key] = null;
+  });
+
+  if (keys.length === 0) return out;
+
+  const outfitsRef = collection(db, "users", uid, "outfits");
+  for (let index = 0; index < keys.length; index += 30) {
+    const chunk = keys.slice(index, index + 30);
+    const snap = await getDocs(
+      query(outfitsRef, where(documentId(), "in", chunk), orderBy(documentId()))
+    );
+    snap.docs.forEach((docSnap) => {
+      out[docSnap.id] = toRecord(docSnap);
+    });
+  }
+
   return out;
+}
+
+export async function getDailyRecord(uid: string, dateKey: string | Date) {
+  return getOutfitByDate(uid, dateKey);
+}
+
+export async function setPlanned(
+  uid: string,
+  dateKey: string | Date,
+  plannedOutfit: PlannedOutfit
+) {
+  return savePlannedRecord(uid, dateKey, plannedOutfit);
+}
+
+export async function setWorn(uid: string, dateKey: string | Date, wornOutfit: WornOutfit) {
+  return markOutfitWorn(uid, dateKey, wornOutfit);
+}
+
+export async function clearPlan(uid: string, dateKey: string | Date) {
+  return clearPlannedOutfit(uid, dateKey);
+}
+
+export async function copyPlan(uid: string, fromDateKey: string | Date, toDateKey: string | Date) {
+  return copyPlannedOutfit(uid, fromDateKey, toDateKey);
 }

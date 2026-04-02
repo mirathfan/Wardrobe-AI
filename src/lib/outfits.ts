@@ -1,12 +1,4 @@
-import {
-    arrayRemove,
-    arrayUnion,
-    doc,
-    serverTimestamp,
-    setDoc,
-    updateDoc,
-} from "firebase/firestore";
-import { auth, db } from "./firebase";
+import { auth } from "./firebase";
 
 export function toDateKey(d: Date) {
   // YYYY-MM-DD (local)
@@ -19,42 +11,32 @@ export function toDateKey(d: Date) {
 function outfitDocRef(dateKey: string) {
   const user = auth.currentUser;
   if (!user) throw new Error("Not signed in");
-  return doc(db, "users", user.uid, "outfits", dateKey);
+  return `users/${user.uid}/outfits/${dateKey}`;
 }
 
 /** Add item to outfit for a date */
 export async function addItemToOutfit(dateKey: string, itemId: string, planned = true) {
-  const ref = outfitDocRef(dateKey);
-
-  // setDoc with merge creates the doc if it doesn't exist
-  await setDoc(
-    ref,
-    {
-      dateKey,
-      planned,
-      itemIds: arrayUnion(itemId),
-      updatedAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-    },
-    { merge: true }
+  throw new Error(
+    `Legacy outfit writer is disabled for ${outfitDocRef(
+      dateKey
+    )}. Use savePlannedOutfit()/markOutfitWorn() from src/utils/dailyOutfits instead.`
   );
 }
 
 /** Remove item from outfit for a date */
 export async function removeItemFromOutfit(dateKey: string, itemId: string) {
-  const ref = outfitDocRef(dateKey);
-  await updateDoc(ref, {
-    itemIds: arrayRemove(itemId),
-    updatedAt: serverTimestamp(),
-  });
+  throw new Error(
+    `Legacy outfit writer is disabled for ${outfitDocRef(
+      dateKey
+    )}. Use Firestore planner helpers from src/utils/dailyOutfits instead.`
+  );
 }
 
 /** Mark outfit as worn (not planned anymore) */
 export async function markOutfitWorn(dateKey: string) {
-  const ref = outfitDocRef(dateKey);
-  await setDoc(
-    ref,
-    { planned: false, updatedAt: serverTimestamp() },
-    { merge: true }
+  throw new Error(
+    `Legacy outfit writer is disabled for ${outfitDocRef(
+      dateKey
+    )}. Use markOutfitWorn(uid, dateKey, wornOutfit) from src/utils/dailyOutfits instead.`
   );
 }

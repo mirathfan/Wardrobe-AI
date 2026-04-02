@@ -1,5 +1,4 @@
 import { router } from "expo-router";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import React, { useMemo, useRef, useState } from "react";
 import {
@@ -16,10 +15,12 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/hooks/useAuth";
-import { app, db } from "@/src/lib/firebase";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { app } from "@/src/lib/firebase";
 import { getItemImageUrl } from "@/src/lib/itemImage";
 import { listenToItems } from "@/src/lib/items";
 import { clearLatestChatCache, loadLatestChatCache, saveLatestChatCache } from "@/src/lib/localChatCache";
+import { savePlannedOutfit } from "@/src/utils/dailyOutfits";
 import { toDateKey } from "@/src/lib/outfits";
 import { ClothingItem } from "@/src/types/ClothingItem";
 import { dockSpace } from "@/src/constants/dock";
@@ -48,8 +49,23 @@ function displayName(item: ClothingItem) {
   return item.name || `${item.primaryColor ?? ""} ${item.category}`.trim();
 }
 
+function buildItemsByCategory(outfit: ChatOutfit) {
+  const outerwear = outfit.picks.find((pick) => pick.slot === "outerwear")?.itemId;
+  const top = outfit.picks.find((pick) => pick.slot === "top")?.itemId;
+  const bottom = outfit.picks.find((pick) => pick.slot === "bottom")?.itemId;
+  const shoes = outfit.picks.find((pick) => pick.slot === "footwear")?.itemId;
+
+  return {
+    ...(outerwear ? { outerwear } : {}),
+    ...(top ? { top } : {}),
+    ...(bottom ? { bottom } : {}),
+    ...(shoes ? { shoes } : {}),
+  };
+}
+
 export default function AIScreen() {
   const { user } = useAuth();
+  const { colors } = useAppTheme();
   const uid = user?.uid ?? null;
   const insets = useSafeAreaInsets();
   const bottomDockSpace = dockSpace(insets.bottom);
@@ -195,16 +211,14 @@ export default function AIScreen() {
       setSavingId(outfit.id);
       const dateKey = toDateKey(new Date());
       const itemIds = outfit.picks.map((pick) => pick.itemId);
-      await setDoc(
-        doc(db, "users", uid, "outfits", dateKey),
-        {
-          dateKey,
-          itemIds,
-          planned: true,
-          updatedAt: serverTimestamp(),
+      await savePlannedOutfit(uid, dateKey, itemIds, {
+        plannedOutfit: {
+          itemsByCategory: buildItemsByCategory(outfit),
+          score: outfit.score,
+          reasons: [outfit.reason],
+          createdAt: Date.now(),
         },
-        {merge: true}
-      );
+      });
       Alert.alert("Saved", "Outfit saved to Today.");
     } catch (e: any) {
       Alert.alert("Error", e?.message ?? "Failed to save outfit");
@@ -227,11 +241,11 @@ export default function AIScreen() {
         style={{
           marginTop: 10,
           borderWidth: 1,
-          borderColor: "#ddd",
+          borderColor: colors.border,
           borderRadius: 14,
           padding: 12,
           gap: 10,
-          backgroundColor: "#fff",
+          backgroundColor: colors.card,
         }}
       >
         <View
@@ -242,10 +256,10 @@ export default function AIScreen() {
           }}
         >
           <Text style={{fontSize: 16, fontWeight: "800"}}>Outfit {index + 1}</Text>
-          <Text style={{color: "#666"}}>Score {outfit.score.toFixed(2)}</Text>
+          <Text style={{color: colors.textSecondary}}>Score {outfit.score.toFixed(2)}</Text>
         </View>
 
-        <Text style={{color: "#666"}}>{outfit.reason}</Text>
+        <Text style={{color: colors.textSecondary}}>{outfit.reason}</Text>
 
         <View style={{gap: 10}}>
           {pickedItems.map(({slot, item}) => {
@@ -266,16 +280,16 @@ export default function AIScreen() {
                       width: 56,
                       height: 56,
                       borderRadius: 10,
-                      backgroundColor: "#f2f2f2",
+                      backgroundColor: colors.muted,
                     }}
                   />
                 )}
 
                 <View style={{flex: 1}}>
-                  <Text style={{fontWeight: "700"}}>
+                  <Text style={{fontWeight: "700", color: colors.text}}>
                     {slot.replace(/_/g, " ")}
                   </Text>
-                  <Text>{displayName(item)}</Text>
+                  <Text style={{ color: colors.text }}>{displayName(item)}</Text>
                 </View>
               </View>
             );
@@ -289,12 +303,12 @@ export default function AIScreen() {
             paddingVertical: 10,
             borderRadius: 12,
             borderWidth: 1,
-            borderColor: "#111",
+            borderColor: colors.accent,
             alignItems: "center",
             opacity: savingId === outfit.id ? 0.6 : 1,
           }}
         >
-          <Text style={{fontWeight: "800", color: "#111"}}>
+          <Text style={{fontWeight: "800", color: colors.text}}>
             {savingId === outfit.id ? "Saving..." : "Save to Today"}
           </Text>
         </Pressable>
@@ -303,7 +317,7 @@ export default function AIScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 16 }}>
+    <View style={{ flex: 1, padding: 16, backgroundColor: colors.background }}>
       <KeyboardAvoidingView
         style={{ flex: 1, gap: 12 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -316,9 +330,9 @@ export default function AIScreen() {
           alignItems: "center",
         }}
       >
-        <Text style={{fontSize: 22, fontWeight: "800"}}>Outfit Chat AI</Text>
+        <Text style={{fontSize: 22, fontWeight: "800", color: colors.text}}>Outfit Chat AI</Text>
         <Pressable onPress={startNewChat}>
-          <Text style={{fontWeight: "800", color: "#111"}}>New chat</Text>
+          <Text style={{fontWeight: "800", color: colors.text}}>New chat</Text>
         </Pressable>
       </View>
 
@@ -336,12 +350,12 @@ export default function AIScreen() {
             <View
               style={{
                 alignSelf: item.role === "user" ? "flex-end" : "stretch",
-                backgroundColor: item.role === "user" ? "#111" : "#f5f5f5",
+                backgroundColor: item.role === "user" ? colors.accent : colors.card,
                 borderRadius: 16,
                 padding: 12,
               }}
             >
-              <Text style={{color: item.role === "user" ? "#fff" : "#111"}}>
+              <Text style={{color: item.role === "user" ? "#fff" : colors.text}}>
                 {item.text}
               </Text>
             </View>
@@ -354,13 +368,13 @@ export default function AIScreen() {
           <View
             style={{
               borderWidth: 1,
-              borderColor: "#e5e5e5",
+              borderColor: colors.border,
               borderRadius: 16,
               padding: 14,
-              backgroundColor: "#fafafa",
+              backgroundColor: colors.card,
             }}
           >
-            <Text style={{color: "#666"}}>
+            <Text style={{color: colors.textSecondary}}>
               Ask for an outfit like “Give me 3 casual black looks for cold Chicago weather.”
             </Text>
           </View>
@@ -368,7 +382,7 @@ export default function AIScreen() {
       />
 
       {loading ? (
-        <Text style={{color: "#666", fontWeight: "700"}}>Thinking…</Text>
+        <Text style={{color: colors.textSecondary, fontWeight: "700"}}>Thinking…</Text>
       ) : null}
 
       <View
@@ -378,9 +392,9 @@ export default function AIScreen() {
           right: 16,
           bottom: composerBottom,
           borderRadius: 18,
-          backgroundColor: "#fff",
+          backgroundColor: colors.surface,
           borderWidth: 1,
-          borderColor: "#e5e7eb",
+          borderColor: colors.border,
           padding: 10,
           gap: 8,
           shadowColor: "#000",
@@ -400,11 +414,11 @@ export default function AIScreen() {
                 paddingHorizontal: 10,
                 borderRadius: 999,
                 borderWidth: 1,
-                borderColor: "#ddd",
-                backgroundColor: "#fff",
+                borderColor: colors.border,
+                backgroundColor: colors.input,
               }}
             >
-              <Text style={{fontWeight: "700", color: "#111", fontSize: 12}}>{chip}</Text>
+              <Text style={{fontWeight: "700", color: colors.text, fontSize: 12}}>{chip}</Text>
             </Pressable>
           ))}
         </View>
@@ -414,12 +428,15 @@ export default function AIScreen() {
             value={input}
             onChangeText={setInput}
             placeholder="Ask for an outfit, a swap, or a tweak"
+            placeholderTextColor={colors.textSecondary}
             multiline
             style={{
               flex: 1,
               borderWidth: 1,
-              borderColor: "#ddd",
+              borderColor: colors.border,
               borderRadius: 14,
+              color: colors.text,
+              backgroundColor: colors.input,
               paddingHorizontal: 12,
               paddingVertical: 10,
               maxHeight: 120,
@@ -432,7 +449,7 @@ export default function AIScreen() {
               paddingVertical: 12,
               paddingHorizontal: 16,
               borderRadius: 12,
-              backgroundColor: "#111",
+              backgroundColor: colors.accent,
               opacity: loading || !input.trim() ? 0.6 : 1,
             }}
           >

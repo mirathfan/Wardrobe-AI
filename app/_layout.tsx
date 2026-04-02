@@ -8,6 +8,7 @@ import { ActivityIndicator, Platform, Text, View } from "react-native";
 import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
 import { isVisionBackgroundRemovalAvailable } from "../src/bg/removeBackground";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { Colors } from "@/constants/theme";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 export const unstable_settings = {
@@ -55,6 +56,31 @@ function AuthGate() {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  const palette = Colors[colorScheme === "dark" ? "dark" : "light"];
+  const navigationTheme =
+    colorScheme === "dark"
+      ? {
+          ...DarkTheme,
+          colors: {
+            ...DarkTheme.colors,
+            background: palette.background,
+            card: palette.surface,
+            border: palette.border,
+            primary: palette.tint,
+            text: palette.text,
+          },
+        }
+      : {
+          ...DefaultTheme,
+          colors: {
+            ...DefaultTheme.colors,
+            background: palette.background,
+            card: palette.surface,
+            border: palette.border,
+            primary: palette.tint,
+            text: palette.text,
+          },
+        };
 
   useEffect(() => {
     if (Platform.OS !== "ios" || !__DEV__) return;
@@ -65,9 +91,9 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+      <ThemeProvider value={navigationTheme}>
         <AuthProvider>
-          <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: palette.background }} edges={["top"]}>
             <AuthGate />
           </SafeAreaView>
         </AuthProvider>

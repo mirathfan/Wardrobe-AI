@@ -4,10 +4,12 @@ import React, { useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 
 import { useAuth } from "@/src/hooks/useAuth";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { auth } from "@/src/lib/firebase";
 
 export default function ProfileScreen() {
   const { user } = useAuth();
+  const { colors } = useAppTheme();
   const [loading, setLoading] = useState(false);
 
   async function onLogout() {
@@ -23,11 +25,15 @@ export default function ProfileScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 16, gap: 16 }}>
-      <Text style={{ fontSize: 28, fontWeight: "900" }}>Profile</Text>
-      <Text style={{ color: "#444" }}>{user?.email ?? "No email found."}</Text>
+    <View style={{ flex: 1, padding: 16, gap: 16, backgroundColor: colors.background }}>
+      <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>Profile</Text>
+      <Text style={{ color: colors.textSecondary }}>{user?.email ?? "No email found."}</Text>
 
-      <Pressable onPress={onLogout} style={[btn, loading ? { opacity: 0.6 } : null]} disabled={loading}>
+      <Pressable
+        onPress={onLogout}
+        style={[btn, { backgroundColor: colors.accent }, loading ? { opacity: 0.6 } : null]}
+        disabled={loading}
+      >
         <Text style={btnText}>{loading ? "Signing out..." : "Log out"}</Text>
       </Pressable>
     </View>

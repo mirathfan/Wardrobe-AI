@@ -19,6 +19,7 @@ import { AiInsightCard } from "@/src/components/AiInsightCard";
 import { AiWardrobeSections } from "@/src/components/AiWardrobeSections";
 import { WardrobeFilterSheet } from "@/src/components/WardrobeFilterSheet";
 import { useAuth } from "@/src/hooks/useAuth";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { getItemImageUrl } from "@/src/lib/itemImage";
 import {
   CategoryFilter,
@@ -118,6 +119,7 @@ const ActionChip = React.memo(function ActionChip({
   onPress: () => void;
   disabled?: boolean;
 }) {
+  const { colors } = useAppTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -129,14 +131,14 @@ const ActionChip = React.memo(function ActionChip({
         paddingVertical: 7,
         paddingHorizontal: 10,
         borderRadius: 999,
-        backgroundColor: "#F3F4F6",
+        backgroundColor: colors.muted,
         borderWidth: 1,
-        borderColor: "#E5E7EB",
+        borderColor: colors.border,
         opacity: disabled ? 0.45 : 1,
       }}
     >
-      <MaterialCommunityIcons name={icon} size={16} color="#111" />
-      <Text style={{ fontWeight: "800", fontSize: 12 }}>{label}</Text>
+      <MaterialCommunityIcons name={icon} size={16} color={colors.text} />
+      <Text style={{ fontWeight: "800", fontSize: 12, color: colors.text }}>{label}</Text>
     </Pressable>
   );
 });
@@ -158,6 +160,7 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
   matchCount?: number;
   compact?: boolean;
 }) {
+  const { colors } = useAppTheme();
   const s = statusStyle(item.status);
   const itemImageUri = getItemImageUrl(item, { variant: compact ? "thumb" : "hero" });
 
@@ -166,14 +169,14 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
       style={{
         width: compact ? 154 : 172,
         borderWidth: 1,
-        borderColor: "#e5e7eb",
+        borderColor: colors.border,
         borderRadius: 16,
         overflow: "hidden",
-        backgroundColor: "#fff",
+        backgroundColor: colors.card,
       }}
     >
       {itemImageUri ? (
-        <View style={{ width: "100%", height: compact ? 116 : 140, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" }}>
+        <View style={{ width: "100%", height: compact ? 116 : 140, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
           <Image
             source={{ uri: itemImageUri }}
             style={{ width: "100%", height: compact ? 116 : 140 }}
@@ -191,10 +194,10 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
                 paddingVertical: 3,
               }}
             >
-              <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>✨ {aiTag}</Text>
-            </View>
-          ) : null}
-        </View>
+            <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>✨ {aiTag}</Text>
+          </View>
+        ) : null}
+      </View>
       ) : (
         <View
           style={{
@@ -202,10 +205,10 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
             height: compact ? 116 : 140,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: "#f3f3f3",
+            backgroundColor: colors.muted,
           }}
         >
-          <Text style={{ color: "#777", fontWeight: "800" }}>No photo</Text>
+          <Text style={{ color: colors.textSecondary, fontWeight: "800" }}>No photo</Text>
         </View>
       )}
 
@@ -219,17 +222,17 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
               backgroundColor: s.dot,
             }}
           />
-          <Text style={{ fontSize: 14, fontWeight: "900", flex: 1 }} numberOfLines={1}>
+          <Text style={{ fontSize: 14, fontWeight: "900", flex: 1, color: colors.text }} numberOfLines={1}>
             {item.name
               ? item.name
               : `${item.primaryColor ?? ""} ${item.subCategory ?? item.category ?? ""}`.trim()}
           </Text>
         </View>
 
-        <Text style={{ opacity: 0.7, fontSize: 12 }} numberOfLines={1}>
+        <Text style={{ opacity: 0.7, fontSize: 12, color: colors.textSecondary }} numberOfLines={1}>
           {item.brand || "—"} • {s.label}
         </Text>
-        <Text style={{ opacity: 0.72, fontSize: 12 }} numberOfLines={1}>
+        <Text style={{ opacity: 0.72, fontSize: 12, color: colors.textSecondary }} numberOfLines={1}>
           {matchCount ? `Pairs well with ${matchCount}` : lastWornLabel(item)}
         </Text>
 
@@ -261,6 +264,7 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
 
 export default function WardrobeScreen() {
   const { user } = useAuth();
+  const { colors } = useAppTheme();
   const uid = user?.uid ?? null;
   const insets = useSafeAreaInsets();
 
@@ -415,7 +419,7 @@ export default function WardrobeScreen() {
   }, [categoryFilter, statusFilter]);
 
   return (
-    <View style={{ flex: 1, paddingHorizontal: 16, backgroundColor: "#fff" }}>
+    <View style={{ flex: 1, paddingHorizontal: 16, backgroundColor: colors.background }}>
       <FlatList
         data={hasResults ? sectionData : []}
         keyExtractor={(s) => s.key}
@@ -432,7 +436,7 @@ export default function WardrobeScreen() {
             >
               <View style={{ gap: 1 }}>
                 <Text style={{ fontSize: 24, fontWeight: "900" }}>{AI_LABEL}</Text>
-                <Text style={{ color: "#64748b", fontSize: 12, fontWeight: "600" }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>
                   Your personal closet assistant
                 </Text>
               </View>
@@ -440,7 +444,7 @@ export default function WardrobeScreen() {
                 onPress={() => router.push({ pathname: "/(tabs)/ai", params: { intent: "build_outfit" } })}
                 style={{
                   borderRadius: 999,
-                  backgroundColor: "#111827",
+                  backgroundColor: colors.accent,
                   paddingHorizontal: 12,
                   paddingVertical: 7,
                 }}
@@ -452,16 +456,16 @@ export default function WardrobeScreen() {
             <View
               style={{
                 gap: 12,
-                backgroundColor: "#f5f8ff",
+                backgroundColor: colors.accentSoft,
                 borderRadius: 18,
                 padding: 10,
               }}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={{ fontSize: 13, fontWeight: "900", color: "#334155" }}>
+                <Text style={{ fontSize: 13, fontWeight: "900", color: colors.text }}>
                   ✨ Smart Wardrobe
                 </Text>
-                <Text style={{ fontSize: 12, color: "#64748b" }}>
+                <Text style={{ fontSize: 12, color: colors.textSecondary }}>
                   Personalized picks and insights
                 </Text>
               </View>
@@ -477,14 +481,14 @@ export default function WardrobeScreen() {
                 <View
                   style={{
                     borderRadius: 14,
-                    backgroundColor: "#eef2ff",
+                    backgroundColor: colors.accentSoft,
                     paddingVertical: 14,
                     alignItems: "center",
                     gap: 8,
                   }}
                 >
                   <ActivityIndicator />
-                  <Text style={{ color: "#475569", fontWeight: "700", fontSize: 12 }}>
+                  <Text style={{ color: colors.textSecondary, fontWeight: "700", fontSize: 12 }}>
                     AI organizing your wardrobe…
                   </Text>
                 </View>
@@ -511,10 +515,13 @@ export default function WardrobeScreen() {
               value={searchText}
               onChangeText={setSearchText}
               placeholder="Search by name or brand"
+              placeholderTextColor={colors.textSecondary}
               style={{
                 borderWidth: 1,
-                borderColor: "#ddd",
+                borderColor: colors.border,
                 borderRadius: 12,
+                color: colors.text,
+                backgroundColor: colors.input,
                 paddingHorizontal: 12,
                 paddingVertical: 10,
               }}
@@ -528,29 +535,29 @@ export default function WardrobeScreen() {
                   alignItems: "center",
                   gap: 6,
                   borderWidth: 1,
-                  borderColor: "#d1d5db",
+                  borderColor: colors.border,
                   borderRadius: 999,
                   paddingHorizontal: 12,
                   paddingVertical: 8,
-                  backgroundColor: "#fff",
+                  backgroundColor: colors.surface,
                 }}
               >
-                <MaterialCommunityIcons name="tune-variant" size={16} color="#111" />
-                <Text style={{ fontWeight: "800", color: "#111" }}>Filters</Text>
+                <MaterialCommunityIcons name="tune-variant" size={16} color={colors.text} />
+                <Text style={{ fontWeight: "800", color: colors.text }}>Filters</Text>
               </Pressable>
 
               <View
                 style={{
                   flex: 1,
                   borderWidth: 1,
-                  borderColor: "#e5e7eb",
+                  borderColor: colors.border,
                   borderRadius: 999,
                   paddingHorizontal: 12,
                   paddingVertical: 8,
-                  backgroundColor: "#fafafa",
+                  backgroundColor: colors.surface,
                 }}
               >
-                <Text style={{ fontWeight: "700", color: "#334155" }} numberOfLines={1}>
+                <Text style={{ fontWeight: "700", color: colors.text }} numberOfLines={1}>
                   {filterSummary} • Sort: {sortLabel}
                 </Text>
               </View>
@@ -561,7 +568,7 @@ export default function WardrobeScreen() {
         ListEmptyComponent={
           loading ? null : (
             <View style={{ justifyContent: "center", alignItems: "center", gap: 10, paddingTop: 28 }}>
-              <Text style={{ fontSize: 16, fontWeight: "800" }}>
+              <Text style={{ fontSize: 16, fontWeight: "800", color: colors.text }}>
                 {isDefaultFilter ? "No items yet" : "No results match filters"}
               </Text>
               <Pressable
@@ -570,7 +577,7 @@ export default function WardrobeScreen() {
                   paddingVertical: 10,
                   paddingHorizontal: 14,
                   borderRadius: 10,
-                  backgroundColor: "#111",
+                  backgroundColor: colors.accent,
                 }}
               >
                 <Text style={{ color: "#fff", fontWeight: "900" }}>Add your first item</Text>
@@ -582,13 +589,13 @@ export default function WardrobeScreen() {
         renderItem={({ item: section }) => (
           <View style={{ gap: 7 }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <Text style={{ fontSize: 16, fontWeight: "900", color: "#0f172a" }}>
+              <Text style={{ fontSize: 16, fontWeight: "900", color: colors.text }}>
                 {section.title} ({section.items.length})
               </Text>
             </View>
 
             {section.items.length === 0 ? (
-              <Text style={{ color: "#666" }}>No items.</Text>
+              <Text style={{ color: colors.textSecondary }}>No items.</Text>
             ) : (
               <FlatList
                 data={section.items}
@@ -624,10 +631,10 @@ export default function WardrobeScreen() {
           width: 56,
           height: 56,
           borderRadius: 28,
-          backgroundColor: "#111",
+          backgroundColor: colors.accent,
           alignItems: "center",
           justifyContent: "center",
-          shadowColor: "#111",
+          shadowColor: colors.accent,
           shadowOpacity: 0.22,
           shadowRadius: 8,
           shadowOffset: { width: 0, height: 4 },
