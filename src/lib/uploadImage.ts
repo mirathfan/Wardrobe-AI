@@ -67,14 +67,6 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     quality = 0.7,
   } = params;
 
-  console.log("[uploadItemPhoto] start", {
-    uid,
-    itemId,
-    localUri,
-    cleanedLocalUri,
-    originalWidth,
-  });
-
   const processedUri = await processImageToJpegUri({
     localUri,
     originalWidth,
@@ -89,26 +81,21 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     contentType: "image/jpeg",
   });
   const primaryUrl = await getDownloadURL(fileRef);
-  console.log("[uploadItemPhoto] primary uploaded", { storagePath, primaryUrl });
 
   const cleanedCandidateUri =
     cleanedLocalUri ||
     (String(localUri).trim().toLowerCase().endsWith(".png") ? localUri : null);
   let cleanedUrl: string | null = null;
   if (cleanedCandidateUri) {
-    console.log("[uploadItemPhoto] cleanedLocalUri:", cleanedCandidateUri);
     const cleanedBlob = await blobFromFileUri(cleanedCandidateUri);
     const cleanedPath = `users/${uid}/items/${itemId}.cleaned.png`;
     const cleanedRef = ref(storage, cleanedPath);
-    console.log("[uploadItemPhoto] cleaned storage path:", cleanedPath);
     await uploadBytes(cleanedRef, cleanedBlob, {
       contentType: "image/png",
     });
     cleanedUrl = await getDownloadURL(cleanedRef);
-    console.log("[uploadItemPhoto] cleaned download URL:", cleanedUrl);
   }
 
-  console.log("[uploadItemPhoto] success", { itemId, hasCleaned: !!cleanedUrl });
   return {
     primaryUrl,
     cleanedUrl,

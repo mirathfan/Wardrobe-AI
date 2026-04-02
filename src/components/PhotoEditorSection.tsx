@@ -8,16 +8,29 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   View,
   useWindowDimensions,
 } from "react-native";
+import { SafeScreen } from "./SafeScreen";
 
 type PhotoEditorSectionProps = {
   previewUri: string | null;
+  cleanedPreviewUri?: string | null;
+  fallbackPreviewUri?: string | null;
+  hasCutoutPreview?: boolean;
+  maskDebugUri?: string | null;
   refineValue: number;
+  edgePolish?: number;
+  debugThreshold?: number;
+  debugCleanupRadius?: number;
+  debugFeather?: number;
+  debugEdgeTighten?: number;
   isProcessing: boolean;
   canRefine: boolean;
+  isAiRunning?: boolean;
+  statusText?: string | null;
   showPendingNote: boolean;
   onPickLibrary: () => void;
   onUseCamera: () => void;
@@ -25,6 +38,11 @@ type PhotoEditorSectionProps = {
   onRefineChange: (value: number) => void;
   onRefineComplete: (value: number) => void;
   onResetRefine: () => void;
+  onEdgePolishChange?: (value: number, commit?: boolean) => void;
+  onDebugThresholdChange?: (value: number, commit?: boolean) => void;
+  onDebugCleanupRadiusChange?: (value: number, commit?: boolean) => void;
+  onDebugFeatherChange?: (value: number, commit?: boolean) => void;
+  onDebugEdgeTightenChange?: (value: number, commit?: boolean) => void;
   onReplace?: () => void;
   onRotate?: () => void;
   onAdjust?: () => void;
@@ -186,14 +204,6 @@ function RefineControls(props: RefineControlsProps) {
         </View>
       </View>
       <View style={{ paddingVertical: 8, marginHorizontal: -6 }}>
-        <View
-          pointerEvents="box-none"
-          onTouchStart={() => {
-            if (__DEV__) {
-              console.log("[TouchDebug] slider container touch");
-            }
-          }}
-        >
         <NativeGuard onError={onNativeError}>
           <Slider
             value={value}
@@ -209,29 +219,126 @@ function RefineControls(props: RefineControlsProps) {
             thumbTintColor={Platform.OS === "ios" ? undefined : "#111"}
           />
         </NativeGuard>
-        </View>
       </View>
     </View>
   );
 }
 
-function PreviewCanvas(props: { uri: string; large?: boolean; showAlphaBg: boolean }) {
-  const { uri, large = false, showAlphaBg } = props;
+function formatDebugValue(value: number, decimals = 2) {
+  return value.toFixed(decimals);
+}
+
+function DebugTuneRow(props: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  decimals?: number;
+  useNativeSlider: boolean;
+  onNativeError: () => void;
+  onChange?: (value: number, commit?: boolean) => void;
+}) {
+  const {
+    label,
+    value,
+    min,
+    max,
+    step,
+    decimals = 2,
+    useNativeSlider,
+    onNativeError,
+    onChange,
+  } = props;
+
+  if (!onChange) {
+    return null;
+  }
+
+  const clamp = (nextValue: number) => {
+    const stepped = Math.round(nextValue / step) * step;
+    return Math.max(min, Math.min(max, Number(stepped.toFixed(decimals))));
+  };
+
+  const nudge = (delta: number) => {
+    const nextValue = clamp(value + delta);
+    onChange(nextValue, true);
+  };
+
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Text style={{ color: "#111", fontSize: 13, fontWeight: "700" }}>{label}</Text>
+        <Text style={{ color: "#666", fontSize: 13, fontVariant: ["tabular-nums"] }}>
+          {formatDebugValue(value, decimals)}
+        </Text>
+      </View>
+      {useNativeSlider ? (
+        <View style={{ marginHorizontal: -6 }}>
+          <NativeGuard onError={onNativeError}>
+            <Slider
+              value={value}
+              minimumValue={min}
+              maximumValue={max}
+              step={step}
+              onValueChange={(nextValue) => onChange(clamp(nextValue), false)}
+              onSlidingComplete={(nextValue) => onChange(clamp(nextValue), true)}
+              minimumTrackTintColor="#111"
+              maximumTrackTintColor="#e5e5e5"
+              tapToSeek={false}
+              thumbImage={Platform.OS === "ios" ? sliderThumbImage : undefined}
+              thumbTintColor={Platform.OS === "ios" ? undefined : "#111"}
+            />
+          </NativeGuard>
+        </View>
+      ) : (
+        <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+          <Pressable onPress={() => nudge(-step)} style={stepperButton}>
+            <Text style={stepperButtonText}>-</Text>
+          </Pressable>
+          <Text
+            style={{
+              minWidth: 72,
+              textAlign: "center",
+              fontWeight: "700",
+              color: "#111",
+              fontVariant: ["tabular-nums"],
+            }}
+          >
+            {formatDebugValue(value, decimals)}
+          </Text>
+          <Pressable onPress={() => nudge(step)} style={stepperButton}>
+            <Text style={stepperButtonText}>+</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function PreviewCanvas(props: {
+  uri: string;
+  large?: boolean;
+  compact?: boolean;
+  checkerboard?: boolean;
+}) {
+  const { uri, large = false, compact = false, checkerboard = false } = props;
 
   return (
     <View
       style={{
         width: "100%",
-        aspectRatio: large ? 4 / 5 : 1,
+        aspectRatio: compact ? 1 : large ? 4 / 5 : 1,
         borderRadius: large ? 20 : 16,
         borderWidth: 1,
         borderColor: "#e7e7e7",
-        backgroundColor: showAlphaBg ? "#ff4d4f" : "#fff",
+        backgroundColor: "#f8f8f8",
         overflow: "hidden",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
+      {checkerboard ? <CheckerboardBackground /> : null}
       <Image
         source={{ uri }}
         style={{ width: "100%", height: "100%" }}
@@ -241,12 +348,53 @@ function PreviewCanvas(props: { uri: string; large?: boolean; showAlphaBg: boole
   );
 }
 
+function CheckerboardBackground() {
+  const cells = Array.from({ length: 64 }, (_, index) => index);
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        ...StyleSheet.absoluteFillObject,
+        flexDirection: "row",
+        flexWrap: "wrap",
+      }}
+    >
+      {cells.map((cell) => {
+        const row = Math.floor(cell / 8);
+        const col = cell % 8;
+        const dark = (row + col) % 2 === 0;
+        return (
+          <View
+            key={cell}
+            style={{
+              width: "12.5%",
+              height: "12.5%",
+              backgroundColor: dark ? "#d9d9d9" : "#f3f3f3",
+            }}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
 export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   const {
     previewUri,
+    cleanedPreviewUri = null,
+    fallbackPreviewUri = null,
+    hasCutoutPreview = false,
+    maskDebugUri = null,
     refineValue,
+    edgePolish = 0.5,
+    debugThreshold = 0.6,
+    debugCleanupRadius = 2,
+    debugFeather = 1,
+    debugEdgeTighten = 0.03,
     isProcessing,
     canRefine,
+    isAiRunning = false,
+    statusText = null,
     showPendingNote,
     onPickLibrary,
     onUseCamera,
@@ -254,6 +402,11 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     onRefineChange,
     onRefineComplete,
     onResetRefine,
+    onEdgePolishChange,
+    onDebugThresholdChange,
+    onDebugCleanupRadiusChange,
+    onDebugFeatherChange,
+    onDebugEdgeTightenChange,
     onReplace,
     onRotate,
     onAdjust,
@@ -261,26 +414,22 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   } = props;
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [sliderErrored, setSliderErrored] = useState(false);
-  const [showAlphaBg, setShowAlphaBg] = useState(false);
+  const [activeModalPreview, setActiveModalPreview] = useState<"cutout" | "mask">("cutout");
   const [liveRefineValue, setLiveRefineValue] = useState(refineValue);
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const displayedPreviewUri = cleanedPreviewUri ?? fallbackPreviewUri ?? previewUri;
+  const modalDisplayedPreviewUri =
+    activeModalPreview === "mask" && maskDebugUri
+      ? maskDebugUri
+      : cleanedPreviewUri ?? fallbackPreviewUri ?? previewUri;
 
   useEffect(() => {
     setLiveRefineValue(refineValue);
   }, [refineValue]);
 
-  useEffect(() => {
-    if (__DEV__) {
-      console.log("[PhotoEditorSection] Slider typeof:", typeof Slider);
-    }
-  }, []);
-
   const useNativeSlider = Platform.OS === "ios" && !sliderErrored;
 
   function handleNativeSliderError() {
-    if (__DEV__) {
-      console.log("[PhotoEditorSection] NativeGuard caught slider render error");
-    }
     setSliderErrored(true);
   }
 
@@ -288,31 +437,30 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     <>
       <View
         style={{
-          gap: 14,
-          padding: 14,
-          borderRadius: 22,
+          gap: 12,
+          padding: 12,
+          borderRadius: 20,
           borderWidth: 1,
           borderColor: "#ebebeb",
-          backgroundColor: "#fafafa",
+          backgroundColor: "#fff",
         }}
       >
-        <View style={{ gap: 4 }}>
-          <Text style={{ fontSize: 18, fontWeight: "800", color: "#111" }}>Photo Edit</Text>
-          <Text style={{ color: "#666", lineHeight: 20 }}>
-            Refine the background removal here, then continue filling out the item details.
-          </Text>
-        </View>
-
-        {previewUri ? (
-          <Pressable onPress={() => setIsModalVisible(true)}>
-            <PreviewCanvas uri={previewUri} large showAlphaBg={showAlphaBg} />
+        {displayedPreviewUri ? (
+          <Pressable
+            onPress={() => {
+              onRefineOpen?.();
+              setActiveModalPreview("cutout");
+              setIsModalVisible(true);
+            }}
+          >
+            <PreviewCanvas uri={displayedPreviewUri} compact checkerboard />
           </Pressable>
         ) : (
           <View
             style={{
               width: "100%",
               aspectRatio: 1,
-              borderRadius: 20,
+              borderRadius: 18,
               borderWidth: 1,
               borderColor: "#e7e7e7",
               backgroundColor: "#f3f3f3",
@@ -322,130 +470,113 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
             }}
           >
             <Text style={{ color: "#666", fontWeight: "700", textAlign: "center" }}>
-              Pick a photo to start editing the cutout.
+              Pick a photo to start.
             </Text>
           </View>
         )}
 
-        {previewUri ? (
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Pressable
-              onPress={() => {
-                onRefineOpen?.();
-                setIsModalVisible(true);
-              }}
-              style={[editorButton, { flex: 1 }]}
-            >
-              <Text style={editorButtonText}>Refine</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => {
-                onAdjust?.();
-                setIsModalVisible(true);
-              }}
-              style={[editorButton, { flex: 1 }]}
-            >
-              <Text style={editorButtonText}>Adjust</Text>
-            </Pressable>
-            <Pressable onPress={onRotate} style={[editorButton, { flex: 1 }]}>
-              <Text style={editorButtonText}>Rotate</Text>
-            </Pressable>
+        {displayedPreviewUri ? (
+          <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+            {canRefine ? (
+              <Pressable
+                onPress={() => {
+                  onRefineOpen?.();
+                  setActiveModalPreview("cutout");
+                  setIsModalVisible(true);
+                }}
+                style={[editorButton, { minWidth: 120 }]}
+              >
+                <Text style={editorButtonText}>Refine cutout</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               onPress={onReplace ?? onPickLibrary}
-              style={[editorButton, { flex: 1 }]}
+              style={[editorButton, { minWidth: 120 }]}
             >
-              <Text style={editorButtonText}>Replace</Text>
+              <Text style={editorButtonText}>Change photo</Text>
             </Pressable>
-          </View>
-        ) : null}
-
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          <Pressable onPress={onPickLibrary} style={[editorButton, { flex: 1 }]}>
-            <Text style={editorButtonText}>{previewUri ? "Change photo" : "Pick from gallery"}</Text>
-          </Pressable>
-          <Pressable onPress={onUseCamera} style={[editorButton, { flex: 1 }]}>
-            <Text style={editorButtonText}>Use camera</Text>
-          </Pressable>
-          {previewUri ? (
+            <Pressable onPress={onUseCamera} style={[editorButton, { minWidth: 110 }]}>
+              <Text style={editorButtonText}>Use camera</Text>
+            </Pressable>
             <Pressable onPress={onRemove} style={editorButton}>
               <Text style={editorButtonText}>Remove</Text>
             </Pressable>
-          ) : null}
-        </View>
+          </View>
+        ) : (
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable onPress={onPickLibrary} style={[editorButton, { flex: 1 }]}>
+              <Text style={editorButtonText}>Pick from gallery</Text>
+            </Pressable>
+            <Pressable onPress={onUseCamera} style={[editorButton, { flex: 1 }]}>
+              <Text style={editorButtonText}>Use camera</Text>
+            </Pressable>
+          </View>
+        )}
 
-        {showPendingNote ? (
-          <Text style={{ color: "#666" }}>
-            New photo selected. It will upload to Firebase Storage when you save.
+        {statusText ? (
+          <Text style={{ color: isAiRunning ? "#4b5563" : "#666", fontSize: 13 }}>
+            {statusText}
           </Text>
         ) : null}
 
-        {previewUri ? (
-          <Pressable
-            onPress={() => setShowAlphaBg((prev) => !prev)}
-            style={{
-              alignSelf: "flex-start",
-              paddingVertical: 8,
-              paddingHorizontal: 12,
-              borderRadius: 999,
-              borderWidth: 1,
-              borderColor: "#ddd",
-              backgroundColor: "#fff",
-            }}
-          >
-            <Text style={{ color: "#111", fontWeight: "700" }}>
-              {showAlphaBg ? "Hide alpha background" : "Show alpha background"}
-            </Text>
-          </Pressable>
-        ) : null}
-
-        {canRefine ? (
-          <View style={{ gap: 8 }}>
-        <RefineControls
-          value={liveRefineValue}
-          isProcessing={isProcessing}
-          useNativeSlider={useNativeSlider}
-          onNativeError={handleNativeSliderError}
-          onChange={(value) => {
-            setLiveRefineValue(value);
-            onRefineChange(value);
-          }}
-          onComplete={(value) => {
-            setLiveRefineValue(value);
-            onRefineComplete(value);
-          }}
-          onReset={onResetRefine}
-        />
-            <Text style={{ color: "#666", fontSize: 12 }}>
-              Drag to remove leftover background. Release for final quality.
-            </Text>
-          </View>
+        {showPendingNote ? (
+          <Text style={{ color: "#666", fontSize: 13 }}>
+            New photo selected. It will upload to Firebase Storage when you save.
+          </Text>
         ) : null}
       </View>
 
       <Modal
-        visible={isModalVisible && !!previewUri}
+        visible={isModalVisible && !!displayedPreviewUri}
         animationType="slide"
         presentationStyle="fullScreen"
-        onRequestClose={() => setIsModalVisible(false)}
+        onRequestClose={() => {
+          setActiveModalPreview("cutout");
+          setIsModalVisible(false);
+        }}
       >
+        <SafeScreen
+          backgroundColor="#111"
+          edges={["top", "bottom"]}
+          minTopPadding={14}
+          minBottomPadding={10}
+        >
         <View style={{ flex: 1, backgroundColor: "#111" }}>
           <View
             style={{
-              paddingTop: 18,
+              height: 72,
               paddingHorizontal: 16,
-              paddingBottom: 12,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "space-between",
+              borderBottomWidth: 1,
+              borderBottomColor: "rgba(255,255,255,0.08)",
             }}
           >
-            <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }}>Edit Photo</Text>
-            <Pressable onPress={() => setIsModalVisible(false)}>
-              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "800" }}>Done</Text>
+            <Pressable
+              onPress={() => {
+                setActiveModalPreview("cutout");
+                setIsModalVisible(false);
+              }}
+              hitSlop={10}
+              style={{ minHeight: 40, justifyContent: "center" }}
+            >
+              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "800" }}>Cancel</Text>
+            </Pressable>
+            <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }}>Refine Cutout</Text>
+            <Pressable
+              onPress={() => {
+                setActiveModalPreview("cutout");
+                setIsModalVisible(false);
+              }}
+              hitSlop={10}
+              style={{ minHeight: 40, justifyContent: "center" }}
+            >
+              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "800" }}>Apply</Text>
             </Pressable>
           </View>
 
-          {previewUri ? (
+          {modalDisplayedPreviewUri ? (
             <ScrollView
               style={{ flex: 1 }}
               contentContainerStyle={{
@@ -468,13 +599,14 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
                   height: Math.max(360, screenHeight * 0.55),
                   borderRadius: 24,
                   overflow: "hidden",
-                  backgroundColor: showAlphaBg ? "#ff4d4f" : "#fff",
+                  backgroundColor: "#f8f8f8",
                   alignItems: "center",
                   justifyContent: "center",
                 }}
               >
+                <CheckerboardBackground />
                 <Image
-                  source={{ uri: previewUri }}
+                  source={{ uri: modalDisplayedPreviewUri ?? undefined }}
                   style={{ width: "100%", height: "100%" }}
                   resizeMode="contain"
                 />
@@ -493,43 +625,166 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
               gap: 10,
             }}
           >
+            <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+              {cleanedPreviewUri ? (
+                <Pressable
+                  onPress={() => setActiveModalPreview("cutout")}
+                  style={[
+                    editorButton,
+                    activeModalPreview === "cutout" ? activePreviewButton : null,
+                  ]}
+                >
+                  <Text style={editorButtonText}>Show cutout</Text>
+                </Pressable>
+              ) : null}
+              {onAdjust ? (
+                <Pressable onPress={onAdjust} style={editorButton}>
+                  <Text style={editorButtonText}>Adjust</Text>
+                </Pressable>
+              ) : null}
+              {maskDebugUri ? (
+                <Pressable
+                  onPress={() => setActiveModalPreview("mask")}
+                  style={[
+                    editorButton,
+                    activeModalPreview === "mask" ? activePreviewButton : null,
+                  ]}
+                >
+                  <Text style={editorButtonText}>Show mask</Text>
+                </Pressable>
+              ) : null}
+              {onRotate ? (
+                <Pressable onPress={onRotate} style={editorButton}>
+                  <Text style={editorButtonText}>Rotate</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
             {canRefine ? (
               <>
-            <RefineControls
-              value={liveRefineValue}
-              isProcessing={isProcessing}
-              useNativeSlider={useNativeSlider}
-              onNativeError={handleNativeSliderError}
-              onChange={(value) => {
-                setLiveRefineValue(value);
-                onRefineChange(value);
-              }}
-              onComplete={(value) => {
-                setLiveRefineValue(value);
-                onRefineComplete(value);
-              }}
-              onReset={onResetRefine}
-            />
+                <RefineControls
+                  value={liveRefineValue}
+                  isProcessing={isProcessing}
+                  useNativeSlider={useNativeSlider}
+                  onNativeError={handleNativeSliderError}
+                  onChange={(value) => {
+                    setLiveRefineValue(value);
+                    onRefineChange(value);
+                  }}
+                  onComplete={(value) => {
+                    setLiveRefineValue(value);
+                    onRefineComplete(value);
+                  }}
+                  onReset={onResetRefine}
+                />
+                <View
+                  style={{
+                    gap: 8,
+                    padding: 12,
+                    borderRadius: 16,
+                    borderWidth: 1,
+                    borderColor: "#ececec",
+                    backgroundColor: "#fafafa",
+                  }}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={{ color: "#111", fontSize: 13, fontWeight: "800" }}>
+                      Edge polish
+                    </Text>
+                    <Text style={{ color: "#666", fontSize: 13, fontVariant: ["tabular-nums"] }}>
+                      {formatDebugValue(edgePolish, 2)}
+                    </Text>
+                  </View>
+                  <Text style={{ color: "#666", fontSize: 12 }}>
+                    Subtle contour cleanup for a smoother premium edge.
+                  </Text>
+                  <DebugTuneRow
+                    label="Polish"
+                    value={edgePolish}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    decimals={2}
+                    useNativeSlider={useNativeSlider}
+                    onNativeError={handleNativeSliderError}
+                    onChange={onEdgePolishChange}
+                  />
+                </View>
+                <View
+                  style={{
+                    gap: 12,
+                    padding: 12,
+                    borderRadius: 16,
+                    borderWidth: 1,
+                    borderColor: "#ececec",
+                    backgroundColor: "#fafafa",
+                  }}
+                >
+                  <View style={{ gap: 2 }}>
+                    <Text style={{ color: "#111", fontSize: 13, fontWeight: "800" }}>
+                      Debug tuning
+                    </Text>
+                    <Text style={{ color: "#666", fontSize: 12 }}>
+                      Temporary live Apple Vision parameters for visual tuning.
+                    </Text>
+                  </View>
+                  <DebugTuneRow
+                    label="Threshold"
+                    value={debugThreshold}
+                    min={0.5}
+                    max={0.75}
+                    step={0.01}
+                    decimals={2}
+                    useNativeSlider={useNativeSlider}
+                    onNativeError={handleNativeSliderError}
+                    onChange={onDebugThresholdChange}
+                  />
+                  <DebugTuneRow
+                    label="Cleanup radius"
+                    value={debugCleanupRadius}
+                    min={0}
+                    max={4}
+                    step={1}
+                    decimals={0}
+                    useNativeSlider={useNativeSlider}
+                    onNativeError={handleNativeSliderError}
+                    onChange={onDebugCleanupRadiusChange}
+                  />
+                  <DebugTuneRow
+                    label="Feather"
+                    value={debugFeather}
+                    min={0}
+                    max={3}
+                    step={1}
+                    decimals={0}
+                    useNativeSlider={useNativeSlider}
+                    onNativeError={handleNativeSliderError}
+                    onChange={onDebugFeatherChange}
+                  />
+                  <DebugTuneRow
+                    label="Edge tighten"
+                    value={debugEdgeTighten}
+                    min={0}
+                    max={0.15}
+                    step={0.01}
+                    decimals={2}
+                    useNativeSlider={useNativeSlider}
+                    onNativeError={handleNativeSliderError}
+                    onChange={onDebugEdgeTightenChange}
+                  />
+                </View>
                 <Text style={{ color: "#666", fontSize: 12 }}>
                   Drag to remove leftover background. Release for final quality.
                 </Text>
               </>
-            ) : null}
-            <Pressable
-              onPress={() => setIsModalVisible(false)}
-              style={{
-                marginTop: 4,
-                paddingVertical: 14,
-                borderRadius: 14,
-                backgroundColor: "#111",
-              }}
-            >
-              <Text style={{ textAlign: "center", color: "#fff", fontWeight: "800" }}>
-                Done
+            ) : (
+              <Text style={{ color: "#666", fontSize: 12 }}>
+                Refine becomes available after a removable cutout is ready.
               </Text>
-            </Pressable>
+            )}
           </View>
         </View>
+        </SafeScreen>
       </Modal>
     </>
   );
@@ -544,6 +799,11 @@ const editorButton = {
   backgroundColor: "#fff",
   alignItems: "center" as const,
   justifyContent: "center" as const,
+};
+
+const activePreviewButton = {
+  borderColor: "#111",
+  backgroundColor: "#f3f4f6",
 };
 
 const editorButtonText = {
