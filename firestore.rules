@@ -46,6 +46,10 @@ service cloud.firestore {
       return value == null || value is bool;
     }
 
+    function validOptionalMap(value) {
+      return value == null || value is map;
+    }
+
     function validCrop(value) {
       return value == null || (
         value is map
@@ -88,6 +92,9 @@ service cloud.firestore {
       return data is map
         && (!changed.hasAny(["status"]) || validStatus(data.status))
         && (!changed.hasAny(["category"]) || validCategory(data.category))
+        && (!changed.hasAny(["subCategory"]) || validOptionalString(data.subCategory))
+        && (!changed.hasAny(["brand"]) || validOptionalString(data.brand))
+        && (!changed.hasAny(["name"]) || validOptionalString(data.name))
         && (!changed.hasAny(["wearCountSinceWash"]) || validWearCount(data.wearCountSinceWash))
         && (!changed.hasAny(["colorSource"]) || validColorSource(data.colorSource))
         && (!changed.hasAny(["colorUpdatedAt"]) || data.colorUpdatedAt is number)
@@ -104,7 +111,13 @@ service cloud.firestore {
         && (!changed.hasAny(["cleanedUpdatedAt"]) || data.cleanedUpdatedAt is number)
         && (!changed.hasAny(["priceAmount"]) || validOptionalNumber(data.priceAmount))
         && (!changed.hasAny(["priceCurrency"]) || validOptionalString(data.priceCurrency))
+        && (!changed.hasAny(["purchaseDate"]) || validOptionalString(data.purchaseDate))
+        && (!changed.hasAny(["size"]) || validOptionalString(data.size))
+        && (!changed.hasAny(["notes"]) || validOptionalString(data.notes))
+        && (!changed.hasAny(["careTags"]) || data.careTags == null || data.careTags is list)
         && (!changed.hasAny(["lastWashedAt"]) || validOptionalNumber(data.lastWashedAt))
+        && (!changed.hasAny(["lastWornDate"]) || validOptionalString(data.lastWornDate))
+        && (!changed.hasAny(["lastWashedDate"]) || validOptionalString(data.lastWashedDate))
         && (!changed.hasAny(["pattern"]) || validOptionalString(data.pattern))
         && (!changed.hasAny(["material"]) || validOptionalString(data.material))
         && (!changed.hasAny(["occasionTags"]) || data.occasionTags == null || data.occasionTags is list)
@@ -113,6 +126,21 @@ service cloud.firestore {
         && (!changed.hasAny(["rise"]) || validOptionalString(data.rise))
         && (!changed.hasAny(["legShape"]) || validOptionalString(data.legShape))
         && (!changed.hasAny(["warmthPreference"]) || validOptionalNumber(data.warmthPreference))
+        && (!changed.hasAny(["photoUrl"]) || validOptionalString(data.photoUrl))
+        && (!changed.hasAny(["photoUri"]) || validOptionalString(data.photoUri))
+        && (!changed.hasAny(["createdAt"]) || validOptionalNumber(data.createdAt))
+        && (!changed.hasAny(["isDraft"]) || validOptionalBool(data.isDraft))
+        && (!changed.hasAny(["wearSlot"]) || validOptionalString(data.wearSlot))
+        && (!changed.hasAny(["brandConfidence"]) || validOptionalNumber(data.brandConfidence))
+        && (!changed.hasAny(["brandEvidence"]) || validOptionalString(data.brandEvidence))
+        && (!changed.hasAny(["brandCandidates"]) || data.brandCandidates == null || data.brandCandidates is list)
+        && (!changed.hasAny(["brandSource"]) || validOptionalString(data.brandSource))
+        && (!changed.hasAny(["brandUpdatedAt"]) || validOptionalNumber(data.brandUpdatedAt))
+        && (!changed.hasAny(["ingestionStatus"]) || validOptionalString(data.ingestionStatus))
+        && (!changed.hasAny(["ingestion"]) || validOptionalMap(data.ingestion))
+        && (!changed.hasAny(["ingestionSource"]) || validOptionalMap(data.ingestionSource))
+        && (!changed.hasAny(["cleanedFromHash"]) || validOptionalString(data.cleanedFromHash))
+        && (!changed.hasAny(["updatedAt"]) || data.updatedAt is number)
         && (!changed.hasAny(["photos"]) || validPhotosMap(data.photos))
         && (!changed.hasAny(["uid"]) || data.uid == uid)
         && noForeignUidField(data, uid);

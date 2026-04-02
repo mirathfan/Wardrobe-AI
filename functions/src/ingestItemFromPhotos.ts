@@ -68,7 +68,15 @@ type ItemDoc = {
     lastRunAt?: Timestamp | { toMillis?: () => number } | number | null;
     error?: { message: string; code?: string };
     lastProcessedPhotoHash?: string;
+    lastProcessedSourceHash?: string;
+    runId?: string;
   };
+  ingestionStatus?: string | null;
+  ingestionSource?: {
+    sourceHash?: string;
+    sourceType?: string;
+  };
+  cleanedFromHash?: string;
 };
 
 type RawExtraction = {
@@ -213,6 +221,17 @@ function extractPhotoUrls(item: ItemDoc): string[] {
   return deduped.filter((url) => /^https?:\/\//i.test(url));
 }
 
+function extractIngestionSourceUrls(item: ItemDoc): string[] {
+  const values = [
+    item.photos?.primaryUrl ?? "",
+    ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
+    item.photoUrl ?? "",
+    item.photoUri ?? "",
+  ];
+  const deduped = Array.from(new Set(values.map((v) => String(v).trim()).filter(Boolean)));
+  return deduped.filter((url) => /^https?:\/\//i.test(url));
+}
+
 function hashPhotoUrls(urls: string[]): string {
   return createHash("sha1").update(urls.join("|")).digest("hex");
 }
@@ -325,6 +344,21 @@ function inferCategoryFromSubCategory(subCategory: string | null): Category | nu
     }
   }
   return null;
+}
+
+function hasBottomGarmentCue(params: {
+  subCategory: string | null;
+  rise: string | null;
+  legShape: string | null;
+  bbox?: RawExtraction["bbox"];
+}): boolean {
+  const inferredCategory = inferCategoryFromSubCategory(params.subCategory);
+  if (inferredCategory === Category.BOTTOM) return true;
+  if (params.rise && params.rise !== "unknown") return true;
+  if (params.legShape && params.legShape !== "unknown") return true;
+  const bboxW = Number(params.bbox?.w ?? 0);
+  const bboxH = Number(params.bbox?.h ?? 0);
+  return bboxW > 0 && bboxH > 0 && bboxH / bboxW >= 1.45;
 }
 
 function toTitleCase(value: string): string {
@@ -767,38 +801,119 @@ export const ingestItemFromPhotos = onDocumentWritten(
     if (!after) return;
 
     const photoUrls = extractPhotoUrls(after);
-    if (photoUrls.length === 0) {
+    const hasPhoto = photoUrls.length > 0 || !!String(after.photoUrl ?? "").trim();
+    const status = (after.ingestion?.status ?? after.ingestionStatus ?? "")
+      .toString()
+      .trim()
+      .toLowerCase() as IngestionStatus | "";
+    logger.info("INGEST CHECK", {
+      uid,
+      itemId,
+      status: status || null,
+      photoUrl: String(after.photoUrl ?? "").trim() || null,
+      photosPrimaryUrl: String(after.photos?.primaryUrl ?? "").trim() || null,
+      photosUrls: Array.isArray(after.photos?.urls) ? after.photos?.urls : [],
+      extractedPhotoUrls: photoUrls,
+      hasPhoto,
+    });
+    if (!hasPhoto) {
       logger.info("Skipping ingestion: no photo URLs", {uid, itemId});
       return;
     }
 
+    const sourceUrls = extractIngestionSourceUrls(after);
+    const beforeSourceUrls = before ? extractIngestionSourceUrls(before) : [];
     const photoHash = hashPhotoUrls(photoUrls);
-    const status = String(after.ingestion?.status ?? "").trim() as IngestionStatus | "";
+    const declaredSourceHash = String(after.ingestionSource?.sourceHash ?? "").trim() || null;
+    const currentSourceHash = sourceUrls.length ? hashPhotoUrls(sourceUrls) : "";
+    const previousSourceHash = beforeSourceUrls.length ? hashPhotoUrls(beforeSourceUrls) : "";
     const existingColorSource = String(after.colorSource ?? "").trim().toLowerCase();
     const hasUserColorOverride = existingColorSource === "user";
     const existingBrandSource = String(after.brandSource ?? "").trim().toLowerCase();
     const hasUserBrandOverride = existingBrandSource === "user";
     const lastRunAtMs = toMillis(after.ingestion?.lastRunAt);
-    const lastHash = after.ingestion?.lastProcessedPhotoHash ?? before?.ingestion?.lastProcessedPhotoHash ?? "";
-    const hasNewPhoto = lastHash !== photoHash;
+    const beforeStatus = (before?.ingestion?.status ?? before?.ingestionStatus ?? "")
+      .toString()
+      .trim()
+      .toLowerCase() as IngestionStatus | "";
+    const processedPhotoHash =
+      String(after.ingestion?.lastProcessedPhotoHash ?? before?.ingestion?.lastProcessedPhotoHash ?? "").trim();
+    const processedSourceHash =
+      String(after.ingestion?.lastProcessedSourceHash ?? before?.ingestion?.lastProcessedSourceHash ?? "").trim();
+    const hasNewPhoto =
+      !!currentSourceHash &&
+      (!processedSourceHash || currentSourceHash !== processedSourceHash);
+    const isCreate = !before;
+    const hasSourcePhoto = sourceUrls.length > 0;
+    const alreadyProcessedCurrentSource =
+      !!currentSourceHash && !!processedSourceHash && currentSourceHash === processedSourceHash;
 
     const retryBlocked =
       status === "failed" &&
-      !hasNewPhoto &&
+      alreadyProcessedCurrentSource &&
       !!lastRunAtMs &&
       Date.now() - lastRunAtMs < HOUR_MS;
 
-    const shouldRun =
-      (!status || status === "pending") ||
-      ((status === "done" || status === "processing" || status === "failed") && hasNewPhoto);
+    const explicitRetryRequested =
+      status === "pending" &&
+      beforeStatus === "failed" &&
+      alreadyProcessedCurrentSource;
 
-    if (!shouldRun || retryBlocked) {
+    const shouldRun =
+      hasSourcePhoto &&
+      !retryBlocked &&
+      (
+        isCreate ||
+        !status ||
+        !currentSourceHash ||
+        !processedSourceHash ||
+        !alreadyProcessedCurrentSource ||
+        explicitRetryRequested
+      );
+
+    logger.info("Ingestion trigger decision", {
+      uid,
+      itemId,
+      beforeExists: !!before,
+      beforeStatus: String(before?.ingestion?.status ?? "").trim() || null,
+      afterStatus: status || null,
+      beforeSourceUrls,
+      afterSourceUrls: sourceUrls,
+      declaredSourceHash,
+      previousSourceHash: previousSourceHash || null,
+      currentSourceHash: currentSourceHash || null,
+      processedPhotoHash: processedPhotoHash || null,
+      processedSourceHash: processedSourceHash || null,
+      hasSourcePhoto,
+      hasNewPhoto,
+      alreadyProcessedCurrentSource,
+      retryBlocked,
+      explicitRetryRequested,
+      shouldRun,
+      skipReason: !hasSourcePhoto
+        ? "missing-source-photo"
+        : retryBlocked
+          ? "recent-failed-same-source"
+          : explicitRetryRequested
+            ? null
+          : shouldRun
+            ? null
+            : "current-source-already-processed",
+    });
+
+    if (!shouldRun) {
       logger.info("Skipping ingestion: conditions not met", {
         uid,
         itemId,
         status: status ?? "missing",
         hasNewPhoto,
         retryBlocked,
+        explicitRetryRequested,
+        declaredSourceHash,
+        previousSourceHash: previousSourceHash || null,
+        currentSourceHash: currentSourceHash || null,
+        processedPhotoHash: processedPhotoHash || null,
+        processedSourceHash: processedSourceHash || null,
       });
       return;
     }
@@ -806,12 +921,25 @@ export const ingestItemFromPhotos = onDocumentWritten(
     const db = getFirestore();
     const ref = db.doc(`users/${uid}/items/${itemId}`);
 
+    if (after.cleanedFromHash === currentSourceHash) {
+      logger.info("Skipping ingestion: cleanedFromHash already matches current source", {
+        uid,
+        itemId,
+        currentSourceHash,
+      });
+      return;
+    }
+
+    const runId = randomUUID();
     logger.info("Ingestion transition", {uid, itemId, from: status ?? "missing", to: "processing"});
     await ref.set({
+      ingestionStatus: "processing",
       ingestion: {
+        runId,
         status: "processing",
         lastRunAt: FieldValue.serverTimestamp(),
         lastProcessedPhotoHash: photoHash,
+        lastProcessedSourceHash: currentSourceHash,
       },
     }, {merge: true});
 
@@ -858,6 +986,22 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const itemLength = normalizeEnum(extracted.length, ALLOWED_LENGTHS);
       const rise = normalizeEnum(extracted.rise, ALLOWED_RISES);
       const legShape = normalizeEnum(extracted.legShape, ALLOWED_LEG_SHAPES);
+
+      if (
+        category === Category.TOP &&
+        hasBottomGarmentCue({
+          subCategory,
+          rise,
+          legShape,
+          bbox: extracted.bbox,
+        })
+      ) {
+        category = Category.BOTTOM;
+        if (!subCategory || !isValidCategorySubCategory(category, subCategory)) {
+          subCategory = "chinos";
+        }
+        warning = "Classifier top result overridden by bottom-garment cues.";
+      }
       const hasLogo = typeof extracted.hasLogo === "boolean" ? extracted.hasLogo : false;
       const logoPlacement = normalizeEnum(
         extracted.logoPlacement,
@@ -965,6 +1109,10 @@ export const ingestItemFromPhotos = onDocumentWritten(
       }
 
       const persistedColorNeedsReview = hasUserColorOverride ? false : colorNeedsReview;
+      const generatedNameColor =
+        finalColors.length > 0
+          ? toTitleCase(String(finalColors[0]))
+          : finalPrimaryColor;
 
       const constrainedScores = applyScoreConstraints(
         category,
@@ -1028,8 +1176,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
           ...(finalColorLabel ? {finalColorLabel} : {}),
           finalPrimaryColor,
           generatedName:
-            !(String(after.name ?? "").trim()) && finalPrimaryColor
-              ? `${finalPrimaryColor} ${humanizeLabel(subCategory || category)}`
+            !(String(after.name ?? "").trim()) && generatedNameColor
+              ? `${generatedNameColor} ${humanizeLabel(subCategory || category)}`
               : null,
           colorSource: hasUserColorOverride ? "user" : "ai",
           formalityScore,
@@ -1040,10 +1188,41 @@ export const ingestItemFromPhotos = onDocumentWritten(
         },
       });
 
+      logger.info("Ingestion final write payload", {
+        uid,
+        itemId,
+        finalWrite: {
+          category,
+          subCategory,
+          colors: finalColors,
+          brand: hasUserBrandOverride ? after.brand ?? null : brand,
+          generatedName:
+            !(String(after.name ?? "").trim()) && generatedNameColor
+              ? `${generatedNameColor} ${humanizeLabel(subCategory || category)}`.trim()
+              : null,
+          ingestionStatus: "done",
+          lastProcessedSourceHash: currentSourceHash,
+        },
+      });
+
+      const latestBeforeDone = await ref.get();
+      const latestRunId = String(latestBeforeDone.get("ingestion.runId") ?? "").trim();
+      if (latestRunId && latestRunId !== runId) {
+        logger.warn("Skipping stale ingestion completion write", {
+          uid,
+          itemId,
+          runId,
+          latestRunId,
+        });
+        return;
+      }
+
       await ref.set({
-        ...(!String(after.name ?? "").trim() && finalPrimaryColor
+        ingestionStatus: "done",
+        cleanedFromHash: currentSourceHash,
+        ...(!String(after.name ?? "").trim() && generatedNameColor
           ? {
-              name: `${finalPrimaryColor} ${humanizeLabel(subCategory || category)}`.trim(),
+              name: `${generatedNameColor} ${humanizeLabel(subCategory || category)}`.trim(),
             }
           : {}),
         category,
@@ -1100,9 +1279,11 @@ export const ingestItemFromPhotos = onDocumentWritten(
           thumbUrl,
         },
         ingestion: {
+          runId,
           status: "done",
           lastRunAt: FieldValue.serverTimestamp(),
           lastProcessedPhotoHash: photoHash,
+          lastProcessedSourceHash: currentSourceHash,
           ...(warning ? {error: {message: warning, code: "warning"}} : {}),
         },
       }, {merge: true});
@@ -1114,16 +1295,46 @@ export const ingestItemFromPhotos = onDocumentWritten(
         to: "done",
         category,
         subCategory,
+        colors: finalColors,
+        brand: hasUserBrandOverride ? after.brand ?? null : brand,
+        processedSourceHash: currentSourceHash,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown ingestion error";
       logger.error("Ingestion failed", {uid, itemId, error: message});
 
+      const latest = await ref.get();
+      const latestStatus = String(
+        latest.get("ingestion.status") ?? latest.get("ingestionStatus") ?? ""
+      ).trim().toLowerCase();
+      const latestRunId = String(latest.get("ingestion.runId") ?? "").trim();
+      if (latestStatus === "done") {
+        logger.warn("Ingestion failure ignored because item is already done", {
+          uid,
+          itemId,
+          error: message,
+        });
+        return;
+      }
+      if (latestRunId && latestRunId !== runId) {
+        logger.warn("Skipping stale ingestion failure write", {
+          uid,
+          itemId,
+          runId,
+          latestRunId,
+          error: message,
+        });
+        return;
+      }
+
       await ref.set({
+        ingestionStatus: "failed",
         ingestion: {
+          runId,
           status: "failed",
           lastRunAt: FieldValue.serverTimestamp(),
           lastProcessedPhotoHash: photoHash,
+          lastProcessedSourceHash: currentSourceHash,
           error: {message},
         },
       }, {merge: true});
