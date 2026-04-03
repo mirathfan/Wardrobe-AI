@@ -24,7 +24,9 @@ import { usePhotoStep } from "./hooks/usePhotoStep";
 import { useAuth } from "../hooks/useAuth";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { db } from "../lib/firebase";
+import { getDefaultSizeForSelection, loadUserProfilePreferences } from "../lib/userProfile";
 import { SUB_CATEGORIES } from "../shared/wardrobeTaxonomy";
+import type { UserProfilePreferences } from "../types/UserProfilePreferences";
 
 export function useAddItemController({
   editItemId,
@@ -38,9 +40,11 @@ export function useAddItemController({
   const isEdit = !!editItemId;
 
   const [createSessionId, setCreateSessionId] = useState(() => makeCreateSessionId());
+  const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
   const photoRef = useRef<any>(null);
   const extractionRef = useRef<any>(null);
   const resetCreateFlowRef = useRef<any>(null);
+  const autoAppliedSizeRef = useRef("");
   const prevEditItemIdRef = useRef<string | null>(null);
   const controllerRenderMetricsRef = useRef({
     lastLogAt: 0,
@@ -77,6 +81,20 @@ export function useAddItemController({
       createSessionRef.current.requestId === token.requestId,
     []
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!uid) {
+      setProfilePreferences(null);
+      return;
+    }
+    void loadUserProfilePreferences(uid).then((profile) => {
+      if (!cancelled) setProfilePreferences(profile);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
 
   const draft = useItemDraft({
     uid,
@@ -134,6 +152,54 @@ export function useAddItemController({
     photo.state.refiningCutout,
     photo.state.serverCleanedUrl,
     photo.state.uploadingPhoto,
+  ]);
+
+  const profileDefaultSize = useMemo(
+    () =>
+      getDefaultSizeForSelection(
+        profilePreferences,
+        draft.state.category ?? draft.derived.selectedCategory,
+        draft.state.subCategory,
+      ),
+    [
+      draft.derived.selectedCategory,
+      draft.state.category,
+      draft.state.subCategory,
+      profilePreferences,
+    ],
+  );
+
+  useEffect(() => {
+    if (isEdit) return;
+    if (draft.refs.userEditedKeysRef.current.has("size")) return;
+    const currentSize = norm(draft.state.size);
+    const nextDefault = norm(profileDefaultSize);
+    const autoAppliedSize = norm(autoAppliedSizeRef.current);
+
+    if (!nextDefault) {
+      if (currentSize && autoAppliedSize && currentSize === autoAppliedSize) {
+        draft.actions.setSize("");
+        autoAppliedSizeRef.current = "";
+      }
+      return;
+    }
+
+    if (!currentSize) {
+      draft.actions.setSize(nextDefault);
+      autoAppliedSizeRef.current = nextDefault;
+      return;
+    }
+
+    if (autoAppliedSize && currentSize === autoAppliedSize && currentSize !== nextDefault) {
+      draft.actions.setSize(nextDefault);
+      autoAppliedSizeRef.current = nextDefault;
+    }
+  }, [
+    draft.actions,
+    draft.refs.userEditedKeysRef,
+    draft.state.size,
+    isEdit,
+    profileDefaultSize,
   ]);
 
   const resetCreateFlow = useCallback(
@@ -282,6 +348,10 @@ export function useAddItemController({
       photo.state.photoUri ??
       null,
     [photo.state.pendingPhotoUri, photo.state.photoUri, photo.state.photoUrl]
+  );
+  const normalizedPreviewUri = useMemo(
+    () => photo.state.pendingNormalizedPreviewUri ?? null,
+    [photo.state.pendingNormalizedPreviewUri]
   );
   const displayedPreviewUri = refinePreviewUri ?? fallbackPreviewUri;
 
@@ -537,6 +607,7 @@ export function useAddItemController({
     PATTERN_OPTIONS,
     CURRENCIES,
     previewPhotoUri: displayedPreviewUri,
+    normalizedPreviewUri,
     refinePreviewUri: displayedPreviewUri,
     cleanedPreviewUri: refinePreviewUri,
     fallbackPreviewUri,

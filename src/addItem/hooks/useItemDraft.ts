@@ -45,6 +45,8 @@ export function useItemDraft({
   const [pattern, setPattern] = useState<string | null>(null);
   const [material, setMaterial] = useState<string | null>(null);
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
+  const [displayColor, setDisplayColor] = useState("");
+  const [displayColors, setDisplayColors] = useState<string[]>([]);
   const [addingCustomColor, setAddingCustomColor] = useState(false);
   const [size, setSize] = useState("");
   const [notes, setNotes] = useState("");
@@ -152,6 +154,8 @@ export function useItemDraft({
           ? subCategory
           : null,
         colors: selectedColors.map(normColor).filter(Boolean),
+        displayColor: norm(displayColor) || null,
+        displayColors: displayColors.map((value) => norm(value) || "").filter(Boolean),
         pattern: norm(pattern ?? "") || null,
         material: norm(material ?? "") || null,
         size: norm(size) || null,
@@ -174,6 +178,8 @@ export function useItemDraft({
   }, [
     brand,
     category,
+    displayColor,
+    displayColors,
     extractionRef,
     fit,
     isEdit,
@@ -207,6 +213,8 @@ export function useItemDraft({
     setPattern(null);
     setMaterial(null);
     setSelectedColors([]);
+    setDisplayColor("");
+    setDisplayColors([]);
     setAddingCustomColor(false);
     setSize("");
     setNotes("");
@@ -239,15 +247,16 @@ export function useItemDraft({
       const itemsRef = collection(db, "users", uid, "items");
       let recentSnap;
       try {
-        recentSnap = await getDocs(query(itemsRef, orderBy("createdAt", "desc"), limit(1)));
+        recentSnap = await getDocs(query(itemsRef, orderBy("createdAt", "desc"), limit(10)));
       } catch {
-        recentSnap = await getDocs(query(itemsRef, orderBy("updatedAt", "desc"), limit(1)));
+        recentSnap = await getDocs(query(itemsRef, orderBy("updatedAt", "desc"), limit(10)));
       }
-      if (!recentSnap || recentSnap.empty) {
+      const latestRealItem = recentSnap?.docs.find((docSnap) => docSnap.data()?.isDraft !== true) ?? null;
+      if (!latestRealItem) {
         Alert.alert("No recent items", "Add at least one item first.");
         return;
       }
-      const data = recentSnap.docs[0].data() as any;
+      const data = latestRealItem.data() as any;
       setBrand(norm(data.brand) || "");
       setName(norm(data.name) || "");
       setCategory(data.category ? normalizeCategoryForStorage(data.category) : null);
@@ -256,6 +265,12 @@ export function useItemDraft({
       setMaterial(norm(data.material) || null);
       setSelectedColors(
         Array.isArray(data.colors) ? data.colors.map(normColor).filter(Boolean) : []
+      );
+      setDisplayColor(norm(data.displayColor) || "");
+      setDisplayColors(
+        Array.isArray(data.displayColors)
+          ? data.displayColors.map((value: unknown) => norm(String(value ?? "")) || "").filter(Boolean)
+          : []
       );
       setSize(norm(data.size) || "");
       setPriceAmount(
@@ -285,6 +300,8 @@ export function useItemDraft({
         "pattern",
         "material",
         "colors",
+        "displayColor",
+        "displayColors",
         "fit",
         "rise",
         "legShape",
@@ -349,6 +366,8 @@ export function useItemDraft({
         wearSlot: wearSlot(category ?? Category.TOP),
         colors: selectedColors.map(normColor).filter(Boolean),
         primaryColor: normColor(selectedColors[0] ?? ""),
+        displayColor: norm(displayColor) || null,
+        displayColors: displayColors.map((value) => norm(value) || "").filter(Boolean),
         pattern: norm(pattern ?? "") || null,
         material: norm(material ?? "") || null,
         size: norm(size) || null,
@@ -374,8 +393,10 @@ export function useItemDraft({
       if (isEdit) {
         const updatePayload: Record<string, any> = {
           ...payload,
+          "photos.originalUrl": nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           "photos.primaryUrl": nextPhoto.photoUrl,
           "photos.urls": nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
+          draftState: "ready",
           ...(photo.state.pendingPhotoUri
             ? {
                 ingestion: {
@@ -385,8 +406,12 @@ export function useItemDraft({
               }
             : {}),
         };
-        if (nextPhoto.cleanedPhotoUrl) {
-          updatePayload["photos.cleanedPhotoUrl"] = nextPhoto.cleanedPhotoUrl;
+        if (nextPhoto.cleanedUrl) {
+          updatePayload["photos.cleanedUrl"] = nextPhoto.cleanedUrl;
+          updatePayload["photos.cleanedSource"] = "vision";
+        }
+        if (nextPhoto.normalizedUrl) {
+          updatePayload["photos.normalizedUrl"] = nextPhoto.normalizedUrl;
         }
         await updateDoc(itemRef, updatePayload);
         Alert.alert("Saved ✅", "Item updated.");
@@ -397,13 +422,19 @@ export function useItemDraft({
       if (draftItemId) {
         const updatePayload: Record<string, any> = {
           ...payload,
+          "photos.originalUrl": nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           "photos.primaryUrl": nextPhoto.photoUrl,
           "photos.urls": nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
           isDraft: false,
+          draftState: "ready",
           updatedAt: Date.now(),
         };
-        if (nextPhoto.cleanedPhotoUrl) {
-          updatePayload["photos.cleanedPhotoUrl"] = nextPhoto.cleanedPhotoUrl;
+        if (nextPhoto.cleanedUrl) {
+          updatePayload["photos.cleanedUrl"] = nextPhoto.cleanedUrl;
+          updatePayload["photos.cleanedSource"] = "vision";
+        }
+        if (nextPhoto.normalizedUrl) {
+          updatePayload["photos.normalizedUrl"] = nextPhoto.normalizedUrl;
         }
         if (
           photo.state.pendingPhotoUri &&
@@ -423,11 +454,18 @@ export function useItemDraft({
       await setDoc(itemRef, {
         ...payload,
         photos: {
+          originalUrl: nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           primaryUrl: nextPhoto.photoUrl,
           urls: nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
-          ...(nextPhoto.cleanedPhotoUrl
+          ...(nextPhoto.cleanedUrl
             ? {
-                cleanedPhotoUrl: nextPhoto.cleanedPhotoUrl,
+                cleanedUrl: nextPhoto.cleanedUrl,
+                cleanedSource: "vision",
+              }
+            : {}),
+          ...(nextPhoto.normalizedUrl
+            ? {
+                normalizedUrl: nextPhoto.normalizedUrl,
               }
             : {}),
         },
@@ -437,6 +475,8 @@ export function useItemDraft({
         lastWornDate: null,
         lastWashedDate: null,
         lastWashedAt: null,
+        isDraft: false,
+        draftState: "ready",
         ingestion: {
           status: "pending",
           lastRunAt: Date.now(),
@@ -466,6 +506,8 @@ export function useItemDraft({
     material,
     name,
     notes,
+    displayColor,
+    displayColors,
     occasionTags,
     parsePriceToNumber,
     parsePurchaseDate,
@@ -520,6 +562,12 @@ export function useItemDraft({
               ? [normColor(data.primaryColor)]
               : [];
         setSelectedColors(loadedColors);
+        setDisplayColor(norm(data.displayColor) || "");
+        setDisplayColors(
+          Array.isArray(data.displayColors)
+            ? data.displayColors.map((value: unknown) => norm(String(value ?? "")) || "").filter(Boolean)
+            : []
+        );
         setAddingCustomColor(false);
         setSize(data.size ?? "");
         setNotes(data.notes ?? "");
@@ -569,6 +617,8 @@ export function useItemDraft({
     pattern,
     material,
     selectedColors,
+    displayColor,
+    displayColors,
     addingCustomColor,
     size,
     notes,
@@ -603,6 +653,8 @@ export function useItemDraft({
     setPattern,
     setMaterial,
     setSelectedColors,
+    setDisplayColor,
+    setDisplayColors,
     setAddingCustomColor,
     setSize,
     setNotes,

@@ -23,6 +23,20 @@ import { detectBrandLogo } from "../../lib/detectBrandLogo";
 import { db } from "../../lib/firebase";
 import { uploadItemPhoto } from "../../lib/uploadImage";
 
+type UploadedPhotoRecord = {
+  itemId: string;
+  photoHash: string;
+  originalUrl: string;
+  primaryUrl: string;
+  cleanedUrl: string | null;
+  normalizedUrl: string | null;
+  cleanedSource: "vision" | null;
+};
+
+const MIN_USABLE_CUTOUT_TRANSPARENCY = 0.05;
+const TRIM_GUARD_PIXELS = 2;
+const NORMALIZED_CANVAS_PADDING_RATIO = 0.14;
+
 export function usePhotoStep({
   uid,
   isEdit,
@@ -48,6 +62,9 @@ export function usePhotoStep({
   const [pendingCutoutHasTransparency, setPendingCutoutHasTransparency] = useState(false);
   const [pendingCutoutTransparencyRatio, setPendingCutoutTransparencyRatio] = useState(0);
   const [pendingCutoutMaskUri, setPendingCutoutMaskUri] = useState<string | null>(null);
+  const [pendingNormalizedPreviewUri, setPendingNormalizedPreviewUri] = useState<string | null>(
+    null
+  );
   const [autofillCutoutUri, setAutofillCutoutUri] = useState<string | null>(null);
   const [pendingPhotoWidth, setPendingPhotoWidth] = useState<number | null>(null);
   const [originalPickedPhotoUri, setOriginalPickedPhotoUri] = useState<string | null>(null);
@@ -62,6 +79,7 @@ export function usePhotoStep({
   const [pendingPhotoHash, setPendingPhotoHash] = useState<string | null>(null);
   const [detectedBrand, setDetectedBrand] = useState<string | null>(null);
   const [detectedBrandConfidence, setDetectedBrandConfidence] = useState<number | null>(null);
+  const [uploadedPhotoRecord, setUploadedPhotoRecord] = useState<UploadedPhotoRecord | null>(null);
 
   const lastCompletedRefineKeyRef = useRef("");
   const latestRefineRequestIdRef = useRef(0);
@@ -77,6 +95,7 @@ export function usePhotoStep({
     setPendingCutoutHasTransparency(false);
     setPendingCutoutTransparencyRatio(0);
     setPendingCutoutMaskUri(null);
+    setPendingNormalizedPreviewUri(null);
     setAutofillCutoutUri(null);
   }, []);
 
@@ -85,6 +104,7 @@ export function usePhotoStep({
       reason: string,
       payload: {
         cutoutUri: string | null;
+        previewUri?: string | null;
         maskUri?: string | null;
         hasTransparency?: boolean;
         transparentPixelRatio?: number;
@@ -93,25 +113,40 @@ export function usePhotoStep({
     ) => {
       const {
         cutoutUri,
+        previewUri = null,
         maskUri = null,
         hasTransparency = false,
         transparentPixelRatio = 0,
         updateAutofillCutout = true,
       } = payload;
       setPendingCleanedPhotoUri(cutoutUri);
+      setPendingNormalizedPreviewUri(previewUri);
       setPendingCutoutHasTransparency(hasTransparency);
       setPendingCutoutTransparencyRatio(transparentPixelRatio);
       setPendingCutoutMaskUri(maskUri);
       if (updateAutofillCutout) {
         setAutofillCutoutUri(cutoutUri);
       }
-      void reason;
+      if (__DEV__) {
+        console.log("[AddItemPreview] commitPendingCutoutState", {
+          reason,
+          cleanedUri: cutoutUri,
+          normalizedUri: previewUri,
+          maskUri,
+          hasTransparency,
+          transparentPixelRatio,
+          updateAutofillCutout,
+        });
+      }
     },
     []
   );
 
   const previewPhotoUri =
-    pendingCleanedPhotoUri ??
+    (pendingCutoutHasTransparency &&
+    pendingCutoutTransparencyRatio >= MIN_USABLE_CUTOUT_TRANSPARENCY
+      ? pendingNormalizedPreviewUri ?? pendingCleanedPhotoUri
+      : null) ??
     pendingPhotoUri ??
     cleanedPhotoUrl ??
     serverCleanedUrl ??
@@ -193,6 +228,122 @@ export function usePhotoStep({
     []
   );
 
+  const buildNormalizedPreviewCutout = useCallback(
+    async (params: {
+      cutoutUri: string;
+      contentBounds?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      } | null;
+      imageWidth?: number | null;
+      imageHeight?: number | null;
+    }) => {
+      const { cutoutUri, contentBounds, imageWidth, imageHeight } = params;
+      if (__DEV__) {
+        console.log("[AddItemPreview] normalized:start", {
+          cutoutUri,
+          imageWidth,
+          imageHeight,
+          contentBounds,
+        });
+      }
+      if (!contentBounds || !imageWidth || !imageHeight) {
+        if (__DEV__) {
+          console.log("[AddItemPreview] normalized:fallback", {
+            reason: "missing_content_bounds_or_dimensions",
+            fallbackUri: cutoutUri,
+          });
+        }
+        return cutoutUri;
+      }
+
+      const sourceWidth = Math.max(1, Math.round(imageWidth));
+      const sourceHeight = Math.max(1, Math.round(imageHeight));
+      const rawX = Math.max(0, Math.round(contentBounds.x));
+      const rawY = Math.max(0, Math.round(contentBounds.y));
+      const rawWidth = Math.max(1, Math.round(contentBounds.width));
+      const rawHeight = Math.max(1, Math.round(contentBounds.height));
+      const trimOriginX = Math.max(0, rawX - TRIM_GUARD_PIXELS);
+      const trimOriginY = Math.max(0, rawY - TRIM_GUARD_PIXELS);
+      const trimWidth = Math.min(
+        sourceWidth - trimOriginX,
+        rawWidth + TRIM_GUARD_PIXELS * 2
+      );
+      const trimHeight = Math.min(
+        sourceHeight - trimOriginY,
+        rawHeight + TRIM_GUARD_PIXELS * 2
+      );
+
+      if (trimWidth <= 0 || trimHeight <= 0) {
+        if (__DEV__) {
+          console.log("[AddItemPreview] normalized:fallback", {
+            reason: "invalid_trim_size",
+            trimWidth,
+            trimHeight,
+            fallbackUri: cutoutUri,
+          });
+        }
+        return cutoutUri;
+      }
+
+      const trimmed = await ImageManipulator.manipulateAsync(
+        cutoutUri,
+        [{ crop: { originX: trimOriginX, originY: trimOriginY, width: trimWidth, height: trimHeight } }],
+        { compress: 1, format: ImageManipulator.SaveFormat.PNG }
+      );
+
+      const trimmedWidth = Math.max(1, Math.round(trimmed.width ?? trimWidth));
+      const trimmedHeight = Math.max(1, Math.round(trimmed.height ?? trimHeight));
+      const maxTrimmedDimension = Math.max(trimmedWidth, trimmedHeight);
+      const canvasSize = Math.max(
+        trimmedWidth,
+        trimmedHeight,
+        Math.round(maxTrimmedDimension * (1 + NORMALIZED_CANVAS_PADDING_RATIO * 2))
+      );
+      const centeredX = Math.round((canvasSize - trimmedWidth) / 2);
+      const centeredY = Math.round((canvasSize - trimmedHeight) / 2);
+
+      if (__DEV__) {
+        console.log("[AddItemPreview] normalized:trimmed", {
+          trimmedSize: `${trimmedWidth}x${trimmedHeight}`,
+          trimOrigin: { x: trimOriginX, y: trimOriginY },
+          canvasSize,
+          centeredOrigin: { x: centeredX, y: centeredY },
+        });
+      }
+
+      const normalized = await ImageManipulator.manipulateAsync(
+        trimmed.uri,
+        [
+          {
+            extent: {
+              originX: centeredX,
+              originY: centeredY,
+              width: canvasSize,
+              height: canvasSize,
+              backgroundColor: "#00000000",
+            },
+          },
+        ],
+        { compress: 1, format: ImageManipulator.SaveFormat.PNG }
+      );
+
+      if (__DEV__) {
+        console.log("[AddItemPreview] normalized:success", {
+          normalizedUri: normalized.uri,
+          cutoutUri,
+          normalizedSize: `${canvasSize}x${canvasSize}`,
+          distinctFromCutout: normalized.uri !== cutoutUri,
+        });
+      }
+
+      return normalized.uri || trimmed.uri || cutoutUri;
+    },
+    []
+  );
+
   const runBackgroundRemoval = useCallback(
     async (params: {
       inputUri: string;
@@ -243,13 +394,29 @@ export function usePhotoStep({
       if (requestId !== latestRefineRequestIdRef.current) {
         return;
       }
+      const usableCutout =
+        cutout.hasTransparency &&
+        cutout.transparentPixelRatio >= MIN_USABLE_CUTOUT_TRANSPARENCY;
+      const previewCutoutUri =
+        usableCutout
+          ? await buildNormalizedPreviewCutout({
+              cutoutUri: cutout.uri,
+              contentBounds: cutout.contentBounds,
+              imageWidth: cutout.width,
+              imageHeight: cutout.height,
+            })
+          : null;
       commitPendingCutoutState("retry", {
-        cutoutUri: cutout.uri,
-        maskUri: cutout.maskUri,
-        hasTransparency: cutout.hasTransparency,
-        transparentPixelRatio: cutout.transparentPixelRatio,
+        cutoutUri: usableCutout ? cutout.uri : null,
+        previewUri: previewCutoutUri,
+        maskUri: usableCutout ? cutout.maskUri : null,
+        hasTransparency: usableCutout ? cutout.hasTransparency : false,
+        transparentPixelRatio: usableCutout ? cutout.transparentPixelRatio : 0,
       });
       setCleanedPhotoUrl(null);
+      if (!usableCutout) {
+        setBgRemovalError("BG removal failed");
+      }
       lastCompletedRefineKeyRef.current = getRefineRequestKey(
         originalPickedPhotoUri,
         refineValue
@@ -262,6 +429,7 @@ export function usePhotoStep({
       }
     }
   }, [
+    buildNormalizedPreviewCutout,
     canRefineCutout,
     commitPendingCutoutState,
     originalPickedPhotoUri,
@@ -307,15 +475,31 @@ export function usePhotoStep({
           if (requestId !== latestRefineRequestIdRef.current) {
             return;
           }
+          const usableCutout =
+            cutout.hasTransparency &&
+            cutout.transparentPixelRatio >= MIN_USABLE_CUTOUT_TRANSPARENCY;
+          const previewCutoutUri =
+            usableCutout
+              ? await buildNormalizedPreviewCutout({
+                  cutoutUri: cutout.uri,
+                  contentBounds: cutout.contentBounds,
+                  imageWidth: cutout.width,
+                  imageHeight: cutout.height,
+                })
+              : null;
           lastCompletedRefineKeyRef.current = requestKey;
           commitPendingCutoutState("refine", {
-            cutoutUri: cutout.uri,
-            maskUri: cutout.maskUri,
-            hasTransparency: cutout.hasTransparency,
-            transparentPixelRatio: cutout.transparentPixelRatio,
+            cutoutUri: usableCutout ? cutout.uri : null,
+            previewUri: previewCutoutUri,
+            maskUri: usableCutout ? cutout.maskUri : null,
+            hasTransparency: usableCutout ? cutout.hasTransparency : false,
+            transparentPixelRatio: usableCutout ? cutout.transparentPixelRatio : 0,
             updateAutofillCutout: immediate,
           });
           setCleanedPhotoUrl(null);
+          if (!usableCutout) {
+            setBgRemovalError("BG removal failed");
+          }
         } catch (e) {
           if (requestId === latestRefineRequestIdRef.current) {
             setBgRemovalError("BG removal failed");
@@ -488,6 +672,7 @@ export function usePhotoStep({
       const previousSelectionId = latestPhotoSelectionIdRef.current + 1;
       latestPhotoSelectionIdRef.current = previousSelectionId;
       extraction?.actions?.prepareForNewPhoto?.();
+      setUploadedPhotoRecord(null);
 
       const originalUri = asset.uri;
       const normalized = await normalizeImageForCutout({
@@ -508,6 +693,7 @@ export function usePhotoStep({
 
       const brandPromise = detectBrandLogo(originalUri).catch(() => null);
       let cutoutUri: string | null = null;
+      let previewCutoutUri: string | null = null;
       let cutoutHasTransparency = false;
       let cutoutTransparencyRatio = 0;
       let cutoutMaskUri: string | null = null;
@@ -523,6 +709,23 @@ export function usePhotoStep({
         cutoutHasTransparency = cutout.hasTransparency;
         cutoutTransparencyRatio = cutout.transparentPixelRatio;
         cutoutMaskUri = cutout.maskUri;
+        previewCutoutUri = await buildNormalizedPreviewCutout({
+          cutoutUri: cutout.uri,
+          contentBounds: cutout.contentBounds,
+          imageWidth: cutout.width,
+          imageHeight: cutout.height,
+        });
+        if (
+          !cutoutHasTransparency ||
+          cutoutTransparencyRatio < MIN_USABLE_CUTOUT_TRANSPARENCY
+        ) {
+          cutoutUri = null;
+          previewCutoutUri = null;
+          cutoutHasTransparency = false;
+          cutoutTransparencyRatio = 0;
+          cutoutMaskUri = null;
+          setBgRemovalError("BG removal failed");
+        }
       } catch (error) {
         setBgRemovalError("BG removal failed");
         cutoutUri = null;
@@ -551,6 +754,7 @@ export function usePhotoStep({
       setPendingPhotoUri(normalizedUri);
       commitPendingCutoutState("pick", {
         cutoutUri,
+        previewUri: previewCutoutUri,
         maskUri: cutoutMaskUri,
         hasTransparency: cutoutHasTransparency,
         transparentPixelRatio: cutoutTransparencyRatio,
@@ -591,6 +795,7 @@ export function usePhotoStep({
     clearPendingCutoutState,
     commitPendingCutoutState,
     draft,
+    buildNormalizedPreviewCutout,
     extractionRef,
     isEdit,
     normalizeImageForCutout,
@@ -599,9 +804,31 @@ export function usePhotoStep({
   ]);
 
   const resolvePhotoFields = useCallback(async (currentUid: string, itemId: string) => {
+    const reusableUpload =
+      !!pendingPhotoHash &&
+      uploadedPhotoRecord &&
+      uploadedPhotoRecord.itemId === itemId &&
+      uploadedPhotoRecord.photoHash === pendingPhotoHash;
+    if (reusableUpload) {
+      setPhotoUrl(uploadedPhotoRecord.primaryUrl);
+      setCleanedPhotoUrl(uploadedPhotoRecord.cleanedUrl);
+      setServerCleanedUrl(uploadedPhotoRecord.cleanedUrl);
+      setPendingNormalizedPreviewUri(uploadedPhotoRecord.normalizedUrl);
+      syncedPreviewUriRef.current = pendingPhotoUri;
+      setUploadError(null);
+      return {
+        originalUrl: uploadedPhotoRecord.originalUrl,
+        photoUrl: uploadedPhotoRecord.primaryUrl,
+        photoUri: null,
+        cleanedPhotoUrl: uploadedPhotoRecord.cleanedUrl,
+        cleanedUrl: uploadedPhotoRecord.cleanedUrl,
+        normalizedUrl: uploadedPhotoRecord.normalizedUrl,
+      };
+    }
+
     const needsUpload =
       !!pendingPhotoUri &&
-      (!photoUrl || syncedPreviewUriRef.current !== pendingPhotoUri);
+      (!photoUrl || !pendingPhotoHash || !uploadedPhotoRecord || uploadedPhotoRecord.photoHash !== pendingPhotoHash);
     if (needsUpload) {
       const attemptId = beginUploadAttempt("resolve-photo-fields");
       try {
@@ -611,6 +838,7 @@ export function usePhotoStep({
             itemId,
             localUri: pendingPhotoUri,
             cleanedLocalUri: pendingCleanedPhotoUri,
+            normalizedLocalUri: pendingNormalizedPreviewUri,
             originalWidth: pendingPhotoWidth,
           }),
           UPLOAD_TIMEOUT_MS,
@@ -618,13 +846,28 @@ export function usePhotoStep({
         );
         setPhotoUrl(uploadedUrl.primaryUrl);
         setCleanedPhotoUrl(uploadedUrl.cleanedUrl);
+        setServerCleanedUrl(uploadedUrl.cleanedUrl);
+        setPendingNormalizedPreviewUri(uploadedUrl.normalizedUrl);
+        if (pendingPhotoHash) {
+          setUploadedPhotoRecord({
+            itemId,
+            photoHash: pendingPhotoHash,
+            originalUrl: uploadedUrl.originalUrl,
+            primaryUrl: uploadedUrl.primaryUrl,
+            cleanedUrl: uploadedUrl.cleanedUrl,
+            normalizedUrl: uploadedUrl.normalizedUrl,
+            cleanedSource: uploadedUrl.cleanedUrl ? "vision" : null,
+          });
+        }
         syncedPreviewUriRef.current = pendingPhotoUri;
         setUploadError(null);
         return {
+          originalUrl: uploadedUrl.originalUrl,
           photoUrl: uploadedUrl.primaryUrl,
           photoUri: null,
           cleanedPhotoUrl: uploadedUrl.cleanedUrl,
-          cleanedUrl: serverCleanedUrl,
+          cleanedUrl: uploadedUrl.cleanedUrl,
+          normalizedUrl: uploadedUrl.normalizedUrl,
         };
       } catch (error) {
         const message =
@@ -637,28 +880,35 @@ export function usePhotoStep({
     }
     if (!photoUrl && !photoUri) {
       return {
+        originalUrl: photoUrl,
         photoUrl: null,
         photoUri: null,
         cleanedPhotoUrl,
         cleanedUrl: serverCleanedUrl,
+        normalizedUrl: pendingNormalizedPreviewUri,
       };
     }
     return {
+      originalUrl: photoUrl,
       photoUrl,
       photoUri,
       cleanedPhotoUrl,
       cleanedUrl: serverCleanedUrl,
+      normalizedUrl: pendingNormalizedPreviewUri,
     };
   }, [
     beginUploadAttempt,
     cleanedPhotoUrl,
     endUploadAttempt,
     pendingCleanedPhotoUri,
+    pendingNormalizedPreviewUri,
     pendingPhotoUri,
     pendingPhotoWidth,
     photoUri,
     photoUrl,
     serverCleanedUrl,
+    uploadedPhotoRecord,
+    pendingPhotoHash,
   ]);
 
   const retryPhotoUpload = useCallback(async () => {
@@ -674,6 +924,7 @@ export function usePhotoStep({
             itemId: extraction.state.draftItemId,
             localUri: pendingPhotoUri,
             cleanedLocalUri: pendingCleanedPhotoUri,
+            normalizedLocalUri: pendingNormalizedPreviewUri,
             originalWidth: pendingPhotoWidth,
           }),
           UPLOAD_TIMEOUT_MS,
@@ -682,11 +933,21 @@ export function usePhotoStep({
         await updateDoc(doc(db, "users", uid, "items", extraction.state.draftItemId), {
           photoUrl: uploaded.primaryUrl,
           updatedAt: Date.now(),
+          "photos.originalUrl": uploaded.originalUrl,
           "photos.primaryUrl": uploaded.primaryUrl,
           "photos.urls": [uploaded.primaryUrl],
           ...(uploaded.cleanedUrl
-            ? { "photos.cleanedPhotoUrl": uploaded.cleanedUrl }
+            ? {
+                "photos.cleanedUrl": uploaded.cleanedUrl,
+                "photos.cleanedSource": uploaded.cleanedSource,
+              }
             : {}),
+          ...(uploaded.normalizedUrl
+            ? {
+                "photos.normalizedUrl": uploaded.normalizedUrl,
+              }
+            : {}),
+          draftState: "photo_uploaded",
           ingestion: {
             status: "pending",
             lastRunAt: Date.now(),
@@ -694,6 +955,19 @@ export function usePhotoStep({
         });
         setPhotoUrl(uploaded.primaryUrl);
         setCleanedPhotoUrl(uploaded.cleanedUrl);
+        setServerCleanedUrl(uploaded.cleanedUrl);
+        setPendingNormalizedPreviewUri(uploaded.normalizedUrl);
+        if (pendingPhotoHash) {
+          setUploadedPhotoRecord({
+            itemId: extraction.state.draftItemId,
+            photoHash: pendingPhotoHash,
+            originalUrl: uploaded.originalUrl,
+            primaryUrl: uploaded.primaryUrl,
+            cleanedUrl: uploaded.cleanedUrl,
+            normalizedUrl: uploaded.normalizedUrl,
+            cleanedSource: uploaded.cleanedUrl ? "vision" : null,
+          });
+        }
         syncedPreviewUriRef.current = pendingPhotoUri;
       } else {
         const retryHash =
@@ -703,8 +977,9 @@ export function usePhotoStep({
         await uploadWithTimeout(
           extraction.actions.startDraftAutofill({
             photoHash: retryHash,
-            localPreviewUri: pendingPhotoUri,
+            localPhotoUri: pendingPhotoUri,
             cleanedLocalUri: pendingCleanedPhotoUri,
+            normalizedLocalUri: pendingNormalizedPreviewUri,
             originalWidth: pendingPhotoWidth,
             token,
             runId: extraction.refs.aiRunIdRef.current,
@@ -728,19 +1003,25 @@ export function usePhotoStep({
     extractionRef,
     isEdit,
     pendingCleanedPhotoUri,
+    pendingNormalizedPreviewUri,
     pendingPhotoHash,
     pendingPhotoUri,
     pendingPhotoWidth,
+    pendingPhotoHash,
     uid,
+    uploadedPhotoRecord,
   ]);
 
   const hydrateFromItem = useCallback((data: any) => {
     setPhotoUrl(data.photoUrl ?? null);
     setPhotoUri(data.photoUri ?? null);
-    setCleanedPhotoUrl(data.photos?.cleanedPhotoUrl ?? null);
-    setServerCleanedUrl(data.photos?.cleanedUrl ?? null);
+    const canonicalCleanedUrl = data.photos?.cleanedUrl ?? data.photos?.cleanedPhotoUrl ?? null;
+    setCleanedPhotoUrl(canonicalCleanedUrl);
+    setServerCleanedUrl(canonicalCleanedUrl);
+    setUploadedPhotoRecord(null);
     setPendingPhotoUri(null);
     clearPendingCutoutState("hydrate-from-item");
+    setPendingNormalizedPreviewUri(data.photos?.normalizedUrl ?? data.photos?.previewUrl ?? null);
     setPendingPhotoWidth(null);
     setOriginalPickedPhotoUri(null);
     setRefineValue(DEFAULT_REFINE_VALUE);
@@ -777,6 +1058,7 @@ export function usePhotoStep({
     setPendingPhotoHash(null);
     setDetectedBrand(null);
     setDetectedBrandConfidence(null);
+    setUploadedPhotoRecord(null);
     lastCompletedRefineKeyRef.current = "";
     latestRefineRequestIdRef.current = 0;
     latestPhotoSelectionIdRef.current = 0;
@@ -801,6 +1083,7 @@ export function usePhotoStep({
     serverCleanedUrl,
     pendingPhotoUri,
     pendingCleanedPhotoUri,
+    pendingNormalizedPreviewUri,
     pendingCutoutHasTransparency,
     pendingCutoutTransparencyRatio,
     pendingCutoutMaskUri,
@@ -817,6 +1100,7 @@ export function usePhotoStep({
     pendingPhotoHash,
     detectedBrand,
     detectedBrandConfidence,
+    uploadedPhotoRecord,
   };
 
   const derived = {
@@ -839,6 +1123,7 @@ export function usePhotoStep({
     setServerCleanedUrl,
     setPendingPhotoUri,
     setPendingCleanedPhotoUri,
+    setPendingNormalizedPreviewUri,
     setPendingCutoutHasTransparency,
     setPendingCutoutTransparencyRatio,
     setPendingCutoutMaskUri,
@@ -855,6 +1140,7 @@ export function usePhotoStep({
     setPendingPhotoHash,
     setDetectedBrand,
     setDetectedBrandConfidence,
+    setUploadedPhotoRecord,
     handleRefineValueChange,
     handleRefineValueComplete,
     handleRefineReset,

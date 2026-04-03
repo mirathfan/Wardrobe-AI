@@ -10,6 +10,16 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
   const { state, derived, actions } = controller;
   const logRender = React.useMemo(() => makeDevThrottleLogger("PhotoStep"), []);
   const displayAutofillSummary = derived.previewPhotoUri ? state.lastAutofillSummary : "";
+  const rawAiCategory = state.aiPrediction?.category || "none";
+  const rawAiColors =
+    Array.isArray(state.aiPrediction?.colors) && state.aiPrediction.colors.length
+      ? state.aiPrediction.colors.join(" / ")
+      : "none";
+  const appliedCategory = state.finalPrediction?.category || "none";
+  const appliedColors =
+    Array.isArray(state.finalPrediction?.colors) && state.finalPrediction.colors.length
+      ? state.finalPrediction.colors.join(" / ")
+      : "none";
   logRender({
     uploading: state.uploadingPhoto,
     aiStatus: state.aiStatus,
@@ -40,6 +50,32 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
           ) : null}
           {state.autofillError ? (
             <Text style={{ color: "#b91c1c", fontWeight: "700" }}>{state.autofillError}</Text>
+          ) : null}
+          <Text style={{ color: "#666", fontSize: 12 }}>
+            Raw AI: {rawAiCategory} | {rawAiColors}
+          </Text>
+          <Text style={{ color: "#666", fontSize: 12 }}>
+            Applied: {appliedCategory} | {appliedColors}
+          </Text>
+          {state.aiDebugRawPayload ? (
+            <View
+              style={{
+                marginTop: 6,
+                padding: 10,
+                borderRadius: 10,
+                backgroundColor: "rgba(255,255,255,0.04)",
+              }}
+            >
+              <Text style={{ color: "#9ca3af", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>
+                Full AI payload
+              </Text>
+              <Text
+                selectable
+                style={{ color: "#9ca3af", fontSize: 11, lineHeight: 16, fontFamily: "Courier" }}
+              >
+                {state.aiDebugRawPayload}
+              </Text>
+            </View>
           ) : null}
           {state.aiStatus === "error" ? (
             <Pressable
@@ -83,6 +119,7 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
       ) : null}
       <PhotoEditorSection
         previewUri={derived.previewPhotoUri}
+        normalizedPreviewUri={derived.normalizedPreviewUri}
         cleanedPreviewUri={derived.cleanedPreviewUri}
         fallbackPreviewUri={derived.fallbackPreviewUri}
         hasCutoutPreview={derived.hasCutoutPreview}

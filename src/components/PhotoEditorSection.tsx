@@ -17,6 +17,7 @@ import { SafeScreen } from "./SafeScreen";
 
 type PhotoEditorSectionProps = {
   previewUri: string | null;
+  normalizedPreviewUri?: string | null;
   cleanedPreviewUri?: string | null;
   fallbackPreviewUri?: string | null;
   hasCutoutPreview?: boolean;
@@ -323,6 +324,8 @@ function PreviewCanvas(props: {
   checkerboard?: boolean;
 }) {
   const { uri, large = false, compact = false, checkerboard = false } = props;
+  const previewPadding = compact ? 22 : large ? 28 : 24;
+  const previewBackgroundColor = checkerboard ? "#fff" : "#E9E8E3";
 
   return (
     <View
@@ -332,18 +335,35 @@ function PreviewCanvas(props: {
         borderRadius: large ? 20 : 16,
         borderWidth: 1,
         borderColor: "#e7e7e7",
-        backgroundColor: "#f8f8f8",
+        backgroundColor: previewBackgroundColor,
         overflow: "hidden",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
       {checkerboard ? <CheckerboardBackground /> : null}
-      <Image
-        source={{ uri }}
-        style={{ width: "100%", height: "100%" }}
-        resizeMode="contain"
-      />
+      <View
+        style={{
+          width: "100%",
+          height: "100%",
+          padding: previewPadding,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Image
+          source={{ uri }}
+          style={{
+            width: "100%",
+            height: "100%",
+            shadowColor: "#000",
+            shadowOpacity: checkerboard ? 0 : 0.08,
+            shadowRadius: 16,
+            shadowOffset: { width: 0, height: 5 },
+          }}
+          resizeMode="contain"
+        />
+      </View>
     </View>
   );
 }
@@ -381,6 +401,7 @@ function CheckerboardBackground() {
 export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   const {
     previewUri,
+    normalizedPreviewUri = null,
     cleanedPreviewUri = null,
     fallbackPreviewUri = null,
     hasCutoutPreview = false,
@@ -417,7 +438,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   const [activeModalPreview, setActiveModalPreview] = useState<"cutout" | "mask">("cutout");
   const [liveRefineValue, setLiveRefineValue] = useState(refineValue);
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const displayedPreviewUri = cleanedPreviewUri ?? fallbackPreviewUri ?? previewUri;
+  const displayedPreviewUri = normalizedPreviewUri ?? cleanedPreviewUri ?? fallbackPreviewUri ?? previewUri;
   const modalDisplayedPreviewUri =
     activeModalPreview === "mask" && maskDebugUri
       ? maskDebugUri
@@ -426,6 +447,25 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   useEffect(() => {
     setLiveRefineValue(refineValue);
   }, [refineValue]);
+
+  useEffect(() => {
+    if (!__DEV__ || !displayedPreviewUri) {
+      return;
+    }
+    console.log("[AddItemPreview] render:selected-uri", {
+      normalizedPreviewUri,
+      cleanedPreviewUri,
+      fallbackPreviewUri,
+      previewUri,
+      displayedPreviewUri,
+    });
+  }, [
+    cleanedPreviewUri,
+    displayedPreviewUri,
+    fallbackPreviewUri,
+    normalizedPreviewUri,
+    previewUri,
+  ]);
 
   const useNativeSlider = Platform.OS === "ios" && !sliderErrored;
 
@@ -453,7 +493,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
               setIsModalVisible(true);
             }}
           >
-            <PreviewCanvas uri={displayedPreviewUri} compact checkerboard />
+            <PreviewCanvas uri={displayedPreviewUri} compact />
           </Pressable>
         ) : (
           <View

@@ -8,6 +8,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   View,
 } from "react-native";
@@ -19,6 +20,7 @@ import { useAddWizardState } from "./hooks/useAddWizardState";
 import { MoreDetailsStepScreen } from "./steps/MoreDetailsStepScreen";
 import { PhotoStepScreen } from "./steps/PhotoStepScreen";
 import { ReviewDetailsStepScreen } from "./steps/ReviewDetailsStepScreen";
+import { Pill } from "./ui/Pill";
 import { SafeScreen } from "../components/SafeScreen";
 import { dockSpace } from "@/src/constants/dock";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -189,7 +191,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                 ]}
                 disabled={!wizard.canContinue}
               >
-                <Text style={{ color: "#fff", fontSize: 16, fontWeight: "900" }}>
+                <Text style={{ color: colors.background, fontSize: 16, fontWeight: "900" }}>
                   {wizard.stepButtonText}
                 </Text>
               </Pressable>
@@ -261,12 +263,15 @@ export const AddItemWizard = React.memo(function AddItemWizard({
             animationType="slide"
             onRequestClose={() => actions.setShowAttributeSheet(null)}
           >
-            <Pressable
-              onPress={() => actions.setShowAttributeSheet(null)}
-              style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.25)", justifyContent: "flex-end" }}
-            >
+            <View style={{ flex: 1, justifyContent: "flex-end" }}>
               <Pressable
-                onPress={(e) => e.stopPropagation()}
+                onPress={() => actions.setShowAttributeSheet(null)}
+                style={{
+                  ...StyleSheet.absoluteFillObject,
+                  backgroundColor: "rgba(0,0,0,0.25)",
+                }}
+              />
+              <View
                 style={{
                   backgroundColor: colors.surface,
                   borderTopLeftRadius: 20,
@@ -315,8 +320,8 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                           Care tags are coming soon.
                         </Text>
                       )}
-              </Pressable>
-            </Pressable>
+              </View>
+            </View>
           </Modal>
           </View>
         </React.Profiler>

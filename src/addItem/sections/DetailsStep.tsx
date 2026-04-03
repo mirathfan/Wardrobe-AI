@@ -4,6 +4,7 @@ import { Category, isValidCategorySubCategory } from "../../shared/wardrobeTaxon
 import { makeDevThrottleLogger } from "../devPerf";
 import { ChipRow } from "../ui/ChipRow";
 import { Field } from "../ui/Field";
+import { MemoTextInputField } from "../ui/MemoTextInputField";
 import { Pill } from "../ui/Pill";
 import { RequiredBadge } from "../ui/RequiredBadge";
 import { SectionCard } from "../ui/SectionCard";
@@ -12,6 +13,16 @@ import { SectionTitle } from "../ui/SectionTitle";
 export const DetailsStep = React.memo(function DetailsStep({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
   const logRender = React.useMemo(() => makeDevThrottleLogger("DetailsStep"), []);
+  const rawAiCategory = state.aiPrediction?.category || "none";
+  const rawAiColors =
+    Array.isArray(state.aiPrediction?.colors) && state.aiPrediction.colors.length
+      ? state.aiPrediction.colors.join(" / ")
+      : "none";
+  const appliedCategory = state.finalPrediction?.category || "none";
+  const appliedColors =
+    Array.isArray(state.finalPrediction?.colors) && state.finalPrediction.colors.length
+      ? state.finalPrediction.colors.join(" / ")
+      : "none";
   logRender({
     aiStatus: state.aiStatus,
     category: state.category,
@@ -55,6 +66,32 @@ export const DetailsStep = React.memo(function DetailsStep({ controller }: { con
               {line}
             </Text>
           ))}
+          <Text style={{ color: "#666", fontSize: 12 }}>
+            Raw AI: {rawAiCategory} | {rawAiColors}
+          </Text>
+          <Text style={{ color: "#666", fontSize: 12 }}>
+            Applied: {appliedCategory} | {appliedColors}
+          </Text>
+          {state.aiDebugRawPayload ? (
+            <View
+              style={{
+                marginTop: 6,
+                padding: 10,
+                borderRadius: 10,
+                backgroundColor: "#11182708",
+              }}
+            >
+              <Text style={{ color: "#666", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>
+                Full AI payload
+              </Text>
+              <Text
+                selectable
+                style={{ color: "#666", fontSize: 11, lineHeight: 16, fontFamily: "Courier" }}
+              >
+                {state.aiDebugRawPayload}
+              </Text>
+            </View>
+          ) : null}
         </View>
       ) : null}
       {derived.aiSuggestions.length ? (
@@ -151,6 +188,24 @@ export const DetailsStep = React.memo(function DetailsStep({ controller }: { con
         <Text style={{ color: "#666" }}>
           Selected: {state.selectedColors.length ? state.selectedColors.join(" / ") : "Auto (AI)"}
         </Text>
+      </Field>
+
+      <Field label="Display Color">
+        <MemoTextInputField
+          value={state.displayColor}
+          onChangeText={actions.setDisplayColor}
+          onCommit={(value) => {
+            actions.markUserEdited("displayColor");
+            actions.setDisplayColor(value);
+          }}
+          placeholder="e.g., light blue"
+          autoCapitalize="words"
+        />
+        {state.displayColors.length ? (
+          <Text style={{ color: "#666" }}>
+            Visible colors: {state.displayColors.join(" / ")}
+          </Text>
+        ) : null}
       </Field>
     </SectionCard>
   );

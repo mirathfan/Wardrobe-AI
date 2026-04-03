@@ -78,13 +78,23 @@ export function useItemExtraction({
   const [isAutofillRunning, setIsAutofillRunning] = useState(false);
   const [lastAutofillSummary, setLastAutofillSummary] = useState<string>("");
   const [autofillError, setAutofillError] = useState<string | null>(null);
-  const [aiPrediction, setAiPrediction] = useState<{ category: string | null; colors: string[] }>({
+  const [aiPrediction, setAiPrediction] = useState<{
+    category: string | null;
+    colors: string[];
+    crop?: { x?: number; y?: number; w?: number; h?: number } | null;
+  }>({
     category: null,
     colors: [],
+    crop: null,
   });
-  const [finalPrediction, setFinalPrediction] = useState<{ category: string | null; colors: string[] }>({
+  const [finalPrediction, setFinalPrediction] = useState<{
+    category: string | null;
+    colors: string[];
+    crop?: { x?: number; y?: number; w?: number; h?: number } | null;
+  }>({
     category: null,
     colors: [],
+    crop: null,
   });
   const [aiDebugRunId, setAiDebugRunId] = useState<number>(0);
   const [aiDebugInputUri, setAiDebugInputUri] = useState<string>("");
@@ -92,6 +102,7 @@ export function useItemExtraction({
   const [aiDebugAspectRatio, setAiDebugAspectRatio] = useState<number | null>(null);
   const [aiDebugDominantRgb, setAiDebugDominantRgb] = useState<string>("");
   const [aiDebugCorrectedCategory, setAiDebugCorrectedCategory] = useState<string>("");
+  const [aiDebugRawPayload, setAiDebugRawPayload] = useState<string>("");
   const [aiPattern, setAiPattern] = useState<string | null>(null);
   const [aiMaterial, setAiMaterial] = useState<string | null>(null);
   const [aiFit, setAiFit] = useState<string | null>(null);
@@ -105,7 +116,7 @@ export function useItemExtraction({
   const aiInteractionTaskRef = useRef<{ cancel?: () => void } | null>(null);
   const aiCacheRef = useRef(new Map<string, { at: number; summary: string }>());
   const aiRunMetaRef = useRef(
-    new Map<number, { source: AutofillSource; inputUri: string }>()
+    new Map<number, { source: AutofillSource; inputUri: string; photoHash: string }>()
   );
   const aiCommittedRef = useRef<{
     source: AutofillSource;
@@ -192,6 +203,7 @@ export function useItemExtraction({
       lastWashedDate: null,
         lastWashedAt: null,
         isDraft: true,
+        draftState: "draft",
     };
     const createPromise = (async () => {
       await setDoc(draftRef, payload, { merge: true });
@@ -244,6 +256,55 @@ export function useItemExtraction({
     const normalizedStatus = normalizeIngestionStatus(
       data?.ingestion?.status ?? data?.ingestionStatus
     );
+    try {
+      setAiDebugRawPayload(
+        JSON.stringify(
+          {
+            ingestionStatus: normalizedStatus,
+            ingestionSource: data?.ingestionSource ?? null,
+            category: data?.category ?? null,
+            subCategory: data?.subCategory ?? null,
+            type: data?.type ?? null,
+            colors: Array.isArray(data?.colors) ? data.colors : [],
+            primaryColor: data?.primaryColor ?? null,
+            displayColor: data?.displayColor ?? null,
+            displayColors: Array.isArray(data?.displayColors) ? data.displayColors : [],
+            colorLabel: data?.colorLabel ?? null,
+            aiDebug: data?.aiDebug ?? null,
+            confidence: data?.confidence ?? null,
+            brand: data?.brand ?? null,
+            brandConfidence: data?.brandConfidence ?? null,
+            name: data?.name ?? null,
+            pattern: data?.pattern ?? null,
+            material: data?.material ?? null,
+            fit: data?.fit ?? null,
+            style: data?.style ?? null,
+            formality: data?.formality ?? null,
+            warmth: data?.warmth ?? null,
+            layerRole: data?.layerRole ?? null,
+            aestheticTags: Array.isArray(data?.aestheticTags) ? data.aestheticTags : [],
+            visualWeight: data?.visualWeight ?? null,
+            versatilityScore: data?.versatilityScore ?? null,
+            sleeveLength: data?.sleeveLength ?? null,
+            neckline: data?.neckline ?? null,
+            closure: data?.closure ?? null,
+            length: data?.length ?? null,
+            rise: data?.rise ?? null,
+            legShape: data?.legShape ?? null,
+            hasLogo: data?.hasLogo ?? null,
+            logoPlacement: data?.logoPlacement ?? null,
+            occasionTags: Array.isArray(data?.occasionTags) ? data.occasionTags : [],
+            seasonTags: Array.isArray(data?.seasonTags) ? data.seasonTags : [],
+            bbox: data?.bbox ?? null,
+            crop: data?.crop ?? null,
+          },
+          null,
+          2
+        )
+      );
+    } catch {
+      setAiDebugRawPayload("");
+    }
     verboseAutofillLog("[AddItem] draft snapshot received", {
       activeRunId,
       draftId: createSessionRef.current.draftId,
@@ -265,7 +326,7 @@ export function useItemExtraction({
       occasionTags: Array.isArray(data?.occasionTags) ? data.occasionTags : [],
       seasonTags: Array.isArray(data?.seasonTags) ? data.seasonTags : [],
       primaryUrl: norm(data?.photos?.primaryUrl ?? data?.photoUrl),
-      cleanedPhotoUrl: norm(data?.photos?.cleanedPhotoUrl ?? data?.photos?.cleanedUrl),
+      cleanedPhotoUrl: norm(data?.photos?.cleanedUrl ?? data?.photos?.cleanedPhotoUrl),
     });
     const snapshotSignature = `${createSessionRef.current.draftId ?? "no-draft"}|${fingerprint}`;
     if (fingerprint === lastDraftFingerprintRef.current) {
@@ -290,6 +351,10 @@ export function useItemExtraction({
     }
     const locked = aiLockedValuesRef.current;
     const activePhotoHash = draftPhotoHash ?? lastAutofillStartedHashRef.current ?? null;
+    const snapshotSourceHash = norm(data?.ingestionSource?.sourceHash);
+    if (activePhotoHash && snapshotSourceHash && snapshotSourceHash !== activePhotoHash) {
+      return;
+    }
     const previousLifecycleStatus = activePhotoHash
       ? hashLifecycleRef.current.get(activePhotoHash)?.status ?? null
       : null;
@@ -342,11 +407,15 @@ export function useItemExtraction({
 
     const serverPrimaryUrl = data?.photos?.primaryUrl ?? data?.photoUrl ?? null;
     const serverCleanedPhotoUrl =
-      data?.photos?.cleanedPhotoUrl ?? data?.photos?.cleanedUrl ?? null;
-    const serverGeneratedCleanedUrl = data?.photos?.cleanedUrl ?? null;
+      data?.photos?.cleanedUrl ?? data?.photos?.cleanedPhotoUrl ?? null;
+    const serverGeneratedCleanedUrl =
+      data?.photos?.cleanedUrl ?? data?.photos?.cleanedPhotoUrl ?? null;
     if (serverPrimaryUrl) photo.actions.setPhotoUrl(serverPrimaryUrl);
     if (serverCleanedPhotoUrl) photo.actions.setCleanedPhotoUrl(serverCleanedPhotoUrl);
     if (serverGeneratedCleanedUrl) photo.actions.setServerCleanedUrl(serverGeneratedCleanedUrl);
+    if (effectiveStatus !== "done") {
+      return;
+    }
 
     const rawIncomingCategory = data?.category
       ? normalizeCategoryForStorage(data.category)
@@ -384,24 +453,29 @@ export function useItemExtraction({
 
     const rawColors = normalizeColorList(data?.colors);
     const rawPrimary = normColor(String(data?.primaryColor ?? ""));
+    const colorNeedsReview = Boolean(data?.colorNeedsReview);
     const pixelHex = norm(String(data?.pixelColorHex ?? data?.pixelHex ?? ""));
     const dominantRgb = parseHexRgb(pixelHex);
     const dominantColor = dominantRgb ? nearestColorLabel(dominantRgb) : "";
-    const dominantColorLabel = normColor(dominantColor);
+    const dominantColorLabel = colorNeedsReview ? "" : normColor(dominantColor);
     const warmNeutralDominant = ["Beige", "Brown", "Khaki", "Tan", "Olive"].includes(
       dominantColorLabel
     );
-    const filteredRawColors = rawColors.filter(
+    const filteredRawColors = (colorNeedsReview ? [] : rawColors).filter(
       (color) => !(warmNeutralDominant && (color === "Orange" || color === "Grey"))
     );
     const filteredRawPrimary =
-      warmNeutralDominant && (rawPrimary === "Orange" || rawPrimary === "Grey")
+      colorNeedsReview
+        ? ""
+        : warmNeutralDominant && (rawPrimary === "Orange" || rawPrimary === "Grey")
         ? ""
         : rawPrimary;
     const finalColors = [
-      ...(dominantColorLabel ? [dominantColorLabel] : []),
       ...filteredRawColors,
       ...(filteredRawPrimary ? [filteredRawPrimary] : []),
+      ...(filteredRawColors.length === 0 && !filteredRawPrimary && dominantColorLabel
+        ? [dominantColorLabel]
+        : []),
     ]
       .filter((value, index, arr) => value && arr.indexOf(value) === index)
       .slice(0, 2);
@@ -422,10 +496,12 @@ export function useItemExtraction({
     setAiPrediction({
       category: rawIncomingCategory,
       colors: rawColors.length ? rawColors : rawPrimary ? [rawPrimary] : [],
+      crop: data?.crop ?? null,
     });
     setFinalPrediction({
       category: finalCategoryCandidate,
       colors: finalColors,
+      crop: data?.crop ?? null,
     });
     verboseAutofillLog("[AddItem] mapped autofill fields", {
       activeRunId,
@@ -590,6 +666,23 @@ export function useItemExtraction({
         finalColors,
       });
     }
+    if (!draft.refs.userEditedKeysRef.current.has("displayColor")) {
+      const incomingDisplayColor = norm(String(data?.displayColor ?? ""));
+      if (incomingDisplayColor) {
+        draft.actions.setDisplayColor(incomingDisplayColor);
+      } else if (finalColors.length > 0 && shouldPreferDoneSnapshot) {
+        draft.actions.setDisplayColor(humanizeAutofillLabel(finalColors[0]).toLowerCase());
+      }
+    }
+    if (!draft.refs.userEditedKeysRef.current.has("displayColors")) {
+      const incomingDisplayColors = Array.isArray(data?.displayColors)
+        ? data.displayColors
+            .map((value: unknown) => norm(String(value ?? "")))
+            .filter(Boolean)
+            .slice(0, 4)
+        : [];
+      draft.actions.setDisplayColors(incomingDisplayColors);
+    }
 
     const summaryParts: string[] = [];
     const summaryBrand = norm(data?.brand);
@@ -610,15 +703,21 @@ export function useItemExtraction({
     }
     const summaryCategory = norm(locked.category ?? finalCategoryCandidate ?? data?.category);
     const summaryColors: string[] = locked.colors && locked.colors.length ? locked.colors : finalColors;
-    const generatedSummaryName =
-      summaryColors.length > 0 && summaryCategory
-        ? `${summaryColors[0]} ${humanizeAutofillLabel(resolvedSubCategory || summaryCategory)}`
-        : "";
     const rawSummaryName = norm(data?.name);
+    const displayColorForName =
+      norm(String(data?.displayColor ?? "")) ||
+      (Array.isArray(data?.displayColors)
+        ? norm(String(data.displayColors[0] ?? ""))
+        : "") ||
+      "";
     const summaryName =
-      shouldPreferDoneSnapshot && generatedSummaryName
-        ? generatedSummaryName
-        : rawSummaryName;
+      colorNeedsReview
+        ? ""
+        : rawSummaryName ||
+          [displayColorForName, summaryCategory]
+            .filter(Boolean)
+            .map((part) => humanizeAutofillLabel(part))
+            .join(" ");
     if (
       summaryName &&
       !draft.refs.userEditedKeysRef.current.has("name") &&
@@ -633,21 +732,20 @@ export function useItemExtraction({
     }
     if (summaryBrand) summaryParts.push(summaryBrand);
     if (summaryCategory) summaryParts.push(summaryCategory);
-    if (summaryColors.length) summaryParts.push(summaryColors.slice(0, 2).join("/"));
     if (summaryParts.length) {
       const summary = `AI found: ${summaryParts.join(" • ")}`;
       setLastAutofillSummary(summary);
       if (effectiveStatus === "pending" || effectiveStatus === "processing") {
         setAutofillStatusThrottled(summary);
       } else if (effectiveStatus === "done") {
-        const doneBits = [summaryCategory, summaryColors[0]].filter(Boolean).join(" • ");
+        const doneBits = [summaryCategory].filter(Boolean).join(" • ");
         const doneStatus = `AI done: ${doneBits || "ready"}`;
         setAutofillStatusThrottled(doneStatus);
         setAiStatus("ready");
         setAiStage(null);
         const runMetaForCache = aiRunMetaRef.current.get(activeRunId);
         if (runMetaForCache) {
-          const cacheKey = `${runMetaForCache.source}:${runMetaForCache.inputUri}`;
+          const cacheKey = `${runMetaForCache.source}:${runMetaForCache.photoHash}`;
           aiCacheRef.current.set(cacheKey, { at: Date.now(), summary });
         }
       }
@@ -720,8 +818,9 @@ export function useItemExtraction({
   const startDraftAutofill = useCallback(
     async (params: {
       photoHash: string;
-      localPreviewUri: string;
+      localPhotoUri: string;
       cleanedLocalUri: string | null;
+      normalizedLocalUri?: string | null;
       originalWidth: number | null;
       token: { sessionId: string; requestId: number };
       runId?: number;
@@ -733,8 +832,9 @@ export function useItemExtraction({
       try {
         const {
           photoHash,
-          localPreviewUri,
+          localPhotoUri,
           cleanedLocalUri,
+          normalizedLocalUri = null,
           originalWidth,
         } = params;
         if (draftPhotoHash === photoHash && draftItemId) {
@@ -752,8 +852,9 @@ export function useItemExtraction({
           uploadItemPhoto({
             uid,
             itemId: draftRef.id,
-            localUri: localPreviewUri,
+            localUri: localPhotoUri,
             cleanedLocalUri,
+            normalizedLocalUri,
             originalWidth,
           }),
           UPLOAD_TIMEOUT_MS,
@@ -765,6 +866,7 @@ export function useItemExtraction({
         }
         const now = Date.now();
         const nextCleanedPhotoUrl = uploaded.cleanedUrl;
+        const nextNormalizedPhotoUrl = uploaded.normalizedUrl;
         failingStep = "create";
         const draftPayload = {
           photoUrl: uploaded.primaryUrl,
@@ -778,10 +880,34 @@ export function useItemExtraction({
           lastWashedDate: null,
           lastWashedAt: null,
           isDraft: true,
+          draftState: "photo_uploaded",
+          name: null,
+          brand: null,
+          subCategory: "",
+          colors: [],
+          primaryColor: null,
+          colorLabel: null,
+          aiColors: [],
+          pattern: null,
+          material: null,
+          fit: null,
+          occasionTags: [],
+          seasonTags: [],
           photos: {
+            originalUrl: uploaded.originalUrl,
             primaryUrl: uploaded.primaryUrl,
             urls: [uploaded.primaryUrl],
-            ...(nextCleanedPhotoUrl ? { cleanedPhotoUrl: nextCleanedPhotoUrl } : {}),
+            ...(nextCleanedPhotoUrl
+              ? {
+                  cleanedUrl: nextCleanedPhotoUrl,
+                  cleanedSource: uploaded.cleanedSource,
+                }
+              : {}),
+            ...(nextNormalizedPhotoUrl
+              ? {
+                  normalizedUrl: nextNormalizedPhotoUrl,
+                }
+              : {}),
           },
           ingestion: {
             status: "pending",
@@ -803,7 +929,18 @@ export function useItemExtraction({
         setIngestionStatus("pending");
         photo.actions.setPhotoUrl(uploaded.primaryUrl);
         photo.actions.setCleanedPhotoUrl(nextCleanedPhotoUrl);
-        photo.refs.syncedPreviewUriRef.current = localPreviewUri;
+        photo.actions.setServerCleanedUrl(nextCleanedPhotoUrl);
+        photo.actions.setPendingNormalizedPreviewUri?.(nextNormalizedPhotoUrl ?? null);
+        photo.actions.setUploadedPhotoRecord?.({
+          itemId: draftRef.id,
+          photoHash,
+          originalUrl: uploaded.originalUrl,
+          primaryUrl: uploaded.primaryUrl,
+          cleanedUrl: nextCleanedPhotoUrl,
+          normalizedUrl: nextNormalizedPhotoUrl,
+          cleanedSource: uploaded.cleanedSource,
+        });
+        photo.refs.syncedPreviewUriRef.current = localPhotoUri;
         attachDraftSubscription(draftRef.id, params.token.sessionId, runId);
         if (previousDraftId && previousDraftId !== draftRef.id) {
           void cleanupDraftDoc(previousDraftId);
@@ -843,8 +980,12 @@ export function useItemExtraction({
   }, []);
 
   const prepareForNewPhoto = useCallback(() => {
+    const nextRunId = bumpAiRun();
     if (!draft.refs.userEditedKeysRef.current.has("brand")) {
       draft.actions.setBrand("");
+    }
+    if (!draft.refs.userEditedKeysRef.current.has("name")) {
+      draft.actions.setName("");
     }
     if (!draft.refs.userEditedKeysRef.current.has("category")) {
       draft.actions.setCategory(null);
@@ -870,10 +1011,25 @@ export function useItemExtraction({
     if (!draft.refs.userEditedKeysRef.current.has("seasonTags")) {
       draft.actions.setSeasonTags([]);
     }
-    bumpAiRun();
+    aiLockedValuesRef.current = { runId: nextRunId };
+    aiCommittedRef.current = null;
+    aiRunMetaRef.current.clear();
+    aiCacheRef.current.clear();
     resetDraftTracking({ preserveDraftId: true });
     setAutofillError(null);
     setLastAutofillSummary("");
+    setAiPrediction({ category: null, colors: [] });
+    setFinalPrediction({ category: null, colors: [], crop: null });
+    setAiPattern(null);
+    setAiMaterial(null);
+    setAiFit(null);
+    setAiOccasionTags([]);
+    setAiSeasonTags([]);
+    setAiDebugInputUri("");
+    setAiDebugInputSource("");
+    setAiDebugAspectRatio(null);
+    setAiDebugDominantRgb("");
+    setAiDebugCorrectedCategory("");
     setAutofillStatus("Starting AI autofill…");
     setAiStatus("running");
     setAiStage("Color");
@@ -902,13 +1058,14 @@ export function useItemExtraction({
     setLastAutofillSummary("");
     setAutofillError(null);
     setAiPrediction({ category: null, colors: [] });
-    setFinalPrediction({ category: null, colors: [] });
+    setFinalPrediction({ category: null, colors: [], crop: null });
     setAiDebugRunId(0);
     setAiDebugInputUri("");
     setAiDebugInputSource("");
     setAiDebugAspectRatio(null);
     setAiDebugDominantRgb("");
     setAiDebugCorrectedCategory("");
+    setAiDebugRawPayload("");
     setAiPattern(null);
     setAiMaterial(null);
     setAiFit(null);
@@ -991,10 +1148,10 @@ export function useItemExtraction({
       });
       return;
     }
-    const imageUri = autofillTriggerUri;
-    const cutoutUri =
-      photo.state.autofillCutoutUri &&
-      photo.state.autofillCutoutUri !== photo.state.originalPickedPhotoUri
+      const imageUri = photo.state.pendingPhotoUri ?? autofillTriggerUri;
+      const cutoutUri =
+        photo.state.autofillCutoutUri &&
+        photo.state.autofillCutoutUri !== photo.state.originalPickedPhotoUri
         ? photo.state.autofillCutoutUri
         : null;
     const photoHash = autofillTriggerHash;
@@ -1075,6 +1232,7 @@ export function useItemExtraction({
     aiRunMetaRef.current.set(runId, {
       source: autofillInputSource || "original",
       inputUri: imageUri,
+      photoHash,
     });
     setAiDebugRunId(runId);
     setAiDebugInputUri(imageUri);
@@ -1097,7 +1255,7 @@ export function useItemExtraction({
       setAutofillStatusThrottled("Starting AI autofill…");
       setIsAutofillRunning(true);
 
-      const cacheKey = `${autofillInputSource || "original"}:${imageUri}`;
+      const cacheKey = `${autofillInputSource || "original"}:${photoHash}`;
       const cached = aiCacheRef.current.get(cacheKey);
       if (cached && Date.now() - cached.at < 5 * 60 * 1000) {
         setAutofillStatusThrottled(cached.summary || "AI done");
@@ -1120,8 +1278,9 @@ export function useItemExtraction({
         await uploadWithTimeout(
           startDraftAutofill({
             photoHash,
-            localPreviewUri: imageUri,
+            localPhotoUri: imageUri,
             cleanedLocalUri: cutoutUri,
+            normalizedLocalUri: photo.state.pendingNormalizedPreviewUri,
             originalWidth: photo.state.pendingPhotoWidth,
             token,
             runId,
@@ -1214,6 +1373,7 @@ export function useItemExtraction({
     aiDebugAspectRatio,
     aiDebugDominantRgb,
     aiDebugCorrectedCategory,
+    aiDebugRawPayload,
     aiPattern,
     aiMaterial,
     aiFit,

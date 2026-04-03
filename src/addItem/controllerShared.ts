@@ -156,6 +156,7 @@ export function nearestColorLabel(rgb: { r: number; g: number; b: number }) {
   const { r, g, b } = rgb;
   const brightness = (r + g + b) / 3;
   if (brightness < 20) return "black";
+  if (r > 70 && g > 40 && b < 85 && r > g * 1.08 && g > b * 1.05) return "brown";
   if (r > 120 && g > 105 && b < 95 && Math.abs(r - g) < 35) return "khaki";
   if (r > 150 && g > 130 && b > 95 && Math.abs(r - g) < 40) return "tan";
   if (g > r && g > b && brightness < 150) return "olive";
