@@ -56,6 +56,12 @@ export async function removeBackground(
   width: number | null;
   height: number | null;
   maskUri: string | null;
+  contentBounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
   hasAlphaChannel: boolean;
   hasTransparency: boolean;
   transparentPixelRatio: number;
@@ -67,6 +73,7 @@ export async function removeBackground(
       width: null,
       height: null,
       maskUri: null,
+      contentBounds: null,
       hasAlphaChannel: false,
       hasTransparency: false,
       transparentPixelRatio: 0,
@@ -88,6 +95,7 @@ export async function removeBackground(
       width: null,
       height: null,
       maskUri: null,
+      contentBounds: null,
       hasAlphaChannel: false,
       hasTransparency: false,
       transparentPixelRatio: 0,
@@ -104,6 +112,20 @@ export async function removeBackground(
     const height = Number((result as any)?.height ?? 0) || null;
     const rawMask = String((result as any)?.maskUri ?? "").trim();
     const maskUri = rawMask ? normalizeFileUri(rawMask) : null;
+    const rawBounds = (result as any)?.contentBounds;
+    const contentBounds =
+      rawBounds &&
+      Number.isFinite(Number(rawBounds?.width)) &&
+      Number.isFinite(Number(rawBounds?.height)) &&
+      Number(rawBounds?.width) > 0 &&
+      Number(rawBounds?.height) > 0
+        ? {
+            x: Number(rawBounds?.x ?? 0),
+            y: Number(rawBounds?.y ?? 0),
+            width: Number(rawBounds?.width),
+            height: Number(rawBounds?.height),
+          }
+        : null;
     const hasAlphaChannel = Boolean((result as any)?.hasAlphaChannel);
     const hasTransparency = Boolean((result as any)?.hasTransparency);
     const transparentPixelRatio =
@@ -118,6 +140,7 @@ export async function removeBackground(
       width,
       height,
       maskUri,
+      contentBounds,
       hasAlphaChannel,
       hasTransparency,
       transparentPixelRatio,
@@ -143,6 +166,7 @@ export async function removeBackground(
       width,
       height,
       maskUri,
+      contentBounds,
       hasAlphaChannel,
       hasTransparency,
       transparentPixelRatio,
@@ -155,6 +179,7 @@ export async function removeBackground(
       width: null,
       height: null,
       maskUri: null,
+      contentBounds: null,
       hasAlphaChannel: false,
       hasTransparency: false,
       transparentPixelRatio: 0,

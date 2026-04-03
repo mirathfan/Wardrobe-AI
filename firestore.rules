@@ -34,6 +34,10 @@ service cloud.firestore {
       return source in ["ai", "user", "pixel"];
     }
 
+    function validDraftState(state) {
+      return state in ["draft", "photo_uploaded", "ingesting", "ready", "failed"];
+    }
+
     function validOptionalString(value) {
       return value == null || value is string;
     }
@@ -130,6 +134,7 @@ service cloud.firestore {
         && (!changed.hasAny(["photoUri"]) || validOptionalString(data.photoUri))
         && (!changed.hasAny(["createdAt"]) || validOptionalNumber(data.createdAt))
         && (!changed.hasAny(["isDraft"]) || validOptionalBool(data.isDraft))
+        && (!changed.hasAny(["draftState"]) || data.draftState == null || validDraftState(data.draftState))
         && (!changed.hasAny(["wearSlot"]) || validOptionalString(data.wearSlot))
         && (!changed.hasAny(["brandConfidence"]) || validOptionalNumber(data.brandConfidence))
         && (!changed.hasAny(["brandEvidence"]) || validOptionalString(data.brandEvidence))

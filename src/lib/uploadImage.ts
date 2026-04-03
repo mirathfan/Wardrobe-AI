@@ -7,6 +7,7 @@ type UploadItemPhotoParams = {
   itemId: string;
   localUri: string;
   cleanedLocalUri?: string | null;
+  normalizedLocalUri?: string | null;
   originalWidth?: number | null;
   maxWidth?: number;
   quality?: number;
@@ -62,6 +63,7 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     itemId,
     localUri,
     cleanedLocalUri = null,
+    normalizedLocalUri = null,
     originalWidth = null,
     maxWidth = 1000,
     quality = 0.7,
@@ -96,9 +98,22 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     cleanedUrl = await getDownloadURL(cleanedRef);
   }
 
+  let normalizedUrl: string | null = null;
+  if (normalizedLocalUri) {
+    const normalizedBlob = await blobFromFileUri(normalizedLocalUri);
+    const normalizedPath = `users/${uid}/items/${itemId}.normalized.png`;
+    const normalizedRef = ref(storage, normalizedPath);
+    await uploadBytes(normalizedRef, normalizedBlob, {
+      contentType: "image/png",
+    });
+    normalizedUrl = await getDownloadURL(normalizedRef);
+  }
+
   return {
+    originalUrl: primaryUrl,
     primaryUrl,
     cleanedUrl,
-    cleanedSource: cleanedUrl ? "ios_vision" : null,
+    normalizedUrl,
+    cleanedSource: cleanedUrl ? "vision" : null,
   };
 }

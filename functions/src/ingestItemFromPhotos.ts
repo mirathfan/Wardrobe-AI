@@ -6,7 +6,12 @@ import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { logger } from "firebase-functions/v2";
 import sharp from "sharp";
 import {
+  ALLOWED_AESTHETIC_TAGS,
   ALLOWED_COLORS,
+  ALLOWED_FORMALITY,
+  ALLOWED_LAYER_ROLES,
+  ALLOWED_VISUAL_WEIGHT,
+  ALLOWED_WARMTH,
   AllowedColor,
   Category,
   SUB_CATEGORIES,
@@ -30,6 +35,7 @@ type ItemDoc = {
   brandUpdatedAt?: number;
   category?: string;
   subCategory?: string;
+  type?: string | null;
   fit?: string;
   style?: string;
   sleeveLength?: string;
@@ -42,9 +48,16 @@ type ItemDoc = {
   logoPlacement?: string;
   occasionTags?: string[];
   seasonTags?: string[];
+  aestheticTags?: string[];
+  formality?: string | null;
+  warmth?: string | null;
+  layerRole?: string | null;
+  visualWeight?: string | null;
+  versatilityScore?: number | null;
   photos?: {
     primaryUrl?: string | null;
     urls?: string[];
+    cleanedUrl?: string | null;
     cleanedPhotoUrl?: string | null;
     croppedUrl?: string;
     thumbUrl?: string;
@@ -54,6 +67,8 @@ type ItemDoc = {
   colors?: string[];
   colorLabel?: string;
   primaryColor?: string;
+  displayColor?: string | null;
+  displayColors?: string[] | null;
   colorSource?: "ai" | "user";
   colorUpdatedAt?: number;
   aiColorLabel?: string;
@@ -62,6 +77,17 @@ type ItemDoc = {
   pixelColorHex?: string;
   colorConfidence?: number;
   colorNeedsReview?: boolean;
+  aiDebug?: {
+    brandEvidence?: string | null;
+    brandCandidates?: string[] | null;
+    aiColors?: string[] | null;
+    aiPrimaryColor?: string | null;
+    aiColorLabel?: string | null;
+    pixelColors?: string[] | null;
+    pixelColorHex?: string | null;
+    colorConfidence?: number | null;
+    colorNeedsReview?: boolean | null;
+  } | null;
   crop?: { x: number; y: number; w: number; h: number; source: "ai" };
   ingestion?: {
     status?: IngestionStatus;
@@ -72,6 +98,8 @@ type ItemDoc = {
     runId?: string;
   };
   ingestionStatus?: string | null;
+  isDraft?: boolean | null;
+  draftState?: string | null;
   ingestionSource?: {
     sourceHash?: string;
     sourceType?: string;
@@ -86,21 +114,70 @@ type RawExtraction = {
   brandCandidates?: string[];
   category?: string;
   subCategory?: string;
+  type?: string | null;
+  name?: string | null;
   colors?: string[];
+  primaryColor?: string | null;
+  displayColor?: string | null;
+  displayColors?: string[] | null;
   pattern?: string;
   material?: string;
-  fit?: "slim" | "regular" | "relaxed" | "oversized" | "unknown";
-  style?: "casual" | "smart_casual" | "formal" | "athleisure" | "streetwear" | "workwear" | "unknown";
+  fit?:
+    | "slim"
+    | "regular"
+    | "relaxed"
+    | "oversized"
+    | "cropped"
+    | "tailored"
+    | "unknown";
+  style?:
+    | "casual"
+    | "smart_casual"
+    | "formal"
+    | "athleisure"
+    | "streetwear"
+    | "workwear"
+    | "luxury"
+    | "minimal"
+    | "unknown";
   sleeveLength?: "sleeveless" | "short" | "three_quarter" | "long" | "unknown";
-  neckline?: "crew" | "v_neck" | "collar" | "hood" | "unknown";
-  closure?: "pullover" | "zip" | "button" | "none" | "unknown";
+  neckline?: "crew" | "v_neck" | "collar" | "hood" | "mock_neck" | "unknown";
+  closure?: "pullover" | "zip" | "button" | "snap" | "none" | "unknown";
   length?: "cropped" | "regular" | "long" | "unknown";
   rise?: "low" | "mid" | "high" | "unknown";
-  legShape?: "skinny" | "slim" | "straight" | "tapered" | "wide" | "unknown";
+  legShape?:
+    | "skinny"
+    | "slim"
+    | "straight"
+    | "tapered"
+    | "wide"
+    | "flare"
+    | "unknown";
   hasLogo?: boolean;
-  logoPlacement?: "chest" | "sleeve" | "back" | "waist" | "leg" | "unknown";
+  logoPlacement?:
+    | "chest"
+    | "sleeve"
+    | "back"
+    | "waist"
+    | "leg"
+    | "all_over"
+    | "unknown";
   occasionTags?: string[];
   seasonTags?: string[];
+  aestheticTags?: string[];
+  formality?:
+    | "casual"
+    | "smart_casual"
+    | "formal"
+    | "athletic"
+    | "lounge"
+    | "party"
+    | "streetwear"
+    | null;
+  warmth?: "light" | "medium" | "heavy" | null;
+  layerRole?: "base" | "mid" | "outer" | null;
+  visualWeight?: "minimal" | "balanced" | "bold" | null;
+  versatilityScore?: number | null;
   confidence?: {
     category?: number;
     subCategory?: number;
@@ -111,9 +188,14 @@ type RawExtraction = {
   warmthScore?: number;
   bbox?: { x?: number; y?: number; w?: number; h?: number };
 };
-type LastRunAtValue = Timestamp | { toMillis?: () => number } | number | null | undefined;
+type LastRunAtValue =
+  | Timestamp
+  | { toMillis?: () => number }
+  | number
+  | null
+  | undefined;
 
-const MODEL = "gpt-4.1-mini";
+const MODEL = "gpt-5.4-mini";
 const HOUR_MS = 60 * 60 * 1000;
 const ALLOWED_PATTERNS = new Set([
   "solid",
@@ -127,6 +209,7 @@ const ALLOWED_PATTERNS = new Set([
   "dots",
   "camouflage",
   "textured",
+  "monogram",
   "other",
   "unknown",
 ]);
@@ -141,9 +224,21 @@ const ALLOWED_MATERIALS = new Set([
   "silk",
   "rayon",
   "fleece",
+  "canvas",
+  "satin",
+  "suede",
+  "knit",
   "unknown",
 ]);
-const ALLOWED_FITS = new Set(["slim", "regular", "relaxed", "oversized", "unknown"]);
+const ALLOWED_FITS = new Set([
+  "slim",
+  "regular",
+  "relaxed",
+  "oversized",
+  "cropped",
+  "tailored",
+  "unknown",
+]);
 const ALLOWED_STYLES = new Set([
   "casual",
   "smart_casual",
@@ -151,8 +246,15 @@ const ALLOWED_STYLES = new Set([
   "athleisure",
   "streetwear",
   "workwear",
+  "luxury",
+  "minimal",
   "unknown",
 ]);
+const ALLOWED_FORMALITY_SET = new Set<string>(ALLOWED_FORMALITY);
+const ALLOWED_WARMTH_SET = new Set<string>(ALLOWED_WARMTH);
+const ALLOWED_LAYER_ROLE_SET = new Set<string>(ALLOWED_LAYER_ROLES);
+const ALLOWED_VISUAL_WEIGHT_SET = new Set<string>(ALLOWED_VISUAL_WEIGHT);
+const ALLOWED_AESTHETIC_TAG_SET = new Set<string>(ALLOWED_AESTHETIC_TAGS);
 const ALLOWED_SLEEVE_LENGTHS = new Set([
   "sleeveless",
   "short",
@@ -160,8 +262,22 @@ const ALLOWED_SLEEVE_LENGTHS = new Set([
   "long",
   "unknown",
 ]);
-const ALLOWED_NECKLINES = new Set(["crew", "v_neck", "collar", "hood", "unknown"]);
-const ALLOWED_CLOSURES = new Set(["pullover", "zip", "button", "none", "unknown"]);
+const ALLOWED_NECKLINES = new Set([
+  "crew",
+  "v_neck",
+  "collar",
+  "hood",
+  "mock_neck",
+  "unknown",
+]);
+const ALLOWED_CLOSURES = new Set([
+  "pullover",
+  "zip",
+  "button",
+  "snap",
+  "none",
+  "unknown",
+]);
 const ALLOWED_LENGTHS = new Set(["cropped", "regular", "long", "unknown"]);
 const ALLOWED_RISES = new Set(["low", "mid", "high", "unknown"]);
 const ALLOWED_LEG_SHAPES = new Set([
@@ -170,6 +286,7 @@ const ALLOWED_LEG_SHAPES = new Set([
   "straight",
   "tapered",
   "wide",
+  "flare",
   "unknown",
 ]);
 const ALLOWED_BRAND_EVIDENCE = new Set(["text", "logo", "tag", "unknown"]);
@@ -179,9 +296,11 @@ const ALLOWED_LOGO_PLACEMENTS = new Set([
   "back",
   "waist",
   "leg",
+  "all_over",
   "unknown",
 ]);
 const ALLOWED_OCCASION_TAGS = new Set([
+  "casual",
   "work",
   "gym",
   "party",
@@ -196,6 +315,8 @@ const ALLOWED_SEASON_TAGS = new Set([
   "winter",
   "spring_fall",
   "all_season",
+  "spring",
+  "fall",
 ]);
 const ALLOWED_COLOR_SET = new Set<string>(ALLOWED_COLORS);
 const MIN_CROP_RATIO = 0.3;
@@ -210,15 +331,25 @@ function toMillis(value: LastRunAtValue): number | null {
 
 function extractPhotoUrls(item: ItemDoc): string[] {
   const values = [
+    item.photos?.cleanedUrl ?? "",
     item.photos?.cleanedPhotoUrl ?? "",
     item.photos?.primaryUrl ?? "",
-    ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
     item.photoUrl ?? "",
     item.photoUri ?? "",
+    ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
   ];
 
-  const deduped = Array.from(new Set(values.map((v) => String(v).trim()).filter(Boolean)));
+  const deduped = Array.from(
+    new Set(values.map((v) => String(v).trim()).filter(Boolean)),
+  );
   return deduped.filter((url) => /^https?:\/\//i.test(url));
+}
+
+function getIngestionStatus(item: ItemDoc | undefined): IngestionStatus | "" {
+  return (item?.ingestion?.status ?? item?.ingestionStatus ?? "")
+    .toString()
+    .trim()
+    .toLowerCase() as IngestionStatus | "";
 }
 
 function extractIngestionSourceUrls(item: ItemDoc): string[] {
@@ -228,7 +359,9 @@ function extractIngestionSourceUrls(item: ItemDoc): string[] {
     item.photoUrl ?? "",
     item.photoUri ?? "",
   ];
-  const deduped = Array.from(new Set(values.map((v) => String(v).trim()).filter(Boolean)));
+  const deduped = Array.from(
+    new Set(values.map((v) => String(v).trim()).filter(Boolean)),
+  );
   return deduped.filter((url) => /^https?:\/\//i.test(url));
 }
 
@@ -249,19 +382,26 @@ function clamp01(value: unknown, fallback = 0): number {
 }
 
 function normalizePattern(value: unknown): string {
-  const raw = String(value ?? "").trim().toLowerCase();
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
   if (ALLOWED_PATTERNS.has(raw)) return raw;
   return "unknown";
 }
 
 function normalizeMaterial(value: unknown): string {
-  const raw = String(value ?? "").trim().toLowerCase();
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
   if (ALLOWED_MATERIALS.has(raw)) return raw;
   return "unknown";
 }
 
 function normalizeCategory(value: unknown): Category | null {
-  const raw = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
   if (!raw) return null;
   if (raw === "shoes" || raw === "shoe") return Category.FOOTWEAR;
   if (raw === "onepiece") return Category.ONE_PIECE;
@@ -270,30 +410,92 @@ function normalizeCategory(value: unknown): Category | null {
 }
 
 function normalizeSubCategory(value: unknown): string | null {
-  const raw = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
   return raw || null;
 }
 
-function normalizeEnum(value: unknown, allowed: Set<string>, fallback = "unknown"): string {
-  const raw = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+function normalizeEnum(
+  value: unknown,
+  allowed: Set<string>,
+  fallback = "unknown",
+): string {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
   if (allowed.has(raw)) return raw;
   return fallback;
+}
+
+function normalizeNullableEnum(
+  value: unknown,
+  allowed: Set<string>,
+): string | null {
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  if (
+    !raw ||
+    raw === "unknown" ||
+    raw === "n/a" ||
+    raw === "na" ||
+    raw === "null"
+  ) {
+    return null;
+  }
+  if (allowed.has(raw)) return raw;
+  return null;
+}
+
+function normalizeFreeTextLabel(value: unknown, maxLength = 48): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const normalized = raw
+    .replace(/\s+/g, " ")
+    .replace(/[^\w\s/&-]/g, "")
+    .trim();
+  if (!normalized) return null;
+  if (["unknown", "n/a", "na", "null"].includes(normalized.toLowerCase()))
+    return null;
+  return normalized.slice(0, maxLength);
 }
 
 function normalizeOptionalTagList(
   value: unknown,
   allowed: Set<string>,
-  maxLength: number
+  maxLength: number,
 ): string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
   for (const entry of value) {
-    const normalized = String(entry ?? "").trim().toLowerCase().replace(/\s+/g, "_");
-    if (!allowed.has(normalized)) continue;
-    if (!out.includes(normalized)) out.push(normalized);
+    const normalized = String(entry ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_");
+    const expanded =
+      normalized === "spring_fall" ? ["spring", "fall"] : [normalized];
+    for (const candidate of expanded) {
+      if (!allowed.has(candidate)) continue;
+      if (!out.includes(candidate)) out.push(candidate);
+      if (out.length >= maxLength) break;
+    }
     if (out.length >= maxLength) break;
   }
   return out;
+}
+
+function normalizeOptionalScore(
+  value: unknown,
+  min: number,
+  max: number,
+): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(min, Math.min(max, Math.round(n)));
 }
 
 function slugifyForCompare(value: string): string {
@@ -308,19 +510,67 @@ function slugifyForCompare(value: string): string {
 function normalizeBrand(value: unknown): string | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
+  const lowered = raw.toLowerCase().trim();
+  if (
+    !lowered ||
+    lowered === "unknown" ||
+    lowered === "n/a" ||
+    lowered === "na" ||
+    lowered === "null"
+  ) {
+    return null;
+  }
   const slug = slugifyForCompare(raw);
   if (!slug) return null;
-  if (slug.includes("justdoit") || slug.includes("nike")) return "Nike";
-  if (slug.includes("adidas")) return "Adidas";
-  if (slug.includes("puma")) return "Puma";
-  if (slug === "hm" || slug.includes("handm")) return "H&M";
-  if (slug.includes("uniqlo")) return "Uniqlo";
-  if (slug.includes("zara")) return "Zara";
-  if (slug.includes("levis")) return "Levi’s";
-  if (slug.includes("ralphlauren") || slug === "polo" || slug.includes("poloralphlauren")) {
-    return "Polo Ralph Lauren";
+
+  const BRAND_ALIASES: Record<string, string> = {
+    nike: "Nike",
+    justdoit: "Nike",
+    adidas: "Adidas",
+    puma: "Puma",
+    hm: "H&M",
+    handm: "H&M",
+    uniqlo: "Uniqlo",
+    zara: "Zara",
+    levis: "Levi’s",
+    lv: "Louis Vuitton",
+    louisvuitton: "Louis Vuitton",
+    gg: "Gucci",
+    gucci: "Gucci",
+    ysl: "Saint Laurent",
+    saintlaurent: "Saint Laurent",
+    ralphlauren: "Polo Ralph Lauren",
+    poloralphlauren: "Polo Ralph Lauren",
+    polo: "Polo Ralph Lauren",
+  };
+
+  for (const [alias, canonical] of Object.entries(BRAND_ALIASES)) {
+    if (slug === alias || slug.includes(alias)) return canonical;
   }
-  return null;
+
+  const cleaned = raw
+    .replace(/\s+/g, " ")
+    .replace(/[^\p{L}\p{N}\s&'.-]/gu, "")
+    .trim();
+  if (!cleaned) return null;
+  if (cleaned.length < 2 || cleaned.length > 40) return null;
+  if (!/[A-Za-z]/.test(cleaned)) return null;
+  if (/\b(brand|logo|designer|fashion|unknown|null|none)\b/i.test(cleaned)) {
+    return null;
+  }
+
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => {
+      if (part.toUpperCase() === "H&M") return "H&M";
+      if (part.toUpperCase() === "LV") return "LV";
+      if (part.toUpperCase() === "GG") return "GG";
+      if (part.toUpperCase() === "YSL") return "YSL";
+      if (/^[A-Z0-9&'.-]+$/.test(part)) return part;
+      return `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`;
+    })
+    .join(" ");
 }
 
 function normalizeBrandCandidates(value: unknown): string[] {
@@ -335,7 +585,9 @@ function normalizeBrandCandidates(value: unknown): string[] {
   return out;
 }
 
-function inferCategoryFromSubCategory(subCategory: string | null): Category | null {
+function inferCategoryFromSubCategory(
+  subCategory: string | null,
+): Category | null {
   if (!subCategory) return null;
   for (const category of Object.values(Category) as Category[]) {
     const subCategories = SUB_CATEGORIES[category] as readonly string[];
@@ -370,7 +622,11 @@ function toTitleCase(value: string): string {
 }
 
 function humanizeLabel(value: string): string {
-  return toTitleCase(String(value ?? "").replace(/_/g, " ").trim());
+  return toTitleCase(
+    String(value ?? "")
+      .replace(/_/g, " ")
+      .trim(),
+  );
 }
 
 function normalizeColorToken(raw: string): AllowedColor | null {
@@ -389,7 +645,13 @@ function normalizeColorToken(raw: string): AllowedColor | null {
   ) {
     return "cream";
   }
-  if (text.includes("beige") || text.includes("tan") || text.includes("khaki")) {
+  if (text.includes("gold")) return "gold";
+  if (text.includes("silver")) return "silver";
+  if (
+    text.includes("beige") ||
+    text.includes("tan") ||
+    text.includes("khaki")
+  ) {
     return "beige";
   }
   if (text.includes("brown")) return "brown";
@@ -402,14 +664,21 @@ function normalizeColorToken(raw: string): AllowedColor | null {
   return null;
 }
 
-function normalizeColors(values: unknown): { colors: AllowedColor[]; colorLabel?: string } {
-  if (!Array.isArray(values)) return {colors: []};
+function normalizeColors(values: unknown): {
+  colors: AllowedColor[];
+  colorLabel?: string;
+} {
+  if (!Array.isArray(values)) return { colors: [] };
 
   const rawColors = values
-    .map((entry) => String(entry ?? "").trim().toLowerCase())
+    .map((entry) =>
+      String(entry ?? "")
+        .trim()
+        .toLowerCase(),
+    )
     .filter((value) => value.length > 0)
     .filter((value) => !value.includes("multi") && !value.includes("various"))
-    .slice(0, 2);
+    .slice(0, 3);
 
   const colorLabel = rawColors.length > 0 ? rawColors.join(" / ") : undefined;
 
@@ -419,21 +688,44 @@ function normalizeColors(values: unknown): { colors: AllowedColor[]; colorLabel?
     if (!mapped) continue;
     if (!ALLOWED_COLOR_SET.has(mapped)) continue;
     if (!out.includes(mapped)) out.push(mapped);
-    if (out.length >= 2) break;
+    if (out.length >= 3) break;
   }
 
-  return {colors: out, colorLabel};
+  return { colors: out, colorLabel };
+}
+
+function normalizeDisplayColorValue(value: unknown): string | null {
+  const normalized = normalizeFreeTextLabel(value, 32);
+  if (!normalized) return null;
+  const lower = normalized.toLowerCase();
+  if (["unknown", "n/a", "na", "null", "none"].includes(lower)) return null;
+  return lower;
+}
+
+function normalizeDisplayColors(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const out: string[] = [];
+  for (const entry of values) {
+    const normalized = normalizeDisplayColorValue(entry);
+    if (!normalized || out.includes(normalized)) continue;
+    out.push(normalized);
+    if (out.length >= 4) break;
+  }
+  return out;
 }
 
 function toHex(r: number, g: number, b: number): string {
   const parts = [r, g, b].map((n) => Math.max(0, Math.min(255, Math.round(n))));
-  return `#${parts.map((n) => n.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+  return `#${parts
+    .map((n) => n.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase()}`;
 }
 
 function rgbToHsv(
   r: number,
   g: number,
-  b: number
+  b: number,
 ): { h: number; s: number; v: number } {
   const rn = Math.max(0, Math.min(255, r)) / 255;
   const gn = Math.max(0, Math.min(255, g)) / 255;
@@ -458,11 +750,11 @@ function rgbToHsv(
 
   const s = max === 0 ? 0 : d / max;
   const v = max;
-  return {h, s, v};
+  return { h, s, v };
 }
 
 function mapRgbToAllowedColor(r: number, g: number, b: number): AllowedColor {
-  const {h, s, v} = rgbToHsv(r, g, b);
+  const { h, s, v } = rgbToHsv(r, g, b);
 
   // Very low saturation should map to neutral palette buckets.
   if (s < 0.12) {
@@ -506,9 +798,15 @@ async function downloadImageBytes(url: string): Promise<Buffer> {
 function clampBbox(
   bbox: RawExtraction["bbox"],
   width: number,
-  height: number
-): { left: number; top: number; cropWidth: number; cropHeight: number; normalized: { x: number; y: number; w: number; h: number; source: "ai" } } {
-  const fallback = {x: 0.2, y: 0.15, w: 0.6, h: 0.7};
+  height: number,
+): {
+  left: number;
+  top: number;
+  cropWidth: number;
+  cropHeight: number;
+  normalized: { x: number; y: number; w: number; h: number; source: "ai" };
+} {
+  const fallback = { x: 0.2, y: 0.15, w: 0.6, h: 0.7 };
   const nxRaw = Number(bbox?.x);
   const nyRaw = Number(bbox?.y);
   const nwRaw = Number(bbox?.w);
@@ -569,7 +867,11 @@ function clampBbox(
   };
 }
 
-async function uploadImageAndGetUrl(path: string, bytes: Buffer, contentType = "image/jpeg"): Promise<string> {
+async function uploadImageAndGetUrl(
+  path: string,
+  bytes: Buffer,
+  contentType = "image/jpeg",
+): Promise<string> {
   const bucket = getStorage().bucket();
   const bucketName = bucket.name;
   const file = bucket.file(path);
@@ -587,15 +889,18 @@ async function uploadImageAndGetUrl(path: string, bytes: Buffer, contentType = "
 }
 
 async function detectPixelColor(
-  croppedBytes: Buffer
+  croppedBytes: Buffer,
 ): Promise<{ pixelColor: AllowedColor; pixelHex: string }> {
   const tiny = await sharp(croppedBytes)
-    .resize({width: 64, height: 64, fit: "inside"})
+    .resize({ width: 64, height: 64, fit: "inside" })
     .ensureAlpha()
     .raw()
-    .toBuffer({resolveWithObject: true});
+    .toBuffer({ resolveWithObject: true });
 
-  const histogram = new Map<string, {count: number; r: number; g: number; b: number}>();
+  const histogram = new Map<
+    string,
+    { count: number; r: number; g: number; b: number }
+  >();
   const channels = tiny.info.channels;
   const data = tiny.data;
   let opaquePixels = 0;
@@ -615,11 +920,12 @@ async function detectPixelColor(
       existing.g += g;
       existing.b += b;
     } else {
-      histogram.set(key, {count: 1, r, g, b});
+      histogram.set(key, { count: 1, r, g, b });
     }
   }
 
-  let dominant: {count: number; r: number; g: number; b: number} | null = null;
+  let dominant: { count: number; r: number; g: number; b: number } | null =
+    null;
   for (const bucket of histogram.values()) {
     if (!dominant || bucket.count > dominant.count) {
       dominant = bucket;
@@ -631,7 +937,7 @@ async function detectPixelColor(
       opaquePixels,
       histogramBuckets: histogram.size,
     });
-    return {pixelColor: "grey", pixelHex: "#808080"};
+    return { pixelColor: "grey", pixelHex: "#808080" };
   }
 
   const avgR = dominant.r / dominant.count;
@@ -648,7 +954,7 @@ function applyScoreConstraints(
   category: Category,
   subCategory: string,
   formalityScore: number,
-  warmthScore: number
+  warmthScore: number,
 ): { formalityScore: number; warmthScore: number } {
   let nextFormality = formalityScore;
   let nextWarmth = warmthScore;
@@ -669,6 +975,124 @@ function applyScoreConstraints(
     formalityScore: clampScore(nextFormality),
     warmthScore: clampScore(nextWarmth),
   };
+}
+
+function deriveLayerRole(
+  category: Category,
+  subCategory: string | null,
+  current: string | null,
+): string | null {
+  const normalized = normalizeNullableEnum(current, ALLOWED_LAYER_ROLE_SET);
+  if (normalized) return normalized;
+  if (category === Category.OUTERWEAR) return "outer";
+  if (category === Category.TOP) {
+    if (["hoodie", "sweatshirt", "sweater"].includes(subCategory ?? ""))
+      return "mid";
+    if (["tshirt", "tank", "shirt", "polo"].includes(subCategory ?? ""))
+      return "base";
+  }
+  return null;
+}
+
+function deriveWarmth(
+  material: string,
+  subCategory: string | null,
+  category: Category,
+  current: string | null,
+): string | null {
+  const normalized = normalizeNullableEnum(current, ALLOWED_WARMTH_SET);
+  if (normalized) return normalized;
+  if (
+    ["wool", "fleece"].includes(material) ||
+    ["coat"].includes(subCategory ?? "")
+  )
+    return "heavy";
+  if (
+    category === Category.OUTERWEAR ||
+    [
+      "hoodie",
+      "sweatshirt",
+      "sweater",
+      "overshirt",
+      "blazer",
+      "jacket",
+    ].includes(subCategory ?? "")
+  ) {
+    return "medium";
+  }
+  if (["tshirt", "tank", "polo", "shirt", "shorts"].includes(subCategory ?? ""))
+    return "light";
+  return null;
+}
+
+function deriveFormality(
+  subCategory: string | null,
+  style: string,
+  current: string | null,
+): string | null {
+  const normalized = normalizeNullableEnum(current, ALLOWED_FORMALITY_SET);
+  if (normalized) return normalized;
+  if (style !== "unknown" && ALLOWED_FORMALITY_SET.has(style)) return style;
+  if (["blazer"].includes(subCategory ?? "")) return "formal";
+  if (
+    ["shirt", "trousers", "loafer", "formal_shoe"].includes(subCategory ?? "")
+  )
+    return "smart_casual";
+  if (
+    ["hoodie", "sweatshirt", "joggers", "trackpants", "sneaker"].includes(
+      subCategory ?? "",
+    )
+  ) {
+    return "streetwear";
+  }
+  return null;
+}
+
+function deriveVisualWeight(
+  pattern: string,
+  hasLogo: boolean,
+  logoPlacement: string,
+  aestheticTags: string[],
+  current: string | null,
+): string | null {
+  const normalized = normalizeNullableEnum(current, ALLOWED_VISUAL_WEIGHT_SET);
+  if (normalized) return normalized;
+  if (
+    ["graphic", "logo", "text", "floral", "camouflage"].includes(pattern) ||
+    aestheticTags.includes("statement") ||
+    aestheticTags.includes("logo_heavy") ||
+    aestheticTags.includes("monogram") ||
+    (hasLogo && logoPlacement === "all_over")
+  ) {
+    return "bold";
+  }
+  if (pattern === "solid" && !hasLogo) return "minimal";
+  return "balanced";
+}
+
+function deriveVersatilityScore(
+  current: number | null,
+  pattern: string,
+  hasLogo: boolean,
+  logoPlacement: string,
+  aestheticTags: string[],
+  visualWeight: string | null,
+): number | null {
+  const normalized = normalizeOptionalScore(current, 1, 5);
+  if (normalized != null) return normalized;
+  if (
+    ["graphic", "logo", "floral", "camouflage"].includes(pattern) ||
+    aestheticTags.includes("statement") ||
+    aestheticTags.includes("luxury") ||
+    aestheticTags.includes("logo_heavy") ||
+    aestheticTags.includes("monogram") ||
+    (hasLogo && logoPlacement === "all_over") ||
+    visualWeight === "bold"
+  ) {
+    return 2;
+  }
+  if (pattern === "solid") return 4;
+  return 3;
 }
 
 function safeJsonExtract(text: string): RawExtraction | null {
@@ -698,13 +1122,14 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
     body: JSON.stringify({
       model: MODEL,
       temperature: 0,
-      response_format: {type: "json_object"},
+      response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
           content: [
-            "Classify one clothing item from the image and output ONLY JSON matching the schema. No markdown. No prose. No additional keys.",
-            "Schema keys only: category, subCategory, colors, pattern, material, brand, brandConfidence, brandEvidence, brandCandidates, fit, style, sleeveLength, neckline, closure, length, rise, legShape, hasLogo, logoPlacement, occasionTags, seasonTags, confidence, formalityScore, warmthScore, bbox.",
+            "You are a fashion catalog parser and wardrobe stylist. Analyze one clothing item from the image and output ONLY one JSON object matching the schema. No markdown. No prose. No extra keys.",
+            "Be visually grounded. Use only what is visible in the garment image. Prefer null over guessing when uncertain.",
+            "Schema keys only: category, subCategory, type, name, brand, brandConfidence, colors, primaryColor, displayColor, displayColors, pattern, material, fit, style, sleeveLength, neckline, closure, length, rise, legShape, hasLogo, logoPlacement, formality, warmth, layerRole, aestheticTags, occasionTags, seasonTags, visualWeight, versatilityScore, confidence.",
             "HARD category disambiguation priority:",
             "1) If two leg openings, inseam, crotch seam, fly, waistband, belt loops, or drawstring at the waist are visible, category MUST be bottom.",
             "2) If collar or neckline plus sleeves are visible, category is top unless it is clearly open-front outerwear.",
@@ -712,31 +1137,35 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
             "4) If a single one-piece garment such as jumpsuit/dress/romper is visible, category is one_piece.",
             "5) If shoes/boots/sandals are visible, category is footwear.",
             "For pants vs top, prioritize waistband/fly/two-leg evidence over upper-body fabric cues.",
-            "Brand detection: detect only when clear visible text, logo, or tag is present. If unsure, return brand=null and brandConfidence <= 0.4. Canonical brands: Nike, Adidas, Puma, Uniqlo, Zara, H&M, Levi’s, Polo Ralph Lauren. brandCandidates max 5.",
-            "Brand evidence enum: text, logo, tag, unknown.",
-            "Extract garment colors only; ignore background, lighting casts, shadows, and skin.",
-            "Return up to 2 simple garment color names. Do NOT output multicolor.",
-            "Prefer unknown or null over guessing for uncertain fields.",
-            "Pattern enum: solid, striped, plaid, checked, graphic, logo, text, floral, dots, camouflage, textured, other, unknown.",
-            "Material enum: cotton, denim, polyester, wool, leather, linen, nylon, silk, rayon, fleece, unknown.",
-            "Fit enum: slim, regular, relaxed, oversized, unknown.",
-            "Style enum: casual, smart_casual, formal, athleisure, streetwear, workwear, unknown.",
+            "Brand detection: if logo, monogram, text, tag, or a recognizable house pattern provides reasonably strong visual evidence, return the brand. Iconic repeating designer monograms and house patterns count as strong brand evidence when unmistakable. For example, LV monogram should map to Louis Vuitton and GG monogram should map to Gucci. If a globally recognizable repeating monogram or house pattern is unmistakable, return the brand instead of leaving it blank, set hasLogo=true, set logoPlacement=all_over, and return a meaningful brandConfidence rather than a low placeholder score. Keep null only when evidence is genuinely weak or ambiguous, and in those cases keep brandConfidence <= 0.4.",
+            "type should be a more specific fashion label than subCategory when visible, for example denim_jacket, trucker_jacket, varsity_jacket, bomber_jacket, dress_shirt, straight_jeans. Return null if not clear.",
+            "name should be a concise catalog-style item title using visible garment attributes only, not marketing fluff.",
+            "Extract garment colors only; ignore transparent regions, checkerboard preview backgrounds, white studio backgrounds, empty cutout space, lighting casts, shadows, and skin.",
+            "colors and primaryColor should be normalized app colors from the base palette. displayColor and displayColors should be short human-friendly visible garment color labels such as light blue, off-white, washed black, olive green, beige, or khaki.",
+            "Return up to 3 garment colors when clearly visible, order them by visual prominence, and choose one garment primaryColor.",
+            "Prefer null over unknown, empty string, n/a, or guesses for uncertain fields.",
+            "Pattern enum: solid, striped, plaid, checked, graphic, logo, text, floral, dots, camouflage, textured, monogram, other, unknown.",
+            "Material enum: cotton, denim, polyester, wool, leather, linen, nylon, silk, rayon, fleece, canvas, satin, suede, knit, unknown.",
+            "Fit enum: slim, regular, relaxed, oversized, cropped, tailored, unknown.",
+            "Style enum: casual, smart_casual, formal, athleisure, streetwear, workwear, luxury, minimal, unknown.",
             "Sleeve enum: sleeveless, short, three_quarter, long, unknown.",
-            "Neckline enum: crew, v_neck, collar, hood, unknown.",
-            "Closure enum: pullover, zip, button, none, unknown.",
+            "Neckline enum: crew, v_neck, collar, hood, mock_neck, unknown.",
+            "Closure enum: pullover, zip, button, snap, none, unknown.",
             "Length enum: cropped, regular, long, unknown.",
             "Rise enum: low, mid, high, unknown.",
-            "Leg shape enum: skinny, slim, straight, tapered, wide, unknown.",
-            "Logo placement enum: chest, sleeve, back, waist, leg, unknown.",
-            "occasionTags max 4 from: work, gym, party, date, travel, lounge, formal_event, streetwear.",
-            "seasonTags max 2 from: summer, winter, spring_fall, all_season.",
+            "Leg shape enum: skinny, slim, straight, tapered, wide, flare, unknown.",
+            "Logo placement enum: chest, sleeve, back, waist, leg, all_over, unknown.",
+            "formality enum: casual, smart_casual, formal, athletic, lounge, party, streetwear.",
+            "warmth enum: light, medium, heavy.",
+            "layerRole enum: base, mid, outer.",
+            "aestheticTags max 3 from: luxury, streetwear, statement, minimal, classic, sporty, workwear, preppy, edgy, vintage, logo_heavy, monogram, utility.",
+            "occasionTags max 4 from: casual, work, gym, party, date, travel, lounge, formal_event, streetwear.",
+            "seasonTags max 3 from: summer, winter, spring, fall, all_season.",
+            "visualWeight enum: minimal, balanced, bold.",
+            "versatilityScore is an integer 1..5 where 1 is highly statement/limited and 5 is highly versatile.",
             "confidence is optional and may contain category, subCategory, colors, brand, each 0..1.",
-            "bbox must be normalized 0..1 with x,y,w,h and tightly cover the garment while excluding most background. If unsure, use a safe central crop.",
-            "Use strict scoring rubric with anchors.",
-            "formalityScore anchors: 0.0 gym/lounge tee, 0.3 casual everyday, 0.5 smart-casual knit, 0.7 business-casual shirt/blazer, 0.9 formal tailoring.",
-            "warmthScore anchors: 0.0 very light sleeveless/summer fabric, 0.3 light short-sleeve cotton, 0.5 midweight long-sleeve, 0.7 hoodie/sweater, 0.9 heavy coat/insulated outerwear.",
-            "Hard constraints: if subCategory is tshirt then formalityScore <= 0.5 and warmthScore <= 0.4.",
-            "Hard constraints: if category is top and subCategory is hoodie, sweatshirt, or sweater then warmthScore >= 0.6.",
+            "Think like a stylist: infer outfit-useful semantics conservatively from visible cues only.",
+            "If branding is subtle or ambiguous, do not guess.",
             `Valid categories: ${Object.values(Category).join(", ")}.`,
             `Valid subCategory map: ${JSON.stringify(SUB_CATEGORIES)}.`,
           ].join(" "),
@@ -750,14 +1179,15 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
                 "Analyze this garment photo.",
                 "Prefer visible garment type and visible logo/text/tag only.",
                 "Use waistband/fly/two-leg cues to avoid misclassifying pants as tops.",
-                "If uncertain, return unknown or null instead of guessing.",
-                "Colors must describe the garment only, not the background.",
-                "Return bbox values between 0 and 1.",
+                "If uncertain, return null instead of guessing.",
+                "Colors and primaryColor must describe the garment only, never the background, transparency, checkerboard cutout preview, or empty space.",
+                "displayColor and displayColors should be short user-facing visible color names, not marketing language.",
+                "If a piece has multiple visible garment colors, include them and choose the main one as primaryColor.",
               ].join(" "),
             },
             {
               type: "image_url",
-              image_url: {url: photoUrl},
+              image_url: { url: photoUrl },
             },
           ],
         },
@@ -767,7 +1197,9 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`OpenAI request failed: ${response.status} ${body.slice(0, 240)}`);
+    throw new Error(
+      `OpenAI request failed: ${response.status} ${body.slice(0, 240)}`,
+    );
   }
 
   const data = (await response.json()) as {
@@ -783,7 +1215,7 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
   if (!parsed) {
     throw new Error("OpenAI returned invalid JSON payload");
   }
-  logger.info("OpenAI parsed extraction payload", {parsed});
+  logger.info("OpenAI parsed extraction payload", { parsed });
 
   return parsed;
 }
@@ -801,11 +1233,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
     if (!after) return;
 
     const photoUrls = extractPhotoUrls(after);
-    const hasPhoto = photoUrls.length > 0 || !!String(after.photoUrl ?? "").trim();
-    const status = (after.ingestion?.status ?? after.ingestionStatus ?? "")
-      .toString()
-      .trim()
-      .toLowerCase() as IngestionStatus | "";
+    const hasPhoto =
+      photoUrls.length > 0 || !!String(after.photoUrl ?? "").trim();
+    const status = getIngestionStatus(after);
     logger.info("INGEST CHECK", {
       uid,
       itemId,
@@ -817,36 +1247,50 @@ export const ingestItemFromPhotos = onDocumentWritten(
       hasPhoto,
     });
     if (!hasPhoto) {
-      logger.info("Skipping ingestion: no photo URLs", {uid, itemId});
+      logger.info("Skipping ingestion: no photo URLs", { uid, itemId });
       return;
     }
 
     const sourceUrls = extractIngestionSourceUrls(after);
     const beforeSourceUrls = before ? extractIngestionSourceUrls(before) : [];
     const photoHash = hashPhotoUrls(photoUrls);
-    const declaredSourceHash = String(after.ingestionSource?.sourceHash ?? "").trim() || null;
-    const currentSourceHash = sourceUrls.length ? hashPhotoUrls(sourceUrls) : "";
-    const previousSourceHash = beforeSourceUrls.length ? hashPhotoUrls(beforeSourceUrls) : "";
-    const existingColorSource = String(after.colorSource ?? "").trim().toLowerCase();
+    const declaredSourceHash =
+      String(after.ingestionSource?.sourceHash ?? "").trim() || null;
+    const currentSourceHash = sourceUrls.length
+      ? hashPhotoUrls(sourceUrls)
+      : "";
+    const previousSourceHash = beforeSourceUrls.length
+      ? hashPhotoUrls(beforeSourceUrls)
+      : "";
+    const existingColorSource = String(after.colorSource ?? "")
+      .trim()
+      .toLowerCase();
     const hasUserColorOverride = existingColorSource === "user";
-    const existingBrandSource = String(after.brandSource ?? "").trim().toLowerCase();
+    const existingBrandSource = String(after.brandSource ?? "")
+      .trim()
+      .toLowerCase();
     const hasUserBrandOverride = existingBrandSource === "user";
     const lastRunAtMs = toMillis(after.ingestion?.lastRunAt);
-    const beforeStatus = (before?.ingestion?.status ?? before?.ingestionStatus ?? "")
-      .toString()
-      .trim()
-      .toLowerCase() as IngestionStatus | "";
-    const processedPhotoHash =
-      String(after.ingestion?.lastProcessedPhotoHash ?? before?.ingestion?.lastProcessedPhotoHash ?? "").trim();
-    const processedSourceHash =
-      String(after.ingestion?.lastProcessedSourceHash ?? before?.ingestion?.lastProcessedSourceHash ?? "").trim();
+    const beforeStatus = getIngestionStatus(before);
+    const processedPhotoHash = String(
+      after.ingestion?.lastProcessedPhotoHash ??
+        before?.ingestion?.lastProcessedPhotoHash ??
+        "",
+    ).trim();
+    const processedSourceHash = String(
+      after.ingestion?.lastProcessedSourceHash ??
+        before?.ingestion?.lastProcessedSourceHash ??
+        "",
+    ).trim();
     const hasNewPhoto =
       !!currentSourceHash &&
       (!processedSourceHash || currentSourceHash !== processedSourceHash);
     const isCreate = !before;
     const hasSourcePhoto = sourceUrls.length > 0;
     const alreadyProcessedCurrentSource =
-      !!currentSourceHash && !!processedSourceHash && currentSourceHash === processedSourceHash;
+      !!currentSourceHash &&
+      !!processedSourceHash &&
+      currentSourceHash === processedSourceHash;
 
     const retryBlocked =
       status === "failed" &&
@@ -862,14 +1306,12 @@ export const ingestItemFromPhotos = onDocumentWritten(
     const shouldRun =
       hasSourcePhoto &&
       !retryBlocked &&
-      (
-        isCreate ||
+      (isCreate ||
         !status ||
         !currentSourceHash ||
         !processedSourceHash ||
         !alreadyProcessedCurrentSource ||
-        explicitRetryRequested
-      );
+        explicitRetryRequested);
 
     logger.info("Ingestion trigger decision", {
       uid,
@@ -896,9 +1338,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
           ? "recent-failed-same-source"
           : explicitRetryRequested
             ? null
-          : shouldRun
-            ? null
-            : "current-source-already-processed",
+            : shouldRun
+              ? null
+              : "current-source-already-processed",
     });
 
     if (!shouldRun) {
@@ -922,26 +1364,37 @@ export const ingestItemFromPhotos = onDocumentWritten(
     const ref = db.doc(`users/${uid}/items/${itemId}`);
 
     if (after.cleanedFromHash === currentSourceHash) {
-      logger.info("Skipping ingestion: cleanedFromHash already matches current source", {
-        uid,
-        itemId,
-        currentSourceHash,
-      });
+      logger.info(
+        "Skipping ingestion: cleanedFromHash already matches current source",
+        {
+          uid,
+          itemId,
+          currentSourceHash,
+        },
+      );
       return;
     }
 
     const runId = randomUUID();
-    logger.info("Ingestion transition", {uid, itemId, from: status ?? "missing", to: "processing"});
-    await ref.set({
-      ingestionStatus: "processing",
-      ingestion: {
-        runId,
-        status: "processing",
-        lastRunAt: FieldValue.serverTimestamp(),
-        lastProcessedPhotoHash: photoHash,
-        lastProcessedSourceHash: currentSourceHash,
+    logger.info("Ingestion transition", {
+      uid,
+      itemId,
+      from: status ?? "missing",
+      to: "processing",
+    });
+    await ref.set(
+      {
+        ...(after.isDraft === true ? { draftState: "ingesting" } : {}),
+        ingestion: {
+          runId,
+          status: "processing",
+          lastRunAt: FieldValue.serverTimestamp(),
+          lastProcessedPhotoHash: photoHash,
+          lastProcessedSourceHash: currentSourceHash,
+        },
       },
-    }, {merge: true});
+      { merge: true },
+    );
 
     try {
       const extracted = await extractWithOpenAI(photoUrls[0]);
@@ -954,7 +1407,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
       if (!category) {
         if (inferredCategory) {
           category = inferredCategory;
-          warning = "Invalid category from classifier; inferred category from sub-category.";
+          warning =
+            "Invalid category from classifier; inferred category from sub-category.";
         } else {
           category = Category.TOP;
           warning = "Invalid category from classifier; fallback applied.";
@@ -968,19 +1422,28 @@ export const ingestItemFromPhotos = onDocumentWritten(
           if (!isValidCategorySubCategory(category, subCategory)) {
             subCategory = SUB_CATEGORIES[category][0];
           }
-          warning = "Invalid category/sub-category pairing; reconciled from sub-category.";
+          warning =
+            "Invalid category/sub-category pairing; reconciled from sub-category.";
         } else {
           subCategory = SUB_CATEGORIES[category][0];
-          warning = "Invalid sub-category from classifier; defaulted by category.";
+          warning =
+            "Invalid sub-category from classifier; defaulted by category.";
         }
       }
       subCategory = subCategory ?? SUB_CATEGORIES[category][0];
+      const itemType = normalizeFreeTextLabel(
+        String(extracted.type ?? "").replace(/_/g, " "),
+      );
+      const extractedName = normalizeFreeTextLabel(extracted.name, 72);
 
       const pattern = normalizePattern(extracted.pattern);
       const material = normalizeMaterial(extracted.material);
       const fit = normalizeEnum(extracted.fit, ALLOWED_FITS);
       const style = normalizeEnum(extracted.style, ALLOWED_STYLES);
-      const sleeveLength = normalizeEnum(extracted.sleeveLength, ALLOWED_SLEEVE_LENGTHS);
+      const sleeveLength = normalizeEnum(
+        extracted.sleeveLength,
+        ALLOWED_SLEEVE_LENGTHS,
+      );
       const neckline = normalizeEnum(extracted.neckline, ALLOWED_NECKLINES);
       const closure = normalizeEnum(extracted.closure, ALLOWED_CLOSURES);
       const itemLength = normalizeEnum(extracted.length, ALLOWED_LENGTHS);
@@ -997,43 +1460,99 @@ export const ingestItemFromPhotos = onDocumentWritten(
         })
       ) {
         category = Category.BOTTOM;
-        if (!subCategory || !isValidCategorySubCategory(category, subCategory)) {
+        if (
+          !subCategory ||
+          !isValidCategorySubCategory(category, subCategory)
+        ) {
           subCategory = "chinos";
         }
         warning = "Classifier top result overridden by bottom-garment cues.";
       }
-      const hasLogo = typeof extracted.hasLogo === "boolean" ? extracted.hasLogo : false;
+      const hasLogo =
+        typeof extracted.hasLogo === "boolean" ? extracted.hasLogo : false;
       const logoPlacement = normalizeEnum(
         extracted.logoPlacement,
-        ALLOWED_LOGO_PLACEMENTS
+        ALLOWED_LOGO_PLACEMENTS,
       );
       const occasionTags = normalizeOptionalTagList(
         extracted.occasionTags,
         ALLOWED_OCCASION_TAGS,
-        4
+        4,
       );
       const seasonTags = normalizeOptionalTagList(
         extracted.seasonTags,
         ALLOWED_SEASON_TAGS,
-        2
+        3,
+      );
+      const aestheticTags = normalizeOptionalTagList(
+        extracted.aestheticTags,
+        ALLOWED_AESTHETIC_TAG_SET,
+        3,
       );
       const rawBrand = normalizeBrand(extracted.brand);
-      const brandCandidates = normalizeBrandCandidates(extracted.brandCandidates);
+      const brandCandidates = normalizeBrandCandidates(
+        extracted.brandCandidates,
+      );
       const brand = rawBrand ?? brandCandidates[0] ?? null;
       const brandConfidenceRaw = clamp01(
-        extracted.brandConfidence ?? extracted.confidence?.brand ?? 0
+        extracted.brandConfidence ?? extracted.confidence?.brand ?? 0,
       );
-      const brandConfidence = brand ? brandConfidenceRaw : Math.min(brandConfidenceRaw, 0.4);
+      const brandConfidence = brand
+        ? brandConfidenceRaw
+        : Math.min(brandConfidenceRaw, 0.4);
       const brandEvidence = normalizeEnum(
         extracted.brandEvidence,
-        ALLOWED_BRAND_EVIDENCE
+        ALLOWED_BRAND_EVIDENCE,
+      );
+      const formality = deriveFormality(
+        subCategory,
+        style,
+        normalizeNullableEnum(extracted.formality, ALLOWED_FORMALITY_SET),
+      );
+      const layerRole = deriveLayerRole(
+        category,
+        subCategory,
+        normalizeNullableEnum(extracted.layerRole, ALLOWED_LAYER_ROLE_SET),
+      );
+      const warmth = deriveWarmth(
+        material,
+        subCategory,
+        category,
+        normalizeNullableEnum(extracted.warmth, ALLOWED_WARMTH_SET),
+      );
+      const visualWeight = deriveVisualWeight(
+        pattern,
+        hasLogo,
+        logoPlacement,
+        aestheticTags,
+        normalizeNullableEnum(
+          extracted.visualWeight,
+          ALLOWED_VISUAL_WEIGHT_SET,
+        ),
+      );
+      const versatilityScore = deriveVersatilityScore(
+        normalizeOptionalScore(extracted.versatilityScore, 1, 5),
+        pattern,
+        hasLogo,
+        logoPlacement,
+        aestheticTags,
+        visualWeight,
       );
       const categoryConfidence = clamp01(extracted.confidence?.category ?? 0);
-      const subCategoryConfidence = clamp01(extracted.confidence?.subCategory ?? 0);
+      const subCategoryConfidence = clamp01(
+        extracted.confidence?.subCategory ?? 0,
+      );
       const colorsConfidence = clamp01(extracted.confidence?.colors ?? 0);
-      const {colors: aiColorsRaw, colorLabel} = normalizeColors(extracted.colors);
-      const aiColors = aiColorsRaw.slice(0, 2);
+      const { colors: aiColorsRaw, colorLabel } = normalizeColors(
+        extracted.colors,
+      );
+      const aiPrimaryColor = normalizeColorToken(
+        String(extracted.primaryColor ?? ""),
+      );
+      const aiColors = aiColorsRaw.slice(0, 3);
       const safeAiColorLabel = colorLabel?.trim() ? colorLabel.trim() : null;
+      const aiDisplayColor = normalizeDisplayColorValue(extracted.displayColor);
+      const aiDisplayColors = normalizeDisplayColors(extracted.displayColors);
 
       const originalBytes = await downloadImageBytes(photoUrls[0]);
       const metadata = await sharp(originalBytes).metadata();
@@ -1054,24 +1573,24 @@ export const ingestItemFromPhotos = onDocumentWritten(
         .png()
         .toBuffer();
       const croppedBytes = await sharp(croppedForColorBytes)
-        .jpeg({quality: 85})
+        .jpeg({ quality: 85 })
         .toBuffer();
       const thumbBytes = await sharp(croppedBytes)
-        .resize({width: 256})
-        .jpeg({quality: 78})
+        .resize({ width: 256 })
+        .jpeg({ quality: 78 })
         .toBuffer();
 
       const croppedStoragePath = `users/${uid}/items/${itemId}/cropped.jpg`;
       const thumbStoragePath = `users/${uid}/items/${itemId}/thumb.jpg`;
-      const croppedUrl = await uploadImageAndGetUrl(croppedStoragePath, croppedBytes);
+      const croppedUrl = await uploadImageAndGetUrl(
+        croppedStoragePath,
+        croppedBytes,
+      );
       const thumbUrl = await uploadImageAndGetUrl(thumbStoragePath, thumbBytes);
 
       const pixelResult = await detectPixelColor(croppedForColorBytes);
       const pixelPrimary = pixelResult.pixelColor;
-      const pixelColors: AllowedColor[] = [pixelPrimary];
-
-      const aiPrimary = aiColors[0];
-      const pixelPrimaryMatchesAi = !!aiPrimary && aiPrimary === pixelPrimary;
+      const pixelColors: AllowedColor[] = pixelPrimary ? [pixelPrimary] : [];
 
       let finalColors: AllowedColor[] = [];
       let finalColorLabel: string | null = null;
@@ -1079,46 +1598,70 @@ export const ingestItemFromPhotos = onDocumentWritten(
       let colorConfidence = 0.4;
       let colorNeedsReview = true;
 
-      if (pixelPrimaryMatchesAi) {
-        finalColors = [pixelPrimary];
-        finalColorLabel = safeAiColorLabel ? toTitleCase(safeAiColorLabel) : toTitleCase(pixelPrimary);
-        finalPrimaryColor = toTitleCase(pixelPrimary);
-        colorConfidence = 0.9;
+      if (aiColors.length > 0 || aiPrimaryColor) {
+        const prioritizedAiColors = [...aiColors];
+        if (aiPrimaryColor && !prioritizedAiColors.includes(aiPrimaryColor)) {
+          prioritizedAiColors.unshift(aiPrimaryColor);
+        } else if (aiPrimaryColor) {
+          prioritizedAiColors.splice(
+            prioritizedAiColors.indexOf(aiPrimaryColor),
+            1,
+          );
+          prioritizedAiColors.unshift(aiPrimaryColor);
+        }
+        finalColors = prioritizedAiColors.slice(0, 3);
+        finalPrimaryColor = toTitleCase(aiPrimaryColor ?? finalColors[0]);
+        finalColorLabel = safeAiColorLabel
+          ? toTitleCase(safeAiColorLabel)
+          : finalColors.map((value) => toTitleCase(value)).join(" / ");
+        colorConfidence = Math.max(0.6, colorsConfidence || 0);
         colorNeedsReview = false;
       } else if (pixelPrimary) {
         finalColors = [pixelPrimary];
         finalColorLabel = toTitleCase(pixelPrimary);
         finalPrimaryColor = toTitleCase(pixelPrimary);
-      } else if (aiPrimary) {
-        finalColors = [aiPrimary];
-        finalColorLabel = safeAiColorLabel ? toTitleCase(safeAiColorLabel) : toTitleCase(aiPrimary);
-        finalPrimaryColor = toTitleCase(aiPrimary);
-      }
-      const final = (finalColors[0] || "").toLowerCase();
-      const pixel = (pixelColors[0] || "").toLowerCase();
-
-      if (final && pixel && final === pixel) {
-        colorNeedsReview = false;
-        colorConfidence = 0.9;
-      } else if (final && pixel && final !== pixel) {
-        colorNeedsReview = true;
-        colorConfidence = 0.4;
-      } else if (!pixel) {
-        colorNeedsReview = true;
         colorConfidence = 0.3;
+        colorNeedsReview = true;
       }
 
-      const persistedColorNeedsReview = hasUserColorOverride ? false : colorNeedsReview;
+      const persistedColorNeedsReview = hasUserColorOverride
+        ? false
+        : colorNeedsReview;
+      let finalDisplayColors = aiDisplayColors.slice(0, 4);
+      if (aiDisplayColor && !finalDisplayColors.includes(aiDisplayColor)) {
+        finalDisplayColors.unshift(aiDisplayColor);
+      } else if (aiDisplayColor) {
+        finalDisplayColors = [
+          aiDisplayColor,
+          ...finalDisplayColors.filter((value) => value !== aiDisplayColor),
+        ];
+      }
+      if (!finalDisplayColors.length && safeAiColorLabel) {
+        const fallbackDisplayColor = normalizeDisplayColorValue(safeAiColorLabel);
+        if (fallbackDisplayColor) finalDisplayColors = [fallbackDisplayColor];
+      }
+      if (!finalDisplayColors.length && finalPrimaryColor) {
+        const fallbackDisplayColor = normalizeDisplayColorValue(finalPrimaryColor);
+        if (fallbackDisplayColor) finalDisplayColors = [fallbackDisplayColor];
+      }
+      const finalDisplayColor = finalDisplayColors[0] ?? null;
       const generatedNameColor =
-        finalColors.length > 0
+        finalDisplayColor
+          ? toTitleCase(String(finalDisplayColor))
+          : finalColors.length > 0
           ? toTitleCase(String(finalColors[0]))
           : finalPrimaryColor;
+      const inferredName =
+        extractedName ??
+        (!String(after.name ?? "").trim() && generatedNameColor
+          ? `${generatedNameColor} ${humanizeLabel(itemType ?? subCategory ?? category)}`
+          : null);
 
       const constrainedScores = applyScoreConstraints(
         category,
         subCategory,
         clampScore(extracted.formalityScore),
-        clampScore(extracted.warmthScore)
+        clampScore(extracted.warmthScore),
       );
       let formalityScore = constrainedScores.formalityScore;
       let warmthScore = constrainedScores.warmthScore;
@@ -1134,13 +1677,14 @@ export const ingestItemFromPhotos = onDocumentWritten(
         normalized: {
           category,
           subCategory,
+          type: itemType,
           confidence: {
             category: categoryConfidence,
             subCategory: subCategoryConfidence,
             colors: colorsConfidence,
             brand: brandConfidence,
           },
-          brand: hasUserBrandOverride ? after.brand ?? null : brand,
+          brand: hasUserBrandOverride ? (after.brand ?? null) : brand,
           brandConfidence,
           brandEvidence,
           brandCandidates,
@@ -1149,6 +1693,11 @@ export const ingestItemFromPhotos = onDocumentWritten(
           material,
           fit,
           style,
+          formality,
+          warmth,
+          layerRole,
+          visualWeight,
+          versatilityScore,
           sleeveLength,
           neckline,
           closure,
@@ -1159,12 +1708,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           logoPlacement,
           occasionTags,
           seasonTags,
-          aiColors,
-          ...(safeAiColorLabel ? {aiColorLabel: safeAiColorLabel} : {}),
-          pixelColors,
-          pixelColorHex: pixelResult.pixelHex,
-          ...(hasUserColorOverride ? {} : {colorConfidence}),
-          colorNeedsReview: persistedColorNeedsReview,
+          aestheticTags,
           crop: cropRect.normalized,
           photos: {
             primaryUrl: photoUrls[0],
@@ -1173,15 +1717,25 @@ export const ingestItemFromPhotos = onDocumentWritten(
             thumbUrl,
           },
           finalColors,
-          ...(finalColorLabel ? {finalColorLabel} : {}),
+          ...(finalColorLabel ? { finalColorLabel } : {}),
           finalPrimaryColor,
-          generatedName:
-            !(String(after.name ?? "").trim()) && generatedNameColor
-              ? `${generatedNameColor} ${humanizeLabel(subCategory || category)}`
-              : null,
+          finalDisplayColor,
+          finalDisplayColors,
+          generatedName: inferredName,
           colorSource: hasUserColorOverride ? "user" : "ai",
           formalityScore,
           warmthScore,
+          aiDebug: {
+            brandEvidence,
+            brandCandidates,
+            aiColors,
+            aiPrimaryColor: aiPrimaryColor ? toTitleCase(aiPrimaryColor) : null,
+            aiColorLabel: safeAiColorLabel ?? null,
+            pixelColors,
+            pixelColorHex: pixelResult.pixelHex,
+            colorConfidence,
+            colorNeedsReview: persistedColorNeedsReview,
+          },
           warning,
           userBrandOverridePreserved: hasUserBrandOverride,
           userColorOverridePreserved: hasUserColorOverride,
@@ -1194,19 +1748,18 @@ export const ingestItemFromPhotos = onDocumentWritten(
         finalWrite: {
           category,
           subCategory,
+          type: itemType,
           colors: finalColors,
-          brand: hasUserBrandOverride ? after.brand ?? null : brand,
-          generatedName:
-            !(String(after.name ?? "").trim()) && generatedNameColor
-              ? `${generatedNameColor} ${humanizeLabel(subCategory || category)}`.trim()
-              : null,
-          ingestionStatus: "done",
+          brand: hasUserBrandOverride ? (after.brand ?? null) : brand,
+          generatedName: inferredName,
           lastProcessedSourceHash: currentSourceHash,
         },
       });
 
       const latestBeforeDone = await ref.get();
-      const latestRunId = String(latestBeforeDone.get("ingestion.runId") ?? "").trim();
+      const latestRunId = String(
+        latestBeforeDone.get("ingestion.runId") ?? "",
+      ).trim();
       if (latestRunId && latestRunId !== runId) {
         logger.warn("Skipping stale ingestion completion write", {
           uid,
@@ -1217,76 +1770,109 @@ export const ingestItemFromPhotos = onDocumentWritten(
         return;
       }
 
-      await ref.set({
-        ingestionStatus: "done",
-        cleanedFromHash: currentSourceHash,
-        ...(!String(after.name ?? "").trim() && generatedNameColor
-          ? {
-              name: `${generatedNameColor} ${humanizeLabel(subCategory || category)}`.trim(),
-            }
-          : {}),
-        category,
-        subCategory,
-        wearSlot: wearSlot(category),
-        pattern,
-        material,
-        fit,
-        style,
-        sleeveLength,
-        neckline,
-        closure,
-        length: itemLength,
-        rise,
-        legShape,
-        hasLogo,
-        logoPlacement,
-        ...(occasionTags.length > 0 ? {occasionTags} : {}),
-        ...(seasonTags.length > 0 ? {seasonTags} : {}),
-        ...(safeAiColorLabel ? {aiColorLabel: safeAiColorLabel} : {}),
-        ...(aiColors.length > 0 ? {aiColors} : {}),
-        ...(pixelColors.length > 0 ? {pixelColors} : {}),
-        ...(pixelResult.pixelHex ? {pixelColorHex: pixelResult.pixelHex} : {}),
-        ...(hasUserColorOverride ? {} : {colorConfidence}),
-        colorNeedsReview: persistedColorNeedsReview,
-        crop: cropRect.normalized,
-        ...(!hasUserColorOverride ? {
-          ...(finalColors.length > 0 ? {colors: finalColors} : {}),
-          ...(finalColorLabel ? {colorLabel: finalColorLabel} : {}),
-          ...(finalPrimaryColor ? {primaryColor: finalPrimaryColor} : {}),
-          colorSource: "ai",
-          colorUpdatedAt: Date.now(),
-        } : {}),
-        ...(!hasUserBrandOverride
-          ? {
-              brand,
-              brandConfidence,
-              brandEvidence,
-              ...(brandCandidates.length > 0 ? {brandCandidates} : {}),
-              brandSource: "ai",
-              brandUpdatedAt: Date.now(),
-            }
-          : {
-              brandConfidence,
-              brandEvidence,
-              ...(brandCandidates.length > 0 ? {brandCandidates} : {}),
-            }),
-        formalityScore,
-        warmthScore,
-        photos: {
-          primaryUrl: photoUrls[0],
-          urls: photoUrls,
-          croppedUrl,
-          thumbUrl,
+      await ref.set(
+        {
+          cleanedFromHash: currentSourceHash,
+          ...(after.isDraft === true ? { draftState: "photo_uploaded" } : {}),
+          ...(!String(after.name ?? "").trim() && inferredName
+            ? { name: inferredName }
+            : {}),
+          category,
+          subCategory,
+          ...(itemType ? { type: itemType } : {}),
+          wearSlot: wearSlot(category),
+          pattern,
+          material,
+          fit,
+          style,
+          ...(formality ? { formality } : {}),
+          ...(warmth ? { warmth } : {}),
+          ...(layerRole ? { layerRole } : {}),
+          ...(visualWeight ? { visualWeight } : {}),
+          ...(versatilityScore != null ? { versatilityScore } : {}),
+          sleeveLength,
+          neckline,
+          closure,
+          length: itemLength,
+          rise,
+          legShape,
+          hasLogo,
+          logoPlacement,
+          ...(occasionTags.length > 0 ? { occasionTags } : {}),
+          ...(seasonTags.length > 0 ? { seasonTags } : {}),
+          ...(aestheticTags.length > 0 ? { aestheticTags } : {}),
+          crop: cropRect.normalized,
+          ...(!hasUserColorOverride
+            ? {
+                ...(finalColors.length > 0 ? { colors: finalColors } : {}),
+                ...(finalColorLabel ? { colorLabel: finalColorLabel } : {}),
+                ...(finalPrimaryColor
+                  ? { primaryColor: finalPrimaryColor }
+                  : {}),
+                ...(finalDisplayColor
+                  ? { displayColor: toTitleCase(finalDisplayColor) }
+                  : {}),
+                ...(finalDisplayColors.length > 0
+                  ? {
+                      displayColors: finalDisplayColors.map((value) =>
+                        toTitleCase(value),
+                      ),
+                    }
+                  : {}),
+                colorSource: "ai",
+                colorUpdatedAt: Date.now(),
+              }
+            : {}),
+          ...(!hasUserBrandOverride
+            ? {
+                brand,
+                brandConfidence,
+                brandSource: "ai",
+                brandUpdatedAt: Date.now(),
+              }
+            : {
+                brandConfidence,
+              }),
+          aiDebug: {
+            brandEvidence,
+            ...(brandCandidates.length > 0 ? { brandCandidates } : {}),
+            ...(aiColors.length > 0 ? { aiColors } : {}),
+            ...(aiPrimaryColor
+              ? { aiPrimaryColor: toTitleCase(aiPrimaryColor) }
+              : {}),
+            ...(safeAiColorLabel ? { aiColorLabel: safeAiColorLabel } : {}),
+            ...(finalDisplayColor ? { displayColor: finalDisplayColor } : {}),
+            ...(finalDisplayColors.length > 0
+              ? { displayColors: finalDisplayColors }
+              : {}),
+            ...(pixelColors.length > 0 ? { pixelColors } : {}),
+            ...(pixelResult.pixelHex
+              ? { pixelColorHex: pixelResult.pixelHex }
+              : {}),
+            ...(hasUserColorOverride ? {} : { colorConfidence }),
+            colorNeedsReview: persistedColorNeedsReview,
+          },
+          formalityScore,
+          warmthScore,
+          photos: {
+            primaryUrl: photoUrls[0],
+            urls: photoUrls,
+            croppedUrl,
+            thumbUrl,
+          },
+          ingestion: {
+            runId,
+            status: "done",
+            lastRunAt: FieldValue.serverTimestamp(),
+            lastProcessedPhotoHash: photoHash,
+            lastProcessedSourceHash: currentSourceHash,
+            ...(warning
+              ? { error: { message: warning, code: "warning" } }
+              : {}),
+          },
         },
-        ingestion: {
-          runId,
-          status: "done",
-          lastRunAt: FieldValue.serverTimestamp(),
-          lastProcessedPhotoHash: photoHash,
-          lastProcessedSourceHash: currentSourceHash,
-          ...(warning ? {error: {message: warning, code: "warning"}} : {}),
-        },
-      }, {merge: true});
+        { merge: true },
+      );
 
       logger.info("Ingestion transition", {
         uid,
@@ -1296,17 +1882,20 @@ export const ingestItemFromPhotos = onDocumentWritten(
         category,
         subCategory,
         colors: finalColors,
-        brand: hasUserBrandOverride ? after.brand ?? null : brand,
+        brand: hasUserBrandOverride ? (after.brand ?? null) : brand,
         processedSourceHash: currentSourceHash,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown ingestion error";
-      logger.error("Ingestion failed", {uid, itemId, error: message});
+      const message =
+        error instanceof Error ? error.message : "Unknown ingestion error";
+      logger.error("Ingestion failed", { uid, itemId, error: message });
 
       const latest = await ref.get();
       const latestStatus = String(
-        latest.get("ingestion.status") ?? latest.get("ingestionStatus") ?? ""
-      ).trim().toLowerCase();
+        latest.get("ingestion.status") ?? latest.get("ingestionStatus") ?? "",
+      )
+        .trim()
+        .toLowerCase();
       const latestRunId = String(latest.get("ingestion.runId") ?? "").trim();
       if (latestStatus === "done") {
         logger.warn("Ingestion failure ignored because item is already done", {
@@ -1327,17 +1916,20 @@ export const ingestItemFromPhotos = onDocumentWritten(
         return;
       }
 
-      await ref.set({
-        ingestionStatus: "failed",
-        ingestion: {
-          runId,
-          status: "failed",
-          lastRunAt: FieldValue.serverTimestamp(),
-          lastProcessedPhotoHash: photoHash,
-          lastProcessedSourceHash: currentSourceHash,
-          error: {message},
+      await ref.set(
+        {
+          ...(after.isDraft === true ? { draftState: "failed" } : {}),
+          ingestion: {
+            runId,
+            status: "failed",
+            lastRunAt: FieldValue.serverTimestamp(),
+            lastProcessedPhotoHash: photoHash,
+            lastProcessedSourceHash: currentSourceHash,
+            error: { message },
+          },
         },
-      }, {merge: true});
+        { merge: true },
+      );
     }
-  }
+  },
 );

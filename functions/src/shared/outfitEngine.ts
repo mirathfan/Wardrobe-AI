@@ -98,6 +98,8 @@ export type WardrobeItem = {
   colors?: string[];
   primaryColor?: string;
   status?: string;
+  isDraft?: boolean;
+  draftState?: string | null;
   brand?: string | null;
   name?: string | null;
   colorLabel?: string | null;
@@ -133,6 +135,11 @@ type ScoredItem = {
   slot: Slot;
   score: number;
 };
+
+const getIngestionStatus = (item: WardrobeItem): string =>
+  String(item.ingestion?.status ?? (item as any).ingestionStatus ?? "")
+    .trim()
+    .toLowerCase();
 
 type OutfitCandidate = {
   picks: Array<{slot: Slot; itemId: string}>;
@@ -734,8 +741,11 @@ export function filterEligibleItems(
   intent: OutfitIntentV1
 ): WardrobeItem[] {
   return items.filter((item) => {
-    const ingestionStatus = String(item.ingestion?.status ?? "").trim().toLowerCase();
+    const ingestionStatus = getIngestionStatus(item);
     const status = String(item.status ?? "").trim().toUpperCase();
+    const draftState = String(item.draftState ?? "").trim().toLowerCase();
+    if (item.isDraft === true) return false;
+    if (draftState && draftState !== "ready") return false;
     if (ingestionStatus !== "done") return false;
     if (intent.excludeLaundry) {
       return status === "AVAILABLE";

@@ -5,6 +5,12 @@ export type RemoveBackgroundResult = {
   width: number;
   height: number;
   maskUri?: string;
+  contentBounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
   hasAlphaChannel?: boolean;
   hasTransparency?: boolean;
   transparentPixelRatio?: number;

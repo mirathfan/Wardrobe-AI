@@ -33,6 +33,8 @@ export type CategoryFilter =
   | "OUTERWEAR"
   | "ACCESSORY";
 export const MAX_WEARS_BEFORE_WASH = 2;
+export type IngestionStatus = "pending" | "processing" | "done" | "failed";
+export type DraftState = "draft" | "photo_uploaded" | "ingesting" | "ready" | "failed";
 
 const CATEGORY_MAP: Record<Exclude<CategoryFilter, "ALL">, string[]> = {
   TOP: ["top"],
@@ -44,6 +46,65 @@ const CATEGORY_MAP: Record<Exclude<CategoryFilter, "ALL">, string[]> = {
 
 function norm(v?: string | null) {
   return (v ?? "").trim().toLowerCase();
+}
+
+export function getIngestionStatus(
+  item: Partial<ClosetItem> | null | undefined
+): IngestionStatus | null {
+  const raw = String(
+    (item as any)?.ingestion?.status ?? (item as any)?.ingestionStatus ?? ""
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    raw === "pending" ||
+    raw === "processing" ||
+    raw === "done" ||
+    raw === "failed"
+  ) {
+    return raw;
+  }
+  return null;
+}
+
+export function getDraftState(
+  item: Partial<ClosetItem> | null | undefined
+): DraftState | null {
+  const raw = String((item as any)?.draftState ?? "")
+    .trim()
+    .toLowerCase();
+  if (
+    raw === "draft" ||
+    raw === "photo_uploaded" ||
+    raw === "ingesting" ||
+    raw === "ready" ||
+    raw === "failed"
+  ) {
+    return raw;
+  }
+
+  if ((item as any)?.isDraft === true) {
+    const ingestionStatus = getIngestionStatus(item);
+    if (ingestionStatus === "processing" || ingestionStatus === "pending") {
+      return "ingesting";
+    }
+    if (ingestionStatus === "failed") {
+      return "failed";
+    }
+    return "draft";
+  }
+
+  return null;
+}
+
+export function isVisibleWardrobeItem(
+  item: Partial<ClosetItem> | null | undefined
+): boolean {
+  if (!item) return false;
+  if ((item as any).isDraft === true) return false;
+  const draftState = getDraftState(item);
+  if (draftState && draftState !== "ready") return false;
+  return true;
 }
 
 export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
@@ -153,7 +214,7 @@ export function listenToItems(
         id: d.id,
         ...(d.data() as any),
       }));
-      cb(next);
+      cb(next.filter((item) => isVisibleWardrobeItem(item)));
     },
     (err) => options?.onError?.(err.message)
   );
