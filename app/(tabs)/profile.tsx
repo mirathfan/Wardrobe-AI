@@ -1,54 +1,78 @@
 import { router } from "expo-router";
-import { signOut } from "firebase/auth";
-import React, { useState } from "react";
-import { Alert, Pressable, Text, View } from "react-native";
+import React from "react";
+import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 
-import { useAuth } from "@/src/hooks/useAuth";
+import { SafeScreen } from "@/src/components/SafeScreen";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
-import { auth } from "@/src/lib/firebase";
+import {
+  ProfileHubRow,
+  formatBodyFitSummary,
+  formatClosetSummary,
+  formatDefaultSizesSummary,
+  formatNotificationsSummary,
+  formatStyleSummary,
+  formatUnitsSummary,
+  useProfilePreferencesState,
+} from "@/src/profile/screens";
 
 export default function ProfileScreen() {
-  const { user } = useAuth();
   const { colors } = useAppTheme();
-  const [loading, setLoading] = useState(false);
-
-  async function onLogout() {
-    try {
-      setLoading(true);
-      await signOut(auth);
-      router.replace("/(auth)/login");
-    } catch (err: any) {
-      Alert.alert("Logout failed", err?.message ?? "Unable to sign out.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { user, loading, profile } = useProfilePreferencesState();
 
   return (
-    <View style={{ flex: 1, padding: 16, gap: 16, backgroundColor: colors.background }}>
-      <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>Profile</Text>
-      <Text style={{ color: colors.textSecondary }}>{user?.email ?? "No email found."}</Text>
+    <SafeScreen backgroundColor={colors.background} edges={["top"]} style={{ flex: 1 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 120 }}>
+        <View style={{ gap: 6 }}>
+          <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>Profile</Text>
+          <Text style={{ color: colors.textSecondary }}>
+            Settings, sizing, and preferences.
+          </Text>
+        </View>
 
-      <Pressable
-        onPress={onLogout}
-        style={[btn, { backgroundColor: colors.accent }, loading ? { opacity: 0.6 } : null]}
-        disabled={loading}
-      >
-        <Text style={btnText}>{loading ? "Signing out..." : "Log out"}</Text>
-      </Pressable>
-    </View>
+        {loading ? (
+          <View style={{ paddingVertical: 40, alignItems: "center" }}>
+            <ActivityIndicator color={colors.accent} />
+          </View>
+        ) : (
+          <>
+            <ProfileHubRow
+              title="Account"
+              summary={user?.email ?? "No email found."}
+              onPress={() => router.push("/profile/account")}
+            />
+            <ProfileHubRow
+              title="Body & Fit"
+              summary={formatBodyFitSummary(profile)}
+              onPress={() => router.push("/profile/body-fit")}
+            />
+            <ProfileHubRow
+              title="Default Sizes"
+              summary={formatDefaultSizesSummary(profile)}
+              onPress={() => router.push("/profile/default-sizes")}
+            />
+            <ProfileHubRow
+              title="Units & Region"
+              summary={formatUnitsSummary(profile)}
+              onPress={() => router.push("/profile/units-region")}
+            />
+            <ProfileHubRow
+              title="Style Preferences"
+              summary={formatStyleSummary(profile)}
+              onPress={() => router.push("/profile/style-preferences")}
+            />
+            <ProfileHubRow
+              title="Closet Preferences"
+              summary={formatClosetSummary(profile)}
+              onPress={() => router.push("/profile/closet-preferences")}
+            />
+            <ProfileHubRow
+              title="Notifications"
+              summary={formatNotificationsSummary(profile)}
+              onPress={() => router.push("/profile/notifications")}
+            />
+          </>
+        )}
+      </ScrollView>
+    </SafeScreen>
   );
 }
-
-const btn = {
-  marginTop: 6,
-  paddingVertical: 14,
-  borderRadius: 12,
-  backgroundColor: "#111",
-  alignItems: "center",
-} as const;
-
-const btnText = {
-  color: "#fff",
-  fontWeight: "900",
-} as const;

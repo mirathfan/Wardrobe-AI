@@ -38,7 +38,7 @@ import { getLoggedOutfitDays, getOutfitStreak } from "@/src/utils/streak";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useAuth } from "@/src/hooks/useAuth";
 import { db } from "@/src/lib/firebase";
-import { MAX_WEARS_BEFORE_WASH, toCanonicalCategory } from "@/src/lib/items";
+import { MAX_WEARS_BEFORE_WASH, isVisibleWardrobeItem, toCanonicalCategory } from "@/src/lib/items";
 import { ClothingItem } from "@/src/types/ClothingItem";
 
 type SectionIconName = "calendar" | "sparkles" | "chart.bar.xaxis";
@@ -234,7 +234,9 @@ export default function CalendarScreen() {
     unsub = onSnapshot(
       qItems,
       (snap) => {
-        const next = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ClothingItem, "id">) }));
+        const next = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Omit<ClothingItem, "id">) }))
+          .filter((item) => isVisibleWardrobeItem(item));
         setItems(next as ClothingItem[]);
         setLoadingItems(false);
       },

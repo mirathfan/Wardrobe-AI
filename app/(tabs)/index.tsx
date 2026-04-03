@@ -7,12 +7,14 @@ import {
   FlatList,
   Image,
   Pressable,
+  Share,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { dockSpace } from "@/src/constants/dock";
+import { deleteDoc, doc } from "firebase/firestore";
 
 import { AI_LABEL } from "@/src/components/AiAccent";
 import { AiInsightCard } from "@/src/components/AiInsightCard";
@@ -20,6 +22,7 @@ import { AiWardrobeSections } from "@/src/components/AiWardrobeSections";
 import { WardrobeFilterSheet } from "@/src/components/WardrobeFilterSheet";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { db } from "@/src/lib/firebase";
 import { getItemImageUrl } from "@/src/lib/itemImage";
 import {
   CategoryFilter,
@@ -151,6 +154,8 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
   aiTag,
   matchCount,
   compact,
+  selectMode = false,
+  selected = false,
 }: {
   item: ClosetItem;
   onWoreToday: () => void;
@@ -159,6 +164,8 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
   aiTag?: "AI Pick" | "Underused" | "Recently Worn" | null;
   matchCount?: number;
   compact?: boolean;
+  selectMode?: boolean;
+  selected?: boolean;
 }) {
   const { colors } = useAppTheme();
   const s = statusStyle(item.status);
@@ -169,12 +176,35 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
       style={{
         width: compact ? 154 : 172,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: selected ? colors.accent : colors.border,
         borderRadius: 16,
         overflow: "hidden",
-        backgroundColor: colors.card,
+        backgroundColor: selected ? colors.accentSoft : colors.card,
       }}
     >
+      {selectMode ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 10,
+            left: 10,
+            zIndex: 2,
+            width: 24,
+            height: 24,
+            borderRadius: 12,
+            borderWidth: 2,
+            borderColor: selected ? colors.accent : "rgba(255,255,255,0.9)",
+            backgroundColor: selected ? colors.accent : "rgba(15,23,42,0.28)",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {selected ? (
+            <MaterialCommunityIcons name="check" size={14} color="#fff" />
+          ) : null}
+        </View>
+      ) : null}
       {itemImageUri ? (
         <View style={{ width: "100%", height: compact ? 116 : 140, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
           <Image
@@ -236,7 +266,7 @@ const ItemPhotoCard = React.memo(function ItemPhotoCard({
           {matchCount ? `Pairs well with ${matchCount}` : lastWornLabel(item)}
         </Text>
 
-        {!compact ? (
+        {!compact && !selectMode ? (
           <View style={{ flexDirection: "row", gap: 8, marginTop: 7, flexWrap: "wrap" }}>
             {item.status === "AVAILABLE" && (
               <>
@@ -275,6 +305,9 @@ export default function WardrobeScreen() {
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ALL");
   const [sortMode, setSortMode] = useState<ItemSort>("NEWEST");
   const [showFilterSheet, setShowFilterSheet] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkBarHeight, setBulkBarHeight] = useState(0);
 
   async function onMarkWorn(itemId: string) {
     try {
@@ -304,6 +337,22 @@ export default function WardrobeScreen() {
       console.log(err);
       Alert.alert("Error", err?.message ?? "Failed to mark washed");
     }
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    setSelectedIds([]);
+  }
+
+  function enterSelectModeWithItem(itemId: string) {
+    setSelectMode(true);
+    setSelectedIds((prev) => (prev.includes(itemId) ? prev : [...prev, itemId]));
+  }
+
+  function toggleSelected(itemId: string) {
+    setSelectedIds((prev) =>
+      prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]
+    );
   }
 
   useEffect(() => {
@@ -358,6 +407,16 @@ export default function WardrobeScreen() {
     return next;
   }, [items, statusFilter, categoryFilter, normalizedSearch]);
 
+  const visibleItemIds = useMemo(() => filteredItems.map((item) => item.id), [filteredItems]);
+  const selectedVisibleIds = useMemo(
+    () => selectedIds.filter((id) => visibleItemIds.includes(id)),
+    [selectedIds, visibleItemIds]
+  );
+
+  useEffect(() => {
+    setSelectedIds((prev) => prev.filter((id) => visibleItemIds.includes(id)));
+  }, [visibleItemIds]);
+
   const sectionData = useMemo(() => {
     const buckets: Record<SectionKey, ClosetItem[]> = {
       TOP: [],
@@ -409,6 +468,8 @@ export default function WardrobeScreen() {
   const hasResults = filteredItems.length > 0;
   const isDefaultFilter = !normalizedSearch && statusFilter === "ALL" && categoryFilter === "ALL";
   const sortLabel = SORT_OPTIONS.find((opt) => opt.key === sortMode)?.label ?? "Newest";
+  const isAllVisibleSelected =
+    visibleItemIds.length > 0 && selectedVisibleIds.length === visibleItemIds.length;
 
   const filterSummary = useMemo(() => {
     const parts = [
@@ -418,24 +479,124 @@ export default function WardrobeScreen() {
     return parts.join(" • ");
   }, [categoryFilter, statusFilter]);
 
+  async function runBulkAction(
+    label: string,
+    action: (itemId: string) => Promise<void>,
+    options?: { successPastTense?: string }
+  ) {
+    if (!uid) return router.replace("/(auth)/login");
+    if (selectedVisibleIds.length === 0) return;
+    const results = await Promise.allSettled(selectedVisibleIds.map((itemId) => action(itemId)));
+    const successCount = results.filter((result) => result.status === "fulfilled").length;
+    const failureCount = results.length - successCount;
+    if (failureCount > 0) {
+      Alert.alert(
+        `${label} complete`,
+        `${successCount} updated${failureCount ? `, ${failureCount} skipped` : ""}.`
+      );
+    }
+    if (successCount > 0) {
+      exitSelectMode();
+    }
+    void options;
+  }
+
+  async function onBulkShare() {
+    if (selectedVisibleIds.length === 0) return;
+    const selectedItems = filteredItems.filter((item) => selectedVisibleIds.includes(item.id));
+    const message = selectedItems
+      .map((item) => {
+        const name =
+          item.name ||
+          `${item.primaryColor ?? ""} ${item.subCategory ?? item.category ?? ""}`.trim() ||
+          "Wardrobe item";
+        return [name, item.brand].filter(Boolean).join(" • ");
+      })
+      .join("\n");
+    try {
+      await Share.share({
+        title: "Wardrobe items",
+        message,
+      });
+      exitSelectMode();
+    } catch (err: any) {
+      if (err?.message && !String(err.message).includes("User did not share")) {
+        Alert.alert("Share failed", err.message);
+      }
+    }
+  }
+
+  function onBulkDelete() {
+    if (!uid) return router.replace("/(auth)/login");
+    if (selectedVisibleIds.length === 0) return;
+    Alert.alert(
+      `Delete ${selectedVisibleIds.length} item${selectedVisibleIds.length === 1 ? "" : "s"}?`,
+      "This will remove the selected items from your wardrobe.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            await runBulkAction("Delete", async (itemId) => {
+              await deleteDoc(doc(db, "users", uid, "items", itemId));
+            });
+          },
+        },
+      ]
+    );
+  }
+
   return (
     <View style={{ flex: 1, paddingHorizontal: 16, backgroundColor: colors.background }}>
-      <FlatList
-        data={hasResults ? sectionData : []}
-        keyExtractor={(s) => s.key}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: dockSpace(insets.bottom) + 18, paddingTop: 4, gap: 12 }}
-        ListHeaderComponent={
-          <View style={{ gap: 14, marginBottom: 2, paddingTop: Math.max(2, insets.top * 0.25) }}>
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
+      <View style={{ gap: 14, paddingTop: Math.max(2, insets.top * 0.25), paddingBottom: 10 }}>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          {selectMode ? (
+            <>
+              <Pressable
+                onPress={exitSelectMode}
+                style={{
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                }}
+              >
+                <Text style={{ fontWeight: "800", color: colors.text }}>Cancel</Text>
+              </Pressable>
+              <Text style={{ fontSize: 20, fontWeight: "900", color: colors.text }}>
+                {selectedVisibleIds.length} selected
+              </Text>
+              <Pressable
+                onPress={() =>
+                  isAllVisibleSelected ? setSelectedIds([]) : setSelectedIds(visibleItemIds)
+                }
+                style={{
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                }}
+              >
+                <Text style={{ fontWeight: "800", color: colors.text }}>
+                  {isAllVisibleSelected ? "Clear All" : "Select All"}
+                </Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
               <View style={{ gap: 1 }}>
-                <Text style={{ fontSize: 24, fontWeight: "900" }}>{AI_LABEL}</Text>
+                <Text style={{ fontSize: 24, fontWeight: "900", color: colors.text }}>{AI_LABEL}</Text>
                 <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>
                   Your personal closet assistant
                 </Text>
@@ -451,118 +612,154 @@ export default function WardrobeScreen() {
               >
                 <Text style={{ fontWeight: "800", color: "#fff" }}>Ask AI</Text>
               </Pressable>
-            </View>
+            </>
+          )}
+        </View>
 
-            <View
+        <TextInput
+          value={searchText}
+          onChangeText={setSearchText}
+          placeholder="Search by name or brand"
+          placeholderTextColor={colors.textSecondary}
+          style={{
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 12,
+            color: colors.text,
+            backgroundColor: colors.input,
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+          }}
+        />
+
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Pressable
+            onPress={() => setShowFilterSheet(true)}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: 999,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              backgroundColor: colors.surface,
+            }}
+          >
+            <MaterialCommunityIcons name="tune-variant" size={16} color={colors.text} />
+            <Text style={{ fontWeight: "800", color: colors.text }}>Filters</Text>
+          </Pressable>
+
+          <View
+            style={{
+              flex: 1,
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: 999,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              backgroundColor: colors.surface,
+            }}
+          >
+            <Text style={{ fontWeight: "700", color: colors.text }} numberOfLines={1}>
+              {filterSummary} • Sort: {sortLabel}
+            </Text>
+          </View>
+          {!selectMode ? (
+            <Pressable
+              onPress={() => setSelectMode(true)}
               style={{
-                gap: 12,
-                backgroundColor: colors.accentSoft,
-                borderRadius: 18,
-                padding: 10,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: colors.surface,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
               }}
             >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={{ fontSize: 13, fontWeight: "900", color: colors.text }}>
-                  ✨ Smart Wardrobe
-                </Text>
-                <Text style={{ fontSize: 12, color: colors.textSecondary }}>
-                  Personalized picks and insights
-                </Text>
-              </View>
+              <Text style={{ fontWeight: "800", color: colors.text }}>Select</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
 
-              <AiInsightCard
-                items={filteredItems}
-                onPressBuildOutfit={() =>
-                  router.push({ pathname: "/(tabs)/ai", params: { intent: "build_outfit" } })
-                }
-              />
-
-              {loading ? (
-                <View
-                  style={{
-                    borderRadius: 14,
-                    backgroundColor: colors.accentSoft,
-                    paddingVertical: 14,
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <ActivityIndicator />
-                  <Text style={{ color: colors.textSecondary, fontWeight: "700", fontSize: 12 }}>
-                    AI organizing your wardrobe…
+      <FlatList
+        data={hasResults ? sectionData : []}
+        keyExtractor={(s) => s.key}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          paddingBottom:
+            selectMode && selectedVisibleIds.length > 0
+              ? bulkBarHeight > 0
+                ? bulkBarHeight + dockSpace(insets.bottom) + 12
+                : dockSpace(insets.bottom) + 160
+              : dockSpace(insets.bottom) + 18,
+          paddingTop: 4,
+          gap: 12,
+        }}
+        ListHeaderComponent={
+          <View style={{ gap: 14, marginBottom: 2 }}>
+            {!selectMode ? (
+              <View
+                style={{
+                  gap: 12,
+                  backgroundColor: colors.accentSoft,
+                  borderRadius: 18,
+                  padding: 10,
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "900", color: colors.text }}>
+                    ✨ Smart Wardrobe
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                    Personalized picks and insights
                   </Text>
                 </View>
-              ) : (
+
+                <AiInsightCard
+                  items={filteredItems}
+                  onPressBuildOutfit={() =>
+                    router.push({ pathname: "/(tabs)/ai", params: { intent: "build_outfit" } })
+                  }
+                />
+
+                {loading ? (
+                  <View
+                    style={{
+                      borderRadius: 14,
+                      backgroundColor: colors.accentSoft,
+                      paddingVertical: 14,
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <ActivityIndicator />
+                    <Text style={{ color: colors.textSecondary, fontWeight: "700", fontSize: 12 }}>
+                      AI organizing your wardrobe…
+                    </Text>
+                  </View>
+                ) : (
                 <AiWardrobeSections
                   items={filteredItems}
                   onPressItem={(item) => router.push(`/(tabs)/item/${item.id}`)}
+                  onLongPressItem={(item) => enterSelectModeWithItem(item.id)}
                   renderItemCardCompact={({ item, aiTag }) => (
                     <ItemPhotoCard
                       item={item}
-                      compact
-                      aiTag={aiTag as "AI Pick" | "Underused" | "Recently Worn"}
-                      matchCount={matchCountByItemId.get(item.id) ?? 0}
-                      onWoreToday={() => onMarkWorn(item.id)}
-                      onToLaundry={() => moveToLaundry(item.id)}
-                      onWashed={() => onMarkWashed(item.id)}
-                    />
-                  )}
-                />
-              )}
-            </View>
-
-            <TextInput
-              value={searchText}
-              onChangeText={setSearchText}
-              placeholder="Search by name or brand"
-              placeholderTextColor={colors.textSecondary}
-              style={{
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderRadius: 12,
-                color: colors.text,
-                backgroundColor: colors.input,
-                paddingHorizontal: 12,
-                paddingVertical: 10,
-              }}
-            />
-
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Pressable
-                onPress={() => setShowFilterSheet(true)}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 6,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: 999,
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  backgroundColor: colors.surface,
-                }}
-              >
-                <MaterialCommunityIcons name="tune-variant" size={16} color={colors.text} />
-                <Text style={{ fontWeight: "800", color: colors.text }}>Filters</Text>
-              </Pressable>
-
-              <View
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: 999,
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  backgroundColor: colors.surface,
-                }}
-              >
-                <Text style={{ fontWeight: "700", color: colors.text }} numberOfLines={1}>
-                  {filterSummary} • Sort: {sortLabel}
-                </Text>
+                        compact
+                        aiTag={aiTag as "AI Pick" | "Underused" | "Recently Worn"}
+                        matchCount={matchCountByItemId.get(item.id) ?? 0}
+                        onWoreToday={() => onMarkWorn(item.id)}
+                        onToLaundry={() => moveToLaundry(item.id)}
+                        onWashed={() => onMarkWashed(item.id)}
+                      />
+                    )}
+                  />
+                )}
               </View>
-            </View>
-
+            ) : null}
           </View>
         }
         ListEmptyComponent={
@@ -606,13 +803,21 @@ export default function WardrobeScreen() {
                 windowSize={5}
                 ItemSeparatorComponent={() => <View style={{ width: 10 }} />}
                 renderItem={({ item }) => (
-                  <Pressable onPress={() => router.push(`/(tabs)/item/${item.id}`)}>
+                  <Pressable
+                    onPress={() =>
+                      selectMode ? toggleSelected(item.id) : router.push(`/(tabs)/item/${item.id}`)
+                    }
+                    onLongPress={() => enterSelectModeWithItem(item.id)}
+                    delayLongPress={220}
+                  >
                     <ItemPhotoCard
                       item={item}
                       matchCount={matchCountByItemId.get(item.id) ?? 0}
                       onWoreToday={() => onMarkWorn(item.id)}
                       onToLaundry={() => moveToLaundry(item.id)}
                       onWashed={() => onMarkWashed(item.id)}
+                      selectMode={selectMode}
+                      selected={selectedVisibleIds.includes(item.id)}
                     />
                   </Pressable>
                 )}
@@ -622,27 +827,84 @@ export default function WardrobeScreen() {
         )}
       />
 
-      <Pressable
-        onPress={() => router.push("/(tabs)/add")}
-        style={{
-          position: "absolute",
-          right: 18,
-          bottom: dockSpace(insets.bottom) + 12,
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          backgroundColor: colors.accent,
-          alignItems: "center",
-          justifyContent: "center",
-          shadowColor: colors.accent,
-          shadowOpacity: 0.22,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 4 },
-          elevation: 6,
-        }}
-      >
-        <Text style={{ color: "#fff", fontSize: 28, lineHeight: 28 }}>+</Text>
-      </Pressable>
+      {!selectMode ? (
+        <Pressable
+          onPress={() => router.push("/(tabs)/add")}
+          style={{
+            position: "absolute",
+            right: 18,
+            bottom: dockSpace(insets.bottom) + 12,
+            width: 56,
+            height: 56,
+            borderRadius: 28,
+            backgroundColor: colors.accent,
+            alignItems: "center",
+            justifyContent: "center",
+            shadowColor: colors.accent,
+            shadowOpacity: 0.22,
+            shadowRadius: 8,
+            shadowOffset: { width: 0, height: 4 },
+            elevation: 6,
+          }}
+        >
+          <Text style={{ color: "#fff", fontSize: 28, lineHeight: 28 }}>+</Text>
+        </Pressable>
+      ) : null}
+
+      {selectMode && selectedVisibleIds.length > 0 ? (
+        <View
+          onLayout={(event) => {
+            const nextHeight = Math.round(event.nativeEvent.layout.height);
+            if (nextHeight !== bulkBarHeight) {
+              setBulkBarHeight(nextHeight);
+            }
+          }}
+          style={{
+            position: "absolute",
+            left: 16,
+            right: 16,
+            bottom: dockSpace(insets.bottom) + 10,
+            borderRadius: 22,
+            backgroundColor: "rgba(15,23,42,0.96)",
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.08)",
+            padding: 12,
+            gap: 10,
+          }}
+        >
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            <Pressable
+              onPress={() => void runBulkAction("Mark as worn", (itemId) => safeMarkWorn(uid!, itemId))}
+              style={bulkPrimaryButton}
+            >
+              <Text style={bulkPrimaryButtonText}>Mark as Worn</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => void runBulkAction("Send to laundry", (itemId) => sendToLaundry(uid!, itemId))}
+              style={bulkSecondaryButton}
+            >
+              <Text style={bulkSecondaryButtonText}>Send to Laundry</Text>
+            </Pressable>
+          </View>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            <Pressable
+              onPress={() => void runBulkAction("Mark as washed", (itemId) => markWashed(uid!, itemId))}
+              style={bulkSecondaryButton}
+            >
+              <Text style={bulkSecondaryButtonText}>Mark as Washed</Text>
+            </Pressable>
+            <Pressable onPress={() => void onBulkShare()} style={bulkSecondaryButton}>
+              <Text style={bulkSecondaryButtonText}>Share</Text>
+            </Pressable>
+            <Pressable
+              onPress={onBulkDelete}
+              style={[bulkSecondaryButton, { borderColor: "rgba(239,68,68,0.45)", backgroundColor: "rgba(127,29,29,0.28)" }]}
+            >
+              <Text style={[bulkSecondaryButtonText, { color: "#fecaca" }]}>Delete</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
       <WardrobeFilterSheet
         visible={showFilterSheet}
@@ -666,3 +928,31 @@ export default function WardrobeScreen() {
     </View>
   );
 }
+
+const bulkPrimaryButton = {
+  paddingVertical: 10,
+  paddingHorizontal: 14,
+  borderRadius: 999,
+  backgroundColor: "#fff",
+} as const;
+
+const bulkPrimaryButtonText = {
+  color: "#111",
+  fontWeight: "900",
+  fontSize: 13,
+} as const;
+
+const bulkSecondaryButton = {
+  paddingVertical: 10,
+  paddingHorizontal: 14,
+  borderRadius: 999,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+  backgroundColor: "rgba(255,255,255,0.04)",
+} as const;
+
+const bulkSecondaryButtonText = {
+  color: "#fff",
+  fontWeight: "800",
+  fontSize: 13,
+} as const;

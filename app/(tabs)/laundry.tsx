@@ -20,6 +20,7 @@ import { router } from "expo-router";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { db } from "@/src/lib/firebase";
+import { isVisibleWardrobeItem } from "@/src/lib/items";
 import { dockSpace } from "@/src/constants/dock";
 
 type Status = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
@@ -69,7 +70,7 @@ export default function LaundryScreen() {
         const all = snap.docs.map((d) => ({
           id: d.id,
           ...(d.data() as any),
-        })) as ClothingItem[];
+        })).filter((item) => isVisibleWardrobeItem(item)) as ClothingItem[];
         setAllItems(all);
         setLoading(false);
       },
@@ -172,8 +173,8 @@ export default function LaundryScreen() {
     <View style={{ paddingBottom: 12 }}>
       {/* Title */}
       <View style={{ marginBottom: 10 }}>
-        <Text style={{ fontSize: 28, fontWeight: "800" }}>Laundry</Text>
-        <Text style={{ marginTop: 4, opacity: 0.7 }}>
+        <Text style={{ fontSize: 28, fontWeight: "800", color: colors.text }}>Laundry</Text>
+        <Text style={{ marginTop: 4, opacity: 0.7, color: colors.textSecondary }}>
           Track what needs washing, what’s in progress, and what’s clean.
         </Text>
       </View>
@@ -205,7 +206,7 @@ export default function LaundryScreen() {
           flexDirection: "row",
           padding: 4,
           borderRadius: 14,
-          backgroundColor: "#F2F2F2",
+          backgroundColor: colors.muted,
           gap: 6,
         }}
       >
@@ -220,10 +221,10 @@ export default function LaundryScreen() {
                 paddingVertical: 10,
                 borderRadius: 12,
                 alignItems: "center",
-                backgroundColor: active ? "#111" : "transparent",
+                backgroundColor: active ? colors.accent : "transparent",
               }}
             >
-              <Text style={{ fontWeight: "700", color: active ? "#fff" : "#111" }}>
+              <Text style={{ fontWeight: "700", color: active ? "#fff" : colors.text }}>
                 {t.label}
               </Text>
             </Pressable>
@@ -240,14 +241,14 @@ export default function LaundryScreen() {
           justifyContent: "space-between",
         }}
       >
-        <Text style={{ fontSize: 18, fontWeight: "800" }}>
+        <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text }}>
           {tab === "NEEDS_WASH"
             ? "Needs Wash"
             : tab === "IN_LAUNDRY"
             ? "In Laundry"
             : "Clean"}
         </Text>
-        <Text style={{ opacity: 0.7 }}>{listItems.length} items</Text>
+        <Text style={{ opacity: 0.7, color: colors.textSecondary }}>{listItems.length} items</Text>
       </View>
     </View>
   );

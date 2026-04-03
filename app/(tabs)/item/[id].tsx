@@ -2,14 +2,16 @@ import { router, useLocalSearchParams } from "expo-router";
 import { deleteDoc, deleteField, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { DOCK_HEIGHT } from "../../../src/constants/dock";
 import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
 import { useAuth } from "../../../src/hooks/useAuth";
 import { useAppTheme } from "../../../src/hooks/useAppTheme";
 import { db } from "../../../src/lib/firebase";
 import { getItemImageUrl } from "../../../src/lib/itemImage";
 import {
+  getIngestionStatus,
   markWashed as markWashedItem,
   safeMarkWorn,
   sendToLaundry,
@@ -37,7 +39,7 @@ function formatDateOrNotSet(value?: any | null) {
 }
 
 function ingestionStatusLabel(item: ItemDetails) {
-  const status = item.ingestion?.status ?? "pending";
+  const status = getIngestionStatus(item) ?? "pending";
   if (status === "done") return "done";
   if (status === "failed") return "failed";
   if (status === "processing") return "processing";
@@ -53,9 +55,59 @@ function toTitleCase(value: string) {
     .join(" ");
 }
 
+function formatValue(value?: string | null) {
+  const normalized = String(value ?? "").trim();
+  return normalized ? normalized : "—";
+}
+
+function QuickFact(props: { label: string; value: string; tone?: "default" | "success" | "danger" }) {
+  const { label, value, tone = "default" } = props;
+  const valueColor =
+    tone === "success" ? "#0a7" : tone === "danger" ? "#d11" : "#111";
+  return (
+    <View
+      style={{
+        flexBasis: "48%",
+        gap: 4,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: "#ececec",
+        backgroundColor: "#fafafa",
+      }}
+    >
+      <Text style={{ color: "#666", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }}>
+        {label}
+      </Text>
+      <Text style={{ color: valueColor, fontSize: 15, fontWeight: "800" }}>{value}</Text>
+    </View>
+  );
+}
+
+function SectionCard(props: {
+  title: string;
+  subtitle?: string | null;
+  children: React.ReactNode;
+}) {
+  const { title, subtitle = null, children } = props;
+  return (
+    <View style={card}>
+      <View style={{ gap: 3, marginBottom: 12 }}>
+        <Text style={{ color: "#111", fontSize: 18, fontWeight: "900" }}>{title}</Text>
+        {subtitle ? (
+          <Text style={{ color: "#666", fontSize: 13, lineHeight: 18 }}>{subtitle}</Text>
+        ) : null}
+      </View>
+      {children}
+    </View>
+  );
+}
+
 export default function ItemDetailsScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
+  const insets = useSafeAreaInsets();
   const uid = user?.uid ?? null;
   const { id } = useLocalSearchParams<{ id: string }>();
   const itemId = useMemo(() => (Array.isArray(id) ? id[0] : id), [id]);
@@ -68,7 +120,57 @@ export default function ItemDetailsScreen() {
   const [detailImageOpen, setDetailImageOpen] = useState(false);
   const [patternDraft, setPatternDraft] = useState("");
   const [materialDraft, setMaterialDraft] = useState("");
+  const [footerHeight, setFooterHeight] = useState(0);
   const itemImageUri = getItemImageUrl(item, { variant: "hero" });
+  const dockBottom = Math.max(16, insets.bottom * 0.35);
+  const footerOffset = DOCK_HEIGHT + dockBottom + 10;
+  const quickFacts = item
+    ? [
+        { label: "Category", value: formatValue(item.category) },
+        { label: "Sub-category", value: formatValue(item.subCategory) },
+        { label: "Size", value: formatValue(item.size) },
+        {
+          label: "Status",
+          value: formatValue(item.status || "available"),
+          tone: item.status === "IN_LAUNDRY" ? ("danger" as const) : ("default" as const),
+        },
+        { label: "Last worn", value: formatDate(item.lastWornDate) },
+        {
+          label: "Last washed",
+          value: formatDateOrNotSet(item.lastWashedAt ?? item.lastWashedDate),
+        },
+      ]
+    : [];
+  const aiFacts = item
+    ? [
+        {
+          label: "Ingestion",
+          value:
+            ingestionStatusLabel(item) === "done"
+              ? "Complete"
+              : ingestionStatusLabel(item) === "failed"
+                ? "Failed"
+                : ingestionStatusLabel(item) === "processing"
+                  ? "Processing"
+                  : "Pending",
+          tone:
+            ingestionStatusLabel(item) === "done"
+              ? ("success" as const)
+              : ingestionStatusLabel(item) === "failed"
+                ? ("danger" as const)
+                : ("default" as const),
+        },
+        { label: "Source", value: formatValue(item.colorSource || "ai") },
+        {
+          label: "Classification",
+          value: `${formatValue(item.category)} / ${formatValue(item.subCategory)}`,
+        },
+        {
+          label: "Detected colors",
+          value: formatValue(item.colorLabel || item.colors?.join(" / ")),
+        },
+      ]
+    : [];
 
   useEffect(() => {
     if (!itemImageUri) return;
@@ -208,6 +310,14 @@ export default function ItemDetailsScreen() {
     });
   }
 
+  function onOpenOverflowMenu() {
+    Alert.alert("Item actions", undefined, [
+      { text: "Edit", onPress: onEdit },
+      { text: "Delete", style: "destructive", onPress: onDelete },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }
+
   async function onSelectColor(color: string) {
     if (!uid || !itemId) return router.replace("/(auth)/login");
     try {
@@ -262,19 +372,51 @@ export default function ItemDetailsScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ItemImageModal
         visible={detailImageOpen}
         uri={itemImageUri}
         onClose={() => setDetailImageOpen(false)}
       />
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <Pressable onPress={() => router.back()} style={[pill, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={{ flex: 1 }}>
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingTop: 0,
+          paddingBottom: footerHeight > 0 ? footerHeight + 20 : footerOffset + 120,
+          gap: 16,
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            minHeight: 40,
+          }}
+        >
+          <Pressable
+            onPress={() => router.back()}
+            style={[pill, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          >
             <Text style={pillText}>Back</Text>
           </Pressable>
-          <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text }}>Item</Text>
-          <View style={{ width: 56 }} />
+          <Text style={{ fontSize: 20, fontWeight: "900", color: colors.text }}>Item</Text>
+          <Pressable
+            onPress={onOpenOverflowMenu}
+            style={[
+              pill,
+              {
+                minWidth: 44,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <Text style={[pillText, { fontSize: 20, lineHeight: 20, color: colors.text }]}>⋯</Text>
+          </Pressable>
         </View>
 
         {loading ? (
@@ -283,106 +425,130 @@ export default function ItemDetailsScreen() {
           <Text>Item not found.</Text>
         ) : (
           <>
-            <View style={card}>
+            <SectionCard title="Product view" subtitle="Tap the image to inspect the full asset.">
               {itemImageUri ? (
                 <Pressable
                   onPress={() => setDetailImageOpen(true)}
-                  style={{ width: "100%", height: 260, borderRadius: 14 }}
+                  style={{ width: "100%", height: 216, borderRadius: 18 }}
                 >
                   <View
                     style={{
                       width: "100%",
-                      height: 260,
-                      borderRadius: 14,
-                      backgroundColor: "#fff",
+                      height: 216,
+                      borderRadius: 18,
+                      backgroundColor: "#E9E8E3",
                       overflow: "hidden",
                       alignItems: "center",
                       justifyContent: "center",
+                      padding: 18,
                     }}
                   >
                     <Image
                       source={{ uri: itemImageUri }}
-                      style={{ width: "100%", height: 260 }}
+                      style={{ width: "100%", height: "100%" }}
                       resizeMode="contain"
                     />
                   </View>
                 </Pressable>
               ) : (
-                <View style={{ height: 260, borderRadius: 14, backgroundColor: "#f3f3f3", alignItems: "center", justifyContent: "center" }}>
+                <View style={{ height: 216, borderRadius: 18, backgroundColor: "#f3f3f3", alignItems: "center", justifyContent: "center" }}>
                   <Text style={{ color: colors.textSecondary, fontWeight: "800" }}>No photo</Text>
                 </View>
               )}
 
-              <View style={{ gap: 6, marginTop: 12 }}>
+              <View style={{ gap: 6, marginTop: 14 }}>
                 <Text style={{ fontSize: 20, fontWeight: "900", color: colors.text }}>
                   {item.name || `${item.primaryColor ?? ""} ${item.category}`}
                 </Text>
-                <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>{item.brand}</Text>
-
-                <Text style={{ color: "#666" }}>
-                  Category: {item.category}
-                </Text>
-                {item.subCategory ? (
-                  <Text style={{ color: "#666" }}>Sub-category: {item.subCategory}</Text>
+                {item.brand ? (
+                  <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>{item.brand}</Text>
                 ) : null}
-
                 {item.colorLabel || item.colors?.length ? (
-                  <Text style={{ color: "#666" }}>
-                    Colors: {item.colorLabel || item.colors?.join(" / ") || "—"}
+                  <Text style={{ color: "#666", fontSize: 14 }}>
+                    {item.colorLabel || item.colors?.join(" / ") || "—"}
                   </Text>
                 ) : null}
-                {(() => {
-                  const ingestionStatus = ingestionStatusLabel(item);
-                  if (ingestionStatus === "done") {
-                    return (
-                      <View style={{ marginTop: 4, gap: 2 }}>
-                        <Text style={{ color: "#0a7", fontWeight: "800" }}>
-                          Ingestion: Complete
-                        </Text>
-                        <Text style={{ color: "#666" }}>
-                          Extracted: {item.category ?? "—"} / {item.subCategory ?? "—"}
-                        </Text>
-                        <Text style={{ color: "#666" }}>
-                          Colors: {item.colorLabel || item.colors?.join(", ") || "—"}
-                        </Text>
-                        <Text style={{ color: "#666" }}>
-                          Source: {item.colorSource || "ai"}
-                        </Text>
-                      </View>
-                    );
-                  }
-                  if (ingestionStatus === "failed") {
-                    return (
-                      <Text style={{ color: "#d11", fontWeight: "700" }}>
-                        Couldn&apos;t analyze, you can edit manually
-                      </Text>
-                    );
-                  }
-                  return (
-                    <Text style={{ color: "#666", fontWeight: "700" }}>
-                      Analyzing…
-                    </Text>
-                  );
-                })()}
+              </View>
+            </SectionCard>
 
-                {item.status ? <Text style={{ color: "#666" }}>Status: {item.status}</Text> : null}
-                <Text style={{ color: "#666" }}>
-                  Wears since wash: {item.wearCountSinceWash ?? 0}
-                </Text>
-                <Text style={{ color: "#666" }}>Last worn: {formatDate(item.lastWornDate)}</Text>
-                <Text style={{ color: "#666" }}>
-                  Last washed: {formatDateOrNotSet(item.lastWashedAt ?? item.lastWashedDate)}
-                </Text>
-
-                {item.size ? <Text style={{ color: "#666" }}>Size: {item.size}</Text> : null}
+            <SectionCard title="Quick facts">
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+                {quickFacts.map((fact) => (
+                  <QuickFact
+                    key={fact.label}
+                    label={fact.label}
+                    value={fact.value}
+                    tone={fact.tone}
+                  />
+                ))}
+                <QuickFact
+                  label="Wears since wash"
+                  value={String(item.wearCountSinceWash ?? 0)}
+                />
                 {typeof item.priceAmount === "number" || typeof item.price === "number" ? (
-                  <Text style={{ color: "#666" }}>
-                    Price: {item.priceCurrency || "USD"} {item.priceAmount ?? item.price}
-                  </Text>
+                  <QuickFact
+                    label="Price"
+                    value={`${item.priceCurrency || "USD"} ${item.priceAmount ?? item.price}`}
+                  />
                 ) : null}
-                {item.purchaseDate ? <Text style={{ color: "#666" }}>Purchase date: {item.purchaseDate}</Text> : null}
-                {item.notes ? <Text style={{ color: "#666" }}>Notes: {item.notes}</Text> : null}
-                <View style={{ gap: 8, marginTop: 6 }}>
+                {item.purchaseDate ? (
+                  <QuickFact label="Purchased" value={item.purchaseDate} />
+                ) : null}
+              </View>
+              {item.notes ? (
+                <View style={{ marginTop: 12, gap: 4 }}>
+                  <Text style={{ color: "#666", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }}>
+                    Notes
+                  </Text>
+                  <Text style={{ color: "#222", lineHeight: 20 }}>{item.notes}</Text>
+                </View>
+              ) : null}
+            </SectionCard>
+
+            <SectionCard
+              title="AI details"
+              subtitle="What the extraction pipeline inferred and how this item is currently classified."
+            >
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+                {aiFacts.map((fact) => (
+                  <QuickFact
+                    key={fact.label}
+                    label={fact.label}
+                    value={fact.value}
+                    tone={fact.tone}
+                  />
+                ))}
+              </View>
+              {ingestionStatusLabel(item) === "failed" ? (
+                <Text style={{ color: "#d11", fontWeight: "700", marginTop: 12 }}>
+                  Couldn&apos;t analyze, you can edit manually.
+                </Text>
+              ) : null}
+              {item.colorNeedsReview && item.colorSource !== "user" ? (
+                <View
+                  style={{
+                    marginTop: 12,
+                    borderWidth: 1,
+                    borderColor: "#f2c66d",
+                    backgroundColor: "#fff8e8",
+                    borderRadius: 12,
+                    padding: 12,
+                  }}
+                >
+                  <Text style={{ color: "#7a5a18", fontWeight: "700", lineHeight: 20 }}>
+                    Color check: AI said {item.aiColorLabel || "—"}, pixels suggest{" "}
+                    {toTitleCase(item.pixelColors?.[0] || "—")}. Confirm a color below if needed.
+                  </Text>
+                </View>
+              ) : null}
+            </SectionCard>
+
+            <SectionCard
+              title="Editable attributes"
+              subtitle="Fine-tune the saved details without changing the rest of the item record."
+            >
+              <View style={{ gap: 16 }}>
+                <View style={{ gap: 8 }}>
                   <Text style={{ color: "#222", fontWeight: "800" }}>Pattern</Text>
                   <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                     <Pressable
@@ -402,6 +568,8 @@ export default function ItemDetailsScreen() {
                       style={[textInput, { flex: 1 }]}
                     />
                   </View>
+                </View>
+                <View style={{ gap: 8 }}>
                   <Text style={{ color: "#222", fontWeight: "800" }}>Material</Text>
                   <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                     <Pressable
@@ -422,56 +590,37 @@ export default function ItemDetailsScreen() {
                     />
                   </View>
                 </View>
-
-                {ingestionStatusLabel(item) === "done" ? (
-                  <View style={{ marginTop: 10, gap: 8 }}>
-                    {item.colorNeedsReview && item.colorSource !== "user" ? (
-                      <View
-                        style={{
-                          borderWidth: 1,
-                          borderColor: "#f2c66d",
-                          backgroundColor: "#fff8e8",
-                          borderRadius: 10,
-                          padding: 10,
-                        }}
-                      >
-                        <Text style={{ color: "#7a5a18", fontWeight: "700" }}>
-                          Color check: AI said {item.aiColorLabel || "—"}, pixels suggest{" "}
-                          {toTitleCase(item.pixelColors?.[0] || "—")}. Tap a color to confirm.
-                        </Text>
-                      </View>
-                    ) : null}
-                    <Text style={{ color: "#222", fontWeight: "800" }}>
-                      Correct color
-                    </Text>
-                    <Text style={{ color: "#666" }}>
-                      Detected: {item.colorLabel || item.colors?.join(" / ") || "—"}. Tap to correct:
-                    </Text>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                      {ALLOWED_COLORS.map((color) => {
-                        const isSelected = (item.colors?.[0] || "").toLowerCase() === color;
-                        return (
-                          <Pressable
-                            key={color}
-                            onPress={() => onSelectColor(color)}
-                            disabled={colorSaving}
-                            style={{
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderRadius: 999,
-                              borderWidth: 1,
-                              borderColor: isSelected ? "#111" : "#ddd",
-                              backgroundColor: isSelected ? "#111" : "#fff",
-                              opacity: colorSaving ? 0.65 : 1,
-                            }}
-                          >
-                            <Text style={{ color: isSelected ? "#fff" : "#111", fontWeight: "700" }}>
-                              {toTitleCase(color)}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
+                <View style={{ gap: 8 }}>
+                  <Text style={{ color: "#222", fontWeight: "800" }}>Color correction</Text>
+                  <Text style={{ color: "#666" }}>
+                    Detected: {item.colorLabel || item.colors?.join(" / ") || "—"}. Tap to correct:
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    {ALLOWED_COLORS.map((color) => {
+                      const isSelected = (item.colors?.[0] || "").toLowerCase() === color;
+                      return (
+                        <Pressable
+                          key={color}
+                          onPress={() => onSelectColor(color)}
+                          disabled={colorSaving}
+                          style={{
+                            paddingVertical: 7,
+                            paddingHorizontal: 11,
+                            borderRadius: 999,
+                            borderWidth: 1,
+                            borderColor: isSelected ? "#111" : "#ddd",
+                            backgroundColor: isSelected ? "#111" : "#fff",
+                            opacity: colorSaving ? 0.65 : 1,
+                          }}
+                        >
+                          <Text style={{ color: isSelected ? "#fff" : "#111", fontWeight: "700" }}>
+                            {toTitleCase(color)}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                     {item.colorSource === "user" ? (
                       <Pressable
                         onPress={onResetToAI}
@@ -493,55 +642,98 @@ export default function ItemDetailsScreen() {
                       <Text style={{ color: "#0a7", fontSize: 12, fontWeight: "700" }}>Saved</Text>
                     ) : null}
                   </View>
-                ) : null}
+                </View>
               </View>
-            </View>
-
-            <View style={{ gap: 10 }}>
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable
-                  onPress={onMarkWorn}
-                  disabled={actionLoading || item.status === "IN_LAUNDRY"}
-                  style={[
-                    btn,
-                    { backgroundColor: "#111" },
-                    actionLoading || item.status === "IN_LAUNDRY" ? { opacity: 0.5 } : null,
-                  ]}
-                >
-                  <Text style={[btnText, { color: "#fff" }]}>Mark as Worn</Text>
-                </Pressable>
-                <Pressable
-                  onPress={onSendToLaundry}
-                  disabled={actionLoading}
-                  style={[btn, { borderColor: "#111", borderWidth: 1 }, actionLoading ? { opacity: 0.6 } : null]}
-                >
-                  <Text style={[btnText, { color: "#111" }]}>Send to Laundry</Text>
-                </Pressable>
-              </View>
-
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable
-                  onPress={onConfirmWashed}
-                  disabled={actionLoading}
-                  style={[btn, { borderColor: "#0a7", borderWidth: 1 }, actionLoading ? { opacity: 0.6 } : null]}
-                >
-                  <Text style={[btnText, { color: "#0a7" }]}>Mark as Washed</Text>
-                </Pressable>
-              </View>
-
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable onPress={onEdit} style={[btn, { backgroundColor: "#111" }]}>
-                  <Text style={[btnText, { color: "#fff" }]}>Edit</Text>
-                </Pressable>
-                <Pressable onPress={onDelete} style={[btn, { borderColor: "#d11", borderWidth: 1 }]}>
-                  <Text style={[btnText, { color: "#d11" }]}>Delete</Text>
-                </Pressable>
-              </View>
-            </View>
+            </SectionCard>
           </>
         )}
       </ScrollView>
-    </SafeAreaView>
+      {!loading && item ? (
+        <View
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            paddingHorizontal: 16,
+            paddingTop: 12,
+            paddingBottom: footerOffset,
+            backgroundColor: "rgba(15,15,15,0.92)",
+            borderTopWidth: 1,
+            borderTopColor: "rgba(255,255,255,0.08)",
+            gap: 10,
+          }}
+          onLayout={(event) => {
+            const nextHeight = Math.round(event.nativeEvent.layout.height);
+            if (nextHeight !== footerHeight) {
+              setFooterHeight(nextHeight);
+            }
+          }}
+        >
+          {item.status === "IN_LAUNDRY" ? (
+            <Pressable
+              onPress={onConfirmWashed}
+              disabled={actionLoading}
+              style={[
+                btn,
+                { backgroundColor: "#fff" },
+                actionLoading ? { opacity: 0.6 } : null,
+              ]}
+            >
+              <Text style={[btnText, { color: "#111" }]}>Mark as Washed</Text>
+            </Pressable>
+          ) : (
+            <>
+              <Pressable
+                onPress={onMarkWorn}
+                disabled={actionLoading}
+                style={[
+                  btn,
+                  { backgroundColor: "#fff" },
+                  actionLoading ? { opacity: 0.5 } : null,
+                ]}
+              >
+                <Text style={[btnText, { color: "#111" }]}>Mark as Worn</Text>
+              </Pressable>
+
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable
+                  onPress={onSendToLaundry}
+                  disabled={actionLoading}
+                  style={[
+                    btn,
+                    {
+                      borderColor: "rgba(255,255,255,0.22)",
+                      borderWidth: 1,
+                      backgroundColor: "rgba(255,255,255,0.04)",
+                    },
+                    actionLoading ? { opacity: 0.6 } : null,
+                  ]}
+                >
+                  <Text style={[btnText, { color: "#fff" }]}>Send to Laundry</Text>
+                </Pressable>
+                <Pressable
+                  onPress={onConfirmWashed}
+                  disabled={actionLoading}
+                  style={[
+                    btn,
+                    {
+                      borderColor: "rgba(255,255,255,0.16)",
+                      borderWidth: 1,
+                      backgroundColor: "transparent",
+                    },
+                    actionLoading ? { opacity: 0.6 } : null,
+                  ]}
+                >
+                  <Text style={[btnText, { color: "rgba(255,255,255,0.88)" }]}>Mark as Washed</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
+        </View>
+      ) : null}
+      </View>
+    </View>
   );
 }
 

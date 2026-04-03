@@ -3,6 +3,7 @@ import { FlatList, Pressable, Text, View } from "react-native";
 
 import type { ClosetItem } from "../../src/lib/items";
 import { AiBadge } from "./AiBadge";
+import { useAppTheme } from "../hooks/useAppTheme";
 
 function toMillis(value: unknown): number | null {
   if (!value) return null;
@@ -60,12 +61,15 @@ function pickUnderused(items: ClosetItem[]) {
 export const AiWardrobeSections = React.memo(function AiWardrobeSections({
   items,
   onPressItem,
+  onLongPressItem,
   renderItemCardCompact,
 }: {
   items: ClosetItem[];
   onPressItem: (item: ClosetItem) => void;
+  onLongPressItem?: (item: ClosetItem) => void;
   renderItemCardCompact: (args: { item: ClosetItem; aiTag: string }) => React.ReactNode;
 }) {
+  const { colors } = useAppTheme();
   const sections = useMemo(
     () => [
       {
@@ -102,8 +106,8 @@ export const AiWardrobeSections = React.memo(function AiWardrobeSections({
         <View key={section.key} style={{ gap: 7 }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
             <View style={{ gap: 2 }}>
-              <Text style={{ fontSize: 16, fontWeight: "900", color: "#111" }}>{section.title}</Text>
-              <Text style={{ fontSize: 12, color: "#64748b" }}>{section.subtitle}</Text>
+              <Text style={{ fontSize: 16, fontWeight: "900", color: colors.text }}>{section.title}</Text>
+              <Text style={{ fontSize: 12, color: colors.textSecondary }}>{section.subtitle}</Text>
             </View>
             <AiBadge label={section.tag} />
           </View>
@@ -117,7 +121,11 @@ export const AiWardrobeSections = React.memo(function AiWardrobeSections({
             initialNumToRender={6}
             windowSize={5}
             renderItem={({ item }) => (
-              <Pressable onPress={() => onPressItem(item)}>
+              <Pressable
+                onPress={() => onPressItem(item)}
+                onLongPress={onLongPressItem ? () => onLongPressItem(item) : undefined}
+                delayLongPress={220}
+              >
                 {renderItemCardCompact({ item, aiTag: section.tag })}
               </Pressable>
             )}

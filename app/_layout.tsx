@@ -18,6 +18,8 @@ export const unstable_settings = {
 function AuthGate() {
   const { user, loading } = useAuth();
   const segments = useSegments();
+  const colorScheme = useColorScheme();
+  const palette = Colors[colorScheme === "dark" ? "dark" : "light"];
 
   useEffect(() => {
     if (loading) return;
@@ -37,7 +39,7 @@ function AuthGate() {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 10 }}>
         <ActivityIndicator />
-        <Text>Checking session…</Text>
+        <Text style={{ color: palette.text }}>Checking session…</Text>
       </View>
     );
   }
@@ -98,7 +100,7 @@ export default function RootLayout() {
           </SafeAreaView>
         </AuthProvider>
 
-        <StatusBar style="auto" />
+        <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
       </ThemeProvider>
     </SafeAreaProvider>
   );

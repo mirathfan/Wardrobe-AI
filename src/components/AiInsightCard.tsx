@@ -12,6 +12,7 @@ import {
   chooseDailyInsightId,
 } from "../utils/insights";
 import { AI_ACCENT } from "./AiAccent";
+import { useAppTheme } from "../hooks/useAppTheme";
 
 type StoredInsight = {
   dayKey: string;
@@ -39,6 +40,7 @@ export const AiInsightCard = React.memo(function AiInsightCard({
   onPressBuildOutfit: () => void;
   onPressViewSuggestion?: (payload: WhyPayload) => void;
 }) {
+  const { colors } = useAppTheme();
   const { greeting, timeLabel } = useNow();
   const weather = useLocalWeather();
   const calendar = useTodayCalendarEvents();
@@ -136,9 +138,9 @@ export const AiInsightCard = React.memo(function AiInsightCard({
     if (weather.permission === "blocked") {
       return (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={{ color: "#64748b", fontSize: 12 }}>Weather off</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Weather off</Text>
           <Pressable onPress={weather.actions.openSettings}>
-            <Text style={{ color: "#334155", fontWeight: "700", fontSize: 12 }}>
+            <Text style={{ color: colors.text, fontWeight: "700", fontSize: 12 }}>
               Enable weather in Settings
             </Text>
           </Pressable>
@@ -149,7 +151,7 @@ export const AiInsightCard = React.memo(function AiInsightCard({
     if (weather.permission === "unknown" || weather.permission === "denied") {
       return (
         <Pressable onPress={weather.actions.requestPermission}>
-          <Text style={{ color: "#334155", fontWeight: "700", fontSize: 12 }}>
+          <Text style={{ color: colors.text, fontWeight: "700", fontSize: 12 }}>
             Enable weather insights
           </Text>
         </Pressable>
@@ -157,22 +159,22 @@ export const AiInsightCard = React.memo(function AiInsightCard({
     }
 
     if (weather.state === "loading") {
-      return <Text style={{ color: "#64748b", fontSize: 12 }}>Weather: loading…</Text>;
+      return <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Weather: loading…</Text>;
     }
 
     if (weather.state === "error") {
       return (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Text style={{ color: "#64748b", fontSize: 12 }}>Weather unavailable</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Weather unavailable</Text>
           <Pressable onPress={weather.actions.refresh}>
-            <Text style={{ color: "#334155", fontWeight: "700", fontSize: 12 }}>Retry</Text>
+            <Text style={{ color: colors.text, fontWeight: "700", fontSize: 12 }}>Retry</Text>
           </Pressable>
         </View>
       );
     }
 
     return (
-      <Text style={{ color: "#334155", fontSize: 12, fontWeight: "700" }} numberOfLines={1}>
+      <Text style={{ color: colors.text, fontSize: 12, fontWeight: "700" }} numberOfLines={1}>
         {weather.tempC != null ? `${Math.round(weather.tempC)}°C` : "--°C"} • {weather.label || "Weather"}
       </Text>
     );
@@ -190,9 +192,9 @@ export const AiInsightCard = React.memo(function AiInsightCard({
     if (calendar.permission === "blocked") {
       return (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={{ color: "#64748b", fontSize: 12 }}>Calendar off</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Calendar off</Text>
           <Pressable onPress={calendar.actions.openSettings}>
-            <Text style={{ color: "#334155", fontWeight: "700", fontSize: 12 }}>
+            <Text style={{ color: colors.text, fontWeight: "700", fontSize: 12 }}>
               Enable calendar in Settings
             </Text>
           </Pressable>
@@ -203,39 +205,39 @@ export const AiInsightCard = React.memo(function AiInsightCard({
     if (calendar.permission === "unknown" || calendar.permission === "denied") {
       return (
         <Pressable onPress={calendar.actions.requestPermission}>
-          <Text style={{ color: "#334155", fontWeight: "700", fontSize: 12 }}>Connect calendar</Text>
+          <Text style={{ color: colors.text, fontWeight: "700", fontSize: 12 }}>Connect calendar</Text>
         </Pressable>
       );
     }
 
     if (calendar.state === "loading") {
-      return <Text style={{ color: "#64748b", fontSize: 12 }}>Today: loading…</Text>;
+      return <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Today: loading…</Text>;
     }
 
     if (calendar.state === "error") {
       return (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Text style={{ color: "#64748b", fontSize: 12 }}>Calendar unavailable</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Calendar unavailable</Text>
           <Pressable onPress={calendar.actions.refresh}>
-            <Text style={{ color: "#334155", fontWeight: "700", fontSize: 12 }}>Retry</Text>
+            <Text style={{ color: colors.text, fontWeight: "700", fontSize: 12 }}>Retry</Text>
           </Pressable>
         </View>
       );
     }
 
     if (calendar.events.length === 0) {
-      return <Text style={{ color: "#64748b", fontSize: 12 }}>No events today</Text>;
+      return <Text style={{ color: colors.textSecondary, fontSize: 12 }}>No events today</Text>;
     }
 
     return (
       <View style={{ gap: 1 }}>
         {calendar.events.map((event) => (
-          <Text key={event.id} style={{ color: "#334155", fontSize: 12 }} numberOfLines={1}>
+          <Text key={event.id} style={{ color: colors.text, fontSize: 12 }} numberOfLines={1}>
             {event.timeLabel} — {event.title}
           </Text>
         ))}
         {calendar.moreCount > 0 ? (
-          <Text style={{ color: "#64748b", fontSize: 11 }}>+{calendar.moreCount} more</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 11 }}>+{calendar.moreCount} more</Text>
         ) : null}
       </View>
     );
@@ -256,19 +258,19 @@ export const AiInsightCard = React.memo(function AiInsightCard({
           borderRadius: 16,
           borderWidth: 1,
           borderColor: AI_ACCENT.border,
-          backgroundColor: "#fff",
+          backgroundColor: colors.card,
           overflow: "hidden",
         }}
       >
         <View style={{ height: 4, backgroundColor: AI_ACCENT.gradientStart }} />
         <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 11, gap: 7 }}>
-          <Text style={{ color: "#64748b", fontWeight: "700", fontSize: 12 }}>
+          <Text style={{ color: colors.textSecondary, fontWeight: "700", fontSize: 12 }}>
             {greeting} • {timeLabel}
           </Text>
-          <Text style={{ fontSize: 16, fontWeight: "900", color: "#0f172a" }}>
+          <Text style={{ fontSize: 16, fontWeight: "900", color: colors.text }}>
             {selectedInsight.title}
           </Text>
-          <Text style={{ color: "#475569", lineHeight: 18, fontSize: 13 }}>
+          <Text style={{ color: colors.textSecondary, lineHeight: 18, fontSize: 13 }}>
             {selectedInsight.body}
           </Text>
 
@@ -277,7 +279,7 @@ export const AiInsightCard = React.memo(function AiInsightCard({
             {calendarRow}
           </View>
 
-          <Text style={{ color: "#94a3b8", fontSize: 11 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
             Based on your closet history • On-device context
           </Text>
 
@@ -303,10 +305,12 @@ export const AiInsightCard = React.memo(function AiInsightCard({
                 borderRadius: 10,
                 paddingHorizontal: 10,
                 paddingVertical: 9,
-                backgroundColor: "#f8fafc",
+                backgroundColor: colors.surface,
+                borderWidth: 1,
+                borderColor: colors.border,
               }}
             >
-              <Text style={{ fontWeight: "800", color: "#334155", fontSize: 13 }}>Why?</Text>
+              <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Why?</Text>
             </Pressable>
           </View>
         </View>
@@ -325,17 +329,17 @@ export const AiInsightCard = React.memo(function AiInsightCard({
           <Pressable
             onPress={(event) => event.stopPropagation()}
             style={{
-              backgroundColor: "#fff",
+              backgroundColor: colors.card,
               borderRadius: 16,
               padding: 16,
               gap: 10,
             }}
           >
-            <Text style={{ fontSize: 18, fontWeight: "900", color: "#0f172a" }}>Why this suggestion</Text>
-            <Text style={{ fontSize: 14, fontWeight: "700", color: "#334155" }}>{selectedInsight.title}</Text>
+            <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text }}>Why this suggestion</Text>
+            <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text }}>{selectedInsight.title}</Text>
             <View style={{ gap: 6 }}>
               {selectedInsight.reasons.map((reason) => (
-                <Text key={reason} style={{ color: "#475569" }}>
+                <Text key={reason} style={{ color: colors.textSecondary }}>
                   • {reason}
                 </Text>
               ))}
@@ -348,12 +352,12 @@ export const AiInsightCard = React.memo(function AiInsightCard({
                   flex: 1,
                   borderRadius: 10,
                   borderWidth: 1,
-                  borderColor: "#d1d5db",
+                  borderColor: colors.border,
                   paddingVertical: 10,
                   alignItems: "center",
                 }}
               >
-                <Text style={{ fontWeight: "800", color: "#334155" }}>Next</Text>
+                <Text style={{ fontWeight: "800", color: colors.text }}>Next</Text>
               </Pressable>
               <Pressable
                 onPress={() => setWhyOpen(false)}
