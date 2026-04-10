@@ -4,6 +4,17 @@ export type RemoveBackgroundResult = {
   uri: string;
   width: number;
   height: number;
+  maskUri?: string;
+  contentBounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  hasAlphaChannel?: boolean;
+  hasTransparency?: boolean;
+  transparentPixelRatio?: number;
+  transparentPixelCount?: number;
 };
 
 export type RemoveBackgroundOptions = {
@@ -11,6 +22,7 @@ export type RemoveBackgroundOptions = {
   cleanupRadius?: number;
   feather?: number;
   edgeTighten?: number;
+  edgePolish?: number;
   maskToAlpha?: boolean;
 };
 

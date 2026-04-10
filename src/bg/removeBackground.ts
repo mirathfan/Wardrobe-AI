@@ -22,16 +22,19 @@ function normalizeOptions(
 ): Required<RemoveBackgroundOptions> {
   const threshold = Number.isFinite(options?.threshold)
     ? Number(options?.threshold)
-    : 0.62;
+    : 0.60;
   const cleanupRadius = Number.isFinite(options?.cleanupRadius)
     ? Number(options?.cleanupRadius)
-    : 3;
+    : 2;
   const feather = Number.isFinite(options?.feather)
     ? Number(options?.feather)
     : 1;
   const edgeTighten = Number.isFinite(options?.edgeTighten)
     ? Number(options?.edgeTighten)
-    : 0;
+    : 0.03;
+  const edgePolish = Number.isFinite(options?.edgePolish)
+    ? Number(options?.edgePolish)
+    : 0.5;
   const maskToAlpha =
     typeof options?.maskToAlpha === "boolean" ? options.maskToAlpha : true;
 
@@ -40,6 +43,7 @@ function normalizeOptions(
     cleanupRadius: Math.max(0, Math.min(8, Math.round(cleanupRadius))),
     feather: Math.max(0, Math.min(6, Math.round(feather))),
     edgeTighten: Math.max(0, Math.min(1, edgeTighten)),
+    edgePolish: Math.max(0, Math.min(1, edgePolish)),
     maskToAlpha,
   };
 }
@@ -47,8 +51,35 @@ function normalizeOptions(
 export async function removeBackground(
   localUri: string,
   options?: RemoveBackgroundOptions
-): Promise<string> {
-  if (Platform.OS !== "ios") return localUri;
+): Promise<{
+  uri: string;
+  width: number | null;
+  height: number | null;
+  maskUri: string | null;
+  contentBounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
+  hasAlphaChannel: boolean;
+  hasTransparency: boolean;
+  transparentPixelRatio: number;
+  transparentPixelCount: number;
+}> {
+  if (Platform.OS !== "ios") {
+    return {
+      uri: localUri,
+      width: null,
+      height: null,
+      maskUri: null,
+      contentBounds: null,
+      hasAlphaChannel: false,
+      hasTransparency: false,
+      transparentPixelRatio: 0,
+      transparentPixelCount: 0,
+    };
+  }
 
   const available = isVisionBgNativeAvailable();
   const normalizedOptions = normalizeOptions(options);
@@ -58,16 +89,64 @@ export async function removeBackground(
     options: normalizedOptions,
   });
 
-  if (!available) return localUri;
+  if (!available) {
+    return {
+      uri: localUri,
+      width: null,
+      height: null,
+      maskUri: null,
+      contentBounds: null,
+      hasAlphaChannel: false,
+      hasTransparency: false,
+      transparentPixelRatio: 0,
+      transparentPixelCount: 0,
+    };
+  }
 
   try {
     const result = await removeBackgroundNative(localUri, normalizedOptions);
     console.log("[VisionBG] native result raw:", result);
 
     const rawOut = String((result as any)?.uri ?? "").trim();
+    const width = Number((result as any)?.width ?? 0) || null;
+    const height = Number((result as any)?.height ?? 0) || null;
+    const rawMask = String((result as any)?.maskUri ?? "").trim();
+    const maskUri = rawMask ? normalizeFileUri(rawMask) : null;
+    const rawBounds = (result as any)?.contentBounds;
+    const contentBounds =
+      rawBounds &&
+      Number.isFinite(Number(rawBounds?.width)) &&
+      Number.isFinite(Number(rawBounds?.height)) &&
+      Number(rawBounds?.width) > 0 &&
+      Number(rawBounds?.height) > 0
+        ? {
+            x: Number(rawBounds?.x ?? 0),
+            y: Number(rawBounds?.y ?? 0),
+            width: Number(rawBounds?.width),
+            height: Number(rawBounds?.height),
+          }
+        : null;
+    const hasAlphaChannel = Boolean((result as any)?.hasAlphaChannel);
+    const hasTransparency = Boolean((result as any)?.hasTransparency);
+    const transparentPixelRatio =
+      Number((result as any)?.transparentPixelRatio ?? 0) || 0;
+    const transparentPixelCount =
+      Number((result as any)?.transparentPixelCount ?? 0) || 0;
     const outputUri = normalizeFileUri(rawOut);
 
-    console.log("[VisionBG] parsed output", { rawOut, outputUri });
+    console.log("[VisionBG] parsed output", {
+      rawOut,
+      outputUri,
+      width,
+      height,
+      maskUri,
+      contentBounds,
+      hasAlphaChannel,
+      hasTransparency,
+      transparentPixelRatio,
+      transparentPixelCount,
+      changed: outputUri && outputUri !== normalizeFileUri(localUri),
+    });
 
     if (!outputUri) {
       throw new Error(
@@ -75,9 +154,36 @@ export async function removeBackground(
       );
     }
 
-    return outputUri;
+    if (outputUri === normalizeFileUri(localUri)) {
+      console.warn("[VisionBG] native returned original URI; treating as no-op", {
+        input: normalizeFileUri(localUri),
+        output: outputUri,
+      });
+    }
+
+    return {
+      uri: outputUri,
+      width,
+      height,
+      maskUri,
+      contentBounds,
+      hasAlphaChannel,
+      hasTransparency,
+      transparentPixelRatio,
+      transparentPixelCount,
+    };
   } catch (error) {
     console.warn("[VisionBG] FAILED; returning original uri", error);
-    return localUri;
+    return {
+      uri: localUri,
+      width: null,
+      height: null,
+      maskUri: null,
+      contentBounds: null,
+      hasAlphaChannel: false,
+      hasTransparency: false,
+      transparentPixelRatio: 0,
+      transparentPixelCount: 0,
+    };
   }
 }

@@ -1,5 +1,12 @@
 import { Timestamp } from "firebase/firestore";
-import { Category } from "../shared/wardrobeTaxonomy";
+import type { VisualNormalization } from "../lib/visualNormalization";
+import {
+  AllowedFormality,
+  AllowedLayerRole,
+  AllowedVisualWeight,
+  AllowedWarmth,
+  Category,
+} from "../shared/wardrobeTaxonomy";
 
 export type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 export type ClothingPattern =
@@ -24,9 +31,17 @@ export type ClothingItem = {
   brand: string;
   category?: Category | "shoes" | string;
   subCategory?: string;
+  type?: string | null;
   wearSlot?: "core" | "accessory";
   pattern?: ClothingPattern;
   material?: string;
+  style?: string | null;
+  formality?: AllowedFormality | null;
+  warmth?: AllowedWarmth | null;
+  layerRole?: AllowedLayerRole | null;
+  visualWeight?: AllowedVisualWeight | null;
+  versatilityScore?: number | null;
+  aestheticTags?: string[] | null;
   formalityScore?: number;
   warmthScore?: number;
   ingestion?: {
@@ -34,17 +49,23 @@ export type ClothingItem = {
     lastRunAt?: Timestamp | number | null;
     error?: { message: string; code?: string };
     lastProcessedPhotoHash?: string;
+    lastProcessedSourceHash?: string;
+    runId?: string;
   };
+  ingestionStatus?: "pending" | "processing" | "done" | "failed" | null;
   embeddings?: { image?: number[] };
   photos?: {
+    originalUrl?: string | null;
     primaryUrl?: string | null;
+    normalizedUrl?: string | null;
+    previewUrl?: string | null;
     urls?: string[];
     croppedUrl?: string;
     thumbUrl?: string;
     cleanedUrl?: string;
     cleanedPhotoUrl?: string;
     cleanedThumbUrl?: string;
-    cleanedSource?: "placeholder" | "onnx" | "ios_vision";
+    cleanedSource?: "placeholder" | "onnx" | "vision";
     cleanedFromHash?: string;
     forceCleaned?: boolean;
   };
@@ -54,6 +75,8 @@ export type ClothingItem = {
   colors?: string[];
   colorLabel?: string;
   primaryColor?: string;
+  displayColor?: string | null;
+  displayColors?: string[] | null;
   colorSource?: "ai" | "user";
   colorUpdatedAt?: number;
   aiColorLabel?: string;
@@ -64,6 +87,17 @@ export type ClothingItem = {
   colorNeedsReview?: boolean;
   crop?: { x: number; y: number; w: number; h: number; source: "ai" };
   cleanedUpdatedAt?: number;
+  aiDebug?: {
+    brandEvidence?: string | null;
+    brandCandidates?: string[] | null;
+    aiColors?: string[] | null;
+    aiPrimaryColor?: string | null;
+    aiColorLabel?: string | null;
+    pixelColors?: string[] | null;
+    pixelColorHex?: string | null;
+    colorConfidence?: number | null;
+    colorNeedsReview?: boolean | null;
+  } | null;
 
   size?: string | null;
   notes?: string | null;
@@ -79,6 +113,9 @@ export type ClothingItem = {
   warmthPreference?: number | null;
   photoUrl?: string | null;
   photoUri?: string | null;
+  visualNormalization?: VisualNormalization | null;
+  isDraft?: boolean;
+  draftState?: "draft" | "photo_uploaded" | "ingesting" | "ready" | "failed" | null;
 
   // lifecycle
   status: ClothingStatus;

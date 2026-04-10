@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { addDays, isSameLocalDate, toDayKey } from "../../utils/date";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 type Status = {
   planned?: boolean;
@@ -20,6 +21,7 @@ const HALF = Math.floor(WINDOW / 2);
 const ITEM_WIDTH = 62;
 
 export default function DateRail({ selectedDate, onSelectDate, statuses = {} }: Props) {
+  const { colors } = useAppTheme();
   const listRef = useRef<FlatList<Date>>(null);
 
   const dates = useMemo(
@@ -59,17 +61,21 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {} }: 
         const dayStatus = statuses[key];
         return (
           <Pressable
-            style={[styles.cell, isActive ? styles.cellActive : null]}
+            style={[
+              styles.cell,
+              { borderColor: colors.border, backgroundColor: colors.surface },
+              isActive ? [styles.cellActive, { backgroundColor: colors.accent, borderColor: colors.accent }] : null,
+            ]}
             onPress={() => onSelectDate(item)}
           >
-            <Text style={[styles.week, isActive ? styles.activeText : null]}>
+            <Text style={[styles.week, { color: colors.textSecondary }, isActive ? styles.activeText : null]}>
               {new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(item)}
             </Text>
-            <Text style={[styles.day, isActive ? styles.activeText : null]}>
+            <Text style={[styles.day, { color: colors.text }, isActive ? styles.activeText : null]}>
               {new Intl.DateTimeFormat(undefined, { day: "numeric" }).format(item)}
             </Text>
             <View style={styles.indicatorRow}>
-              {dayStatus?.planned ? <View style={styles.planDot} /> : null}
+              {dayStatus?.planned ? <View style={[styles.planDot, { backgroundColor: colors.aiAccent }]} /> : null}
               {dayStatus?.worn ? <Text style={styles.check}>✓</Text> : null}
               {dayStatus?.streak ? <Text style={styles.fire}>🔥</Text> : null}
             </View>
@@ -88,26 +94,20 @@ const styles = StyleSheet.create({
   cell: {
     width: ITEM_WIDTH - 6,
     marginHorizontal: 3,
-    borderRadius: 14,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#fff",
     alignItems: "center",
     paddingVertical: 8,
   },
   cellActive: {
-    backgroundColor: "#111",
-    borderColor: "#111",
   },
   week: {
     fontSize: 11,
-    color: "#6b7280",
     fontWeight: "700",
   },
   day: {
     marginTop: 2,
     fontSize: 16,
-    color: "#111",
     fontWeight: "800",
   },
   activeText: {
@@ -124,7 +124,6 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: "#3b82f6",
   },
   check: {
     fontSize: 9,
@@ -137,4 +136,3 @@ const styles = StyleSheet.create({
     lineHeight: 9,
   },
 });
-

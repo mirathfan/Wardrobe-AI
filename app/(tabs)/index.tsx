@@ -1,661 +1,690 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { router } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
-  Image,
+  Animated,
   Pressable,
+  ScrollView,
   Text,
-  TextInput,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { dockSpace } from "@/src/constants/dock";
 
-import { AI_LABEL } from "@/src/components/AiAccent";
-import { AiInsightCard } from "@/src/components/AiInsightCard";
-import { AiWardrobeSections } from "@/src/components/AiWardrobeSections";
-import { WardrobeFilterSheet } from "@/src/components/WardrobeFilterSheet";
+import ContinueSection from "@/src/components/home/ContinueSection";
+import ContinueChatCard from "@/src/components/home/ContinueChatCard";
+import AuraLookModule from "@/src/components/home/AuraLookModule";
+import HomeHero from "@/src/components/home/HomeHero";
+import InsightCard from "@/src/components/home/InsightCard";
+import QuickActionRail, { type QuickActionItem } from "@/src/components/home/QuickActionRail";
+import SmartToolsGrid, { type SmartTool } from "@/src/components/home/SmartToolsGrid";
+import TodayOutfitCard from "@/src/components/home/TodayOutfitCard";
 import { useAuth } from "@/src/hooks/useAuth";
-import { getItemImageUrl } from "@/src/lib/itemImage";
-import {
-  CategoryFilter,
-  ClosetItem,
-  ItemSort,
-  StatusFilter,
-  isInCategory,
-  listenToItems,
-  markWashed,
-  safeMarkWorn,
-  sendToLaundry,
-  toCanonicalCategory,
-} from "@/src/lib/items";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { useLocalWeather } from "@/src/hooks/useLocalWeather";
+import { useNow } from "@/src/hooks/useNow";
+import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
+import { buildVisiblePreferenceHint, loadAssistantProfile } from "@/src/lib/assistantMemory";
+import { loadChatMessages, loadLatestChatThread, type AIChatThread } from "@/src/lib/aiChats";
+import { auraLookToPlannedOutfit, loadLatestSavedAuraLook, saveAuraLook } from "@/src/lib/auraLooks";
+import { listenToItems } from "@/src/lib/items";
+import type { ClothingItem } from "@/src/types/ClothingItem";
+import type { AuraLookAction, AuraResponse } from "@/src/types/aura";
+import { savePlannedRecord, subscribeOutfitByDate, type DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
-const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
-  { key: "ALL", label: "All" },
-  { key: "AVAILABLE", label: "Available" },
-  { key: "WORN", label: "Worn" },
-  { key: "IN_LAUNDRY", label: "Laundry" },
-];
-
-const CATEGORY_FILTERS: { key: CategoryFilter; label: string }[] = [
-  { key: "ALL", label: "All" },
-  { key: "TOP", label: "Top" },
-  { key: "BOTTOM", label: "Bottom" },
-  { key: "SHOES", label: "Shoes" },
-  { key: "OUTERWEAR", label: "Outerwear" },
-  { key: "ACCESSORY", label: "Accessory" },
-];
-
-const SORT_OPTIONS: { key: ItemSort; label: string }[] = [
-  { key: "NEWEST", label: "Newest" },
-  { key: "MOST_WORN", label: "Most worn" },
-];
-
-const SECTIONS = [
-  { key: "TOP", title: "Top" },
-  { key: "BOTTOM", title: "Bottom" },
-  { key: "SHOES", title: "Shoes" },
-  { key: "OUTERWEAR", title: "Outerwear" },
-  { key: "ACCESSORY", title: "Accessory" },
-] as const;
-
-type SectionKey = (typeof SECTIONS)[number]["key"];
-
-function sectionForItem(item: ClosetItem): SectionKey {
-  const c = toCanonicalCategory(item.category);
-  if (c === "top") return "TOP";
-  if (c === "bottom") return "BOTTOM";
-  if (c === "shoes") return "SHOES";
-  if (c === "outerwear") return "OUTERWEAR";
-  return "ACCESSORY";
-}
-
-function statusStyle(status: "AVAILABLE" | "WORN" | "IN_LAUNDRY") {
-  switch (status) {
-    case "AVAILABLE":
-      return { dot: "#22c55e", border: "#b7f7c8", label: "Available" };
-    case "WORN":
-      return { dot: "#f59e0b", border: "#ffe0b2", label: "Worn" };
-    case "IN_LAUNDRY":
-      return { dot: "#ef4444", border: "#ffd1d1", label: "Laundry" };
-    default:
-      return { dot: "#9ca3af", border: "#e5e7eb", label: "—" };
-  }
-}
-
-function toMillis(value: unknown): number | null {
-  if (!value) return null;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+function toMillis(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
   if (value instanceof Date) return value.getTime();
-  if (typeof (value as { toDate?: () => Date }).toDate === "function") {
+  if (value && typeof value === "object" && typeof (value as { toDate?: () => Date }).toDate === "function") {
     const date = (value as { toDate: () => Date }).toDate();
-    const ms = date?.getTime?.();
-    return Number.isFinite(ms) ? ms : null;
+    return Number.isFinite(date?.getTime?.()) ? date.getTime() : 0;
   }
-  return null;
+  return 0;
 }
 
-function lastWornLabel(item: ClosetItem) {
-  const ms = toMillis(item.lastWornDate);
-  if (!ms) return "Last worn: —";
-  const days = Math.max(0, Math.floor((Date.now() - ms) / (24 * 60 * 60 * 1000)));
-  if (days === 0) return "Last worn: today";
-  if (days === 1) return "Last worn: yesterday";
-  return `Last worn: ${days}d ago`;
+function RevealSection({
+  delay,
+  children,
+}: {
+  delay: number;
+  children: React.ReactNode;
+}) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(18)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 320,
+        delay,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 360,
+        delay,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [delay, opacity, translateY]);
+
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+      {children}
+    </Animated.View>
+  );
 }
 
-const ActionChip = React.memo(function ActionChip({
-  icon,
-  label,
-  onPress,
-  disabled,
-}: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 6,
-        paddingVertical: 7,
-        paddingHorizontal: 10,
-        borderRadius: 999,
-        backgroundColor: "#F3F4F6",
-        borderWidth: 1,
-        borderColor: "#E5E7EB",
-        opacity: disabled ? 0.45 : 1,
-      }}
-    >
-      <MaterialCommunityIcons name={icon} size={16} color="#111" />
-      <Text style={{ fontWeight: "800", fontSize: 12 }}>{label}</Text>
-    </Pressable>
-  );
-});
-
-const ItemPhotoCard = React.memo(function ItemPhotoCard({
-  item,
-  onWoreToday,
-  onToLaundry,
-  onWashed,
-  aiTag,
-  matchCount,
-  compact,
-}: {
-  item: ClosetItem;
-  onWoreToday: () => void;
-  onToLaundry: () => void;
-  onWashed: () => void;
-  aiTag?: "AI Pick" | "Underused" | "Recently Worn" | null;
-  matchCount?: number;
-  compact?: boolean;
-}) {
-  const s = statusStyle(item.status);
-  const itemImageUri = getItemImageUrl(item, { variant: compact ? "thumb" : "hero" });
-
-  return (
-    <View
-      style={{
-        width: compact ? 154 : 172,
-        borderWidth: 1,
-        borderColor: "#e5e7eb",
-        borderRadius: 16,
-        overflow: "hidden",
-        backgroundColor: "#fff",
-      }}
-    >
-      {itemImageUri ? (
-        <View style={{ width: "100%", height: compact ? 116 : 140, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" }}>
-          <Image
-            source={{ uri: itemImageUri }}
-            style={{ width: "100%", height: compact ? 116 : 140 }}
-            resizeMode="contain"
-          />
-          {aiTag ? (
-            <View
-              style={{
-                position: "absolute",
-                right: 8,
-                top: 8,
-                borderRadius: 999,
-                backgroundColor: "rgba(15,23,42,0.92)",
-                paddingHorizontal: 7,
-                paddingVertical: 3,
-              }}
-            >
-              <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>✨ {aiTag}</Text>
-            </View>
-          ) : null}
-        </View>
-      ) : (
-        <View
-          style={{
-            width: "100%",
-            height: compact ? 116 : 140,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: "#f3f3f3",
-          }}
-        >
-          <Text style={{ color: "#777", fontWeight: "800" }}>No photo</Text>
-        </View>
-      )}
-
-      <View style={{ paddingHorizontal: 10, paddingTop: 9, paddingBottom: compact ? 9 : 10, gap: 3 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <View
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: 99,
-              backgroundColor: s.dot,
-            }}
-          />
-          <Text style={{ fontSize: 14, fontWeight: "900", flex: 1 }} numberOfLines={1}>
-            {item.name
-              ? item.name
-              : `${item.primaryColor ?? ""} ${item.subCategory ?? item.category ?? ""}`.trim()}
-          </Text>
-        </View>
-
-        <Text style={{ opacity: 0.7, fontSize: 12 }} numberOfLines={1}>
-          {item.brand || "—"} • {s.label}
-        </Text>
-        <Text style={{ opacity: 0.72, fontSize: 12 }} numberOfLines={1}>
-          {matchCount ? `Pairs well with ${matchCount}` : lastWornLabel(item)}
-        </Text>
-
-        {!compact ? (
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 7, flexWrap: "wrap" }}>
-            {item.status === "AVAILABLE" && (
-              <>
-                <ActionChip icon="check" label="Wore" onPress={onWoreToday} />
-                <ActionChip icon="washing-machine" label="Laundry" onPress={onToLaundry} />
-              </>
-            )}
-
-            {item.status === "WORN" && (
-              <>
-                <ActionChip icon="washing-machine" label="Laundry" onPress={onToLaundry} />
-                <ActionChip icon="check" label="Wore" onPress={onWoreToday} />
-              </>
-            )}
-
-            {item.status === "IN_LAUNDRY" && (
-              <ActionChip icon="tshirt-crew" label="Washed" onPress={onWashed} />
-            )}
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-});
-
-export default function WardrobeScreen() {
+export default function HomeScreen() {
   const { user } = useAuth();
+  const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
+  const { greeting, timeLabel } = useNow();
+  const weather = useLocalWeather();
   const uid = user?.uid ?? null;
-  const insets = useSafeAreaInsets();
 
-  const [items, setItems] = useState<ClosetItem[]>([]);
+  const [items, setItems] = useState<ClothingItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchText, setSearchText] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ALL");
-  const [sortMode, setSortMode] = useState<ItemSort>("NEWEST");
-  const [showFilterSheet, setShowFilterSheet] = useState(false);
-
-  async function onMarkWorn(itemId: string) {
-    try {
-      if (!uid) return router.replace("/(auth)/login");
-      await safeMarkWorn(uid, itemId);
-    } catch (err: any) {
-      console.log(err);
-      Alert.alert("Error", err?.message ?? "Failed to mark worn");
-    }
-  }
-
-  async function moveToLaundry(itemId: string) {
-    try {
-      if (!uid) return router.replace("/(auth)/login");
-      await sendToLaundry(uid, itemId);
-    } catch (err: any) {
-      console.log(err);
-      Alert.alert("Error", err?.message ?? "Failed to move to laundry");
-    }
-  }
-
-  async function onMarkWashed(itemId: string) {
-    try {
-      if (!uid) return router.replace("/(auth)/login");
-      await markWashed(uid, itemId);
-    } catch (err: any) {
-      console.log(err);
-      Alert.alert("Error", err?.message ?? "Failed to mark washed");
-    }
-  }
+  const [todayRecord, setTodayRecord] = useState<DailyOutfitRecord | null>(null);
+  const [assistantHint, setAssistantHint] = useState<string | null>(null);
+  const [latestChatThread, setLatestChatThread] = useState<AIChatThread | null>(null);
+  const [latestAuraLookResponse, setLatestAuraLookResponse] = useState<AuraResponse | null>(null);
+  const [latestSavedLook, setLatestSavedLook] = useState<import("@/src/lib/auraLooks").SavedAuraLookRecord | null>(null);
 
   useEffect(() => {
     if (!uid) {
-      setItems([]);
-      setLoading(false);
       router.replace("/(auth)/login");
       return;
     }
 
-    setLoading(true);
     const unsub = listenToItems(
       uid,
       (next) => {
-        setItems(next);
+        setItems(next as ClothingItem[]);
         setLoading(false);
       },
       {
-        status: statusFilter,
-        sort: sortMode,
+        status: "ALL",
+        sort: "NEWEST",
         onError: (message) => {
-          Alert.alert("Firestore error", message);
           setLoading(false);
+          Alert.alert("Firestore error", message);
         },
       }
     );
 
     return () => unsub();
-  }, [uid, statusFilter, sortMode]);
+  }, [uid]);
 
-  const normalizedSearch = searchText.trim().toLowerCase();
+  useEffect(() => {
+    if (!uid) return;
+    const unsub = subscribeOutfitByDate(
+      uid,
+      new Date(),
+      (record) => setTodayRecord(record),
+      () => setTodayRecord(null)
+    );
+    return () => unsub();
+  }, [uid]);
 
-  const filteredItems = useMemo(() => {
-    let next = items;
-
-    if (statusFilter !== "ALL") {
-      next = next.filter((i) => i.status === statusFilter);
+  useEffect(() => {
+    if (weather.permission === "granted" && weather.state === "idle") {
+      void weather.actions.refresh();
     }
+  }, [weather.actions, weather.permission, weather.state]);
 
-    if (categoryFilter !== "ALL") {
-      next = next.filter((i) => isInCategory(i, categoryFilter));
+  useFocusEffect(
+    React.useCallback(() => {
+      let active = true;
+      void (async () => {
+        if (!uid) {
+          setAssistantHint(null);
+          setLatestChatThread(null);
+          return;
+        }
+        try {
+          const [profile, latestChat, savedLook] = await Promise.all([
+            loadAssistantProfile(uid),
+            loadLatestChatThread(uid),
+            loadLatestSavedAuraLook(uid),
+          ]);
+          if (!active) return;
+          setAssistantHint(buildVisiblePreferenceHint(profile));
+          setLatestChatThread(latestChat);
+          setLatestSavedLook(savedLook);
+          if (latestChat?.chatId) {
+            const chatMessages = await loadChatMessages(uid, latestChat.chatId);
+            if (!active) return;
+            const latestAura = [...chatMessages]
+              .reverse()
+              .find((message) => message.type === "assistant" && message.aura?.look)?.aura ?? null;
+            setLatestAuraLookResponse(latestAura);
+          } else {
+            setLatestAuraLookResponse(null);
+          }
+        } catch {
+          if (!active) return;
+          setAssistantHint(null);
+          setLatestChatThread(null);
+          setLatestAuraLookResponse(null);
+          setLatestSavedLook(null);
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }, [uid])
+  );
+
+  const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+
+  const displayName = (user?.displayName ?? user?.email?.split("@")[0] ?? "there").trim();
+  const headerGreeting = `${greeting}, ${displayName}`;
+
+  const weatherLabel = useMemo(() => {
+    if (weather.permission === "granted" && weather.state === "ready") {
+      const city = weather.city ?? "Your city";
+      const temp = typeof weather.tempC === "number" ? `${Math.round(weather.tempC)}°C` : null;
+      return [city, weather.label ?? null, temp, timeLabel].filter(Boolean).join(" • ");
     }
+    if (weather.permission === "blocked") return "Weather available when location access is enabled";
+    if (weather.permission === "denied") return "Location denied • enable weather-aware outfit suggestions";
+    return `${Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop()?.replace(/_/g, " ") ?? "Your city"} • ${timeLabel}`;
+  }, [timeLabel, weather.city, weather.label, weather.permission, weather.state, weather.tempC]);
 
-    if (normalizedSearch) {
-      next = next.filter((i) => {
-        const name = (i.name || "").toLowerCase();
-        const brand = (i.brand || "").toLowerCase();
-        return name.includes(normalizedSearch) || brand.includes(normalizedSearch);
-      });
+  const availableCount = useMemo(
+    () => items.filter((item) => item.status === "AVAILABLE").length,
+    [items]
+  );
+  const laundryCount = useMemo(
+    () => items.filter((item) => item.status === "IN_LAUNDRY").length,
+    [items]
+  );
+  const unwornCount = useMemo(
+    () =>
+      items.filter((item) => {
+        const wearCount = typeof item.wearCount === "number" ? item.wearCount : 0;
+        return item.status === "AVAILABLE" && wearCount === 0;
+      }).length,
+    [items]
+  );
+
+  const recentItems = useMemo(
+    () =>
+      [...items]
+        .sort((a, b) => {
+          const aMs = Math.max(toMillis(a.updatedAt), toMillis(a.createdAt));
+          const bMs = Math.max(toMillis(b.updatedAt), toMillis(b.createdAt));
+          return bMs - aMs;
+        })
+        .slice(0, 8),
+    [items]
+  );
+
+  const hasMinimalWardrobe = availableCount < 4;
+  const latestLook = latestAuraLookResponse?.look ?? latestSavedLook?.look ?? null;
+  const proactiveLookMeta = useMemo(() => {
+    if (latestAuraLookResponse?.look) {
+      return {
+        eyebrow: latestAuraLookResponse.look.addToComplete.length ? "COMPLETE THE LOOK" : "BUILT FROM YOUR WARDROBE",
+        title:
+          weather.permission === "granted" && weather.state === "ready"
+            ? "Recommended for today"
+            : "Built from your wardrobe",
+        subtitle:
+          latestAuraLookResponse.look.addToComplete.length
+            ? "Use what you own and add one or two sharp pieces to finish it."
+            : "AURA kept this grounded in pieces you can actually wear now.",
+      };
     }
-
-    return next;
-  }, [items, statusFilter, categoryFilter, normalizedSearch]);
-
-  const sectionData = useMemo(() => {
-    const buckets: Record<SectionKey, ClosetItem[]> = {
-      TOP: [],
-      BOTTOM: [],
-      SHOES: [],
-      OUTERWEAR: [],
-      ACCESSORY: [],
+    if (latestSavedLook?.look) {
+      return {
+        eyebrow: "SAVED LOOK",
+        title: latestSavedLook.title || "A look worth keeping",
+        subtitle: "A saved AURA look you can keep building on.",
+      };
+    }
+    if (weather.permission === "granted" && weather.state === "ready") {
+      if (weather.tempC != null && weather.tempC < 12) {
+        return {
+          eyebrow: "DRESS FOR WEATHER",
+          fallbackTitle: "Layered for today",
+          fallbackBody: "The weather is doing more work today, so start with a smart layered base and let AURA build around what is ready in your closet.",
+          primaryPrompt: "Build a weather-aware layered look with a visual outfit recommendation.",
+          secondaryPrompt: "Build a warm look using only my closet if possible.",
+        };
+      }
+      if (weather.tempC != null && weather.tempC > 24) {
+        return {
+          eyebrow: "LIGHTER FOR TODAY",
+          fallbackTitle: "Clean and easy today",
+          fallbackBody: "AURA can keep today lighter, cleaner, and more comfortable without making the look feel flat.",
+          primaryPrompt: "Build a light warm-weather look with a visual outfit recommendation.",
+          secondaryPrompt: "Build a heat-friendly look using only my closet.",
+        };
+      }
+    }
+    if (unwornCount > 0) {
+      return {
+        eyebrow: "BUILT FROM YOUR WARDROBE",
+        fallbackTitle: "Use what’s being ignored",
+        fallbackBody: "AURA can pull neglected pieces back into rotation and still make the outfit feel intentional.",
+        primaryPrompt: "Build a visual outfit recommendation around my least-worn items.",
+        secondaryPrompt: "Show a sharper version using only my closet.",
+      };
+    }
+    if (hasMinimalWardrobe) {
+      return {
+        eyebrow: "COMPLETE THE LOOK",
+        fallbackTitle: "Unlock stronger outfits",
+        fallbackBody: "Your closet is still taking shape. AURA can show a hybrid look now and point out the few additions that would unlock more combinations.",
+        primaryPrompt: "Show me a hybrid visual look using what I own and what I should add next.",
+        secondaryPrompt: "What should I buy first to unlock stronger outfits?",
+      };
+    }
+    return {
+      eyebrow: "GOOD FOR TONIGHT",
+      fallbackTitle: "A sharper direction",
+      fallbackBody: "If you want something more elevated, AURA can build a premium night look instead of another basic outfit suggestion.",
+      primaryPrompt: "Plan a sharper look for tonight with a visual outfit recommendation.",
+      secondaryPrompt: "Make it dressier and use my best pieces.",
     };
+  }, [
+    hasMinimalWardrobe,
+    latestAuraLookResponse?.look,
+    latestSavedLook,
+    unwornCount,
+    weather.permission,
+    weather.state,
+    weather.tempC,
+  ]);
 
-    for (const it of filteredItems) {
-      buckets[sectionForItem(it)].push(it);
+  const starterPrompts = useMemo<QuickActionItem[]>(
+    () => [
+      { key: "today", label: "Build today’s look", prompt: "Build an outfit for today from my wardrobe." },
+      { key: "weather", label: "Dress for weather", prompt: "Build me a weather-aware outfit using what I own." },
+      { key: "unworn", label: "Use unworn items", prompt: "Create a look using pieces I have not worn much." },
+      { key: "trip", label: "Pack a trip", prompt: "Help me plan a compact travel wardrobe from my closet." },
+      { key: "elevate", label: "Dress this up", prompt: "Elevate one of my casual outfits into something sharper." },
+    ],
+    []
+  );
+
+  const openAIWithPrompt = React.useCallback((prompt?: string) => {
+    if (prompt) {
+      router.push({
+        pathname: "/(tabs)/ai",
+        params: {
+          prompt,
+          promptKey: String(Date.now()),
+        },
+      });
+      return;
     }
+    router.push("/(tabs)/ai");
+  }, []);
 
-    const visible =
-      categoryFilter === "ALL"
-        ? SECTIONS
-        : SECTIONS.filter((s) => s.key === categoryFilter);
-
-    return visible.map((s) => ({ key: s.key, title: s.title, items: buckets[s.key] }));
-  }, [filteredItems, categoryFilter]);
-
-  const colorToItemCount = useMemo(() => {
-    // TODO(wardrobe-ai): replace with embedding-based compatibility score when ready.
-    const counts = new Map<string, number>();
-    filteredItems.forEach((item) => {
-      const colors = (item.colors ?? []).map((c) => String(c).toLowerCase()).filter(Boolean);
-      if (colors.length === 0 && item.primaryColor) {
-        colors.push(String(item.primaryColor).toLowerCase());
-      }
-      const unique = Array.from(new Set(colors));
-      unique.forEach((color) => counts.set(color, (counts.get(color) ?? 0) + 1));
+  const openAIChat = React.useCallback((chatId: string) => {
+    router.push({
+      pathname: "/(tabs)/ai",
+      params: {
+        chatId,
+        chatKey: String(Date.now()),
+      },
     });
-    return counts;
-  }, [filteredItems]);
+  }, []);
 
-  const matchCountByItemId = useMemo(() => {
-    const map = new Map<string, number>();
-    filteredItems.forEach((item) => {
-      const colors = (item.colors ?? []).map((c) => String(c).toLowerCase()).filter(Boolean);
-      if (colors.length === 0 && item.primaryColor) {
-        colors.push(String(item.primaryColor).toLowerCase());
+  const openSoonTool = React.useCallback((title: string, prompt: string) => {
+    Alert.alert(
+      `${title} is coming soon`,
+      "We haven’t built the dedicated tool yet, but the stylist can still help right now.",
+      [
+        { text: "Not now", style: "cancel" },
+        {
+          text: "Ask Stylist",
+          onPress: () => openAIWithPrompt(prompt),
+        },
+      ]
+    );
+  }, [openAIWithPrompt]);
+
+  async function handleAuraLookAction(action: AuraLookAction) {
+    const look = latestLook;
+    if (!look || !uid) return;
+    const promptBase = look.lookTitle;
+    if (action === "saveLook") {
+      try {
+        const saved = await saveAuraLook(uid, look, { title: promptBase });
+        setLatestSavedLook(saved);
+        Alert.alert("Saved", "Look saved to your profile.");
+      } catch (error: any) {
+        Alert.alert("Save failed", error?.message ?? "Unable to save this look.");
       }
-      const score = colors.reduce((acc, color) => acc + (colorToItemCount.get(color) ?? 0), 0);
-      map.set(item.id, Math.max(0, score - 1));
-    });
-    return map;
-  }, [colorToItemCount, filteredItems]);
+      return;
+    }
+    if (action === "planForToday") {
+      try {
+        await savePlannedRecord(uid, new Date(), auraLookToPlannedOutfit(look));
+        Alert.alert("Planned", "This look is now attached to today.");
+      } catch (error: any) {
+        Alert.alert("Plan failed", error?.message ?? "Unable to plan this look for today.");
+      }
+      return;
+    }
+    if (action === "showMoreLikeThis") {
+      openAIWithPrompt(`Show me 3 more looks like ${promptBase}.`);
+      return;
+    }
+    if (action === "shopMissingPieces") {
+      const missingPieces = look.addToComplete.filter(Boolean);
+      Alert.alert(
+        "Missing pieces",
+        missingPieces.length
+          ? missingPieces.join("\n")
+          : "AURA does not see any missing pieces in this look yet.",
+        missingPieces.length
+          ? [
+              { text: "Close", style: "cancel" },
+              {
+                text: "Create shopping brief",
+                onPress: () => openAIWithPrompt(`Turn ${promptBase} into a concise shopping brief for the missing pieces.`),
+              },
+            ]
+          : [{ text: "Close", style: "cancel" }]
+      );
+      return;
+    }
+    if (action === "useOnlyMyCloset") {
+      openAIWithPrompt(`Rebuild ${promptBase} using only my closet.`);
+      return;
+    }
+    if (action === "makeItDressier") {
+      openAIWithPrompt(`Make ${promptBase} dressier.`);
+    }
+  }
 
-  const hasResults = filteredItems.length > 0;
-  const isDefaultFilter = !normalizedSearch && statusFilter === "ALL" && categoryFilter === "ALL";
-  const sortLabel = SORT_OPTIONS.find((opt) => opt.key === sortMode)?.label ?? "Newest";
+  const smartTools = useMemo<SmartTool[]>(
+    () => [
+      {
+        key: "laundry",
+        title: "Laundry",
+        subtitle: laundryCount > 0 ? `${laundryCount} items need attention` : "Check care flow and refresh pieces",
+        icon: "washing-machine",
+        badge: laundryCount > 0 ? String(laundryCount) : undefined,
+        onPress: () => router.push("/(tabs)/laundry"),
+      },
+      {
+        key: "shopping",
+        title: "Shopping",
+        subtitle: "Turn wardrobe gaps into a cleaner wish list",
+        icon: "shopping-outline",
+        badge: "Soon",
+        onPress: () =>
+          openSoonTool(
+            "Shopping",
+            "Review my wardrobe and suggest a short shopping list of meaningful gaps."
+          ),
+      },
+      {
+        key: "favorites",
+        title: "Favorites",
+        subtitle: "Surface the pieces worth building around",
+        icon: "heart-outline",
+        badge: "Soon",
+        onPress: () =>
+          openSoonTool(
+            "Favorites",
+            "Show me the standout pieces in my wardrobe and what to build around them."
+          ),
+      },
+      {
+        key: "insights",
+        title: "Insights",
+        subtitle: "See what you wear most, least, and should rotate next",
+        icon: "chart-line",
+        onPress: () => openAIWithPrompt("Give me a concise wardrobe insight summary from what I own."),
+      },
+      {
+        key: "packing",
+        title: "Packing",
+        subtitle: "Build short trip capsules without overpacking",
+        icon: "bag-suitcase-outline",
+        onPress: () => openAIWithPrompt("Help me pack for a weekend trip using only my wardrobe."),
+      },
+      {
+        key: "recent",
+        title: "Recently worn",
+        subtitle: "Review what has been in rotation lately",
+        icon: "history",
+        onPress: () => router.push("/(tabs)/calendar"),
+      },
+      {
+        key: "unworn",
+        title: "Unworn items",
+        subtitle: unwornCount > 0 ? `${unwornCount} items deserve airtime` : "Everything is getting some rotation",
+        icon: "hanger",
+        badge: unwornCount > 0 ? String(unwornCount) : undefined,
+        onPress: () => openAIWithPrompt("Build an outfit around my least-worn items."),
+      },
+      {
+        key: "gaps",
+        title: "Wardrobe gaps",
+        subtitle: "Find what is missing before you buy the wrong thing",
+        icon: "vector-square-plus",
+        onPress: () => openAIWithPrompt("What wardrobe gaps should I actually fill next based on what I own?"),
+      },
+    ],
+    [laundryCount, openAIWithPrompt, openSoonTool, unwornCount]
+  );
 
-  const filterSummary = useMemo(() => {
-    const parts = [
-      STATUS_FILTERS.find((f) => f.key === statusFilter)?.label ?? "All",
-      CATEGORY_FILTERS.find((f) => f.key === categoryFilter)?.label ?? "All",
-    ];
-    return parts.join(" • ");
-  }, [categoryFilter, statusFilter]);
-
-  return (
-    <View style={{ flex: 1, paddingHorizontal: 16, backgroundColor: "#fff" }}>
-      <FlatList
-        data={hasResults ? sectionData : []}
-        keyExtractor={(s) => s.key}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: dockSpace(insets.bottom) + 18, paddingTop: 4, gap: 12 }}
-        ListHeaderComponent={
-          <View style={{ gap: 14, marginBottom: 2, paddingTop: Math.max(2, insets.top * 0.25) }}>
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <View style={{ gap: 1 }}>
-                <Text style={{ fontSize: 24, fontWeight: "900" }}>{AI_LABEL}</Text>
-                <Text style={{ color: "#64748b", fontSize: 12, fontWeight: "600" }}>
-                  Your personal closet assistant
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => router.push({ pathname: "/(tabs)/ai", params: { intent: "build_outfit" } })}
-                style={{
-                  borderRadius: 999,
-                  backgroundColor: "#111827",
-                  paddingHorizontal: 12,
-                  paddingVertical: 7,
-                }}
-              >
-                <Text style={{ fontWeight: "800", color: "#fff" }}>Ask AI</Text>
-              </Pressable>
-            </View>
-
-            <View
-              style={{
-                gap: 12,
-                backgroundColor: "#f5f8ff",
-                borderRadius: 18,
-                padding: 10,
-              }}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={{ fontSize: 13, fontWeight: "900", color: "#334155" }}>
-                  ✨ Smart Wardrobe
-                </Text>
-                <Text style={{ fontSize: 12, color: "#64748b" }}>
-                  Personalized picks and insights
-                </Text>
-              </View>
-
-              <AiInsightCard
-                items={filteredItems}
-                onPressBuildOutfit={() =>
-                  router.push({ pathname: "/(tabs)/ai", params: { intent: "build_outfit" } })
-                }
-              />
-
-              {loading ? (
-                <View
-                  style={{
-                    borderRadius: 14,
-                    backgroundColor: "#eef2ff",
-                    paddingVertical: 14,
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <ActivityIndicator />
-                  <Text style={{ color: "#475569", fontWeight: "700", fontSize: 12 }}>
-                    AI organizing your wardrobe…
-                  </Text>
-                </View>
-              ) : (
-                <AiWardrobeSections
-                  items={filteredItems}
-                  onPressItem={(item) => router.push(`/(tabs)/item/${item.id}`)}
-                  renderItemCardCompact={({ item, aiTag }) => (
-                    <ItemPhotoCard
-                      item={item}
-                      compact
-                      aiTag={aiTag as "AI Pick" | "Underused" | "Recently Worn"}
-                      matchCount={matchCountByItemId.get(item.id) ?? 0}
-                      onWoreToday={() => onMarkWorn(item.id)}
-                      onToLaundry={() => moveToLaundry(item.id)}
-                      onWashed={() => onMarkWashed(item.id)}
-                    />
-                  )}
-                />
-              )}
-            </View>
-
-            <TextInput
-              value={searchText}
-              onChangeText={setSearchText}
-              placeholder="Search by name or brand"
-              style={{
-                borderWidth: 1,
-                borderColor: "#ddd",
-                borderRadius: 12,
-                paddingHorizontal: 12,
-                paddingVertical: 10,
-              }}
-            />
-
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Pressable
-                onPress={() => setShowFilterSheet(true)}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 6,
-                  borderWidth: 1,
-                  borderColor: "#d1d5db",
-                  borderRadius: 999,
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  backgroundColor: "#fff",
-                }}
-              >
-                <MaterialCommunityIcons name="tune-variant" size={16} color="#111" />
-                <Text style={{ fontWeight: "800", color: "#111" }}>Filters</Text>
-              </Pressable>
-
-              <View
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: "#e5e7eb",
-                  borderRadius: 999,
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  backgroundColor: "#fafafa",
-                }}
-              >
-                <Text style={{ fontWeight: "700", color: "#334155" }} numberOfLines={1}>
-                  {filterSummary} • Sort: {sortLabel}
-                </Text>
-              </View>
-            </View>
-
-          </View>
-        }
-        ListEmptyComponent={
-          loading ? null : (
-            <View style={{ justifyContent: "center", alignItems: "center", gap: 10, paddingTop: 28 }}>
-              <Text style={{ fontSize: 16, fontWeight: "800" }}>
-                {isDefaultFilter ? "No items yet" : "No results match filters"}
-              </Text>
-              <Pressable
-                onPress={() => router.push("/(tabs)/add")}
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 14,
-                  borderRadius: 10,
-                  backgroundColor: "#111",
-                }}
-              >
-                <Text style={{ color: "#fff", fontWeight: "900" }}>Add your first item</Text>
-              </Pressable>
-            </View>
-          )
-        }
-        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-        renderItem={({ item: section }) => (
-          <View style={{ gap: 7 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <Text style={{ fontSize: 16, fontWeight: "900", color: "#0f172a" }}>
-                {section.title} ({section.items.length})
-              </Text>
-            </View>
-
-            {section.items.length === 0 ? (
-              <Text style={{ color: "#666" }}>No items.</Text>
-            ) : (
-              <FlatList
-                data={section.items}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                keyExtractor={(it) => it.id}
-                initialNumToRender={6}
-                windowSize={5}
-                ItemSeparatorComponent={() => <View style={{ width: 10 }} />}
-                renderItem={({ item }) => (
-                  <Pressable onPress={() => router.push(`/(tabs)/item/${item.id}`)}>
-                    <ItemPhotoCard
-                      item={item}
-                      matchCount={matchCountByItemId.get(item.id) ?? 0}
-                      onWoreToday={() => onMarkWorn(item.id)}
-                      onToLaundry={() => moveToLaundry(item.id)}
-                      onWashed={() => onMarkWashed(item.id)}
-                    />
-                  </Pressable>
-                )}
-              />
-            )}
-          </View>
-        )}
-      />
-
-      <Pressable
-        onPress={() => router.push("/(tabs)/add")}
+  if (loading) {
+    return (
+      <View
         style={{
-          position: "absolute",
-          right: 18,
-          bottom: dockSpace(insets.bottom) + 12,
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          backgroundColor: "#111",
+          flex: 1,
+          backgroundColor: colors.background,
           alignItems: "center",
           justifyContent: "center",
-          shadowColor: "#111",
-          shadowOpacity: 0.22,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 4 },
-          elevation: 6,
+          gap: 12,
         }}
       >
-        <Text style={{ color: "#fff", fontSize: 28, lineHeight: 28 }}>+</Text>
-      </Pressable>
+        <ActivityIndicator color={colors.text} />
+        <Text style={{ color: colors.textSecondary, fontSize: 14 }}>Building your dashboard…</Text>
+      </View>
+    );
+  }
 
-      <WardrobeFilterSheet
-        visible={showFilterSheet}
-        onClose={() => setShowFilterSheet(false)}
-        statusFilter={statusFilter}
-        categoryFilter={categoryFilter}
-        sortMode={sortMode}
-        statusOptions={STATUS_FILTERS}
-        categoryOptions={CATEGORY_FILTERS}
-        sortOptions={SORT_OPTIONS}
-        onChangeStatus={setStatusFilter}
-        onChangeCategory={setCategoryFilter}
-        onChangeSort={setSortMode}
-        onClear={() => {
-          setStatusFilter("ALL");
-          setCategoryFilter("ALL");
-          setSortMode("NEWEST");
-          setSearchText("");
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          paddingTop: layout.topContentInset,
+          paddingHorizontal: layout.horizontalPadding,
+          paddingBottom: layout.bottomDockPadding,
+          gap: layout.sectionGap,
         }}
-      />
+      >
+        <RevealSection delay={0}>
+          <HomeHero
+            colors={colors}
+            greeting={headerGreeting}
+            weatherLabel={weatherLabel}
+            personalHint={assistantHint}
+            onAskStylist={() => openAIWithPrompt("Build me a strong outfit from my wardrobe for today.")}
+            onPlanToday={() => router.push("/(tabs)/calendar")}
+          />
+        </RevealSection>
+
+        <RevealSection delay={40}>
+          <TodayOutfitCard
+            colors={colors}
+            record={todayRecord}
+            itemsById={itemsById}
+            onPlanToday={() => openAIWithPrompt("Plan my outfit for today using what I already own.")}
+            onOpenCalendar={() => router.push("/(tabs)/calendar")}
+            onAskStylist={() => openAIWithPrompt("Refine or improve my outfit plan for today.")}
+          />
+        </RevealSection>
+
+        <RevealSection delay={80}>
+          {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (
+            <ContinueChatCard
+              colors={colors}
+              title={latestChatThread.title}
+              preview={latestChatThread.lastMessagePreview}
+              updatedAt={latestChatThread.updatedAt}
+              onPress={() => openAIChat(latestChatThread.chatId)}
+            />
+          ) : null}
+        </RevealSection>
+
+        <RevealSection delay={120}>
+          <AuraLookModule
+            colors={colors}
+            look={latestLook}
+            itemsById={itemsById}
+            onAskAura={openAIWithPrompt}
+            onAction={handleAuraLookAction}
+            eyebrow={proactiveLookMeta.eyebrow}
+            title={"title" in proactiveLookMeta ? proactiveLookMeta.title : undefined}
+            subtitle={"subtitle" in proactiveLookMeta ? proactiveLookMeta.subtitle : undefined}
+            fallbackTitle={"fallbackTitle" in proactiveLookMeta ? proactiveLookMeta.fallbackTitle : undefined}
+            fallbackBody={"fallbackBody" in proactiveLookMeta ? proactiveLookMeta.fallbackBody : undefined}
+            primaryPrompt={"primaryPrompt" in proactiveLookMeta ? proactiveLookMeta.primaryPrompt : undefined}
+            secondaryPrompt={"secondaryPrompt" in proactiveLookMeta ? proactiveLookMeta.secondaryPrompt : undefined}
+          />
+        </RevealSection>
+
+        <RevealSection delay={160}>
+          <View style={{ gap: 10 }}>
+            <View style={{ gap: 2 }}>
+              <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900" }}>Ask faster</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                Start the stylist with a focused prompt instead of a blank thread.
+              </Text>
+            </View>
+            <QuickActionRail
+              colors={colors}
+              actions={starterPrompts}
+              onPressAction={(action) => openAIWithPrompt(action.prompt)}
+            />
+          </View>
+        </RevealSection>
+
+        <RevealSection delay={200}>
+          <SmartToolsGrid colors={colors} tools={smartTools} columns={layout.smartGridColumns} />
+        </RevealSection>
+
+        <RevealSection delay={240}>
+          <View style={{ gap: 12 }}>
+            <InsightCard
+              colors={colors}
+              eyebrow="ROTATION"
+              title={
+                hasMinimalWardrobe
+                  ? "Start with a few strong core pieces"
+                  : unwornCount > 0
+                    ? `${unwornCount} pieces are ready for a comeback`
+                    : "Your wardrobe is staying in motion"
+              }
+              body={
+                hasMinimalWardrobe
+                  ? "Once you add a few more available items, the stylist can build stronger rotations, gap analysis, and smarter daily suggestions."
+                  : unwornCount > 0
+                  ? "Use the stylist to pull neglected items back into rotation before they disappear into the background."
+                  : "You do not have obvious dead stock right now. A few targeted outfit prompts can keep that momentum going."
+              }
+              ctaLabel={hasMinimalWardrobe ? "Add another item" : "Use unworn pieces"}
+              onPress={() =>
+                hasMinimalWardrobe
+                  ? router.push("/(tabs)/add")
+                  : openAIWithPrompt("Build a look around pieces I have not worn enough.")
+              }
+            />
+
+            <InsightCard
+              colors={colors}
+              eyebrow="CARE"
+              title={
+                availableCount === 0
+                  ? "Your wardrobe is still taking shape"
+                  : laundryCount > 0
+                    ? `${laundryCount} items are sitting in laundry`
+                    : "Care flow is under control"
+              }
+              body={
+                availableCount === 0
+                  ? "Add a few pieces first, then Home will start surfacing stronger outfit planning and rotation insights."
+                  : laundryCount > 0
+                  ? "Push those pieces back to available once they are clean so your daily outfit options stay full."
+                  : `You have ${availableCount} available pieces ready to wear, so planning can stay focused on choice instead of recovery.`
+              }
+              ctaLabel={
+                availableCount === 0
+                  ? "Add first item"
+                  : laundryCount > 0
+                    ? "Open Laundry"
+                    : "Plan around what is ready"
+              }
+              onPress={() =>
+                availableCount === 0
+                  ? router.push("/(tabs)/add")
+                  : laundryCount > 0
+                  ? router.push("/(tabs)/laundry")
+                  : openAIWithPrompt("Build me an outfit from the pieces that are ready to wear right now.")
+              }
+            />
+          </View>
+        </RevealSection>
+
+        <RevealSection delay={280}>
+          {recentItems.length ? (
+            <ContinueSection
+              colors={colors}
+              title="Continue where you left off"
+              subtitle="Recently added and recently updated pieces worth acting on next."
+              items={recentItems}
+              onPressItem={(item) =>
+                router.push({
+                  pathname: "/(tabs)/item/[id]",
+                  params: { id: item.id },
+                })
+              }
+            />
+          ) : (
+            <InsightCard
+              colors={colors}
+              eyebrow="NEXT STEP"
+              title="Add a few pieces to unlock the dashboard"
+              body="Once your closet has a bit more depth, Home will start feeling much more personal with stronger recents, smarter prompts, and better planning cues."
+              ctaLabel="Add item"
+              onPress={() => router.push("/(tabs)/add")}
+            />
+          )}
+        </RevealSection>
+
+        <RevealSection delay={320}>
+          <Pressable
+            onPress={() => router.push("/(tabs)/add")}
+            style={({ pressed }) => ({
+              borderRadius: layout.largeRadius,
+              paddingVertical: layout.cardPadding + 2,
+              paddingHorizontal: layout.cardPadding,
+              backgroundColor: "rgba(255,255,255,0.045)",
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.08)",
+              opacity: pressed ? 0.86 : 1,
+              gap: 4,
+            })}
+          >
+            <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>Add something new</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
+              Bring in a new piece, clean its image, and let the assistant classify it in the background.
+            </Text>
+          </Pressable>
+        </RevealSection>
+      </ScrollView>
     </View>
   );
 }

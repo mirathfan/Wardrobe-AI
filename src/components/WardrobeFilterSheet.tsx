@@ -6,6 +6,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useAppTheme } from "../hooks/useAppTheme";
 
 type Option<T extends string> = {
   key: T;
@@ -21,6 +22,7 @@ function FilterPill({
   active: boolean;
   onPress: () => void;
 }) {
+  const { colors } = useAppTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -29,11 +31,11 @@ function FilterPill({
         paddingHorizontal: 12,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: active ? "#111" : "#d1d5db",
-        backgroundColor: active ? "#111" : "#fff",
+        borderColor: active ? colors.accent : colors.border,
+        backgroundColor: active ? colors.accent : colors.surface,
       }}
     >
-      <Text style={{ color: active ? "#fff" : "#111", fontWeight: "700" }}>{label}</Text>
+      <Text style={{ color: active ? "#fff" : colors.text, fontWeight: "700" }}>{label}</Text>
     </Pressable>
   );
 }
@@ -69,6 +71,7 @@ export const WardrobeFilterSheet = React.memo(function WardrobeFilterSheet<
   onChangeSort: (value: TSort) => void;
   onClear: () => void;
 }) {
+  const { colors } = useAppTheme();
   const translateY = useRef(new Animated.Value(360)).current;
 
   useEffect(() => {
@@ -106,7 +109,7 @@ export const WardrobeFilterSheet = React.memo(function WardrobeFilterSheet<
         <Animated.View
           style={{
             transform: [{ translateY }],
-            backgroundColor: "#fff",
+            backgroundColor: colors.card,
             borderTopLeftRadius: 20,
             borderTopRightRadius: 20,
             paddingHorizontal: 16,
@@ -121,19 +124,19 @@ export const WardrobeFilterSheet = React.memo(function WardrobeFilterSheet<
               width: 44,
               height: 5,
               borderRadius: 999,
-              backgroundColor: "#d1d5db",
+              backgroundColor: colors.border,
             }}
           />
 
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <Text style={{ fontSize: 18, fontWeight: "900" }}>Filters & Sort</Text>
+            <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text }}>Filters & Sort</Text>
             <Pressable onPress={onClear}>
-              <Text style={{ fontWeight: "800", color: "#0f172a" }}>Clear filters</Text>
+              <Text style={{ fontWeight: "800", color: colors.text }}>Clear filters</Text>
             </Pressable>
           </View>
 
           <View style={{ gap: 8 }}>
-            <Text style={{ fontWeight: "800" }}>Status</Text>
+            <Text style={{ fontWeight: "800", color: colors.text }}>Status</Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {statusOptions.map((option) => (
                 <FilterPill
@@ -147,7 +150,7 @@ export const WardrobeFilterSheet = React.memo(function WardrobeFilterSheet<
           </View>
 
           <View style={{ gap: 8 }}>
-            <Text style={{ fontWeight: "800" }}>Category</Text>
+            <Text style={{ fontWeight: "800", color: colors.text }}>Category</Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {categoryOptions.map((option) => (
                 <FilterPill
@@ -161,7 +164,7 @@ export const WardrobeFilterSheet = React.memo(function WardrobeFilterSheet<
           </View>
 
           <View style={{ gap: 8 }}>
-            <Text style={{ fontWeight: "800" }}>Sort</Text>
+            <Text style={{ fontWeight: "800", color: colors.text }}>Sort</Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {sortOptions.map((option) => (
                 <FilterPill
@@ -178,7 +181,7 @@ export const WardrobeFilterSheet = React.memo(function WardrobeFilterSheet<
             onPress={closeWithAnimation}
             style={{
               marginTop: 4,
-              backgroundColor: "#111",
+              backgroundColor: colors.accent,
               borderRadius: 12,
               alignItems: "center",
               justifyContent: "center",

@@ -8,7 +8,8 @@ import { ActivityIndicator, Platform, Text, View } from "react-native";
 import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
 import { isVisionBackgroundRemovalAvailable } from "../src/bg/removeBackground";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { Colors } from "@/constants/theme";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -17,6 +18,8 @@ export const unstable_settings = {
 function AuthGate() {
   const { user, loading } = useAuth();
   const segments = useSegments();
+  const colorScheme = useColorScheme();
+  const palette = Colors[colorScheme === "dark" ? "dark" : "light"];
 
   useEffect(() => {
     if (loading) return;
@@ -36,7 +39,7 @@ function AuthGate() {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 10 }}>
         <ActivityIndicator />
-        <Text>Checking session…</Text>
+        <Text style={{ color: palette.text }}>Checking session…</Text>
       </View>
     );
   }
@@ -55,6 +58,31 @@ function AuthGate() {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  const palette = Colors[colorScheme === "dark" ? "dark" : "light"];
+  const navigationTheme =
+    colorScheme === "dark"
+      ? {
+          ...DarkTheme,
+          colors: {
+            ...DarkTheme.colors,
+            background: palette.background,
+            card: palette.surface,
+            border: palette.border,
+            primary: palette.tint,
+            text: palette.text,
+          },
+        }
+      : {
+          ...DefaultTheme,
+          colors: {
+            ...DefaultTheme.colors,
+            background: palette.background,
+            card: palette.surface,
+            border: palette.border,
+            primary: palette.tint,
+            text: palette.text,
+          },
+        };
 
   useEffect(() => {
     if (Platform.OS !== "ios" || !__DEV__) return;
@@ -65,14 +93,14 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+      <ThemeProvider value={navigationTheme}>
         <AuthProvider>
-          <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+          <View style={{ flex: 1, backgroundColor: palette.background }}>
             <AuthGate />
-          </SafeAreaView>
+          </View>
         </AuthProvider>
 
-        <StatusBar style="auto" />
+        <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
       </ThemeProvider>
     </SafeAreaProvider>
   );

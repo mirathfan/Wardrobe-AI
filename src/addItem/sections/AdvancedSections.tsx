@@ -89,10 +89,23 @@ export const SizeContentRow = React.memo(function SizeContentRow({ controller }:
                 key={option}
                 label={option}
                 active={state.size === option}
-                onPress={() => actions.setSize(state.size === option ? "" : option)}
+                onPress={() => {
+                  actions.markUserEdited("size");
+                  actions.setSize(state.size === option ? "" : option);
+                }}
               />
             ))}
           </ChipRow>
+        </Field>
+        <Field label="Custom size">
+          <MemoTextInputField
+            value={state.size}
+            onCommit={(value) => {
+              actions.markUserEdited("size");
+              actions.setSize(value);
+            }}
+            placeholder="e.g., M, 32 / 30, EU 42"
+          />
         </Field>
         <Field label="Price">
           <View style={{ flexDirection: "row", gap: 8 }}>

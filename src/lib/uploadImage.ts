@@ -7,6 +7,7 @@ type UploadItemPhotoParams = {
   itemId: string;
   localUri: string;
   cleanedLocalUri?: string | null;
+  normalizedLocalUri?: string | null;
   originalWidth?: number | null;
   maxWidth?: number;
   quality?: number;
@@ -62,18 +63,11 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     itemId,
     localUri,
     cleanedLocalUri = null,
+    normalizedLocalUri = null,
     originalWidth = null,
     maxWidth = 1000,
     quality = 0.7,
   } = params;
-
-  console.log("[uploadItemPhoto] start", {
-    uid,
-    itemId,
-    localUri,
-    cleanedLocalUri,
-    originalWidth,
-  });
 
   const processedUri = await processImageToJpegUri({
     localUri,
@@ -89,29 +83,37 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     contentType: "image/jpeg",
   });
   const primaryUrl = await getDownloadURL(fileRef);
-  console.log("[uploadItemPhoto] primary uploaded", { storagePath, primaryUrl });
 
   const cleanedCandidateUri =
     cleanedLocalUri ||
     (String(localUri).trim().toLowerCase().endsWith(".png") ? localUri : null);
   let cleanedUrl: string | null = null;
   if (cleanedCandidateUri) {
-    console.log("[uploadItemPhoto] cleanedLocalUri:", cleanedCandidateUri);
     const cleanedBlob = await blobFromFileUri(cleanedCandidateUri);
     const cleanedPath = `users/${uid}/items/${itemId}.cleaned.png`;
     const cleanedRef = ref(storage, cleanedPath);
-    console.log("[uploadItemPhoto] cleaned storage path:", cleanedPath);
     await uploadBytes(cleanedRef, cleanedBlob, {
       contentType: "image/png",
     });
     cleanedUrl = await getDownloadURL(cleanedRef);
-    console.log("[uploadItemPhoto] cleaned download URL:", cleanedUrl);
   }
 
-  console.log("[uploadItemPhoto] success", { itemId, hasCleaned: !!cleanedUrl });
+  let normalizedUrl: string | null = null;
+  if (normalizedLocalUri) {
+    const normalizedBlob = await blobFromFileUri(normalizedLocalUri);
+    const normalizedPath = `users/${uid}/items/${itemId}.normalized.png`;
+    const normalizedRef = ref(storage, normalizedPath);
+    await uploadBytes(normalizedRef, normalizedBlob, {
+      contentType: "image/png",
+    });
+    normalizedUrl = await getDownloadURL(normalizedRef);
+  }
+
   return {
+    originalUrl: primaryUrl,
     primaryUrl,
     cleanedUrl,
-    cleanedSource: cleanedUrl ? "ios_vision" : null,
+    normalizedUrl,
+    cleanedSource: cleanedUrl ? "vision" : null,
   };
 }

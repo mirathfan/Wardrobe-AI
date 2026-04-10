@@ -14,16 +14,58 @@ export const ALLOWED_COLORS = [
   "navy",
   "blue",
   "green",
+  "olive",
   "red",
   "brown",
   "beige",
+  "tan",
+  "khaki",
   "cream",
+  "gold",
+  "silver",
   "yellow",
   "orange",
   "pink",
   "purple",
 ] as const;
 export type AllowedColor = (typeof ALLOWED_COLORS)[number];
+
+export const ALLOWED_FORMALITY = [
+  "casual",
+  "smart_casual",
+  "formal",
+  "athletic",
+  "lounge",
+  "party",
+  "streetwear",
+] as const;
+export type AllowedFormality = (typeof ALLOWED_FORMALITY)[number];
+
+export const ALLOWED_WARMTH = ["light", "medium", "heavy"] as const;
+export type AllowedWarmth = (typeof ALLOWED_WARMTH)[number];
+
+export const ALLOWED_LAYER_ROLES = ["base", "mid", "outer"] as const;
+export type AllowedLayerRole = (typeof ALLOWED_LAYER_ROLES)[number];
+
+export const ALLOWED_VISUAL_WEIGHT = ["minimal", "balanced", "bold"] as const;
+export type AllowedVisualWeight = (typeof ALLOWED_VISUAL_WEIGHT)[number];
+
+export const ALLOWED_AESTHETIC_TAGS = [
+  "luxury",
+  "streetwear",
+  "statement",
+  "minimal",
+  "classic",
+  "sporty",
+  "workwear",
+  "preppy",
+  "edgy",
+  "vintage",
+  "logo_heavy",
+  "monogram",
+  "utility",
+] as const;
+export type AllowedAestheticTag = (typeof ALLOWED_AESTHETIC_TAGS)[number];
 
 export const SUB_CATEGORIES = {
   [Category.TOP]: [
