@@ -4,10 +4,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DOCK_HEIGHT } from "../../../src/constants/dock";
+import { SafeScreen } from "../../../src/components/SafeScreen";
 import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
 import { useAuth } from "../../../src/hooks/useAuth";
 import { useAppTheme } from "../../../src/hooks/useAppTheme";
+import { useResponsiveLayout } from "../../../src/hooks/useResponsiveLayout";
 import { db } from "../../../src/lib/firebase";
 import { getItemImageUrl } from "../../../src/lib/itemImage";
 import {
@@ -62,8 +63,9 @@ function formatValue(value?: string | null) {
 
 function QuickFact(props: { label: string; value: string; tone?: "default" | "success" | "danger" }) {
   const { label, value, tone = "default" } = props;
+  const { colors } = useAppTheme();
   const valueColor =
-    tone === "success" ? "#0a7" : tone === "danger" ? "#d11" : "#111";
+    tone === "success" ? colors.accent : tone === "danger" ? "#ff6b6b" : colors.text;
   return (
     <View
       style={{
@@ -73,11 +75,13 @@ function QuickFact(props: { label: string; value: string; tone?: "default" | "su
         paddingHorizontal: 12,
         borderRadius: 14,
         borderWidth: 1,
-        borderColor: "#ececec",
-        backgroundColor: "#fafafa",
+        borderColor: "rgba(255,255,255,0.08)",
+        backgroundColor: "rgba(255,255,255,0.04)",
       }}
     >
-      <Text style={{ color: "#666", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }}>
+      <Text
+        style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700", textTransform: "uppercase" }}
+      >
         {label}
       </Text>
       <Text style={{ color: valueColor, fontSize: 15, fontWeight: "800" }}>{value}</Text>
@@ -91,12 +95,23 @@ function SectionCard(props: {
   children: React.ReactNode;
 }) {
   const { title, subtitle = null, children } = props;
+  const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
   return (
-    <View style={card}>
+    <View
+      style={[
+        card,
+        {
+          borderColor: "rgba(255,255,255,0.08)",
+          borderRadius: layout.mediumRadius,
+          backgroundColor: "rgba(255,255,255,0.035)",
+        },
+      ]}
+    >
       <View style={{ gap: 3, marginBottom: 12 }}>
-        <Text style={{ color: "#111", fontSize: 18, fontWeight: "900" }}>{title}</Text>
+        <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>{title}</Text>
         {subtitle ? (
-          <Text style={{ color: "#666", fontSize: 13, lineHeight: 18 }}>{subtitle}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18 }}>{subtitle}</Text>
         ) : null}
       </View>
       {children}
@@ -107,7 +122,7 @@ function SectionCard(props: {
 export default function ItemDetailsScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
-  const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
   const uid = user?.uid ?? null;
   const { id } = useLocalSearchParams<{ id: string }>();
   const itemId = useMemo(() => (Array.isArray(id) ? id[0] : id), [id]);
@@ -122,8 +137,7 @@ export default function ItemDetailsScreen() {
   const [materialDraft, setMaterialDraft] = useState("");
   const [footerHeight, setFooterHeight] = useState(0);
   const itemImageUri = getItemImageUrl(item, { variant: "hero" });
-  const dockBottom = Math.max(16, insets.bottom * 0.35);
-  const footerOffset = DOCK_HEIGHT + dockBottom + 10;
+  const footerOffset = layout.composerOffset;
   const quickFacts = item
     ? [
         { label: "Category", value: formatValue(item.category) },
@@ -342,6 +356,11 @@ export default function ItemDetailsScreen() {
 
   async function onResetToAI() {
     if (!uid || !itemId) return router.replace("/(auth)/login");
+    const currentIngestionStatus = ingestionStatusLabel(item);
+    if (currentIngestionStatus === "processing" || currentIngestionStatus === "done") {
+      Alert.alert("AI already complete", "Ingestion is already active or completed for this item.");
+      return;
+    }
     try {
       setColorSaving(true);
       await updateDoc(doc(db, "users", uid, "items", itemId), {
@@ -372,18 +391,17 @@ export default function ItemDetailsScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <SafeScreen backgroundColor={colors.background} includeBottomInset={false}>
       <ItemImageModal
         visible={detailImageOpen}
         uri={itemImageUri}
         onClose={() => setDetailImageOpen(false)}
       />
-      <View style={{ flex: 1 }}>
       <ScrollView
         contentContainerStyle={{
-          paddingHorizontal: 16,
+          paddingHorizontal: layout.horizontalPadding,
           paddingTop: 0,
-          paddingBottom: footerHeight > 0 ? footerHeight + 20 : footerOffset + 120,
+          paddingBottom: footerHeight > 0 ? footerHeight + 24 : layout.bottomDockPadding + 96,
           gap: 16,
         }}
       >
@@ -420,9 +438,9 @@ export default function ItemDetailsScreen() {
         </View>
 
         {loading ? (
-          <Text>Loading…</Text>
+          <Text style={{ color: colors.textSecondary }}>Loading…</Text>
         ) : !item ? (
-          <Text>Item not found.</Text>
+          <Text style={{ color: colors.textSecondary }}>Item not found.</Text>
         ) : (
           <>
             <SectionCard title="Product view" subtitle="Tap the image to inspect the full asset.">
@@ -436,7 +454,7 @@ export default function ItemDetailsScreen() {
                       width: "100%",
                       height: 216,
                       borderRadius: 18,
-                      backgroundColor: "#E9E8E3",
+                      backgroundColor: "rgba(255,255,255,0.04)",
                       overflow: "hidden",
                       alignItems: "center",
                       justifyContent: "center",
@@ -451,7 +469,15 @@ export default function ItemDetailsScreen() {
                   </View>
                 </Pressable>
               ) : (
-                <View style={{ height: 216, borderRadius: 18, backgroundColor: "#f3f3f3", alignItems: "center", justifyContent: "center" }}>
+                <View
+                  style={{
+                    height: 216,
+                    borderRadius: 18,
+                    backgroundColor: "rgba(255,255,255,0.04)",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
                   <Text style={{ color: colors.textSecondary, fontWeight: "800" }}>No photo</Text>
                 </View>
               )}
@@ -464,7 +490,7 @@ export default function ItemDetailsScreen() {
                   <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>{item.brand}</Text>
                 ) : null}
                 {item.colorLabel || item.colors?.length ? (
-                  <Text style={{ color: "#666", fontSize: 14 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
                     {item.colorLabel || item.colors?.join(" / ") || "—"}
                   </Text>
                 ) : null}
@@ -495,12 +521,19 @@ export default function ItemDetailsScreen() {
                   <QuickFact label="Purchased" value={item.purchaseDate} />
                 ) : null}
               </View>
-              {item.notes ? (
+                {item.notes ? (
                 <View style={{ marginTop: 12, gap: 4 }}>
-                  <Text style={{ color: "#666", fontSize: 12, fontWeight: "700", textTransform: "uppercase" }}>
+                  <Text
+                    style={{
+                      color: colors.textSecondary,
+                      fontSize: 12,
+                      fontWeight: "700",
+                      textTransform: "uppercase",
+                    }}
+                  >
                     Notes
                   </Text>
-                  <Text style={{ color: "#222", lineHeight: 20 }}>{item.notes}</Text>
+                  <Text style={{ color: colors.text, lineHeight: 20 }}>{item.notes}</Text>
                 </View>
               ) : null}
             </SectionCard>
@@ -529,8 +562,8 @@ export default function ItemDetailsScreen() {
                   style={{
                     marginTop: 12,
                     borderWidth: 1,
-                    borderColor: "#f2c66d",
-                    backgroundColor: "#fff8e8",
+                    borderColor: "rgba(242,198,109,0.45)",
+                    backgroundColor: "rgba(242,198,109,0.12)",
                     borderRadius: 12,
                     padding: 12,
                   }}
@@ -549,7 +582,7 @@ export default function ItemDetailsScreen() {
             >
               <View style={{ gap: 16 }}>
                 <View style={{ gap: 8 }}>
-                  <Text style={{ color: "#222", fontWeight: "800" }}>Pattern</Text>
+                  <Text style={{ color: colors.text, fontWeight: "800" }}>Pattern</Text>
                   <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                     <Pressable
                       onPress={() => {
@@ -570,7 +603,7 @@ export default function ItemDetailsScreen() {
                   </View>
                 </View>
                 <View style={{ gap: 8 }}>
-                  <Text style={{ color: "#222", fontWeight: "800" }}>Material</Text>
+                  <Text style={{ color: colors.text, fontWeight: "800" }}>Material</Text>
                   <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                     <Pressable
                       onPress={() => {
@@ -591,8 +624,8 @@ export default function ItemDetailsScreen() {
                   </View>
                 </View>
                 <View style={{ gap: 8 }}>
-                  <Text style={{ color: "#222", fontWeight: "800" }}>Color correction</Text>
-                  <Text style={{ color: "#666" }}>
+                  <Text style={{ color: colors.text, fontWeight: "800" }}>Color correction</Text>
+                  <Text style={{ color: colors.textSecondary }}>
                     Detected: {item.colorLabel || item.colors?.join(" / ") || "—"}. Tap to correct:
                   </Text>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
@@ -608,12 +641,14 @@ export default function ItemDetailsScreen() {
                             paddingHorizontal: 11,
                             borderRadius: 999,
                             borderWidth: 1,
-                            borderColor: isSelected ? "#111" : "#ddd",
-                            backgroundColor: isSelected ? "#111" : "#fff",
+                            borderColor: isSelected ? colors.text : "rgba(255,255,255,0.12)",
+                            backgroundColor: isSelected ? colors.text : "rgba(255,255,255,0.03)",
                             opacity: colorSaving ? 0.65 : 1,
                           }}
                         >
-                          <Text style={{ color: isSelected ? "#fff" : "#111", fontWeight: "700" }}>
+                          <Text
+                            style={{ color: isSelected ? colors.background : colors.text, fontWeight: "700" }}
+                          >
                             {toTitleCase(color)}
                           </Text>
                         </Pressable>
@@ -631,11 +666,12 @@ export default function ItemDetailsScreen() {
                           paddingHorizontal: 10,
                           borderRadius: 999,
                           borderWidth: 1,
-                          borderColor: "#aaa",
+                          borderColor: "rgba(255,255,255,0.18)",
+                          backgroundColor: "rgba(255,255,255,0.03)",
                           opacity: colorSaving ? 0.65 : 1,
                         }}
                       >
-                        <Text style={{ color: "#333", fontWeight: "700" }}>Reset to AI</Text>
+                        <Text style={{ color: colors.text, fontWeight: "700" }}>Reset to AI</Text>
                       </Pressable>
                     ) : null}
                     {colorSavedAt ? (
@@ -655,7 +691,7 @@ export default function ItemDetailsScreen() {
             left: 0,
             right: 0,
             bottom: 0,
-            paddingHorizontal: 16,
+            paddingHorizontal: layout.horizontalPadding,
             paddingTop: 12,
             paddingBottom: footerOffset,
             backgroundColor: "rgba(15,15,15,0.92)",
@@ -732,8 +768,7 @@ export default function ItemDetailsScreen() {
           )}
         </View>
       ) : null}
-      </View>
-    </View>
+    </SafeScreen>
   );
 }
 

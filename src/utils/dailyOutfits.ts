@@ -1,4 +1,5 @@
 import {
+  FieldValue,
   collection,
   deleteField,
   doc,
@@ -57,9 +58,19 @@ type FirestoreOutfitDoc = {
   wornOutfit?: WornOutfit | null;
 };
 
+function isFirestoreSentinel(value: unknown): value is FieldValue {
+  return value instanceof FieldValue;
+}
+
 function removeUndefinedFields<T>(value: T): T {
   if (Array.isArray(value)) {
-    return value.map((entry) => removeUndefinedFields(entry)) as T;
+    return value
+      .filter((entry) => entry !== undefined)
+      .map((entry) => removeUndefinedFields(entry)) as T;
+  }
+
+  if (isFirestoreSentinel(value)) {
+    return value;
   }
 
   if (value && typeof value === "object") {
@@ -174,20 +185,45 @@ export async function savePlannedOutfit(
 ) {
   const key = normalizeDateKey(dateKey);
   const ref = outfitDocRef(uid, key);
-  const payload = removeUndefinedFields({
+  const rawPayload = {
     dateKey: key,
     itemIds: itemIds.filter(Boolean),
     planned: true,
     ...(extraFields ?? {}),
     updatedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
+  };
+  const payload = removeUndefinedFields(rawPayload);
+
+  console.log("[OutfitSave] savePlannedOutfit:raw", {
+    path: ref.path,
+    uid,
+    dateKey: key,
+    itemIds,
+    rawPayload,
+  });
+  console.log("[OutfitSave] savePlannedOutfit:clean", {
+    path: ref.path,
+    uid,
+    dateKey: key,
+    itemIds: Array.isArray(payload.itemIds) ? payload.itemIds : [],
+    payload,
   });
 
-  await setDoc(
-    ref,
-    payload,
-    { merge: true }
-  );
+  try {
+    await setDoc(ref, payload, { merge: true });
+  } catch (error) {
+    console.log("[OutfitSave] savePlannedOutfit:error", {
+      path: ref.path,
+      uid,
+      dateKey: key,
+      itemIds,
+      rawPayload,
+      payload,
+      error,
+    });
+    throw error;
+  }
   return getOutfitByDate(uid, key);
 }
 

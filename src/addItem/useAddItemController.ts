@@ -210,6 +210,13 @@ export function useAddItemController({
       }
     ) => {
       if (isEdit) return;
+      if (__DEV__) {
+        console.log("[AddItemLifecycle] resetCreateFlow:start", {
+          reason,
+          deleteActiveDraft: options?.deleteActiveDraft === true,
+          draftId: createSessionRef.current.draftId ?? extraction.state.draftItemId ?? null,
+        });
+      }
       void reason;
       const previousDraftId = createSessionRef.current.draftId ?? extraction.state.draftItemId;
       createSessionRef.current.requestId += 1;
@@ -222,6 +229,11 @@ export function useAddItemController({
       extraction.actions.resetExtractionState();
       if (options?.deleteActiveDraft && previousDraftId) {
         await extraction.actions.cleanupDraftDoc(previousDraftId);
+      }
+      if (__DEV__) {
+        console.log("[AddItemLifecycle] resetCreateFlow:end", {
+          previousDraftId: previousDraftId ?? null,
+        });
       }
     },
     [draft.actions, extraction.actions, extraction.state.draftItemId, isEdit, photo.actions]
@@ -247,15 +259,26 @@ export function useAddItemController({
       createSessionRef.current.draftId = existingDraftId;
       const sessionId = createSessionRef.current.sessionId;
       void getDoc(doc(db, "users", uid, "items", existingDraftId)).then((snap) => {
-        if (!snap.exists()) return;
         if (createSessionRef.current.sessionId !== sessionId) return;
-        extraction.actions.maybeApplyAutofillFromDraft(snap.data() as any);
+        if (!snap.exists()) {
+          createSessionRef.current.draftId = null;
+          extraction.actions.resetDraftTracking?.();
+          return;
+        }
+        const data = snap.data() as any;
+        if (data?.isDraft !== true) {
+          // Prevent finalized items from being re-hydrated into add-item as an active draft.
+          createSessionRef.current.draftId = null;
+          extraction.actions.resetDraftTracking?.();
+          return;
+        }
+        extraction.actions.maybeApplyAutofillFromDraft(data);
+        extraction.actions.attachDraftSubscription(
+          existingDraftId,
+          sessionId,
+          extraction.refs.aiRunIdRef.current
+        );
       });
-      extraction.actions.attachDraftSubscription(
-        existingDraftId,
-        sessionId,
-        extraction.refs.aiRunIdRef.current
-      );
     }
   }, [
     draft.actions,

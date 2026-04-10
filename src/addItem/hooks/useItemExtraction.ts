@@ -3,6 +3,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   setDoc,
 } from "firebase/firestore";
@@ -685,7 +686,9 @@ export function useItemExtraction({
     }
 
     const summaryParts: string[] = [];
-    const summaryBrand = norm(data?.brand);
+    const summaryBrand = String(data?.brand ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (
       summaryBrand &&
       !draft.refs.userEditedKeysRef.current.has("brand") &&
@@ -795,6 +798,19 @@ export function useItemExtraction({
         }
         if (!snap.exists()) return;
         snapshotUpdateCountRef.current += 1;
+        if (__DEV__) {
+          console.log("[AddItemLifecycle] draftSubscription:update", {
+            itemId,
+            activeSessionId,
+            activeRunId,
+            snapshotCount: snapshotUpdateCountRef.current,
+            ingestionStatus: normalizeIngestionStatus(
+              snap.data()?.ingestion?.status ?? snap.data()?.ingestionStatus
+            ),
+            isDraft: snap.data()?.isDraft ?? null,
+            draftState: snap.data()?.draftState ?? null,
+          });
+        }
         verboseAutofillLog("[AddItem] draft subscription update", {
           sessionId: activeSessionId,
           itemId,
@@ -848,6 +864,47 @@ export function useItemExtraction({
         const draftRef = reusableDraftId
           ? doc(db, "users", uid, "items", reusableDraftId)
           : doc(collection(db, "users", uid, "items"));
+        const existingDraftSnap = await getDoc(draftRef);
+        if (existingDraftSnap.exists()) {
+          const existingData = existingDraftSnap.data() as any;
+          const existingStatus = normalizeIngestionStatus(
+            existingData?.ingestion?.status ?? existingData?.ingestionStatus
+          );
+          const existingSourceHash = norm(existingData?.ingestionSource?.sourceHash);
+          if (
+            (existingStatus === "processing" || existingStatus === "done") &&
+            existingSourceHash &&
+            existingSourceHash === photoHash
+          ) {
+            if (__DEV__) {
+              console.log("[AddItemLifecycle] startDraftAutofill:skip-active-terminal", {
+                draftId: draftRef.id,
+                existingStatus,
+                photoHash,
+                existingSourceHash,
+              });
+            }
+            setDraftItemId(draftRef.id);
+            setDraftPhotoHash(photoHash);
+            createSessionRef.current.draftId = draftRef.id;
+            setIngestionStatus(existingStatus);
+            const existingPrimary =
+              existingData?.photos?.primaryUrl ?? existingData?.photoUrl ?? null;
+            const existingCleaned =
+              existingData?.photos?.cleanedUrl ??
+              existingData?.photos?.cleanedPhotoUrl ??
+              null;
+            const existingNormalized = existingData?.photos?.normalizedUrl ?? null;
+            if (existingPrimary) photo.actions.setPhotoUrl(existingPrimary);
+            if (existingCleaned) {
+              photo.actions.setCleanedPhotoUrl(existingCleaned);
+              photo.actions.setServerCleanedUrl(existingCleaned);
+            }
+            photo.actions.setPendingNormalizedPreviewUri?.(existingNormalized);
+            attachDraftSubscription(draftRef.id, params.token.sessionId, runId);
+            return;
+          }
+        }
         const uploaded = await uploadWithTimeout(
           uploadItemPhoto({
             uid,

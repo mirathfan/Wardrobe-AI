@@ -101,15 +101,17 @@ export const AiWardrobeSections = React.memo(function AiWardrobeSections({
   if (nonEmptySections.length === 0) return null;
 
   return (
-    <View style={{ gap: 12 }}>
+    <View style={{ gap: 16 }}>
       {nonEmptySections.map((section) => (
-        <View key={section.key} style={{ gap: 7 }}>
+        <View key={section.key} style={{ gap: 9 }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View style={{ gap: 2 }}>
-              <Text style={{ fontSize: 16, fontWeight: "900", color: colors.text }}>{section.title}</Text>
+            <View style={{ gap: 3 }}>
+              <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text }}>{section.title}</Text>
               <Text style={{ fontSize: 12, color: colors.textSecondary }}>{section.subtitle}</Text>
             </View>
-            <AiBadge label={section.tag} />
+            <View style={{ transform: [{ scale: 0.95 }] }}>
+              <AiBadge label={section.tag} />
+            </View>
           </View>
 
           <FlatList

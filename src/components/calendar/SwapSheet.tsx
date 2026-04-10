@@ -1,5 +1,7 @@
 import React from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 type Option = { id: string; label: string };
 
@@ -13,24 +15,40 @@ type Props = {
 };
 
 export default function SwapSheet({ visible, title, options, onSelect, onClear, onClose }: Props) {
+  const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
-        <View style={styles.sheet}>
-          <Text style={styles.title}>{title}</Text>
-          {options.length === 0 ? <Text style={styles.empty}>No matching items yet.</Text> : null}
+        <View
+          style={[
+            styles.sheet,
+            {
+              backgroundColor: colors.surface,
+              borderTopLeftRadius: layout.largeRadius,
+              borderTopRightRadius: layout.largeRadius,
+              padding: layout.cardPadding,
+            },
+          ]}
+        >
+          <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+          {options.length === 0 ? <Text style={[styles.empty, { color: colors.textSecondary }]}>No matching items yet.</Text> : null}
           {options.map((option) => (
-            <Pressable key={option.id} style={styles.option} onPress={() => onSelect(option.id)}>
-              <Text style={styles.optionText}>{option.label}</Text>
+            <Pressable
+              key={option.id}
+              style={[styles.option, { borderColor: colors.border, backgroundColor: colors.overlay }]}
+              onPress={() => onSelect(option.id)}
+            >
+              <Text style={[styles.optionText, { color: colors.text }]}>{option.label}</Text>
             </Pressable>
           ))}
           {onClear ? (
-            <Pressable style={styles.clear} onPress={onClear}>
+            <Pressable style={[styles.clear, { borderColor: "#ef4444" }]} onPress={onClear}>
               <Text style={styles.clearText}>Clear slot</Text>
             </Pressable>
           ) : null}
-          <Pressable style={styles.close} onPress={onClose}>
-            <Text style={styles.closeText}>Done</Text>
+          <Pressable style={[styles.close, { borderColor: colors.border, backgroundColor: colors.background }]} onPress={onClose}>
+            <Text style={[styles.closeText, { color: colors.text }]}>Done</Text>
           </Pressable>
         </View>
       </View>
@@ -41,16 +59,17 @@ export default function SwapSheet({ visible, title, options, onSelect, onClear, 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.25)", justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 16,
     gap: 8,
   },
   title: { fontSize: 16, fontWeight: "800", marginBottom: 8 },
-  option: { paddingVertical: 10 },
-  optionText: { color: "#111", fontWeight: "600" },
-  empty: { color: "#666", marginBottom: 8 },
+  option: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  optionText: { fontWeight: "600" },
+  empty: { marginBottom: 8 },
   clear: {
     marginTop: 4,
     borderRadius: 10,
@@ -64,9 +83,8 @@ const styles = StyleSheet.create({
     marginTop: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#ddd",
     alignItems: "center",
     paddingVertical: 10,
   },
-  closeText: { fontWeight: "700", color: "#111" },
+  closeText: { fontWeight: "700" },
 });

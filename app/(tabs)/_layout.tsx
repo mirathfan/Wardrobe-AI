@@ -17,9 +17,9 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-       name="calendar"
+       name="closet"
        options={{
-       title: 'Calendar',
+       title: 'Closet',
        }}
       />
       <Tabs.Screen
@@ -29,9 +29,9 @@ export default function TabLayout() {
        }}
       />
        <Tabs.Screen
-         name="laundry"
+         name="calendar"
          options={{
-         title: 'Laundry',
+         title: 'Calendar',
         }}
       />
       <Tabs.Screen
@@ -44,6 +44,7 @@ export default function TabLayout() {
         name="add"
         options={{
          href: null,
+         unmountOnBlur: true,
         }}
       />
       <Tabs.Screen
@@ -52,6 +53,12 @@ export default function TabLayout() {
          href: null,
         }}
         />
+      <Tabs.Screen
+        name="laundry"
+        options={{
+         href: null,
+        }}
+      />
     </Tabs>
   );
 }

@@ -22,6 +22,7 @@ import {
 import { detectBrandLogo } from "../../lib/detectBrandLogo";
 import { db } from "../../lib/firebase";
 import { uploadItemPhoto } from "../../lib/uploadImage";
+import { analyzeCutoutVisualNormalization, type VisualNormalization } from "../../lib/visualNormalization";
 
 type UploadedPhotoRecord = {
   itemId: string;
@@ -31,6 +32,7 @@ type UploadedPhotoRecord = {
   cleanedUrl: string | null;
   normalizedUrl: string | null;
   cleanedSource: "vision" | null;
+  visualNormalization?: VisualNormalization | null;
 };
 
 const MIN_USABLE_CUTOUT_TRANSPARENCY = 0.05;
@@ -80,6 +82,9 @@ export function usePhotoStep({
   const [detectedBrand, setDetectedBrand] = useState<string | null>(null);
   const [detectedBrandConfidence, setDetectedBrandConfidence] = useState<number | null>(null);
   const [uploadedPhotoRecord, setUploadedPhotoRecord] = useState<UploadedPhotoRecord | null>(null);
+  const [pendingVisualNormalization, setPendingVisualNormalization] = useState<VisualNormalization | null>(
+    null
+  );
 
   const lastCompletedRefineKeyRef = useRef("");
   const latestRefineRequestIdRef = useRef(0);
@@ -406,6 +411,13 @@ export function usePhotoStep({
               imageHeight: cutout.height,
             })
           : null;
+      const visualNormalization = usableCutout
+        ? await analyzeCutoutVisualNormalization({
+            contentBounds: cutout.contentBounds,
+            imageWidth: cutout.width,
+            imageHeight: cutout.height,
+          })
+        : null;
       commitPendingCutoutState("retry", {
         cutoutUri: usableCutout ? cutout.uri : null,
         previewUri: previewCutoutUri,
@@ -413,6 +425,7 @@ export function usePhotoStep({
         hasTransparency: usableCutout ? cutout.hasTransparency : false,
         transparentPixelRatio: usableCutout ? cutout.transparentPixelRatio : 0,
       });
+      setPendingVisualNormalization(visualNormalization);
       setCleanedPhotoUrl(null);
       if (!usableCutout) {
         setBgRemovalError("BG removal failed");
@@ -421,7 +434,7 @@ export function usePhotoStep({
         originalPickedPhotoUri,
         refineValue
       );
-    } catch (error) {
+    } catch {
       setBgRemovalError("BG removal failed");
     } finally {
       if (requestId === latestRefineRequestIdRef.current) {
@@ -487,6 +500,13 @@ export function usePhotoStep({
                   imageHeight: cutout.height,
                 })
               : null;
+          const visualNormalization = usableCutout
+            ? await analyzeCutoutVisualNormalization({
+                contentBounds: cutout.contentBounds,
+                imageWidth: cutout.width,
+                imageHeight: cutout.height,
+              })
+            : null;
           lastCompletedRefineKeyRef.current = requestKey;
           commitPendingCutoutState("refine", {
             cutoutUri: usableCutout ? cutout.uri : null,
@@ -496,11 +516,12 @@ export function usePhotoStep({
             transparentPixelRatio: usableCutout ? cutout.transparentPixelRatio : 0,
             updateAutofillCutout: immediate,
           });
+          setPendingVisualNormalization(visualNormalization);
           setCleanedPhotoUrl(null);
           if (!usableCutout) {
             setBgRemovalError("BG removal failed");
           }
-        } catch (e) {
+        } catch {
           if (requestId === latestRefineRequestIdRef.current) {
             setBgRemovalError("BG removal failed");
           }
@@ -525,8 +546,10 @@ export function usePhotoStep({
       }, 180);
     },
     [
+      buildNormalizedPreviewCutout,
       canRefineCutout,
       commitPendingCutoutState,
+      edgePolish,
       extractionRef,
       originalPickedPhotoUri,
       pendingPhotoWidth,
@@ -697,6 +720,16 @@ export function usePhotoStep({
       let cutoutHasTransparency = false;
       let cutoutTransparencyRatio = 0;
       let cutoutMaskUri: string | null = null;
+      let cutoutContentBounds:
+        | {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+          }
+        | null = null;
+      let cutoutWidth: number | null = null;
+      let cutoutHeight: number | null = null;
       try {
         const cutout = await runBackgroundRemoval({
           inputUri: normalizedUri,
@@ -709,6 +742,9 @@ export function usePhotoStep({
         cutoutHasTransparency = cutout.hasTransparency;
         cutoutTransparencyRatio = cutout.transparentPixelRatio;
         cutoutMaskUri = cutout.maskUri;
+        cutoutContentBounds = cutout.contentBounds;
+        cutoutWidth = cutout.width;
+        cutoutHeight = cutout.height;
         previewCutoutUri = await buildNormalizedPreviewCutout({
           cutoutUri: cutout.uri,
           contentBounds: cutout.contentBounds,
@@ -726,7 +762,7 @@ export function usePhotoStep({
           cutoutMaskUri = null;
           setBgRemovalError("BG removal failed");
         }
-      } catch (error) {
+      } catch {
         setBgRemovalError("BG removal failed");
         cutoutUri = null;
         cutoutHasTransparency = false;
@@ -739,6 +775,14 @@ export function usePhotoStep({
       const finalDisplayUri = cutoutUri || normalizedUri;
       void finalDisplayUri;
       void shortenUri;
+      const visualNormalization =
+        cutoutUri && cutoutContentBounds && cutoutWidth && cutoutHeight
+        ? await analyzeCutoutVisualNormalization({
+            contentBounds: cutoutContentBounds,
+            imageWidth: cutoutWidth,
+            imageHeight: cutoutHeight,
+          })
+        : null;
       lastCompletedRefineKeyRef.current = getRefineRequestKey(
         normalizedUri,
         DEFAULT_REFINE_VALUE
@@ -759,6 +803,7 @@ export function usePhotoStep({
         hasTransparency: cutoutHasTransparency,
         transparentPixelRatio: cutoutTransparencyRatio,
       });
+      setPendingVisualNormalization(visualNormalization);
       setCleanedPhotoUrl(null);
       setServerCleanedUrl(null);
       extraction?.actions?.setIngestionStatus?.(isEdit ? null : "pending");
@@ -773,9 +818,6 @@ export function usePhotoStep({
         setDetectedBrandConfidence(
           typeof brandResult.confidence === "number" ? brandResult.confidence : null
         );
-        if (!draft.refs.userEditedKeysRef.current.has("brand")) {
-          draft.actions.setBrand(brandResult.brand);
-        }
       }
 
       if (!isEdit && uid) {
@@ -794,7 +836,6 @@ export function usePhotoStep({
   }, [
     clearPendingCutoutState,
     commitPendingCutoutState,
-    draft,
     buildNormalizedPreviewCutout,
     extractionRef,
     isEdit,
@@ -814,6 +855,7 @@ export function usePhotoStep({
       setCleanedPhotoUrl(uploadedPhotoRecord.cleanedUrl);
       setServerCleanedUrl(uploadedPhotoRecord.cleanedUrl);
       setPendingNormalizedPreviewUri(uploadedPhotoRecord.normalizedUrl);
+      setPendingVisualNormalization(uploadedPhotoRecord.visualNormalization ?? null);
       syncedPreviewUriRef.current = pendingPhotoUri;
       setUploadError(null);
       return {
@@ -823,6 +865,7 @@ export function usePhotoStep({
         cleanedPhotoUrl: uploadedPhotoRecord.cleanedUrl,
         cleanedUrl: uploadedPhotoRecord.cleanedUrl,
         normalizedUrl: uploadedPhotoRecord.normalizedUrl,
+        visualNormalization: uploadedPhotoRecord.visualNormalization ?? null,
       };
     }
 
@@ -857,6 +900,7 @@ export function usePhotoStep({
             cleanedUrl: uploadedUrl.cleanedUrl,
             normalizedUrl: uploadedUrl.normalizedUrl,
             cleanedSource: uploadedUrl.cleanedUrl ? "vision" : null,
+            visualNormalization: pendingVisualNormalization,
           });
         }
         syncedPreviewUriRef.current = pendingPhotoUri;
@@ -868,6 +912,7 @@ export function usePhotoStep({
           cleanedPhotoUrl: uploadedUrl.cleanedUrl,
           cleanedUrl: uploadedUrl.cleanedUrl,
           normalizedUrl: uploadedUrl.normalizedUrl,
+          visualNormalization: pendingVisualNormalization,
         };
       } catch (error) {
         const message =
@@ -886,6 +931,7 @@ export function usePhotoStep({
         cleanedPhotoUrl,
         cleanedUrl: serverCleanedUrl,
         normalizedUrl: pendingNormalizedPreviewUri,
+        visualNormalization: pendingVisualNormalization,
       };
     }
     return {
@@ -895,6 +941,7 @@ export function usePhotoStep({
       cleanedPhotoUrl,
       cleanedUrl: serverCleanedUrl,
       normalizedUrl: pendingNormalizedPreviewUri,
+      visualNormalization: pendingVisualNormalization,
     };
   }, [
     beginUploadAttempt,
@@ -904,6 +951,7 @@ export function usePhotoStep({
     pendingNormalizedPreviewUri,
     pendingPhotoUri,
     pendingPhotoWidth,
+    pendingVisualNormalization,
     photoUri,
     photoUrl,
     serverCleanedUrl,
@@ -1007,9 +1055,7 @@ export function usePhotoStep({
     pendingPhotoHash,
     pendingPhotoUri,
     pendingPhotoWidth,
-    pendingPhotoHash,
     uid,
-    uploadedPhotoRecord,
   ]);
 
   const hydrateFromItem = useCallback((data: any) => {
@@ -1022,6 +1068,7 @@ export function usePhotoStep({
     setPendingPhotoUri(null);
     clearPendingCutoutState("hydrate-from-item");
     setPendingNormalizedPreviewUri(data.photos?.normalizedUrl ?? data.photos?.previewUrl ?? null);
+    setPendingVisualNormalization(data.visualNormalization ?? null);
     setPendingPhotoWidth(null);
     setOriginalPickedPhotoUri(null);
     setRefineValue(DEFAULT_REFINE_VALUE);
@@ -1031,7 +1078,13 @@ export function usePhotoStep({
     setDebugEdgeTighten(defaultRefineOptions.edgeTighten);
     setDetectedBrand(null);
     setDetectedBrandConfidence(null);
-  }, []);
+  }, [
+    clearPendingCutoutState,
+    defaultRefineOptions.cleanupRadius,
+    defaultRefineOptions.edgeTighten,
+    defaultRefineOptions.feather,
+    defaultRefineOptions.threshold,
+  ]);
 
   const resetPhotoState = useCallback(() => {
     if (refineTimeoutRef.current) {
@@ -1048,6 +1101,7 @@ export function usePhotoStep({
     setPendingPhotoUri(null);
     clearPendingCutoutState("reset-photo-state");
     setPendingPhotoWidth(null);
+    setPendingVisualNormalization(null);
     setOriginalPickedPhotoUri(null);
     setRefineValue(DEFAULT_REFINE_VALUE);
     setDebugThreshold(defaultRefineOptions.threshold);
@@ -1063,7 +1117,13 @@ export function usePhotoStep({
     latestRefineRequestIdRef.current = 0;
     latestPhotoSelectionIdRef.current = 0;
     syncedPreviewUriRef.current = null;
-  }, []);
+  }, [
+    clearPendingCutoutState,
+    defaultRefineOptions.cleanupRadius,
+    defaultRefineOptions.edgeTighten,
+    defaultRefineOptions.feather,
+    defaultRefineOptions.threshold,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -1089,6 +1149,7 @@ export function usePhotoStep({
     pendingCutoutMaskUri,
     autofillCutoutUri,
     pendingPhotoWidth,
+    pendingVisualNormalization,
     originalPickedPhotoUri,
     refineValue,
     edgePolish,
@@ -1129,6 +1190,7 @@ export function usePhotoStep({
     setPendingCutoutMaskUri,
     setAutofillCutoutUri,
     setPendingPhotoWidth,
+    setPendingVisualNormalization,
     setOriginalPickedPhotoUri,
     setRefineValue,
     setEdgePolish,

@@ -181,6 +181,27 @@ service cloud.firestore {
         && noForeignUidField(data, uid);
     }
 
+    function validAiChatDoc(data, uid) {
+      return data is map
+        && (!("title" in data) || validOptionalString(data.title))
+        && (!("createdAt" in data) || data.createdAt is number)
+        && (!("updatedAt" in data) || data.updatedAt is number)
+        && (!("lastMessagePreview" in data) || validOptionalString(data.lastMessagePreview))
+        && (!("messageCount" in data) || data.messageCount is number)
+        && (!("threadId" in data) || validOptionalString(data.threadId))
+        && noForeignUidField(data, uid);
+    }
+
+    function validAiChatMessageDoc(data, uid) {
+      return data is map
+        && data.keys().hasAll(["type", "createdAt"])
+        && data.type in ["user", "assistant", "outfit", "system/action"]
+        && data.createdAt is number
+        && (!("text" in data) || validOptionalString(data.text))
+        && (!("outfits" in data) || data.outfits is list)
+        && noForeignUidField(data, uid);
+    }
+
     match /users/{uid} {
       allow read, write: if isOwner(uid);
 
@@ -212,6 +233,22 @@ service cloud.firestore {
 
       match /ai/{docId} {
         allow read, write: if isOwner(uid);
+      }
+
+      match /assistantProfile/{docId} {
+        allow read, write: if isOwner(uid) && (docId == "main" || docId == "behavior");
+      }
+
+      match /aiChats/{chatId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validAiChatDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+
+        match /messages/{messageId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid) && validAiChatMessageDoc(request.resource.data, uid);
+          allow delete: if isOwner(uid);
+        }
       }
     }
 

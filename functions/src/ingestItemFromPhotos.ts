@@ -59,6 +59,7 @@ type ItemDoc = {
     urls?: string[];
     cleanedUrl?: string | null;
     cleanedPhotoUrl?: string | null;
+    normalizedUrl?: string | null;
     croppedUrl?: string;
     thumbUrl?: string;
   };
@@ -354,10 +355,13 @@ function getIngestionStatus(item: ItemDoc | undefined): IngestionStatus | "" {
 
 function extractIngestionSourceUrls(item: ItemDoc): string[] {
   const values = [
+    item.photos?.cleanedUrl ?? "",
+    item.photos?.cleanedPhotoUrl ?? "",
+    item.photos?.normalizedUrl ?? "",
     item.photos?.primaryUrl ?? "",
-    ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
     item.photoUrl ?? "",
     item.photoUri ?? "",
+    ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
   ];
   const deduped = Array.from(
     new Set(values.map((v) => String(v).trim()).filter(Boolean)),
@@ -498,19 +502,11 @@ function normalizeOptionalScore(
   return Math.max(min, Math.min(max, Math.round(n)));
 }
 
-function slugifyForCompare(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[®'’.]/g, "")
-    .replace(/&/g, "and")
-    .replace(/[^a-z0-9]+/g, "")
-    .trim();
-}
-
 function normalizeBrand(value: unknown): string | null {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  const lowered = raw.toLowerCase().trim();
+  const raw = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const lowered = raw.toLowerCase();
   if (
     !lowered ||
     lowered === "unknown" ||
@@ -520,57 +516,10 @@ function normalizeBrand(value: unknown): string | null {
   ) {
     return null;
   }
-  const slug = slugifyForCompare(raw);
-  if (!slug) return null;
-
-  const BRAND_ALIASES: Record<string, string> = {
-    nike: "Nike",
-    justdoit: "Nike",
-    adidas: "Adidas",
-    puma: "Puma",
-    hm: "H&M",
-    handm: "H&M",
-    uniqlo: "Uniqlo",
-    zara: "Zara",
-    levis: "Levi’s",
-    lv: "Louis Vuitton",
-    louisvuitton: "Louis Vuitton",
-    gg: "Gucci",
-    gucci: "Gucci",
-    ysl: "Saint Laurent",
-    saintlaurent: "Saint Laurent",
-    ralphlauren: "Polo Ralph Lauren",
-    poloralphlauren: "Polo Ralph Lauren",
-    polo: "Polo Ralph Lauren",
-  };
-
-  for (const [alias, canonical] of Object.entries(BRAND_ALIASES)) {
-    if (slug === alias || slug.includes(alias)) return canonical;
-  }
-
-  const cleaned = raw
-    .replace(/\s+/g, " ")
-    .replace(/[^\p{L}\p{N}\s&'.-]/gu, "")
-    .trim();
-  if (!cleaned) return null;
-  if (cleaned.length < 2 || cleaned.length > 40) return null;
-  if (!/[A-Za-z]/.test(cleaned)) return null;
-  if (/\b(brand|logo|designer|fashion|unknown|null|none)\b/i.test(cleaned)) {
+  if (/\b(brand|logo|designer|fashion|unknown|null|none)\b/i.test(raw)) {
     return null;
   }
-
-  return cleaned
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => {
-      if (part.toUpperCase() === "H&M") return "H&M";
-      if (part.toUpperCase() === "LV") return "LV";
-      if (part.toUpperCase() === "GG") return "GG";
-      if (part.toUpperCase() === "YSL") return "YSL";
-      if (/^[A-Z0-9&'.-]+$/.test(part)) return part;
-      return `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`;
-    })
-    .join(" ");
+  return raw;
 }
 
 function normalizeBrandCandidates(value: unknown): string[] {
@@ -1137,7 +1086,7 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
             "4) If a single one-piece garment such as jumpsuit/dress/romper is visible, category is one_piece.",
             "5) If shoes/boots/sandals are visible, category is footwear.",
             "For pants vs top, prioritize waistband/fly/two-leg evidence over upper-body fabric cues.",
-            "Brand detection: if logo, monogram, text, tag, or a recognizable house pattern provides reasonably strong visual evidence, return the brand. Iconic repeating designer monograms and house patterns count as strong brand evidence when unmistakable. For example, LV monogram should map to Louis Vuitton and GG monogram should map to Gucci. If a globally recognizable repeating monogram or house pattern is unmistakable, return the brand instead of leaving it blank, set hasLogo=true, set logoPlacement=all_over, and return a meaningful brandConfidence rather than a low placeholder score. Keep null only when evidence is genuinely weak or ambiguous, and in those cases keep brandConfidence <= 0.4.",
+            "Brand detection: identify the brand when there is strong visual evidence. Accept the following as valid evidence: clearly readable brand text (logo, print, tag, label), a distinct and recognizable logo glyph or symbol, or an unmistakable repeated monogram pattern with consistent and legible letterforms. For repeated monograms or house patterns, only return a brand if the letterforms or symbols are clearly visible and consistent across multiple repeats. Do not infer brand from general style, silhouette, material, color palette, or perceived luxury appearance alone. If the evidence is partial, blurred, cropped, low-resolution, obstructed, or ambiguous, return brand=null. When a brand is identified from strong evidence, set hasLogo=true, set logoPlacement appropriately (chest, sleeve, back, waist, leg, all_over), and set brandConfidence proportional to how clearly the evidence is visible. Prefer precision over recall: it is better to return null than to return an incorrect brand.",
             "type should be a more specific fashion label than subCategory when visible, for example denim_jacket, trucker_jacket, varsity_jacket, bomber_jacket, dress_shirt, straight_jeans. Return null if not clear.",
             "name should be a concise catalog-style item title using visible garment attributes only, not marketing fluff.",
             "Extract garment colors only; ignore transparent regions, checkerboard preview backgrounds, white studio backgrounds, empty cutout space, lighting casts, shadows, and skin.",
@@ -1246,6 +1195,14 @@ export const ingestItemFromPhotos = onDocumentWritten(
       extractedPhotoUrls: photoUrls,
       hasPhoto,
     });
+    if (status === "processing" || status === "done") {
+      logger.info("Skipping ingestion: active or terminal status", {
+        uid,
+        itemId,
+        status,
+      });
+      return;
+    }
     if (!hasPhoto) {
       logger.info("Skipping ingestion: no photo URLs", { uid, itemId });
       return;
@@ -1270,6 +1227,19 @@ export const ingestItemFromPhotos = onDocumentWritten(
       .trim()
       .toLowerCase();
     const hasUserBrandOverride = existingBrandSource === "user";
+    const existingBrandValue = String(after.brand ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const hasLegacyAiBrandSignals =
+      typeof after.brandConfidence === "number" ||
+      !!String(after.brandEvidence ?? after.aiDebug?.brandEvidence ?? "").trim() ||
+      (Array.isArray(after.brandCandidates) && after.brandCandidates.length > 0) ||
+      (Array.isArray(after.aiDebug?.brandCandidates) &&
+        after.aiDebug.brandCandidates.length > 0);
+    const shouldPreserveLegacyManualBrand =
+      !existingBrandSource &&
+      !!existingBrandValue &&
+      !hasLegacyAiBrandSignals;
     const lastRunAtMs = toMillis(after.ingestion?.lastRunAt);
     const beforeStatus = getIngestionStatus(before);
     const processedPhotoHash = String(
@@ -1362,6 +1332,36 @@ export const ingestItemFromPhotos = onDocumentWritten(
 
     const db = getFirestore();
     const ref = db.doc(`users/${uid}/items/${itemId}`);
+    const latestSnapshot = await ref.get();
+    const latestData = latestSnapshot.data() as ItemDoc | undefined;
+    const latestStatus = getIngestionStatus(latestData);
+    const latestProcessedSourceHash = String(
+      latestData?.ingestion?.lastProcessedSourceHash ?? "",
+    ).trim();
+    if (latestStatus === "processing" || latestStatus === "done") {
+      logger.info("Skipping ingestion: latest state already active/terminal", {
+        uid,
+        itemId,
+        latestStatus,
+      });
+      return;
+    }
+    if (
+      latestProcessedSourceHash &&
+      currentSourceHash &&
+      latestProcessedSourceHash === currentSourceHash
+    ) {
+      logger.info(
+        "Skipping ingestion: latest source already processed for current hash",
+        {
+          uid,
+          itemId,
+          currentSourceHash,
+          latestProcessedSourceHash,
+        },
+      );
+      return;
+    }
 
     if (after.cleanedFromHash === currentSourceHash) {
       logger.info(
@@ -1493,17 +1493,17 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const brandCandidates = normalizeBrandCandidates(
         extracted.brandCandidates,
       );
-      const brand = rawBrand ?? brandCandidates[0] ?? null;
+      const brand = rawBrand ?? null;
       const brandConfidenceRaw = clamp01(
         extracted.brandConfidence ?? extracted.confidence?.brand ?? 0,
       );
-      const brandConfidence = brand
-        ? brandConfidenceRaw
-        : Math.min(brandConfidenceRaw, 0.4);
       const brandEvidence = normalizeEnum(
         extracted.brandEvidence,
         ALLOWED_BRAND_EVIDENCE,
       );
+      const brandConfidence = brand
+        ? brandConfidenceRaw
+        : Math.min(brandConfidenceRaw, 0.4);
       const formality = deriveFormality(
         subCategory,
         style,
@@ -1684,7 +1684,10 @@ export const ingestItemFromPhotos = onDocumentWritten(
             colors: colorsConfidence,
             brand: brandConfidence,
           },
-          brand: hasUserBrandOverride ? (after.brand ?? null) : brand,
+          brand:
+            hasUserBrandOverride || shouldPreserveLegacyManualBrand
+              ? (after.brand ?? null)
+              : brand,
           brandConfidence,
           brandEvidence,
           brandCandidates,
@@ -1738,6 +1741,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           },
           warning,
           userBrandOverridePreserved: hasUserBrandOverride,
+          legacyManualBrandPreserved: shouldPreserveLegacyManualBrand,
           userColorOverridePreserved: hasUserColorOverride,
         },
       });
@@ -1750,7 +1754,10 @@ export const ingestItemFromPhotos = onDocumentWritten(
           subCategory,
           type: itemType,
           colors: finalColors,
-          brand: hasUserBrandOverride ? (after.brand ?? null) : brand,
+          brand:
+            hasUserBrandOverride || shouldPreserveLegacyManualBrand
+              ? (after.brand ?? null)
+              : brand,
           generatedName: inferredName,
           lastProcessedSourceHash: currentSourceHash,
         },
@@ -1823,7 +1830,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
                 colorUpdatedAt: Date.now(),
               }
             : {}),
-          ...(!hasUserBrandOverride
+          ...(!hasUserBrandOverride && !shouldPreserveLegacyManualBrand
             ? {
                 brand,
                 brandConfidence,
@@ -1882,7 +1889,10 @@ export const ingestItemFromPhotos = onDocumentWritten(
         category,
         subCategory,
         colors: finalColors,
-        brand: hasUserBrandOverride ? (after.brand ?? null) : brand,
+        brand:
+          hasUserBrandOverride || shouldPreserveLegacyManualBrand
+            ? (after.brand ?? null)
+            : brand,
         processedSourceHash: currentSourceHash,
       });
     } catch (error) {

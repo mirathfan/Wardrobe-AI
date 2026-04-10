@@ -577,9 +577,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
       >
         <SafeScreen
           backgroundColor="#111"
-          edges={["top", "bottom"]}
-          minTopPadding={14}
-          minBottomPadding={10}
+          includeBottomInset={false}
         >
         <View style={{ flex: 1, backgroundColor: "#111" }}>
           <View

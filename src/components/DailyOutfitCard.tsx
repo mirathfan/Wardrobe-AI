@@ -5,6 +5,8 @@ import { ClothingItem } from "../../src/types/ClothingItem";
 import { DailyOutfitRecord, PlannedOutfit } from "../utils/dailyOutfits";
 import { lookToItems, PlannedLook } from "../utils/outfitPlanning";
 import OutfitGrid from "./OutfitGrid";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 type SlotKey = "outerwear" | "top" | "bottom" | "shoes";
 
@@ -56,6 +58,8 @@ export default function DailyOutfitCard({
   onCopyPlan,
   onSwapSlot,
 }: Props) {
+  const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
   const hasWorn = !!record?.wornOutfit;
   const hasPlanned = !!record?.plannedOutfit;
 
@@ -68,23 +72,40 @@ export default function DailyOutfitCard({
     : { outerwear: null, top: null, bottom: null, shoes: null };
 
   return (
-    <View style={styles.card}>
-      {hasWorn ? <Text style={styles.title}>Worn on {dateLabel}</Text> : hasPlanned ? <Text style={styles.title}>Planned</Text> : <Text style={styles.title}>Plan outfit for this day</Text>}
+    <View
+      style={[
+        styles.card,
+        {
+          borderColor: colors.glassBorder,
+          backgroundColor: colors.overlay,
+          borderRadius: layout.largeRadius,
+          padding: layout.cardPadding,
+        },
+      ]}
+    >
+      {hasWorn ? <Text style={[styles.title, { color: colors.text }]}>Worn on {dateLabel}</Text> : hasPlanned ? <Text style={[styles.title, { color: colors.text }]}>Planned</Text> : <Text style={[styles.title, { color: colors.text }]}>Plan outfit for this day</Text>}
 
       {!hasWorn && !hasPlanned ? (
         <View style={styles.segRow}>
           {looks.map((look) => {
             const active = look.id === selectedLookId;
             return (
-              <Pressable key={look.id} style={[styles.segChip, active ? styles.segChipActive : null]} onPress={() => onSelectLook(look.id)}>
-                <Text style={[styles.segText, active ? styles.segTextActive : null]}>{look.label}</Text>
+              <Pressable
+                key={look.id}
+                style={[
+                  styles.segChip,
+                  { borderColor: active ? colors.accent : colors.border, backgroundColor: active ? colors.accent : colors.surface },
+                ]}
+                onPress={() => onSelectLook(look.id)}
+              >
+                <Text style={[styles.segText, { color: active ? "#fff" : colors.text }]}>{look.label}</Text>
               </Pressable>
             );
           })}
         </View>
       ) : null}
 
-      {thinking ? <Text style={styles.thinking}>✨ Thinking…</Text> : null}
+      {thinking ? <Text style={[styles.thinking, { color: colors.textSecondary }]}>✨ Thinking…</Text> : null}
       <View style={{ height: 10 }} />
       <OutfitGrid
         items={gridItems}
@@ -94,32 +115,32 @@ export default function DailyOutfitCard({
 
       {activeLook ? (
         <View style={styles.scoreWrap}>
-          <Text style={styles.score}>Outfit score: {activeLook.score}%</Text>
+          <Text style={[styles.score, { color: colors.text }]}>Outfit score: {activeLook.score}%</Text>
           {(activeLook.reasons ?? []).slice(0, 2).map((reason) => (
-            <Text key={reason} style={styles.reason}>• {reason}</Text>
+            <Text key={reason} style={[styles.reason, { color: colors.textSecondary }]}>• {reason}</Text>
           ))}
         </View>
       ) : null}
 
       <View style={styles.actionsRow}>
         {hasWorn ? (
-          <Text style={styles.muted}>Outfit already marked worn.</Text>
+          <Text style={[styles.muted, { color: colors.textSecondary }]}>Outfit already marked worn.</Text>
         ) : hasPlanned ? (
           <>
-            <Pressable style={styles.primaryBtn} onPress={onMarkWorn}>
+            <Pressable style={[styles.primaryBtn, { backgroundColor: colors.accent }]} onPress={onMarkWorn}>
               <Text style={styles.primaryBtnText}>Mark Worn</Text>
             </Pressable>
-            <Pressable style={styles.secondaryBtn} onPress={() => Alert.alert("Edit", "Tap a slot to swap an item.") }>
-              <Text style={styles.secondaryBtnText}>Edit/Swap</Text>
+            <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={() => Alert.alert("Edit", "Tap a slot to swap an item.") }>
+              <Text style={[styles.secondaryBtnText, { color: colors.text }]}>Edit/Swap</Text>
             </Pressable>
           </>
         ) : (
           <>
-            <Pressable style={styles.primaryBtn} onPress={onUseOutfit}>
+            <Pressable style={[styles.primaryBtn, { backgroundColor: colors.accent }]} onPress={onUseOutfit}>
               <Text style={styles.primaryBtnText}>Use this outfit</Text>
             </Pressable>
-            <Pressable style={styles.secondaryBtn} onPress={onWhy}>
-              <Text style={styles.secondaryBtnText}>Why?</Text>
+            <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={onWhy}>
+              <Text style={[styles.secondaryBtnText, { color: colors.text }]}>Why?</Text>
             </Pressable>
           </>
         )}
@@ -127,8 +148,8 @@ export default function DailyOutfitCard({
 
       {hasPlanned && !hasWorn ? (
         <View style={styles.textActions}>
-          <Pressable onPress={onClearPlan}><Text style={styles.textAction}>Clear plan</Text></Pressable>
-          <Pressable onPress={onCopyPlan}><Text style={styles.textAction}>Copy this plan to…</Text></Pressable>
+          <Pressable onPress={onClearPlan}><Text style={[styles.textAction, { color: colors.textSecondary }]}>Clear plan</Text></Pressable>
+          <Pressable onPress={onCopyPlan}><Text style={[styles.textAction, { color: colors.textSecondary }]}>Copy this plan to…</Text></Pressable>
         </View>
       ) : null}
 
@@ -147,10 +168,6 @@ export default function DailyOutfitCard({
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderColor: "#dedede",
-    borderRadius: 16,
-    padding: 14,
-    backgroundColor: "#fff",
   },
   title: {
     fontSize: 16,
@@ -166,24 +183,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
-  },
-  segChipActive: {
-    backgroundColor: "#111",
-    borderColor: "#111",
   },
   segText: {
-    color: "#333",
     fontWeight: "700",
     fontSize: 12,
   },
-  segTextActive: {
-    color: "#fff",
-  },
   thinking: {
     marginTop: 8,
-    color: "#6b7280",
     fontSize: 12,
     fontWeight: "600",
   },
@@ -192,12 +198,10 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   score: {
-    color: "#111",
     fontWeight: "800",
     fontSize: 13,
   },
   reason: {
-    color: "#555",
     fontSize: 12,
   },
   actionsRow: {
@@ -208,7 +212,6 @@ const styles = StyleSheet.create({
   },
   primaryBtn: {
     flex: 1,
-    backgroundColor: "#111",
     borderRadius: 12,
     alignItems: "center",
     paddingVertical: 11,
@@ -219,14 +222,12 @@ const styles = StyleSheet.create({
   },
   secondaryBtn: {
     borderWidth: 1,
-    borderColor: "#111",
     borderRadius: 12,
     paddingHorizontal: 14,
     justifyContent: "center",
     alignItems: "center",
   },
   secondaryBtnText: {
-    color: "#111",
     fontWeight: "800",
   },
   textActions: {
@@ -236,7 +237,6 @@ const styles = StyleSheet.create({
   },
   textAction: {
     fontSize: 12,
-    color: "#4b5563",
     fontWeight: "700",
   },
   muted: {

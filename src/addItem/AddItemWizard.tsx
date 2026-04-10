@@ -62,7 +62,11 @@ export const AddItemWizard = React.memo(function AddItemWizard({
   });
 
   return (
-    <SafeScreen backgroundColor={colors.background} edges={["top"]} style={styles.screen}>
+    <SafeScreen
+      backgroundColor={colors.background}
+      includeBottomInset={false}
+      style={styles.screen}
+    >
       <KeyboardAvoidingView
         style={styles.screen}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -76,7 +80,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={[styles.listContent, { paddingBottom: floatingDockSpace + 180 }]}
           >
-            <View style={{ marginBottom: 14, gap: 14 }}>
+            <View style={{ marginBottom: 10, gap: 10 }}>
               <View style={styles.headerRow}>
                 <Pressable onPress={wizard.handleStepBack} style={styles.btnSecondary}>
                   <Text style={styles.btnSecondaryText}>Back</Text>

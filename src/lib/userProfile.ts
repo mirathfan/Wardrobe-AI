@@ -4,6 +4,10 @@ import { db } from "./firebase";
 import { Category } from "../shared/wardrobeTaxonomy";
 import type { UserProfilePreferences } from "../types/UserProfilePreferences";
 
+export type UserAccountProfile = {
+  name: string | null;
+};
+
 export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
   units: {
     length: "cm",
@@ -17,6 +21,10 @@ export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
   stylePreferences: {},
   closetPreferences: {},
   notifications: {},
+};
+
+export const EMPTY_USER_ACCOUNT_PROFILE: UserAccountProfile = {
+  name: null,
 };
 
 function cleanString(value: unknown) {
@@ -161,6 +169,31 @@ export async function loadUserProfilePreferences(uid: string) {
   const snap = await getDoc(doc(db, "users", uid));
   if (!snap.exists()) return EMPTY_USER_PROFILE_PREFERENCES;
   return normalizeUserProfilePreferences(snap.data()?.profilePreferences);
+}
+
+export function normalizeUserAccountProfile(value: unknown): UserAccountProfile {
+  const root = readRecord(value);
+  return {
+    name: cleanString(root.name),
+  };
+}
+
+export async function loadUserAccountProfile(uid: string) {
+  const snap = await getDoc(doc(db, "users", uid));
+  if (!snap.exists()) return EMPTY_USER_ACCOUNT_PROFILE;
+  return normalizeUserAccountProfile(snap.data());
+}
+
+export async function saveUserAccountProfile(uid: string, accountProfile: UserAccountProfile) {
+  const normalized = normalizeUserAccountProfile(accountProfile);
+  await setDoc(
+    doc(db, "users", uid),
+    {
+      ...normalized,
+      profileUpdatedAt: Date.now(),
+    },
+    { merge: true },
+  );
 }
 
 export async function saveUserProfilePreferences(

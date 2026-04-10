@@ -9,7 +9,7 @@ import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
 import { isVisionBackgroundRemovalAvailable } from "../src/bg/removeBackground";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Colors } from "@/constants/theme";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -95,9 +95,9 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ThemeProvider value={navigationTheme}>
         <AuthProvider>
-          <SafeAreaView style={{ flex: 1, backgroundColor: palette.background }} edges={["top"]}>
+          <View style={{ flex: 1, backgroundColor: palette.background }}>
             <AuthGate />
-          </SafeAreaView>
+          </View>
         </AuthProvider>
 
         <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />

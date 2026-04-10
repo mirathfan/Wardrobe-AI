@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "./firebase";
+import { buildSignalFromItem, updateAssistantMemoryFromAction } from "./assistantMemory";
 import { ClothingItem, ClothingStatus } from "../types/ClothingItem";
 import { Category } from "../shared/wardrobeTaxonomy";
 
@@ -272,6 +273,10 @@ export async function safeMarkWorn(uid: string, itemId: string) {
     wearCountSinceWash: increment(1),
     lastWornDate: serverTimestamp(),
   });
+  void updateAssistantMemoryFromAction(uid, "wear_item", buildSignalFromItem({
+    ...(data as ClothingItem),
+    id: itemId,
+  }));
 }
 
 export async function markWorn(uid: string, itemId: string) {

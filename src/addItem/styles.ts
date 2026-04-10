@@ -5,12 +5,12 @@ export function createStyles(colors: AppColors) {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
     container: { flex: 1, backgroundColor: colors.background },
-    listContent: { padding: 16, paddingBottom: 180 },
+    listContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 180 },
     headerRow: {
       flexDirection: "row",
       justifyContent: "space-between",
       alignItems: "center",
-      marginBottom: 14,
+      marginBottom: 8,
     },
     footer: {
       borderTopWidth: 1,

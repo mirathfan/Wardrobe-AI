@@ -255,59 +255,59 @@ export const AiInsightCard = React.memo(function AiInsightCard({
     <>
       <View
         style={{
-          borderRadius: 16,
+          borderRadius: 18,
           borderWidth: 1,
-          borderColor: AI_ACCENT.border,
+          borderColor: "rgba(255,255,255,0.08)",
           backgroundColor: colors.card,
           overflow: "hidden",
         }}
       >
-        <View style={{ height: 4, backgroundColor: AI_ACCENT.gradientStart }} />
-        <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 11, gap: 7 }}>
+        <View style={{ height: 3, backgroundColor: AI_ACCENT.gradientStart, opacity: 0.9 }} />
+        <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 14, gap: 9 }}>
           <Text style={{ color: colors.textSecondary, fontWeight: "700", fontSize: 12 }}>
             {greeting} • {timeLabel}
           </Text>
-          <Text style={{ fontSize: 16, fontWeight: "900", color: colors.text }}>
+          <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text }}>
             {selectedInsight.title}
           </Text>
-          <Text style={{ color: colors.textSecondary, lineHeight: 18, fontSize: 13 }}>
+          <Text style={{ color: colors.textSecondary, lineHeight: 20, fontSize: 14 }}>
             {selectedInsight.body}
           </Text>
 
-          <View style={{ gap: 5, marginTop: 2 }}>
+          <View style={{ gap: 4, marginTop: 1 }}>
             {weatherRow}
             {calendarRow}
           </View>
 
-          <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 11, opacity: 0.8 }}>
             Based on your closet history • On-device context
           </Text>
 
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 1 }}>
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 2 }}>
             <Pressable
               onPress={onPressBuildOutfit}
               style={{
                 flex: 1,
                 alignItems: "center",
                 justifyContent: "center",
-                borderRadius: 10,
-                paddingVertical: 9,
+                borderRadius: 12,
+                paddingVertical: 11,
                 backgroundColor: "#0f172a",
               }}
             >
-              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>Build Outfit</Text>
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>Build Outfit</Text>
             </Pressable>
             <Pressable
               onPress={onPressWhy}
               style={{
                 alignItems: "center",
                 justifyContent: "center",
-                borderRadius: 10,
-                paddingHorizontal: 10,
-                paddingVertical: 9,
-                backgroundColor: colors.surface,
+                borderRadius: 12,
+                paddingHorizontal: 14,
+                paddingVertical: 11,
+                backgroundColor: "rgba(255,255,255,0.04)",
                 borderWidth: 1,
-                borderColor: colors.border,
+                borderColor: "rgba(255,255,255,0.08)",
               }}
             >
               <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Why?</Text>

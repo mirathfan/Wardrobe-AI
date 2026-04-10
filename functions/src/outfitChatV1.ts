@@ -22,6 +22,11 @@ import {
   safeJsonExtract,
   swapOutfitSlot,
 } from "./shared/outfitEngine";
+import {
+  buildCompactMemorySummary,
+  loadAssistantProfile,
+  loadBehaviorProfile,
+} from "./shared/assistantMemory";
 import { getOrRefreshWardrobeSummary } from "./shared/wardrobeSummary";
 
 if (!getApps().length) {
@@ -269,6 +274,7 @@ function buildThreadMemorySummary(messages: ChatMessageDoc[]): string {
 
 async function parseChatAction(params: {
   profile: UserProfile | null;
+  assistantMemorySummary: string;
   wardrobeSummary: {summaryText: string; stats: Record<string, unknown>};
   slotCounts: Record<Slot, number>;
   messages: ChatMessageDoc[];
@@ -284,7 +290,7 @@ async function parseChatAction(params: {
   references: {outfitId: string | null; slot: Slot | null};
   followup: OutfitFollowup;
 }> {
-  const {profile, wardrobeSummary, slotCounts, messages, latestUserMessage} = params;
+  const {profile, assistantMemorySummary, wardrobeSummary, slotCounts, messages, latestUserMessage} = params;
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     const requestedOutfitCount =
@@ -315,6 +321,7 @@ async function parseChatAction(params: {
     slotCounts,
     recentOutfitRefs: buildRecentOutfitRefs(messages),
     lastMessages: recentHistory(messages) || "none",
+    assistantMemorySummary,
   };
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -342,6 +349,7 @@ async function parseChatAction(params: {
             "If the user says 'make it warmer', use action=tweak and followup.type=warmer.",
             "If the user says 'swap shoes in outfit 2', use action=swap_item, references.slot=footwear, and references.outfitId from recentOutfitRefs if possible.",
             "Ask clarifying questions if a request is ambiguous or impossible.",
+            "Treat assistantMemorySummary as a soft preference signal only. Use it to personalize when the request is open-ended, but do not force it when the wardrobe or explicit user request points elsewhere.",
             "Context packet:",
             JSON.stringify(contextPacket),
           ].join(" "),
@@ -425,19 +433,26 @@ export const outfitChatV1 = onCall(
       }, {merge: true});
     }
 
-    const [recentMessagesSnap, userSnap, allItems] = await Promise.all([
+    const [recentMessagesSnap, userSnap, allItems, assistantProfile, behaviorProfile] = await Promise.all([
       threadRef.collection("messages").orderBy("createdAt", "asc").limitToLast(12).get(),
       userRef.get(),
       fetchWardrobeItems(db, uid),
+      loadAssistantProfile(db, uid),
+      loadBehaviorProfile(db, uid),
     ]);
 
     const recentMessages = recentMessagesSnap.docs.map((docSnap) => docSnap.data() as ChatMessageDoc);
     const profile = normalizeProfile(userSnap.exists ? (userSnap.data() as {profile?: unknown}).profile : null);
     const slotCounts = countSlots(allItems);
     const wardrobeSummary = await getOrRefreshWardrobeSummary(db, uid, allItems);
+    const assistantMemorySummary = buildCompactMemorySummary(
+      assistantProfile,
+      behaviorProfile
+    );
 
     const parsed = await parseChatAction({
       profile,
+      assistantMemorySummary,
       wardrobeSummary: {summaryText: wardrobeSummary.summaryText, stats: wardrobeSummary.stats},
       slotCounts,
       messages: recentMessages,

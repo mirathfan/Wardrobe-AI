@@ -4,8 +4,10 @@ import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 
 import { SafeScreen } from "@/src/components/SafeScreen";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import {
   ProfileHubRow,
+  useAccountProfileState,
   formatBodyFitSummary,
   formatClosetSummary,
   formatDefaultSizesSummary,
@@ -17,13 +19,25 @@ import {
 
 export default function ProfileScreen() {
   const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
   const { user, loading, profile } = useProfilePreferencesState();
+  const { accountProfile } = useAccountProfileState();
+  const accountSummary = accountProfile.name
+    ? `${accountProfile.name} • ${user?.email ?? "No email found."}`
+    : user?.email ?? "No email found.";
 
   return (
-    <SafeScreen backgroundColor={colors.background} edges={["top"]} style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 120 }}>
+    <SafeScreen backgroundColor={colors.background} includeBottomInset={false} style={{ flex: 1 }}>
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: layout.horizontalPadding,
+          paddingTop: 0,
+          gap: layout.sectionGap - 6,
+          paddingBottom: layout.bottomDockPadding,
+        }}
+      >
         <View style={{ gap: 6 }}>
-          <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>Profile</Text>
+          <Text style={{ fontSize: 28 * layout.titleScale, fontWeight: "900", color: colors.text }}>Profile</Text>
           <Text style={{ color: colors.textSecondary }}>
             Settings, sizing, and preferences.
           </Text>
@@ -37,7 +51,7 @@ export default function ProfileScreen() {
           <>
             <ProfileHubRow
               title="Account"
-              summary={user?.email ?? "No email found."}
+              summary={accountSummary}
               onPress={() => router.push("/profile/account")}
             />
             <ProfileHubRow

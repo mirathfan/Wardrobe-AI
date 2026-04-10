@@ -1,4 +1,5 @@
 import { Timestamp } from "firebase/firestore";
+import type { VisualNormalization } from "../lib/visualNormalization";
 import {
   AllowedFormality,
   AllowedLayerRole,
@@ -34,6 +35,7 @@ export type ClothingItem = {
   wearSlot?: "core" | "accessory";
   pattern?: ClothingPattern;
   material?: string;
+  style?: string | null;
   formality?: AllowedFormality | null;
   warmth?: AllowedWarmth | null;
   layerRole?: AllowedLayerRole | null;
@@ -111,6 +113,7 @@ export type ClothingItem = {
   warmthPreference?: number | null;
   photoUrl?: string | null;
   photoUri?: string | null;
+  visualNormalization?: VisualNormalization | null;
   isDraft?: boolean;
   draftState?: "draft" | "photo_uploaded" | "ingesting" | "ready" | "failed" | null;
 

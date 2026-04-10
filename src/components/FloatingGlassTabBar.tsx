@@ -16,9 +16,9 @@ import { useAppTheme } from '../hooks/useAppTheme';
 
 const TAB_META: Record<string, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
   index: { label: 'Home', icon: 'home-outline' },
-  calendar: { label: 'Calendar', icon: 'calendar-outline' },
+  closet: { label: 'Closet', icon: 'shirt-outline' },
   ai: { label: 'AI', icon: 'sparkles-outline' },
-  laundry: { label: 'Laundry', icon: 'shirt-outline' },
+  calendar: { label: 'Calendar', icon: 'calendar-outline' },
   profile: { label: 'Profile', icon: 'person-circle-outline' },
 };
 

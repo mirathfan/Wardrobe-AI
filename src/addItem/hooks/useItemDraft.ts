@@ -37,6 +37,10 @@ export function useItemDraft({
   extractionRef: MutableRefObject<any>;
   resetCreateFlowRef: MutableRefObject<any>;
 }) {
+  const cleanBrandInput = (value: unknown) =>
+    String(value ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
   const [loading, setLoading] = useState(false);
   const [brand, setBrand] = useState("");
   const [name, setName] = useState("");
@@ -74,6 +78,8 @@ export function useItemDraft({
   const [fitExpanded, setFitExpanded] = useState(false);
 
   const userEditedKeysRef = useRef<Set<string>>(new Set());
+  const saveInFlightRef = useRef(false);
+  const lastFinalizedSubmissionKeyRef = useRef("");
   const selectedCategory = category ?? Category.TOP;
 
   const markUserEdited = useCallback((...keys: string[]) => {
@@ -147,7 +153,13 @@ export function useItemDraft({
     try {
       const draftRef = doc(db, "users", uid, "items", draftItemId);
       await updateDoc(draftRef, {
-        brand: norm(brand) || "",
+        ...(userEditedKeysRef.current.has("brand")
+          ? {
+              brand: cleanBrandInput(brand) || "",
+              brandSource: "user",
+              brandUpdatedAt: Date.now(),
+            }
+          : {}),
         name: norm(name) || "",
         category: category ?? Category.TOP,
         subCategory: isValidCategorySubCategory(selectedCategory, subCategory)
@@ -257,7 +269,7 @@ export function useItemDraft({
         return;
       }
       const data = latestRealItem.data() as any;
-      setBrand(norm(data.brand) || "");
+      setBrand(cleanBrandInput(data.brand) || "");
       setName(norm(data.name) || "");
       setCategory(data.category ? normalizeCategoryForStorage(data.category) : null);
       setSubCategory(norm(data.subCategory) || "");
@@ -319,9 +331,31 @@ export function useItemDraft({
     const resetCreateFlow = resetCreateFlowRef.current;
     if (!photo || !extraction) return;
 
+    const submissionKey = [
+      uid ?? "",
+      String(editItemId ?? extraction.state.draftItemId ?? ""),
+      String(photo.state.pendingPhotoHash ?? photo.state.photoUrl ?? photo.state.photoUri ?? ""),
+      norm(name),
+      norm(brand),
+    ].join("|");
+    if (saveInFlightRef.current) {
+      return;
+    }
+    if (lastFinalizedSubmissionKeyRef.current && lastFinalizedSubmissionKeyRef.current === submissionKey) {
+      return;
+    }
+
+    saveInFlightRef.current = true;
     setLoading(true);
     extraction.refs.isFinalizingRef.current = true;
-    const b = norm(brand);
+    let finalizedAndExiting = false;
+    const extractionIngestionStatus = String(extraction.state.ingestionStatus ?? "")
+      .trim()
+      .toLowerCase();
+    const canKickoffIngestion =
+      extractionIngestionStatus !== "processing" &&
+      extractionIngestionStatus !== "done";
+    const b = cleanBrandInput(brand);
     const n = norm(name);
     const hasAtLeastOnePhoto = !!(
       photo.state.pendingPhotoUri ||
@@ -357,7 +391,13 @@ export function useItemDraft({
           : doc(itemsRef);
 
       const payloadBase = {
-        brand: b || "",
+        ...(userEditedKeysRef.current.has("brand")
+          ? {
+              brand: b || "",
+              brandSource: "user",
+              brandUpdatedAt: Date.now(),
+            }
+          : {}),
         name: n || "",
         category: category ?? Category.TOP,
         subCategory: isValidCategorySubCategory(selectedCategory, subCategory)
@@ -397,7 +437,7 @@ export function useItemDraft({
           "photos.primaryUrl": nextPhoto.photoUrl,
           "photos.urls": nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
           draftState: "ready",
-          ...(photo.state.pendingPhotoUri
+          ...(photo.state.pendingPhotoUri && canKickoffIngestion
             ? {
                 ingestion: {
                   status: "pending",
@@ -412,6 +452,9 @@ export function useItemDraft({
         }
         if (nextPhoto.normalizedUrl) {
           updatePayload["photos.normalizedUrl"] = nextPhoto.normalizedUrl;
+        }
+        if (nextPhoto.visualNormalization) {
+          updatePayload.visualNormalization = nextPhoto.visualNormalization;
         }
         await updateDoc(itemRef, updatePayload);
         Alert.alert("Saved ✅", "Item updated.");
@@ -436,8 +479,12 @@ export function useItemDraft({
         if (nextPhoto.normalizedUrl) {
           updatePayload["photos.normalizedUrl"] = nextPhoto.normalizedUrl;
         }
+        if (nextPhoto.visualNormalization) {
+          updatePayload.visualNormalization = nextPhoto.visualNormalization;
+        }
         if (
           photo.state.pendingPhotoUri &&
+          canKickoffIngestion &&
           photo.refs.syncedPreviewUriRef.current !== photo.state.pendingPhotoUri
         ) {
           updatePayload.ingestion = {
@@ -446,8 +493,21 @@ export function useItemDraft({
           };
         }
         await updateDoc(itemRef, updatePayload);
+        lastFinalizedSubmissionKeyRef.current = submissionKey;
+        if (__DEV__) {
+          console.log("[AddItemSave] success:draft-create", {
+            draftItemId,
+            submissionKey,
+          });
+        }
         Alert.alert("Added ✅", "Item added to wardrobe.");
         await resetCreateFlow?.("post-save");
+        extraction.actions.stopDraftSubscription?.();
+        finalizedAndExiting = true;
+        if (__DEV__) {
+          console.log("[AddItemSave] navigate:replace-closet");
+        }
+        router.replace("/(tabs)/closet");
         return;
       }
 
@@ -469,6 +529,11 @@ export function useItemDraft({
               }
             : {}),
         },
+        ...(nextPhoto.visualNormalization
+          ? {
+              visualNormalization: nextPhoto.visualNormalization,
+            }
+          : {}),
         status: "AVAILABLE",
         wearCountSinceWash: 0,
         createdAt: Date.now(),
@@ -477,24 +542,51 @@ export function useItemDraft({
         lastWashedAt: null,
         isDraft: false,
         draftState: "ready",
-        ingestion: {
-          status: "pending",
-          lastRunAt: Date.now(),
-        },
+        ...(canKickoffIngestion
+          ? {
+              ingestion: {
+                status: "pending",
+                lastRunAt: Date.now(),
+              },
+            }
+          : {}),
       });
 
+      lastFinalizedSubmissionKeyRef.current = submissionKey;
+      if (__DEV__) {
+        console.log("[AddItemSave] success:new-create", {
+          itemId: itemRef.id,
+          submissionKey,
+        });
+      }
       Alert.alert("Added ✅", "Item added to wardrobe.");
       await resetCreateFlow?.("post-save");
+      extraction.actions.stopDraftSubscription?.();
+      finalizedAndExiting = true;
+      if (__DEV__) {
+        console.log("[AddItemSave] navigate:replace-closet");
+      }
+      router.replace("/(tabs)/closet");
     } catch (e: any) {
       Alert.alert(
         "Error",
         e?.message ?? (isEdit ? "Failed to update item" : "Failed to add item")
       );
     } finally {
+      if (__DEV__) {
+        console.log("[AddItemSave] finally", {
+          finalizedAndExiting,
+        });
+      }
       photo.actions.setUploadingPhoto(false);
       setLoading(false);
-      extraction.refs.isFinalizingRef.current = false;
+      if (!finalizedAndExiting) {
+        extraction.refs.isFinalizingRef.current = false;
+      }
+      saveInFlightRef.current = false;
     }
+  // resetCreateFlowRef is a stable ref container; saveItem intentionally reads .current at submit time.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     brand,
     category,
@@ -516,7 +608,6 @@ export function useItemDraft({
     priceAmount,
     priceCurrency,
     purchaseDate,
-    resetCreateFlowRef,
     rise,
     seasonTags,
     selectedCategory,

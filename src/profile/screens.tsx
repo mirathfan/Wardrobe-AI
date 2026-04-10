@@ -18,13 +18,17 @@ import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { auth } from "@/src/lib/firebase";
 import {
+  EMPTY_USER_ACCOUNT_PROFILE,
   EMPTY_USER_PROFILE_PREFERENCES,
+  loadUserAccountProfile,
   loadUserProfilePreferences,
+  saveUserAccountProfile,
   saveUserProfilePreferences,
 } from "@/src/lib/userProfile";
+import type { UserAccountProfile } from "@/src/lib/userProfile";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 
-const BODY_FIELDS: Array<{ key: keyof UserProfilePreferences["body"]; label: string }> = [
+const BODY_FIELDS: { key: keyof UserProfilePreferences["body"]; label: string }[] = [
   { key: "height", label: "Height" },
   { key: "weight", label: "Weight" },
   { key: "chest", label: "Chest" },
@@ -38,11 +42,11 @@ const BODY_FIELDS: Array<{ key: keyof UserProfilePreferences["body"]; label: str
   { key: "footLength", label: "Foot length" },
 ];
 
-const DEFAULT_SIZE_FIELDS: Array<{
+const DEFAULT_SIZE_FIELDS: {
   key: keyof UserProfilePreferences["defaultSizes"];
   label: string;
   placeholder: string;
-}> = [
+}[] = [
   { key: "top", label: "Tops size", placeholder: "e.g., M" },
   { key: "outerwear", label: "Outerwear size", placeholder: "e.g., L" },
   { key: "hoodie", label: "Hoodie / sweatshirt", placeholder: "e.g., L" },
@@ -133,6 +137,57 @@ export function useProfilePreferencesState() {
   }, [profile, user?.uid]);
 
   return { user, loading, saving, profile, setProfile, save };
+}
+
+export function useAccountProfileState() {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [accountProfile, setAccountProfile] = useState<UserAccountProfile>(EMPTY_USER_ACCOUNT_PROFILE);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.uid) {
+      setAccountProfile(EMPTY_USER_ACCOUNT_PROFILE);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    void loadUserAccountProfile(user.uid)
+      .then((nextProfile) => {
+        if (!cancelled) setAccountProfile(nextProfile);
+      })
+      .catch((error: any) => {
+        if (!cancelled) {
+          Alert.alert("Account", error?.message ?? "Unable to load account.");
+          setAccountProfile(EMPTY_USER_ACCOUNT_PROFILE);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid]);
+
+  const save = useCallback(async () => {
+    if (!user?.uid) {
+      Alert.alert("Account", "Please sign in first.");
+      return;
+    }
+    try {
+      setSaving(true);
+      await saveUserAccountProfile(user.uid, accountProfile);
+      Alert.alert("Saved", "Account updated.");
+    } catch (error: any) {
+      Alert.alert("Save failed", error?.message ?? "Unable to save account.");
+    } finally {
+      setSaving(false);
+    }
+  }, [accountProfile, user?.uid]);
+
+  return { user, loading, saving, accountProfile, setAccountProfile, save };
 }
 
 export function formatBodyFitSummary(profile: UserProfilePreferences) {
@@ -244,7 +299,7 @@ export function ProfileSectionScreen({
 }) {
   const { colors } = useAppTheme();
   return (
-    <SafeScreen backgroundColor={colors.background} edges={["top"]} style={{ flex: 1 }}>
+    <SafeScreen backgroundColor={colors.background} style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 120 }}>
           <View style={{ gap: 8 }}>
@@ -283,7 +338,7 @@ export function ProfileSectionScreen({
             style={{
               paddingHorizontal: 16,
               paddingTop: 12,
-              paddingBottom: 20,
+              paddingBottom: 12,
               borderTopWidth: 1,
               borderTopColor: colors.border,
               backgroundColor: colors.background,
@@ -298,26 +353,44 @@ export function ProfileSectionScreen({
 }
 
 export function AccountScreen() {
-  const { user } = useAuth();
+  const { user, loading: profileLoading, saving, accountProfile, setAccountProfile, save } = useAccountProfileState();
   const { colors } = useAppTheme();
-  const [loading, setLoading] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const onLogout = useCallback(async () => {
     try {
-      setLoading(true);
+      setLoggingOut(true);
       await signOut(auth);
       router.replace("/(auth)/login");
     } catch (err: any) {
       Alert.alert("Logout failed", err?.message ?? "Unable to sign out.");
     } finally {
-      setLoading(false);
+      setLoggingOut(false);
     }
   }, []);
 
   return (
-    <ProfileSectionScreen title="Account" subtitle="Email and sign-out">
+    <ProfileSectionScreen title="Account" subtitle="Personal details and sign-out" onSave={save} saving={saving}>
+      {profileLoading ? <ActivityIndicator color={colors.accent} /> : (
+        <>
+          <ProfileInputRow
+            label="Name"
+            value={accountProfile.name ?? ""}
+            placeholder="How should AURA address you?"
+            onChangeText={(value) =>
+              setAccountProfile((prev) => ({
+                ...prev,
+                name: value,
+              }))
+            }
+          />
+          <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19 }}>
+            AURA may use your name occasionally in greetings and replies, but it will not overdo it.
+          </Text>
+        </>
+      )}
       <ProfileValueRow label="Email" value={user?.email ?? "No email found."} />
-      <PrimaryButton label={loading ? "Signing out..." : "Log out"} onPress={onLogout} disabled={loading} />
+      <PrimaryButton label={loggingOut ? "Signing out..." : "Log out"} onPress={onLogout} disabled={loggingOut} />
     </ProfileSectionScreen>
   );
 }

@@ -15,13 +15,12 @@ import {
   Text,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { db } from "@/src/lib/firebase";
 import { isVisibleWardrobeItem } from "@/src/lib/items";
-import { dockSpace } from "@/src/constants/dock";
 
 type Status = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
 
@@ -45,9 +44,9 @@ const TABS: { key: "NEEDS_WASH" | "IN_LAUNDRY" | "CLEAN"; label: string }[] = [
 export default function LaundryScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
   const uid = user?.uid ?? null;
-  const insets = useSafeAreaInsets();
-  const floatingTabSpace = dockSpace(insets.bottom) + 18;
+  const floatingTabSpace = layout.bottomDockPadding;
   const [allItems, setAllItems] = useState<ClothingItem[]>([]);
   const [tab, setTab] = useState<"NEEDS_WASH" | "IN_LAUNDRY" | "CLEAN">(
     "IN_LAUNDRY"
@@ -255,7 +254,14 @@ export default function LaundryScreen() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, padding: 16, justifyContent: "center" }}>
+      <View
+        style={{
+          flex: 1,
+          paddingHorizontal: layout.horizontalPadding,
+          justifyContent: "center",
+          backgroundColor: colors.background,
+        }}
+      >
         <ActivityIndicator />
         <Text style={{ textAlign: "center", marginTop: 10, opacity: 0.7 }}>
           Loading laundry…
@@ -265,11 +271,18 @@ export default function LaundryScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 16, backgroundColor: colors.background }}>
+    <View
+      style={{
+        flex: 1,
+        paddingHorizontal: layout.horizontalPadding,
+        paddingTop: layout.topContentInset,
+        backgroundColor: colors.background,
+      }}
+    >
       <FlatList
         data={listItems}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: floatingTabSpace + 16 }}
+        contentContainerStyle={{ paddingBottom: floatingTabSpace }}
         ListHeaderComponent={Header}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         ListEmptyComponent={

@@ -4,7 +4,6 @@ import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import AgendaCard from "@/src/components/AgendaCard";
 import DailyOutfitCard from "@/src/components/DailyOutfitCard";
@@ -15,10 +14,10 @@ import DayContextCard from "@/src/components/calendar/DayContextCard";
 import SwapSheet from "@/src/components/calendar/SwapSheet";
 import TimelineCard from "@/src/components/calendar/TimelineCard";
 import WeatherStrip from "@/src/components/calendar/WeatherStrip";
-import { dockSpace } from "@/src/constants/dock";
 import { useDayEvents } from "@/src/hooks/useDayEvents";
 import { useDayWeather } from "@/src/hooks/useDayWeather";
 import { useNow } from "@/src/hooks/useNow";
+import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { useSelectedDate } from "@/src/hooks/useSelectedDate";
 import { addDays, formatHeaderDate, parseDateValue, toDayKey } from "@/src/utils/date";
 import {
@@ -39,7 +38,7 @@ import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useAuth } from "@/src/hooks/useAuth";
 import { db } from "@/src/lib/firebase";
 import { MAX_WEARS_BEFORE_WASH, isVisibleWardrobeItem, toCanonicalCategory } from "@/src/lib/items";
-import { ClothingItem } from "@/src/types/ClothingItem";
+import type { ClothingItem } from "@/src/types/ClothingItem";
 
 type SectionIconName = "calendar" | "sparkles" | "chart.bar.xaxis";
 type SlotKey = keyof OutfitItemsByCategory;
@@ -62,7 +61,8 @@ function iconFallback(name: SectionIconName): keyof typeof Ionicons.glyphMap {
 
 function SectionHeader({ icon, title }: { icon: SectionIconName; title: string }) {
   const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   return (
     <View style={styles.sectionHeader}>
       <Ionicons name={iconFallback(icon)} size={17} color={colors.text} />
@@ -130,7 +130,8 @@ function DatePickerSheet({
   onConfirm: () => void;
 }) {
   const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={styles.modalBackdrop}>
@@ -165,9 +166,9 @@ function DatePickerSheet({
 export default function CalendarScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
   const uid = user?.uid ?? null;
-  const insets = useSafeAreaInsets();
-  const bottomDockPadding = dockSpace(insets.bottom) + 20;
+  const bottomDockPadding = layout.bottomDockPadding;
 
   const { greeting, timeLabel } = useNow();
   const day = useSelectedDate();
@@ -626,12 +627,16 @@ export default function CalendarScreen() {
     return selectedLook?.reasons ?? [];
   }, [record?.plannedOutfit?.reasons, selectedLook?.reasons]);
 
-  const themedStyles = useMemo(() => createStyles(colors), [colors]);
+  const themedStyles = useMemo(() => createStyles(colors, layout), [colors, layout]);
 
   return (
     <View style={themedStyles.screen}>
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: bottomDockPadding + 16 }}
+        contentContainerStyle={{
+          paddingHorizontal: layout.horizontalPadding,
+          paddingTop: layout.topContentInset,
+          paddingBottom: Math.max(bottomDockPadding, 120),
+        }}
         showsVerticalScrollIndicator={false}
       >
         <CalendarHeader
@@ -777,14 +782,17 @@ export default function CalendarScreen() {
   );
 }
 
-function createStyles(colors: ReturnType<typeof useAppTheme>["colors"]) {
+function createStyles(
+  colors: ReturnType<typeof useAppTheme>["colors"],
+  layout: ReturnType<typeof useResponsiveLayout>
+) {
 return StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   sectionHeader: {
-    marginTop: 16,
+    marginTop: layout.sectionGap - 4,
     marginBottom: 10,
     flexDirection: "row",
     alignItems: "center",
@@ -793,11 +801,10 @@ return StyleSheet.create({
   sectionTitle: {
     fontSize: 15,
     fontWeight: "800",
-    color: "#111",
   },
   monthPicker: {
     marginTop: 8,
-    marginBottom: 2,
+    marginBottom: 4,
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
@@ -815,29 +822,30 @@ return StyleSheet.create({
     fontWeight: "700",
   },
   weatherStripWrap: {
-    marginTop: 10,
+    marginTop: layout.sectionGap - 10,
   },
   sectionGap: {
-    height: 16,
+    height: layout.sectionGap - 4,
   },
   card: {
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 16,
-    padding: 14,
-    backgroundColor: colors.card,
+    borderColor: colors.glassBorder,
+    borderRadius: layout.mediumRadius,
+    padding: layout.cardPadding,
+    backgroundColor: colors.surface,
   },
   muted: {
     color: colors.textSecondary,
     fontSize: 12,
+    lineHeight: 18,
   },
   planCta: {
     marginTop: 10,
     alignSelf: "flex-start",
-    borderRadius: 10,
+    borderRadius: 999,
     backgroundColor: colors.accent,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   planCtaText: {
     color: "#fff",
@@ -854,7 +862,7 @@ return StyleSheet.create({
     flex: 1,
     height: 20,
     borderRadius: 6,
-    backgroundColor: colors.muted,
+    backgroundColor: colors.overlay,
     justifyContent: "flex-end",
     padding: 1,
   },
@@ -873,9 +881,9 @@ return StyleSheet.create({
   },
   modalSheet: {
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 16,
+    borderTopLeftRadius: layout.largeRadius,
+    borderTopRightRadius: layout.largeRadius,
+    padding: layout.cardPadding,
     gap: 12,
   },
   modalTitle: {

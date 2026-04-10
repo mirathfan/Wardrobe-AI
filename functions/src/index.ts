@@ -1,9 +1,11 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
+import { parseOutfitIntentFromPrompt } from "./parseOutfitIntent";
 export { generateOutfitsV1 } from "./generateOutfitsV1";
 export { outfitChatV1 } from "./outfitChatV1";
-import { parseOutfitIntentFromPrompt } from "./parseOutfitIntent";
+export { askAura } from "./askAura";
+export { askAuraStream } from "./askAuraStream";
 export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
 export { generateCleanedProductImages } from "./generateCleanedProductImages";
 

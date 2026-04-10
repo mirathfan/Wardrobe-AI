@@ -1,49 +1,53 @@
 import React from "react";
 import {
-  SafeAreaView,
-  type Edge,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import { View, type StyleProp, type ViewStyle } from "react-native";
+import { dockSpace } from "@/src/constants/dock";
+
+export const SCREEN_TOP_PADDING = 8;
+export const SCREEN_BOTTOM_PADDING = 80;
 
 export function SafeScreen({
   children,
-  edges = ["top", "bottom"],
   style,
   contentStyle,
   backgroundColor,
   minTopPadding = 0,
   minBottomPadding = 0,
+  includeTopInset = true,
+  includeBottomInset = true,
 }: {
   children: React.ReactNode;
-  edges?: Edge[];
   style?: StyleProp<ViewStyle>;
   contentStyle?: StyleProp<ViewStyle>;
   backgroundColor?: string;
   minTopPadding?: number;
   minBottomPadding?: number;
+  includeTopInset?: boolean;
+  includeBottomInset?: boolean;
 }) {
   const insets = useSafeAreaInsets();
-  const includesTop = edges.includes("top");
-  const includesBottom = edges.includes("bottom");
+  const paddingTop = includeTopInset ? insets.top + SCREEN_TOP_PADDING + minTopPadding : minTopPadding;
+  const paddingBottom = includeBottomInset
+    ? Math.max(insets.bottom + SCREEN_BOTTOM_PADDING, dockSpace(insets.bottom) + 24, 100) +
+      minBottomPadding
+    : minBottomPadding;
 
   return (
-    <SafeAreaView
-      edges={edges}
-      style={[{ flex: 1, backgroundColor }, style]}
-    >
+    <View style={[{ flex: 1, backgroundColor }, style]}>
       <View
         style={[
           {
             flex: 1,
-            paddingTop: (includesTop ? 0 : insets.top) + minTopPadding,
-            paddingBottom: (includesBottom ? 0 : insets.bottom) + minBottomPadding,
+            paddingTop,
+            paddingBottom,
           },
           contentStyle,
         ]}
       >
         {children}
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
