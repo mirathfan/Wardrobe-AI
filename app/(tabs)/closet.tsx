@@ -24,31 +24,42 @@ import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import {
   type CanonicalCategory,
   type ClosetItem,
-  type ClothingStatus,
   listenToItems,
   toCanonicalCategory,
 } from "@/src/lib/items";
+import { getStyleProfileConfig } from "@/src/lib/styleProfile";
+import { loadUserProfilePreferences } from "@/src/lib/userProfile";
 import { sanitizeDisplayText } from "@/src/lib/text";
+import type { ClothingStatus } from "@/src/types/ClothingItem";
+import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 
 type SortMode = "RECENTLY_ADDED" | "RECENTLY_WORN" | "BRAND" | "MOST_WORN";
 type CategoryKey = CanonicalCategory;
 
-const CATEGORY_ORDER: CategoryKey[] = ["top", "outerwear", "bottom", "shoes", "accessory"];
 const CATEGORY_LABELS: Record<CategoryKey, string> = {
   top: "Tops",
+  one_piece: "One-pieces",
   outerwear: "Outerwear",
   bottom: "Bottoms",
   shoes: "Footwear",
   accessory: "Accessories",
 };
 
-const SUBCATEGORY_GROUPS: Record<CategoryKey, Array<{ label: string; matches: string[] }>> = {
+const SUBCATEGORY_GROUPS: Record<CategoryKey, { label: string; matches: string[] }[]> = {
   top: [
     { label: "T-shirts", matches: ["t-shirt", "tshirt", "tee"] },
     { label: "Shirts", matches: ["shirt", "dress shirt"] },
+    { label: "Blouses", matches: ["blouse"] },
+    { label: "Crop tops", matches: ["crop_top", "crop top"] },
     { label: "Polos", matches: ["polo"] },
+    { label: "Tanks", matches: ["tank"] },
     { label: "Sweaters", matches: ["sweater", "knit", "jumper"] },
     { label: "Hoodies", matches: ["hoodie", "sweatshirt"] },
+  ],
+  one_piece: [
+    { label: "Dresses", matches: ["dress"] },
+    { label: "Jumpsuits & rompers", matches: ["jumpsuit", "romper"] },
+    { label: "Matching sets", matches: ["set", "matching_set"] },
   ],
   outerwear: [
     { label: "Jackets", matches: ["jacket"] },
@@ -61,32 +72,35 @@ const SUBCATEGORY_GROUPS: Record<CategoryKey, Array<{ label: string; matches: st
     { label: "Trousers", matches: ["trousers", "pants", "slacks"] },
     { label: "Joggers", matches: ["joggers", "sweatpants"] },
     { label: "Shorts", matches: ["shorts"] },
+    { label: "Skirts", matches: ["skirt"] },
   ],
   shoes: [
     { label: "Sneakers", matches: ["sneaker", "sneakers", "trainer"] },
     { label: "Loafers", matches: ["loafer", "loafers"] },
     { label: "Boots", matches: ["boot", "boots"] },
+    { label: "Heels", matches: ["heel", "heels"] },
     { label: "Sandals", matches: ["sandal", "sandals", "slides"] },
   ],
   accessory: [
     { label: "Watches", matches: ["watch", "watches"] },
-    { label: "Bags", matches: ["bag", "bags", "backpack", "tote"] },
+    { label: "Bags", matches: ["bag", "bags", "backpack", "tote", "handbag"] },
     { label: "Perfumes", matches: ["perfume", "fragrance", "cologne"] },
-    { label: "Jewelry", matches: ["jewelry", "jewellery", "necklace", "ring", "bracelet"] },
+    { label: "Jewelry", matches: ["jewelry", "jewellery", "necklace", "ring", "bracelet", "earrings"] },
     { label: "Belts", matches: ["belt", "belts"] },
     { label: "Sunglasses", matches: ["sunglasses", "glasses"] },
     { label: "Caps", matches: ["cap", "caps", "hat", "beanie"] },
+    { label: "Scarves", matches: ["scarf", "scarves"] },
   ],
 };
 
-const SORT_OPTIONS: Array<{ key: SortMode; label: string }> = [
+const SORT_OPTIONS: { key: SortMode; label: string }[] = [
   { key: "RECENTLY_ADDED", label: "Recently added" },
   { key: "RECENTLY_WORN", label: "Recently worn" },
   { key: "BRAND", label: "Brand" },
   { key: "MOST_WORN", label: "Most worn" },
 ];
 
-const STATUS_OPTIONS: Array<{ key: "ALL" | ClothingStatus; label: string }> = [
+const STATUS_OPTIONS: { key: "ALL" | ClothingStatus; label: string }[] = [
   { key: "ALL", label: "All" },
   { key: "AVAILABLE", label: "Available" },
   { key: "WORN", label: "Worn" },
@@ -156,8 +170,12 @@ function sortItems(items: ClosetItem[], sortMode: SortMode) {
   return next;
 }
 
-function buildSections(items: ClosetItem[]) {
-  return CATEGORY_ORDER.map((category) => {
+function buildSections(
+  items: ClosetItem[],
+  categoryOrder: CategoryKey[],
+  emphasizedSubcategories: string[],
+) {
+  return categoryOrder.map((category) => {
     const inCategory = items.filter((item) => toCanonicalCategory(item.category) === category);
     const buckets = new Map<string, ClosetItem[]>();
     inCategory.forEach((item) => {
@@ -169,6 +187,14 @@ function buildSections(items: ClosetItem[]) {
     const subcategories = Array.from(buckets.entries())
       .map(([label, groupedItems]) => ({ label, items: groupedItems }))
       .sort((a, b) => {
+        const aMatches = SUBCATEGORY_GROUPS[category]
+          .find((option) => option.label === a.label)
+          ?.matches.some((term) => emphasizedSubcategories.includes(term));
+        const bMatches = SUBCATEGORY_GROUPS[category]
+          .find((option) => option.label === b.label)
+          ?.matches.some((term) => emphasizedSubcategories.includes(term));
+        if (aMatches && !bMatches) return -1;
+        if (bMatches && !aMatches) return 1;
         if (a.label === "Other") return 1;
         if (b.label === "Other") return -1;
         return a.label.localeCompare(b.label);
@@ -188,6 +214,7 @@ export default function ClosetScreen() {
   const layout = useResponsiveLayout();
   const uid = user?.uid ?? null;
   const [items, setItems] = useState<ClosetItem[]>([]);
+  const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("RECENTLY_ADDED");
@@ -198,6 +225,7 @@ export default function ClosetScreen() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     top: true,
+    one_piece: true,
     outerwear: true,
     bottom: true,
     shoes: true,
@@ -213,7 +241,7 @@ export default function ClosetScreen() {
   useEffect(() => {
     if (!uid) {
       setLoading(false);
-      router.replace("/(auth)/login");
+      router.replace("/(auth)/welcome");
       return;
     }
     setLoading(true);
@@ -228,6 +256,35 @@ export default function ClosetScreen() {
     });
     return () => unsub();
   }, [uid]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!uid) {
+      setProfilePreferences(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void loadUserProfilePreferences(uid)
+      .then((profile) => {
+        if (!cancelled) setProfilePreferences(profile);
+      })
+      .catch(() => {
+        if (!cancelled) setProfilePreferences(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
+
+  const styleProfile = useMemo(
+    () => getStyleProfileConfig(profilePreferences),
+    [profilePreferences]
+  );
+  const categoryOrder = useMemo(
+    () => styleProfile.categoryOrder as CategoryKey[],
+    [styleProfile.categoryOrder]
+  );
 
   const brandOptions = useMemo(() => {
     const values = Array.from(
@@ -269,7 +326,10 @@ export default function ClosetScreen() {
     );
   }, [brandFilter, categoryFilter, colorFilter, items, search, sortMode, statusFilter]);
 
-  const sections = useMemo(() => buildSections(filteredItems), [filteredItems]);
+  const sections = useMemo(
+    () => buildSections(filteredItems, categoryOrder, styleProfile.emphasizedSubcategories),
+    [categoryOrder, filteredItems, styleProfile.emphasizedSubcategories]
+  );
   const visibleCount = filteredItems.length;
 
   return (
@@ -369,7 +429,7 @@ export default function ClosetScreen() {
         colorFilter={colorFilter}
         sortOptions={SORT_OPTIONS}
         statusOptions={STATUS_OPTIONS}
-        categoryOptions={[{ key: "ALL", label: "All categories" }, ...CATEGORY_ORDER.map((key) => ({ key, label: CATEGORY_LABELS[key] }))]}
+        categoryOptions={[{ key: "ALL", label: "All categories" }, ...categoryOrder.map((key) => ({ key, label: CATEGORY_LABELS[key] }))]}
         brandOptions={brandOptions}
         colorOptions={colorOptions}
         onChangeSort={setSortMode}

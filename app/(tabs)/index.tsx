@@ -27,8 +27,11 @@ import { buildVisiblePreferenceHint, loadAssistantProfile } from "@/src/lib/assi
 import { loadChatMessages, loadLatestChatThread, type AIChatThread } from "@/src/lib/aiChats";
 import { auraLookToPlannedOutfit, loadLatestSavedAuraLook, saveAuraLook } from "@/src/lib/auraLooks";
 import { listenToItems } from "@/src/lib/items";
+import { getStyleProfileConfig } from "@/src/lib/styleProfile";
+import { loadUserProfilePreferences } from "@/src/lib/userProfile";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLookAction, AuraResponse } from "@/src/types/aura";
+import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 import { savePlannedRecord, subscribeOutfitByDate, type DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
 function toMillis(value: unknown): number {
@@ -90,10 +93,11 @@ export default function HomeScreen() {
   const [latestChatThread, setLatestChatThread] = useState<AIChatThread | null>(null);
   const [latestAuraLookResponse, setLatestAuraLookResponse] = useState<AuraResponse | null>(null);
   const [latestSavedLook, setLatestSavedLook] = useState<import("@/src/lib/auraLooks").SavedAuraLookRecord | null>(null);
+  const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
 
   useEffect(() => {
     if (!uid) {
-      router.replace("/(auth)/login");
+      router.replace("/(auth)/welcome");
       return;
     }
 
@@ -143,15 +147,17 @@ export default function HomeScreen() {
           return;
         }
         try {
-          const [profile, latestChat, savedLook] = await Promise.all([
+          const [assistantProfile, latestChat, savedLook, userProfilePreferences] = await Promise.all([
             loadAssistantProfile(uid),
             loadLatestChatThread(uid),
             loadLatestSavedAuraLook(uid),
+            loadUserProfilePreferences(uid),
           ]);
           if (!active) return;
-          setAssistantHint(buildVisiblePreferenceHint(profile));
+          setAssistantHint(buildVisiblePreferenceHint(assistantProfile));
           setLatestChatThread(latestChat);
           setLatestSavedLook(savedLook);
+          setProfilePreferences(userProfilePreferences);
           if (latestChat?.chatId) {
             const chatMessages = await loadChatMessages(uid, latestChat.chatId);
             if (!active) return;
@@ -168,6 +174,7 @@ export default function HomeScreen() {
           setLatestChatThread(null);
           setLatestAuraLookResponse(null);
           setLatestSavedLook(null);
+          setProfilePreferences(null);
         }
       })();
       return () => {
@@ -177,8 +184,17 @@ export default function HomeScreen() {
   );
 
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const styleProfile = useMemo(
+    () => getStyleProfileConfig(profilePreferences),
+    [profilePreferences]
+  );
 
-  const displayName = (user?.displayName ?? user?.email?.split("@")[0] ?? "there").trim();
+  const displayName = (
+    profilePreferences?.firstName ??
+    user?.displayName ??
+    user?.email?.split("@")[0] ??
+    "there"
+  ).trim();
   const headerGreeting = `${greeting}, ${displayName}`;
 
   const weatherLabel = useMemo(() => {
@@ -203,7 +219,8 @@ export default function HomeScreen() {
   const unwornCount = useMemo(
     () =>
       items.filter((item) => {
-        const wearCount = typeof item.wearCount === "number" ? item.wearCount : 0;
+        const wearCount =
+          typeof item.wearCountSinceWash === "number" ? item.wearCountSinceWash : 0;
         return item.status === "AVAILABLE" && wearCount === 0;
       }).length,
     [items]
@@ -213,8 +230,16 @@ export default function HomeScreen() {
     () =>
       [...items]
         .sort((a, b) => {
-          const aMs = Math.max(toMillis(a.updatedAt), toMillis(a.createdAt));
-          const bMs = Math.max(toMillis(b.updatedAt), toMillis(b.createdAt));
+          const aMs = Math.max(
+            toMillis(a.createdAt),
+            toMillis(a.cleanedUpdatedAt),
+            toMillis(a.colorUpdatedAt)
+          );
+          const bMs = Math.max(
+            toMillis(b.createdAt),
+            toMillis(b.cleanedUpdatedAt),
+            toMillis(b.colorUpdatedAt)
+          );
           return bMs - aMs;
         })
         .slice(0, 8),
@@ -224,6 +249,16 @@ export default function HomeScreen() {
   const hasMinimalWardrobe = availableCount < 4;
   const latestLook = latestAuraLookResponse?.look ?? latestSavedLook?.look ?? null;
   const proactiveLookMeta = useMemo(() => {
+    const leansDressy = styleProfile.recommendationEmphasis.some((value) =>
+      ["date_night", "going_out", "dress_styling"].includes(value)
+    );
+    const leansCasual = styleProfile.recommendationEmphasis.some((value) =>
+      ["casual_everyday", "streetwear", "weekend"].includes(value)
+    );
+    const leansTailored = styleProfile.recommendationEmphasis.some((value) =>
+      ["smart_casual", "office", "formal"].includes(value)
+    );
+
     if (latestAuraLookResponse?.look) {
       return {
         eyebrow: latestAuraLookResponse.look.addToComplete.length ? "COMPLETE THE LOOK" : "BUILT FROM YOUR WARDROBE",
@@ -282,6 +317,33 @@ export default function HomeScreen() {
         secondaryPrompt: "What should I buy first to unlock stronger outfits?",
       };
     }
+    if (leansDressy) {
+      return {
+        eyebrow: "GOOD FOR TONIGHT",
+        fallbackTitle: "A polished night direction",
+        fallbackBody: "AURA can build around the dressier side of your wardrobe and still keep it closet-first.",
+        primaryPrompt: "Plan a date-night or going-out look using the categories I actually wear.",
+        secondaryPrompt: "Style a sharper evening outfit from my wardrobe.",
+      };
+    }
+    if (leansTailored) {
+      return {
+        eyebrow: "SMARTER EVERYDAY",
+        fallbackTitle: "Pulled together and sharp",
+        fallbackBody: "AURA can lean into blazers, trousers, and cleaner layers for a more polished daily direction.",
+        primaryPrompt: "Build a smart casual or office-ready outfit using the categories I wear most.",
+        secondaryPrompt: "Show a sharper version that still feels easy.",
+      };
+    }
+    if (leansCasual) {
+      return {
+        eyebrow: "BUILT FOR EVERYDAY",
+        fallbackTitle: "Easy and lived-in",
+        fallbackBody: "AURA can lean into your casual rotation and keep it intentional without overcomplicating it.",
+        primaryPrompt: "Build a casual everyday look using the categories I wear most.",
+        secondaryPrompt: "Give it a streetwear edge using only my closet.",
+      };
+    }
     return {
       eyebrow: "GOOD FOR TONIGHT",
       fallbackTitle: "A sharper direction",
@@ -293,22 +355,131 @@ export default function HomeScreen() {
     hasMinimalWardrobe,
     latestAuraLookResponse?.look,
     latestSavedLook,
+    styleProfile.recommendationEmphasis,
     unwornCount,
     weather.permission,
     weather.state,
     weather.tempC,
   ]);
 
-  const starterPrompts = useMemo<QuickActionItem[]>(
-    () => [
-      { key: "today", label: "Build today’s look", prompt: "Build an outfit for today from my wardrobe." },
-      { key: "weather", label: "Dress for weather", prompt: "Build me a weather-aware outfit using what I own." },
-      { key: "unworn", label: "Use unworn items", prompt: "Create a look using pieces I have not worn much." },
-      { key: "trip", label: "Pack a trip", prompt: "Help me plan a compact travel wardrobe from my closet." },
-      { key: "elevate", label: "Dress this up", prompt: "Elevate one of my casual outfits into something sharper." },
-    ],
-    []
-  );
+  const starterPrompts = useMemo<QuickActionItem[]>(() => {
+    const byKey: Record<string, QuickActionItem> = {
+      today: {
+        key: "today",
+        label: "Style me today",
+        prompt: "Build an outfit for today from my wardrobe.",
+      },
+      weather: {
+        key: "weather",
+        label: "Dress for weather",
+        prompt: "Build me a weather-aware outfit using what I own.",
+      },
+      unworn: {
+        key: "unworn",
+        label: "Use unworn items",
+        prompt: "Create a look using pieces I have not worn much.",
+      },
+      closet: {
+        key: "closet",
+        label: "Use only my closet",
+        prompt: "Build a strong outfit using only my closet.",
+      },
+      elevate: {
+        key: "elevate",
+        label: "Dress this up",
+        prompt: "Elevate one of my casual outfits into something sharper.",
+      },
+      shopping: {
+        key: "shopping",
+        label: "Find key gaps",
+        prompt: "Review my wardrobe and suggest the smartest missing pieces to buy next.",
+      },
+      packing: {
+        key: "packing",
+        label: "Pack a trip",
+        prompt: "Help me plan a compact travel wardrobe from my closet.",
+      },
+      confidence: {
+        key: "confidence",
+        label: "Build confidence",
+        prompt: "Give me an easy, confidence-boosting outfit from my wardrobe.",
+      },
+      accessories: {
+        key: "accessories",
+        label: "Push accessories",
+        prompt: `Build an outfit that leans into ${styleProfile.emphasizedAccessories.slice(0, 2).join(" and ") || "my accessories"}.`,
+      },
+      date_night: {
+        key: "date_night",
+        label: "Date night",
+        prompt: "Build a date-night look using the categories I actually wear.",
+      },
+      dress_up: {
+        key: "dress_up",
+        label: "Going out",
+        prompt: "Style a more elevated going-out outfit from my wardrobe.",
+      },
+      streetwear: {
+        key: "streetwear",
+        label: "More street",
+        prompt: "Build a streetwear-leaning look using hoodies, sneakers, and other categories I wear most.",
+      },
+      casual: {
+        key: "casual",
+        label: "Casual clean",
+        prompt: "Build an easy casual outfit using the categories I actually wear most.",
+      },
+      office: {
+        key: "office",
+        label: "Office ready",
+        prompt: "Build a smart office-ready outfit using blazers, trousers, and other categories I wear.",
+      },
+      smart_casual: {
+        key: "smart_casual",
+        label: "Smart casual",
+        prompt: "Build a smart casual outfit that feels polished but wearable.",
+      },
+    };
+
+    const goalOrder = styleProfile.prioritizedGoals.flatMap((goal) => {
+      if (goal === "shopping_suggestions") return ["shopping", "today"];
+      if (goal === "packing_help") return ["packing", "weather"];
+      if (goal === "laundry_reminders") return ["closet", "unworn"];
+      if (goal === "styling_confidence") return ["confidence", "today"];
+      return ["today", "elevate"];
+    });
+
+    const aestheticOrder = profilePreferences?.styleAesthetics.includes("luxury")
+      ? ["elevate", "shopping"]
+      : profilePreferences?.styleAesthetics.includes("sporty")
+        ? ["weather", "closet"]
+        : profilePreferences?.styleAesthetics.includes("minimal")
+          ? ["closet", "today"]
+          : [];
+
+    const orderedKeys = Array.from(
+      new Set([
+        ...styleProfile.starterPromptPresets,
+        ...goalOrder,
+        ...aestheticOrder,
+        "today",
+        "weather",
+        "closet",
+        "elevate",
+        styleProfile.emphasizedAccessories.length ? "accessories" : "",
+        "packing",
+        "shopping",
+        "unworn",
+      ].filter(Boolean))
+    ).slice(0, 5);
+
+    return orderedKeys.map((key) => byKey[key]).filter(Boolean);
+  }, [
+    profilePreferences?.styleAesthetics,
+    styleProfile.emphasizedAccessories,
+    styleProfile.prioritizedGoals,
+    styleProfile.starterPromptPresets,
+  ]);
 
   const openAIWithPrompt = React.useCallback((prompt?: string) => {
     if (prompt) {

@@ -12,6 +12,12 @@ type WardrobeItem = {
   status?: string;
   inLaundry?: boolean;
   isDraft?: boolean;
+  photoUrl?: string | null;
+  images?: {
+    originalUrl?: string | null;
+    cleanedUrl?: string | null;
+    isPrimary?: boolean;
+  }[] | null;
 };
 
 type AuraContextArgs = {
@@ -177,6 +183,16 @@ export function buildAuraContext({
       type: String(item.type ?? "").trim(),
       color: pickColor(item),
       status: String(item.status ?? "").trim(),
+      primaryImageUrl:
+        String(
+          item.images?.find((image) => image?.isPrimary)?.cleanedUrl ??
+            item.images?.find((image) => image?.isPrimary)?.originalUrl ??
+            item.images?.[0]?.cleanedUrl ??
+            item.images?.[0]?.originalUrl ??
+            item.photoUrl ??
+            "",
+        ).trim(),
+      imageCount: String(Array.isArray(item.images) ? item.images.length : 0),
     };
 
     if (item.isDraft) {
