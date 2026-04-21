@@ -22,6 +22,7 @@ export type ItemSort = "NEWEST" | "MOST_WORN";
 export type StatusFilter = "ALL" | ClothingStatus;
 export type CanonicalCategory =
   | "top"
+  | "one_piece"
   | "bottom"
   | "shoes"
   | "outerwear"
@@ -29,6 +30,7 @@ export type CanonicalCategory =
 export type CategoryFilter =
   | "ALL"
   | "TOP"
+  | "ONE_PIECE"
   | "BOTTOM"
   | "SHOES"
   | "OUTERWEAR"
@@ -39,6 +41,7 @@ export type DraftState = "draft" | "photo_uploaded" | "ingesting" | "ready" | "f
 
 const CATEGORY_MAP: Record<Exclude<CategoryFilter, "ALL">, string[]> = {
   TOP: ["top"],
+  ONE_PIECE: ["one_piece"],
   BOTTOM: ["bottom"],
   SHOES: ["shoes"],
   OUTERWEAR: ["outerwear"],
@@ -113,6 +116,19 @@ export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
 
   if (
     [
+      "one_piece",
+      "dress",
+      "jumpsuit",
+      "romper",
+      "set",
+      "matching_set",
+    ].includes(v)
+  ) {
+    return "one_piece";
+  }
+
+  if (
+    [
       "top",
       "tshirt",
       "t-shirt",
@@ -120,22 +136,22 @@ export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
       "tee",
       "polo",
       "sweater",
-      "one_piece",
-      "jumpsuit",
-      "set",
+      "blouse",
+      "crop_top",
+      "tank",
     ].includes(v)
   ) {
     return "top";
   }
 
   if (
-    ["bottom", "pants", "trousers", "jeans", "shorts", "joggers"].includes(v)
+    ["bottom", "pants", "trousers", "jeans", "shorts", "joggers", "skirt"].includes(v)
   ) {
     return "bottom";
   }
 
   if (
-    ["shoes", "footwear", "sneakers", "sneaker", "boots", "slides", "sandal", "loafer"].includes(
+    ["shoes", "footwear", "sneakers", "sneaker", "boots", "slides", "sandal", "loafer", "heel"].includes(
       v
     )
   ) {
@@ -155,6 +171,14 @@ export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
       "watch",
       "sunglasses",
       "belt",
+      "handbag",
+      "bag",
+      "necklace",
+      "bracelet",
+      "ring",
+      "earrings",
+      "scarf",
+      "perfume",
     ].includes(v)
   ) {
     return "accessory";

@@ -26,6 +26,13 @@ export type ClothingPattern =
 
 export type ClothingItem = {
   id: string;
+  images?: {
+    originalUrl: string;
+    cleanedUrl?: string | null;
+    isPrimary: boolean;
+  }[] | null;
+  originalImageUrl?: string | null;
+  cleanedImageUrl?: string | null;
 
   // core
   brand: string;
@@ -35,6 +42,7 @@ export type ClothingItem = {
   wearSlot?: "core" | "accessory";
   pattern?: ClothingPattern;
   material?: string;
+  materialConfidence?: number | null;
   style?: string | null;
   formality?: AllowedFormality | null;
   warmth?: AllowedWarmth | null;
@@ -57,6 +65,11 @@ export type ClothingItem = {
   photos?: {
     originalUrl?: string | null;
     primaryUrl?: string | null;
+    images?: {
+      originalUrl?: string | null;
+      cleanedUrl?: string | null;
+      isPrimary?: boolean;
+    }[] | null;
     normalizedUrl?: string | null;
     previewUrl?: string | null;
     urls?: string[];
@@ -84,7 +97,12 @@ export type ClothingItem = {
   pixelColors?: string[];
   pixelColorHex?: string;
   colorConfidence?: number;
+  confidenceSummary?: {
+    overall: number;
+    notes: string;
+  } | null;
   colorNeedsReview?: boolean;
+  detailTags?: string[] | null;
   crop?: { x: number; y: number; w: number; h: number; source: "ai" };
   cleanedUpdatedAt?: number;
   aiDebug?: {
