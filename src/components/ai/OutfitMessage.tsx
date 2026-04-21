@@ -3,7 +3,7 @@ import React from "react";
 import { Image, Pressable, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
-import { getItemImageUrl } from "@/src/lib/itemImage";
+import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
@@ -114,6 +114,11 @@ export default function OutfitMessage({
           const imageUri = getItemImageUrl(item, { variant: "thumb" });
           return (
             <View key={`${outfit.id}-${slot}-${item.id}`} style={{ flex: 1, minWidth: 0, gap: 10 }}>
+              {(() => {
+                const imagePresentation = getItemImagePresentation(item, {
+                  surface: "ai_outfit",
+                });
+                return (
               <View
                 style={{
                   borderRadius: 20,
@@ -121,7 +126,7 @@ export default function OutfitMessage({
                   backgroundColor: "rgba(255,255,255,0.04)",
                   borderWidth: 1,
                   borderColor: "rgba(255,255,255,0.06)",
-                  aspectRatio: 0.84,
+                  aspectRatio: imagePresentation.containerAspectRatio,
                   justifyContent: "center",
                   alignItems: "center",
                 }}
@@ -129,8 +134,11 @@ export default function OutfitMessage({
                 {imageUri ? (
                   <Image
                     source={{ uri: imageUri }}
-                    resizeMode="contain"
-                    style={{ width: "100%", height: "100%", borderRadius: 14 }}
+                    resizeMode={imagePresentation.resizeMode}
+                    style={[
+                      { width: "100%", height: "100%", borderRadius: 14 },
+                      imagePresentation.imageStyle,
+                    ]}
                   />
                 ) : (
                   <View
@@ -143,6 +151,8 @@ export default function OutfitMessage({
                   />
                 )}
               </View>
+                );
+              })()}
               <View style={{ gap: 3 }}>
                 <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: "700", letterSpacing: 0.7 }} numberOfLines={1} ellipsizeMode="tail">
                   {slotLabel(slot)}

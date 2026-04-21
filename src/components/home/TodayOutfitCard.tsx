@@ -3,7 +3,7 @@ import { Image, Pressable, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { getItemImageUrl } from "@/src/lib/itemImage";
+import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
@@ -72,6 +72,9 @@ export default function TodayOutfitCard({
           {slots.map((slot) => {
             const item = itemForSlot(record, itemsById, slot);
             const imageUri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+            const imagePresentation = getItemImagePresentation(item, {
+              surface: "home_today",
+            });
             return (
               <View key={slot} style={{ flex: 1, gap: 6 }}>
                 <View
@@ -87,7 +90,11 @@ export default function TodayOutfitCard({
                   }}
                 >
                   {imageUri ? (
-                    <Image source={{ uri: imageUri }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
+                    <Image
+                      source={{ uri: imageUri }}
+                      style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
+                      resizeMode={imagePresentation.resizeMode}
+                    />
                   ) : null}
                 </View>
                 <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "700", textAlign: "center" }}>

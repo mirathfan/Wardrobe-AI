@@ -3,7 +3,7 @@ import { Image, Pressable, ScrollView, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { getItemImageUrl } from "@/src/lib/itemImage";
+import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 function itemTitle(item: ClothingItem) {
@@ -35,6 +35,9 @@ export default function ContinueSection({
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 8 }}>
         {items.map((item) => {
           const imageUri = getItemImageUrl(item, { variant: "thumb" });
+          const imagePresentation = getItemImagePresentation(item, {
+            surface: "home_continue",
+          });
           return (
             <Pressable
               key={item.id}
@@ -51,15 +54,20 @@ export default function ContinueSection({
             >
               <View
                 style={{
-                  height: layout.continueCardWidth - 20,
+                  height: (layout.continueCardWidth - 20) / imagePresentation.containerAspectRatio,
                   backgroundColor: colors.surface,
                   alignItems: "center",
                   justifyContent: "center",
-                  padding: 12,
+                  paddingHorizontal: 8,
+                  paddingVertical: 6,
                 }}
               >
                 {imageUri ? (
-                  <Image source={{ uri: imageUri }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
+                  <Image
+                    source={{ uri: imageUri }}
+                    style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
+                    resizeMode={imagePresentation.resizeMode}
+                  />
                 ) : (
                   <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>No image</Text>
                 )}
