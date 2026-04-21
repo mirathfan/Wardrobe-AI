@@ -246,7 +246,7 @@ export default function AIScreen() {
 
       setIsBooting(true);
 
-      const cached = await loadLatestChatCache<AIMessage>();
+      const cached = await loadLatestChatCache<AIMessage>(uid);
       if (!cancelled && cached?.messages?.length) {
         setMessages(cached.messages);
         setActiveChatId(cached.chatId ?? null);
@@ -264,7 +264,7 @@ export default function AIScreen() {
             setActiveChatId(routeChatId);
             setQuickChips(DEFAULT_CHIPS);
             setRecentThreads(recent);
-            await saveLatestChatCache(routeChatId, null, threadMessages);
+            await saveLatestChatCache(uid, routeChatId, null, threadMessages);
           }
           return;
         }
@@ -276,7 +276,7 @@ export default function AIScreen() {
           setMessages(threadMessages);
           setActiveChatId(latestThread.chatId);
           setRecentThreads(recent);
-          await saveLatestChatCache(latestThread.chatId, latestThread.threadId, threadMessages);
+          await saveLatestChatCache(uid, latestThread.chatId, latestThread.threadId, threadMessages);
         } else if (!cancelled) {
           setRecentThreads(recent);
         }
@@ -296,8 +296,8 @@ export default function AIScreen() {
 
   useEffect(() => {
     if (isBooting) return;
-    void saveLatestChatCache(activeChatId, null, messages);
-  }, [activeChatId, isBooting, messages]);
+    void saveLatestChatCache(uid, activeChatId, null, messages);
+  }, [activeChatId, isBooting, messages, uid]);
 
   useEffect(() => {
     const updateKeyboardHeight = (event: KeyboardEvent) => {
@@ -623,7 +623,7 @@ export default function AIScreen() {
                         const threadMessages = await loadChatMessages(uid, thread.chatId);
                         setMessages(threadMessages);
                         setActiveChatId(thread.chatId);
-                        await saveLatestChatCache(thread.chatId, thread.threadId, threadMessages);
+                        await saveLatestChatCache(uid, thread.chatId, thread.threadId, threadMessages);
                       },
                     })),
                     { text: "Cancel", style: "cancel" as const },
@@ -737,7 +737,9 @@ export default function AIScreen() {
                 setMessages([]);
                 setActiveChatId(null);
                 setQuickChips(DEFAULT_CHIPS);
-                void clearLatestChatCache();
+                if (uid) {
+                  void clearLatestChatCache(uid);
+                }
               }}
               style={({ pressed }) => ({
                 width: 52,
