@@ -6,6 +6,7 @@ type UploadItemPhotoParams = {
   uid: string;
   itemId: string;
   localUri: string;
+  imageId?: string;
   cleanedLocalUri?: string | null;
   normalizedLocalUri?: string | null;
   originalWidth?: number | null;
@@ -62,6 +63,7 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     uid,
     itemId,
     localUri,
+    imageId = "",
     cleanedLocalUri = null,
     normalizedLocalUri = null,
     originalWidth = null,
@@ -77,7 +79,8 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
   });
   const primaryBlob = await blobFromFileUri(processedUri);
 
-  const storagePath = `users/${uid}/items/${itemId}.jpg`;
+  const suffix = imageId ? `/${imageId}` : "";
+  const storagePath = `users/${uid}/items/${itemId}${suffix}.jpg`;
   const fileRef = ref(storage, storagePath);
   await uploadBytes(fileRef, primaryBlob, {
     contentType: "image/jpeg",
@@ -90,7 +93,7 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
   let cleanedUrl: string | null = null;
   if (cleanedCandidateUri) {
     const cleanedBlob = await blobFromFileUri(cleanedCandidateUri);
-    const cleanedPath = `users/${uid}/items/${itemId}.cleaned.png`;
+    const cleanedPath = `users/${uid}/items/${itemId}${suffix}.cleaned.png`;
     const cleanedRef = ref(storage, cleanedPath);
     await uploadBytes(cleanedRef, cleanedBlob, {
       contentType: "image/png",
@@ -101,7 +104,7 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
   let normalizedUrl: string | null = null;
   if (normalizedLocalUri) {
     const normalizedBlob = await blobFromFileUri(normalizedLocalUri);
-    const normalizedPath = `users/${uid}/items/${itemId}.normalized.png`;
+    const normalizedPath = `users/${uid}/items/${itemId}${suffix}.normalized.png`;
     const normalizedRef = ref(storage, normalizedPath);
     await uploadBytes(normalizedRef, normalizedBlob, {
       contentType: "image/png",
@@ -115,5 +118,13 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     cleanedUrl,
     normalizedUrl,
     cleanedSource: cleanedUrl ? "vision" : null,
+    imageUrls: [primaryUrl],
+    images: [
+      {
+        originalUrl: primaryUrl,
+        ...(cleanedUrl ? { cleanedUrl } : {}),
+        isPrimary: true,
+      },
+    ],
   };
 }

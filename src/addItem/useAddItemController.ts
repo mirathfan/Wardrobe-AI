@@ -330,6 +330,7 @@ export function useAddItemController({
   const hasPhoto = useMemo(
     () =>
       !!(
+        photo.state.selectedPhotos?.length ||
         photo.state.pendingCleanedPhotoUri ||
         photo.state.pendingPhotoUri ||
         photo.state.photoUri ||
@@ -339,6 +340,7 @@ export function useAddItemController({
       ),
     [
       photo.state.cleanedPhotoUrl,
+      photo.state.selectedPhotos,
       photo.state.pendingCleanedPhotoUri,
       photo.state.pendingPhotoUri,
       photo.state.photoUri,
@@ -666,6 +668,7 @@ export function useAddItemController({
     rowKeys,
     touched,
     isDirty:
+      (photo.state.selectedPhotos?.length ?? 0) > 0 ||
       !!photo.state.pendingPhotoUri ||
       !!draft.state.brand ||
       !!draft.state.name ||

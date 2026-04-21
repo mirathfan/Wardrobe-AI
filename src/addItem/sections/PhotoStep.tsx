@@ -1,5 +1,5 @@
 import React from "react";
-import { Alert, Pressable, Text, View } from "react-native";
+import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
 import { PhotoEditorSection } from "../../components/PhotoEditorSection";
 import { makeDevThrottleLogger } from "../devPerf";
 import { SectionCard } from "../ui/SectionCard";
@@ -167,6 +167,132 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
         onAdjust={() => {}}
         onRotate={() => Alert.alert("Coming soon", "Rotate is coming soon.")}
       />
+      {state.selectedPhotos?.length ? (
+        <View style={{ gap: 10, marginTop: 10 }}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <Text style={{ color: "#111", fontSize: 14, fontWeight: "800" }}>
+              Item photos
+            </Text>
+            <Text style={{ color: "#666", fontSize: 12 }}>
+              Mark a primary image and reorder before save
+            </Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              {state.selectedPhotos.map((entry: any, index: number) => {
+                const previewUri =
+                  entry.normalizedLocalUri ??
+                  entry.cleanedLocalUri ??
+                  entry.localUri ??
+                  null;
+                const isPrimary = state.primaryPhotoId === entry.id;
+                return (
+                  <View
+                    key={entry.id}
+                    style={{
+                      width: 118,
+                      gap: 8,
+                    }}
+                  >
+                    <Pressable
+                      onPress={() => actions.setPrimaryPhoto(entry.id)}
+                      style={{
+                        borderRadius: 16,
+                        borderWidth: 2,
+                        borderColor: isPrimary ? "#111" : "rgba(17,17,17,0.12)",
+                        overflow: "hidden",
+                        backgroundColor: "#f3f4f6",
+                      }}
+                    >
+                      {previewUri ? (
+                        <Image
+                          source={{ uri: previewUri }}
+                          style={{ width: "100%", height: 132 }}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <View style={{ width: "100%", height: 132, backgroundColor: "#f3f4f6" }} />
+                      )}
+                    </Pressable>
+                    <View style={{ gap: 6 }}>
+                      <Pressable
+                        onPress={() => actions.setPrimaryPhoto(entry.id)}
+                        style={[
+                          controller.styles.btnSecondary,
+                          {
+                            paddingVertical: 8,
+                            backgroundColor: isPrimary ? "#111" : "#fff",
+                            borderColor: isPrimary ? "#111" : "rgba(17,17,17,0.12)",
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            controller.styles.btnSecondaryText,
+                            { color: isPrimary ? "#fff" : "#111", fontSize: 12 },
+                          ]}
+                        >
+                          {isPrimary ? "Primary" : "Make primary"}
+                        </Text>
+                      </Pressable>
+                      <View style={{ flexDirection: "row", gap: 6 }}>
+                        <Pressable
+                          onPress={() => actions.movePhotoLeft(entry.id)}
+                          disabled={index === 0}
+                          style={[controller.styles.btnSecondary, { flex: 1, opacity: index === 0 ? 0.4 : 1 }]}
+                        >
+                          <Text style={[controller.styles.btnSecondaryText, { fontSize: 12 }]}>Left</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => actions.movePhotoRight(entry.id)}
+                          disabled={index === state.selectedPhotos.length - 1}
+                          style={[
+                            controller.styles.btnSecondary,
+                            {
+                              flex: 1,
+                              opacity: index === state.selectedPhotos.length - 1 ? 0.4 : 1,
+                            },
+                          ]}
+                        >
+                          <Text style={[controller.styles.btnSecondaryText, { fontSize: 12 }]}>Right</Text>
+                        </Pressable>
+                      </View>
+                      <Pressable
+                        onPress={() => actions.removeSelectedPhoto(entry.id)}
+                        style={[controller.styles.btnSecondary, { borderColor: "#b91c1c" }]}
+                      >
+                        <Text style={[controller.styles.btnSecondaryText, { color: "#b91c1c", fontSize: 12 }]}>
+                          Remove
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable
+              onPress={() => void actions.pickPhoto("library")}
+              style={[controller.styles.btnSecondary, { flex: 1 }]}
+            >
+              <Text style={controller.styles.btnSecondaryText}>Add from library</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => void actions.pickPhoto("camera")}
+              style={[controller.styles.btnSecondary, { flex: 1 }]}
+            >
+              <Text style={controller.styles.btnSecondaryText}>Add from camera</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
       {!state.isEdit && state.ingestionStatus === "done" && state.lastAutofillSummary ? (
         <View style={controller.styles.inlineInfo}>
           <Text style={{ fontSize: 13, color: "#666" }}>

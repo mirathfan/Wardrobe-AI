@@ -26,6 +26,11 @@ if (!getApps().length) {
 type IngestionStatus = "pending" | "processing" | "done" | "failed";
 
 type ItemDoc = {
+  images?: {
+    originalUrl?: string | null;
+    cleanedUrl?: string | null;
+    isPrimary?: boolean;
+  }[] | null;
   brand?: string | null;
   name?: string | null;
   brandConfidence?: number;
@@ -55,8 +60,14 @@ type ItemDoc = {
   visualWeight?: string | null;
   versatilityScore?: number | null;
   photos?: {
+    originalUrl?: string | null;
     primaryUrl?: string | null;
     urls?: string[];
+    images?: {
+      originalUrl?: string | null;
+      cleanedUrl?: string | null;
+      isPrimary?: boolean;
+    }[];
     cleanedUrl?: string | null;
     cleanedPhotoUrl?: string | null;
     normalizedUrl?: string | null;
@@ -64,6 +75,8 @@ type ItemDoc = {
     thumbUrl?: string;
   };
   photoUrl?: string | null;
+  originalImageUrl?: string | null;
+  cleanedImageUrl?: string | null;
   photoUri?: string | null;
   colors?: string[];
   colorLabel?: string;
@@ -123,6 +136,7 @@ type RawExtraction = {
   displayColors?: string[] | null;
   pattern?: string;
   material?: string;
+  materialConfidence?: number;
   fit?:
     | "slim"
     | "regular"
@@ -184,6 +198,12 @@ type RawExtraction = {
     subCategory?: number;
     colors?: number;
     brand?: number;
+    material?: number;
+  };
+  detailTags?: string[];
+  confidenceSummary?: {
+    overall?: number;
+    notes?: string;
   };
   formalityScore?: number;
   warmthScore?: number;
@@ -332,9 +352,18 @@ function toMillis(value: LastRunAtValue): number | null {
 
 function extractPhotoUrls(item: ItemDoc): string[] {
   const values = [
+    ...(Array.isArray(item.images)
+      ? item.images.flatMap((image) => [image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      : []),
+    ...(Array.isArray(item.photos?.images)
+      ? item.photos.images.flatMap((image) => [image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      : []),
     item.photos?.cleanedUrl ?? "",
     item.photos?.cleanedPhotoUrl ?? "",
+    item.photos?.originalUrl ?? "",
     item.photos?.primaryUrl ?? "",
+    item.cleanedImageUrl ?? "",
+    item.originalImageUrl ?? "",
     item.photoUrl ?? "",
     item.photoUri ?? "",
     ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
@@ -355,10 +384,19 @@ function getIngestionStatus(item: ItemDoc | undefined): IngestionStatus | "" {
 
 function extractIngestionSourceUrls(item: ItemDoc): string[] {
   const values = [
+    ...(Array.isArray(item.images)
+      ? item.images.flatMap((image) => [image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      : []),
+    ...(Array.isArray(item.photos?.images)
+      ? item.photos.images.flatMap((image) => [image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      : []),
     item.photos?.cleanedUrl ?? "",
     item.photos?.cleanedPhotoUrl ?? "",
     item.photos?.normalizedUrl ?? "",
+    item.photos?.originalUrl ?? "",
     item.photos?.primaryUrl ?? "",
+    item.cleanedImageUrl ?? "",
+    item.originalImageUrl ?? "",
     item.photoUrl ?? "",
     item.photoUri ?? "",
     ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
@@ -659,6 +697,20 @@ function normalizeDisplayColors(values: unknown): string[] {
     if (!normalized || out.includes(normalized)) continue;
     out.push(normalized);
     if (out.length >= 4) break;
+  }
+  return out;
+}
+
+function normalizeDetailTags(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeFreeTextLabel(value, 24)
+      ?.toLowerCase()
+      .replace(/\s+/g, "_");
+    if (!normalized || out.includes(normalized)) continue;
+    out.push(normalized);
+    if (out.length >= 6) break;
   }
   return out;
 }
@@ -1056,7 +1108,7 @@ function safeJsonExtract(text: string): RawExtraction | null {
   }
 }
 
-async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
+async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not configured");
@@ -1076,9 +1128,9 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
         {
           role: "system",
           content: [
-            "You are a fashion catalog parser and wardrobe stylist. Analyze one clothing item from the image and output ONLY one JSON object matching the schema. No markdown. No prose. No extra keys.",
+            "You are a fashion catalog parser and wardrobe stylist. You are given multiple images of the same clothing item. Combine information across all images to determine the most accurate attributes and output ONLY one JSON object matching the schema. No markdown. No prose. No extra keys.",
             "Be visually grounded. Use only what is visible in the garment image. Prefer null over guessing when uncertain.",
-            "Schema keys only: category, subCategory, type, name, brand, brandConfidence, colors, primaryColor, displayColor, displayColors, pattern, material, fit, style, sleeveLength, neckline, closure, length, rise, legShape, hasLogo, logoPlacement, formality, warmth, layerRole, aestheticTags, occasionTags, seasonTags, visualWeight, versatilityScore, confidence.",
+            "Schema keys only: category, subCategory, type, name, brand, brandConfidence, colors, primaryColor, displayColor, displayColors, pattern, material, materialConfidence, fit, style, sleeveLength, neckline, closure, length, rise, legShape, hasLogo, logoPlacement, formality, warmth, layerRole, aestheticTags, occasionTags, seasonTags, visualWeight, versatilityScore, detailTags, confidenceSummary, confidence.",
             "HARD category disambiguation priority:",
             "1) If two leg openings, inseam, crotch seam, fly, waistband, belt loops, or drawstring at the waist are visible, category MUST be bottom.",
             "2) If collar or neckline plus sleeves are visible, category is top unless it is clearly open-front outerwear.",
@@ -1125,7 +1177,9 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
             {
               type: "text",
               text: [
-                "Analyze this garment photo.",
+                "Analyze these garment photos together as one item.",
+                "Use all images to improve brand, material, pattern, color, and visible-detail accuracy.",
+                "If the images conflict, choose the most consistent signal and lower confidence.",
                 "Prefer visible garment type and visible logo/text/tag only.",
                 "Use waistband/fly/two-leg cues to avoid misclassifying pants as tops.",
                 "If uncertain, return null instead of guessing.",
@@ -1134,10 +1188,10 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
                 "If a piece has multiple visible garment colors, include them and choose the main one as primaryColor.",
               ].join(" "),
             },
-            {
-              type: "image_url",
+            ...photoUrls.map((photoUrl) => ({
+              type: "image_url" as const,
               image_url: { url: photoUrl },
-            },
+            })),
           ],
         },
       ],
@@ -1152,7 +1206,7 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
   }
 
   const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: { message?: { content?: string } }[];
   };
 
   const content = data.choices?.[0]?.message?.content ?? "";
@@ -1397,8 +1451,30 @@ export const ingestItemFromPhotos = onDocumentWritten(
     );
 
     try {
-      const extracted = await extractWithOpenAI(photoUrls[0]);
+      const extracted = await extractWithOpenAI(photoUrls);
       let warning: string | null = null;
+      const storedImageCandidates: {
+        originalUrl?: string | null;
+        cleanedUrl?: string | null;
+        isPrimary?: boolean;
+      }[] = Array.isArray(after.images)
+        ? after.images
+        : Array.isArray(after.photos?.images)
+          ? after.photos.images
+          : photoUrls.map((url, index) => ({
+              originalUrl: url,
+              isPrimary: index === 0,
+            }));
+
+      const storedImages = storedImageCandidates
+        .map((image) => ({
+          originalUrl: String(image?.originalUrl ?? "").trim(),
+          ...(String(image?.cleanedUrl ?? "").trim()
+            ? { cleanedUrl: String(image?.cleanedUrl ?? "").trim() }
+            : {}),
+          isPrimary: Boolean(image?.isPrimary),
+        }))
+        .filter((image) => image.originalUrl);
 
       let category = normalizeCategory(extracted.category);
       let subCategory = normalizeSubCategory(extracted.subCategory);
@@ -1438,6 +1514,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
 
       const pattern = normalizePattern(extracted.pattern);
       const material = normalizeMaterial(extracted.material);
+      const materialConfidence = clamp01(
+        extracted.materialConfidence ?? extracted.confidence?.material ?? 0,
+      );
       const fit = normalizeEnum(extracted.fit, ALLOWED_FITS);
       const style = normalizeEnum(extracted.style, ALLOWED_STYLES);
       const sleeveLength = normalizeEnum(
@@ -1543,6 +1622,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         extracted.confidence?.subCategory ?? 0,
       );
       const colorsConfidence = clamp01(extracted.confidence?.colors ?? 0);
+      const detailTags = normalizeDetailTags(extracted.detailTags);
       const { colors: aiColorsRaw, colorLabel } = normalizeColors(
         extracted.colors,
       );
@@ -1665,6 +1745,24 @@ export const ingestItemFromPhotos = onDocumentWritten(
       );
       let formalityScore = constrainedScores.formalityScore;
       let warmthScore = constrainedScores.warmthScore;
+      const confidenceOverall = Number(
+        (
+          (categoryConfidence +
+            subCategoryConfidence +
+            colorsConfidence +
+            brandConfidence +
+            materialConfidence) /
+          5
+        ).toFixed(3),
+      );
+      const confidenceSummary = {
+        overall: confidenceOverall,
+        notes:
+          normalizeFreeTextLabel(extracted.confidenceSummary?.notes, 180) ??
+          (photoUrls.length > 1
+            ? "Combined multiple images for a more reliable extraction."
+            : "Built from a single item image."),
+      };
 
       if (subCategory === "tshirt") {
         formalityScore = Math.min(formalityScore, 0.5);
@@ -1694,6 +1792,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
           wearSlot: wearSlot(category),
           pattern,
           material,
+          materialConfidence,
+          ...(detailTags.length > 0 ? { detailTags } : {}),
           fit,
           style,
           formality,
@@ -1716,6 +1816,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           photos: {
             primaryUrl: photoUrls[0],
             urls: photoUrls,
+            images: storedImages,
             croppedUrl,
             thumbUrl,
           },
@@ -1724,6 +1825,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
           finalPrimaryColor,
           finalDisplayColor,
           finalDisplayColors,
+          detailTags,
+          confidenceSummary,
           generatedName: inferredName,
           colorSource: hasUserColorOverride ? "user" : "ai",
           formalityScore,
@@ -1754,6 +1857,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           subCategory,
           type: itemType,
           colors: finalColors,
+          detailTags,
           brand:
             hasUserBrandOverride || shouldPreserveLegacyManualBrand
               ? (after.brand ?? null)
@@ -1780,6 +1884,17 @@ export const ingestItemFromPhotos = onDocumentWritten(
       await ref.set(
         {
           cleanedFromHash: currentSourceHash,
+          originalImageUrl:
+            storedImages.find((image) => image.isPrimary)?.originalUrl ??
+            storedImages[0]?.originalUrl ??
+            after.originalImageUrl ??
+            photoUrls[0],
+          cleanedImageUrl:
+            storedImages.find((image) => image.isPrimary)?.cleanedUrl ??
+            storedImages[0]?.cleanedUrl ??
+            after.cleanedImageUrl ??
+            null,
+          images: storedImages,
           ...(after.isDraft === true ? { draftState: "photo_uploaded" } : {}),
           ...(!String(after.name ?? "").trim() && inferredName
             ? { name: inferredName }
@@ -1790,6 +1905,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
           wearSlot: wearSlot(category),
           pattern,
           material,
+          materialConfidence,
+          ...(detailTags.length > 0 ? { detailTags } : {}),
+          confidenceSummary,
           fit,
           style,
           ...(formality ? { formality } : {}),
@@ -1864,6 +1982,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           photos: {
             primaryUrl: photoUrls[0],
             urls: photoUrls,
+            images: storedImages,
             croppedUrl,
             thumbUrl,
           },

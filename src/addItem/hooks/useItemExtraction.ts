@@ -705,7 +705,6 @@ export function useItemExtraction({
       }
     }
     const summaryCategory = norm(locked.category ?? finalCategoryCandidate ?? data?.category);
-    const summaryColors: string[] = locked.colors && locked.colors.length ? locked.colors : finalColors;
     const rawSummaryName = norm(data?.name);
     const displayColorForName =
       norm(String(data?.displayColor ?? "")) ||
@@ -738,7 +737,7 @@ export function useItemExtraction({
     if (summaryParts.length) {
       const summary = `AI found: ${summaryParts.join(" • ")}`;
       setLastAutofillSummary(summary);
-      if (effectiveStatus === "pending" || effectiveStatus === "processing") {
+      if (normalizedStatus === "pending" || normalizedStatus === "processing") {
         setAutofillStatusThrottled(summary);
       } else if (effectiveStatus === "done") {
         const doneBits = [summaryCategory].filter(Boolean).join(" • ");
@@ -753,7 +752,7 @@ export function useItemExtraction({
         }
       }
     }
-    if (!isPlaceholderDraftCategory || normalizedStatus === "done") {
+    if (!isPlaceholderDraftCategory || effectiveStatus === "done") {
       aiCommittedRef.current = {
         source: incomingSource,
         category: finalCategoryCandidate,
@@ -844,7 +843,6 @@ export function useItemExtraction({
       if (!uid || isEdit) return;
       const runId = params.runId ?? aiRunIdRef.current;
       if (runId !== aiRunIdRef.current) return;
-      let failingStep = "upload";
       try {
         const {
           photoHash,
@@ -924,10 +922,12 @@ export function useItemExtraction({
         const now = Date.now();
         const nextCleanedPhotoUrl = uploaded.cleanedUrl;
         const nextNormalizedPhotoUrl = uploaded.normalizedUrl;
-        failingStep = "create";
         const draftPayload = {
           photoUrl: uploaded.primaryUrl,
           photoUri: null,
+          originalImageUrl: uploaded.originalUrl,
+          cleanedImageUrl: uploaded.cleanedUrl,
+          images: uploaded.images,
           createdAt: now,
           updatedAt: now,
           status: "AVAILABLE",
@@ -953,7 +953,8 @@ export function useItemExtraction({
           photos: {
             originalUrl: uploaded.originalUrl,
             primaryUrl: uploaded.primaryUrl,
-            urls: [uploaded.primaryUrl],
+            urls: uploaded.imageUrls,
+            images: uploaded.images,
             ...(nextCleanedPhotoUrl
               ? {
                   cleanedUrl: nextCleanedPhotoUrl,
@@ -989,6 +990,7 @@ export function useItemExtraction({
         photo.actions.setServerCleanedUrl(nextCleanedPhotoUrl);
         photo.actions.setPendingNormalizedPreviewUri?.(nextNormalizedPhotoUrl ?? null);
         photo.actions.setUploadedPhotoRecord?.({
+          imageId: "primary",
           itemId: draftRef.id,
           photoHash,
           originalUrl: uploaded.originalUrl,

@@ -357,10 +357,11 @@ export function useItemDraft({
       extractionIngestionStatus !== "done";
     const b = cleanBrandInput(brand);
     const n = norm(name);
-    const hasAtLeastOnePhoto = !!(
-      photo.state.pendingPhotoUri ||
-      photo.state.photoUrl ||
-      photo.state.photoUri
+      const hasAtLeastOnePhoto = !!(
+        (photo.state.selectedPhotos?.length ?? 0) > 0 ||
+        photo.state.pendingPhotoUri ||
+        photo.state.photoUrl ||
+        photo.state.photoUri
     );
 
     try {
@@ -429,13 +430,17 @@ export function useItemDraft({
         ...payloadBase,
         photoUrl: nextPhoto.photoUrl,
         photoUri: nextPhoto.photoUri,
+        originalImageUrl: nextPhoto.originalUrl ?? nextPhoto.photoUrl,
+        cleanedImageUrl: nextPhoto.cleanedUrl,
+        images: nextPhoto.images,
       };
       if (isEdit) {
         const updatePayload: Record<string, any> = {
           ...payload,
           "photos.originalUrl": nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           "photos.primaryUrl": nextPhoto.photoUrl,
-          "photos.urls": nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
+          "photos.urls": nextPhoto.imageUrls,
+          "photos.images": nextPhoto.images,
           draftState: "ready",
           ...(photo.state.pendingPhotoUri && canKickoffIngestion
             ? {
@@ -467,7 +472,8 @@ export function useItemDraft({
           ...payload,
           "photos.originalUrl": nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           "photos.primaryUrl": nextPhoto.photoUrl,
-          "photos.urls": nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
+          "photos.urls": nextPhoto.imageUrls,
+          "photos.images": nextPhoto.images,
           isDraft: false,
           draftState: "ready",
           updatedAt: Date.now(),
@@ -516,7 +522,8 @@ export function useItemDraft({
         photos: {
           originalUrl: nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           primaryUrl: nextPhoto.photoUrl,
-          urls: nextPhoto.photoUrl ? [nextPhoto.photoUrl] : [],
+          urls: nextPhoto.imageUrls,
+          images: nextPhoto.images,
           ...(nextPhoto.cleanedUrl
             ? {
                 cleanedUrl: nextPhoto.cleanedUrl,
