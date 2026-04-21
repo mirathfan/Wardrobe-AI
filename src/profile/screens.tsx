@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { signOut } from "firebase/auth";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -65,6 +65,16 @@ const SHOE_SIZE_OPTIONS = {
   UK: ["UK 4", "UK 4.5", "UK 5", "UK 5.5", "UK 6", "UK 6.5", "UK 7", "UK 7.5", "UK 8", "UK 8.5", "UK 9", "UK 9.5", "UK 10", "UK 11", "UK 12"],
   EU: ["EU 38", "EU 39", "EU 40", "EU 41", "EU 42", "EU 43", "EU 44", "EU 45", "EU 46", "EU 47"],
 } as const;
+
+const TOP_FIT_OPTIONS = ["slim", "regular", "relaxed", "oversized"] as const;
+const OUTERWEAR_FIT_OPTIONS = ["slim", "regular", "roomy"] as const;
+const BOTTOM_RISE_OPTIONS = ["low", "mid", "high"] as const;
+const BOTTOM_LEG_OPTIONS = ["skinny", "slim", "straight", "tapered", "wide"] as const;
+const SHOE_FIT_OPTIONS = ["true_to_size", "half_up", "half_down"] as const;
+const LENGTH_UNIT_OPTIONS = ["cm", "in"] as const;
+const WEIGHT_UNIT_OPTIONS = ["kg", "lb"] as const;
+const SHOE_REGION_OPTIONS = ["US", "UK", "EU"] as const;
+const CLOTHING_REGION_OPTIONS = ["US", "UK", "EU", "INTL"] as const;
 
 function commaText(values?: string[]) {
   return Array.isArray(values) && values.length ? values.join(", ") : "";
@@ -430,7 +440,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Top fit"
             value={profile.fitPreferences.tops ?? ""}
-            options={["slim", "regular", "relaxed", "oversized"]}
+            options={TOP_FIT_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -441,7 +451,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Outerwear fit"
             value={profile.fitPreferences.outerwear ?? ""}
-            options={["slim", "regular", "roomy"]}
+            options={OUTERWEAR_FIT_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -452,7 +462,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Bottom rise"
             value={profile.fitPreferences.bottomsRise ?? ""}
-            options={["low", "mid", "high"]}
+            options={BOTTOM_RISE_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -463,7 +473,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Bottom leg"
             value={profile.fitPreferences.bottomsLeg ?? ""}
-            options={["skinny", "slim", "straight", "tapered", "wide"]}
+            options={BOTTOM_LEG_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -474,7 +484,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Shoe fit"
             value={profile.fitPreferences.shoes ?? ""}
-            options={["true_to_size", "half_up", "half_down"]}
+            options={SHOE_FIT_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -508,21 +518,21 @@ export function DefaultSizesScreen() {
     return DEFAULT_SIZE_FIELDS.find((field) => field.key === activePicker)?.label ?? "";
   }, [activePicker]);
 
-  const pickerOptions = useMemo(() => {
+  const pickerOptions = useMemo<string[]>(() => {
     switch (activePicker) {
       case "top":
       case "outerwear":
       case "hoodie":
       case "formalShirt":
-        return ALPHA_SIZE_OPTIONS;
+        return [...ALPHA_SIZE_OPTIONS];
       case "bottomWaist":
-        return BOTTOM_WAIST_OPTIONS;
+        return [...BOTTOM_WAIST_OPTIONS];
       case "bottomLength":
-        return BOTTOM_LENGTH_OPTIONS;
+        return [...BOTTOM_LENGTH_OPTIONS];
       case "jeans":
         return jeansOptions;
       case "shoes":
-        return SHOE_SIZE_OPTIONS[profile.units.shoeRegion] ?? SHOE_SIZE_OPTIONS.US;
+        return [...(SHOE_SIZE_OPTIONS[profile.units.shoeRegion] ?? SHOE_SIZE_OPTIONS.US)];
       default:
         return [];
     }
@@ -745,35 +755,35 @@ export function UnitsRegionScreen() {
           <ProfilePillField
             label="Length"
             value={profile.units.length}
-            options={["cm", "in"]}
+            options={LENGTH_UNIT_OPTIONS}
             onSelect={(value) =>
-              setProfile((prev) => ({ ...prev, units: { ...prev.units, length: value as any } }))
+              setProfile((prev) => ({ ...prev, units: { ...prev.units, length: value } }))
             }
           />
           <ProfilePillField
             label="Weight"
             value={profile.units.weight}
-            options={["kg", "lb"]}
+            options={WEIGHT_UNIT_OPTIONS}
             onSelect={(value) =>
-              setProfile((prev) => ({ ...prev, units: { ...prev.units, weight: value as any } }))
+              setProfile((prev) => ({ ...prev, units: { ...prev.units, weight: value } }))
             }
           />
           <ProfilePillField
             label="Shoe region"
             value={profile.units.shoeRegion}
-            options={["US", "UK", "EU"]}
+            options={SHOE_REGION_OPTIONS}
             onSelect={(value) =>
-              setProfile((prev) => ({ ...prev, units: { ...prev.units, shoeRegion: value as any } }))
+              setProfile((prev) => ({ ...prev, units: { ...prev.units, shoeRegion: value } }))
             }
           />
           <ProfilePillField
             label="Clothing region"
             value={profile.units.clothingRegion}
-            options={["US", "UK", "EU", "INTL"]}
+            options={CLOTHING_REGION_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
-                units: { ...prev.units, clothingRegion: value as any },
+                units: { ...prev.units, clothingRegion: value },
               }))
             }
           />
@@ -1039,7 +1049,7 @@ function ProfileSelectorRow({
   );
 }
 
-function ProfilePillField({
+function ProfilePillField<T extends string>({
   label,
   value,
   options,
@@ -1047,9 +1057,9 @@ function ProfilePillField({
   labelFormatter,
 }: {
   label: string;
-  value: string;
-  options: string[];
-  onSelect: (value: string) => void;
+  value: T | "";
+  options: readonly T[];
+  onSelect: (value: T) => void;
   labelFormatter?: (value: string) => string;
 }) {
   const { colors } = useAppTheme();

@@ -44,7 +44,6 @@ export default function TabLayout() {
         name="add"
         options={{
          href: null,
-         unmountOnBlur: true,
         }}
       />
       <Tabs.Screen

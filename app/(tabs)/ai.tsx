@@ -296,6 +296,7 @@ export default function AIScreen() {
 
   useEffect(() => {
     if (isBooting) return;
+    if (!uid) return;
     void saveLatestChatCache(uid, activeChatId, null, messages);
   }, [activeChatId, isBooting, messages, uid]);
 

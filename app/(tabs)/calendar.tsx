@@ -390,6 +390,7 @@ export default function CalendarScreen() {
   const contextEventSummary = useMemo(() => {
     if (events.events.length === 0) return "No events for this day";
     const next = events.events[0];
+    if (!next) return "No events for this day";
     return `Next: ${next.timeLabel} — ${next.title}`;
   }, [events.events]);
 
@@ -455,6 +456,7 @@ export default function CalendarScreen() {
     if (!selectedLook) return null;
     const planned = lookToPlanned(selectedLook);
     const next = await setPlanned(uid, selectedDayKey, planned);
+    if (!next) return null;
     setRecord(next);
     return next.plannedOutfit ?? null;
   }, [record?.plannedOutfit, selectedDayKey, selectedLook, uid]);

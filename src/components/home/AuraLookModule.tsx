@@ -109,7 +109,7 @@ export default function AuraLookModule({
           </Text>
         ) : null}
       </View>
-      <AuraLookCard colors={colors} look={look} itemsById={itemsById} onAction={onAction} compact />
+      <AuraLookCard colors={colors} look={look} itemsById={itemsById} onAction={onAction} />
     </View>
   );
 }

@@ -22,6 +22,10 @@ const TAB_META: Record<string, { label: string; icon: keyof typeof Ionicons.glyp
   profile: { label: 'Profile', icon: 'person-circle-outline' },
 };
 
+type ExpoRouterTabOptions = {
+  href?: string | null;
+};
+
 function getFocusedIcon(name: keyof typeof Ionicons.glyphMap) {
   if (name === 'home-outline') return 'home';
   if (name === 'calendar-outline') return 'calendar';
@@ -41,7 +45,7 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
   const visibleRoutes = useMemo(
     () =>
       state.routes.filter((route) => {
-        const options = descriptors[route.key]?.options;
+        const options = descriptors[route.key]?.options as ExpoRouterTabOptions | undefined;
         if (options?.href === null) return false;
         return !!TAB_META[route.name];
       }),

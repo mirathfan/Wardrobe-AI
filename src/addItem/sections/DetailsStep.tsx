@@ -193,13 +193,11 @@ export const DetailsStep = React.memo(function DetailsStep({ controller }: { con
       <Field label="Display Color">
         <MemoTextInputField
           value={state.displayColor}
-          onChangeText={actions.setDisplayColor}
           onCommit={(value) => {
             actions.markUserEdited("displayColor");
             actions.setDisplayColor(value);
           }}
           placeholder="e.g., light blue"
-          autoCapitalize="words"
         />
         {state.displayColors.length ? (
           <Text style={{ color: "#666" }}>
