@@ -3,7 +3,7 @@ import { Image, Pressable, Text, View } from "react-native";
 
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { getItemImageUrl } from "@/src/lib/itemImage";
+import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClosetItem } from "@/src/lib/items";
 import { sanitizeDisplayText } from "@/src/lib/text";
 
@@ -26,6 +26,7 @@ export function ClosetItemCard({
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const imageUrl = getItemImageUrl(item, { variant: "thumb" });
+  const imagePresentation = getItemImagePresentation(item, { surface: "closet_card" });
 
   return (
     <Pressable
@@ -45,21 +46,21 @@ export function ClosetItemCard({
     >
       <View
         style={{
-          aspectRatio: 1,
+          aspectRatio: imagePresentation.containerAspectRatio,
           backgroundColor: "transparent",
           alignItems: "center",
           justifyContent: "center",
           overflow: "hidden",
-          paddingHorizontal: 8,
-          paddingTop: 8,
-          paddingBottom: 4,
+          paddingHorizontal: 4,
+          paddingTop: 4,
+          paddingBottom: 2,
         }}
       >
         {imageUrl ? (
           <Image
             source={{ uri: imageUrl }}
-            style={{ width: "100%", height: "100%" }}
-            resizeMode="contain"
+            style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
+            resizeMode={imagePresentation.resizeMode}
           />
         ) : (
           <View

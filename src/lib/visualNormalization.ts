@@ -7,6 +7,10 @@ export type VisualNormalization = {
     widthPct: number;
     heightPct: number;
   };
+  contentWidthPct?: number;
+  contentHeightPct?: number;
+  visualFillRatio?: number;
+  verticalBias?: number;
   recommendedScale?: number;
   recommendedTranslateY?: number;
   anchor?: VisualNormalizationAnchor;
@@ -64,11 +68,14 @@ function inferAnchor(input: {
   }
   if (
     tokens.includes("shirt") ||
+    tokens.includes("blouse") ||
     tokens.includes("tee") ||
     tokens.includes("t-shirt") ||
+    tokens.includes("crop top") ||
     tokens.includes("jacket") ||
     tokens.includes("coat") ||
-    tokens.includes("hoodie")
+    tokens.includes("hoodie") ||
+    tokens.includes("dress")
   ) {
     return "top";
   }
@@ -86,10 +93,16 @@ export function getVisualNormalizationDefaults(input: {
   const joined = `${category} ${subCategory} ${type}`;
 
   if (joined.includes("shirt")) {
-    return { recommendedScale: 1.02, recommendedTranslateY: 6, anchor: "top" };
+    return { recommendedScale: 1.1, recommendedTranslateY: 10, anchor: "top" };
+  }
+  if (joined.includes("blouse")) {
+    return { recommendedScale: 1.08, recommendedTranslateY: 8, anchor: "top" };
+  }
+  if (joined.includes("crop top")) {
+    return { recommendedScale: 1.04, recommendedTranslateY: 6, anchor: "top" };
   }
   if (joined.includes("tee") || joined.includes("t-shirt")) {
-    return { recommendedScale: 0.98, recommendedTranslateY: 4, anchor: "top" };
+    return { recommendedScale: 1.06, recommendedTranslateY: 8, anchor: "top" };
   }
   if (
     joined.includes("jacket") ||
@@ -97,27 +110,39 @@ export function getVisualNormalizationDefaults(input: {
     joined.includes("overshirt") ||
     joined.includes("hoodie")
   ) {
-    return { recommendedScale: 1.04, recommendedTranslateY: 2, anchor: "top" };
+    return { recommendedScale: 1.1, recommendedTranslateY: 6, anchor: "top" };
   }
   if (joined.includes("jeans") || joined.includes("pants") || joined.includes("trousers")) {
-    return { recommendedScale: 1.0, recommendedTranslateY: 0, anchor: "waist" };
+    return { recommendedScale: 1.08, recommendedTranslateY: 4, anchor: "waist" };
+  }
+  if (joined.includes("skirt")) {
+    return { recommendedScale: 1.06, recommendedTranslateY: 3, anchor: "waist" };
+  }
+  if (joined.includes("dress") || joined.includes("romper") || joined.includes("jumpsuit")) {
+    return { recommendedScale: 1.1, recommendedTranslateY: 4, anchor: "top" };
   }
   if (
     joined.includes("shoe") ||
     joined.includes("sneaker") ||
     joined.includes("loafer") ||
-    joined.includes("boot")
+    joined.includes("boot") ||
+    joined.includes("heel")
   ) {
-    return { recommendedScale: 0.98, recommendedTranslateY: 2, anchor: "foot" };
+    return { recommendedScale: 1.04, recommendedTranslateY: 4, anchor: "foot" };
   }
   if (joined.includes("watch")) {
-    return { recommendedScale: 0.96, recommendedTranslateY: 0, anchor: "center" };
+    return { recommendedScale: 1.0, recommendedTranslateY: 0, anchor: "center" };
   }
   if (joined.includes("glasses") || joined.includes("sunglasses")) {
-    return { recommendedScale: 0.96, recommendedTranslateY: 0, anchor: "center" };
+    return { recommendedScale: 1.0, recommendedTranslateY: 0, anchor: "center" };
   }
-  if (joined.includes("bag") || joined.includes("backpack") || joined.includes("crossbody")) {
-    return { recommendedScale: 1.02, recommendedTranslateY: 0, anchor: "center" };
+  if (
+    joined.includes("bag") ||
+    joined.includes("handbag") ||
+    joined.includes("backpack") ||
+    joined.includes("crossbody")
+  ) {
+    return { recommendedScale: 1.08, recommendedTranslateY: 0, anchor: "center" };
   }
   return { recommendedScale: 1, recommendedTranslateY: 0, anchor: inferAnchor(input) };
 }
@@ -136,10 +161,10 @@ export function buildVisualNormalizationFromContentBounds(
   const heightPct = clamp((contentBounds.height / imageHeight) * 100, 0.1, 100);
 
   const defaults = getVisualNormalizationDefaults(input);
-  const fillHeightTarget = 84;
-  const fillCompensation = clamp(fillHeightTarget / heightPct, 0.88, 1.22);
+  const fillHeightTarget = 92;
+  const fillCompensation = clamp(fillHeightTarget / heightPct, 0.95, 1.35);
   const topBias = 10 - topPct;
-  const translateFromTopBias = clamp(topBias * 0.6, -12, 12);
+  const translateFromTopBias = clamp(topBias * 0.75, -14, 16);
 
   return {
     contentBounds: {
@@ -148,6 +173,12 @@ export function buildVisualNormalizationFromContentBounds(
       widthPct,
       heightPct,
     },
+    contentWidthPct: widthPct,
+    contentHeightPct: heightPct,
+    visualFillRatio: Number(((widthPct * heightPct) / 10000).toFixed(4)),
+    verticalBias: Number(
+      (100 - (topPct + heightPct) - topPct).toFixed(2),
+    ),
     recommendedScale: Number(((defaults.recommendedScale ?? 1) * fillCompensation).toFixed(3)),
     recommendedTranslateY: Math.round((defaults.recommendedTranslateY ?? 0) + translateFromTopBias),
     anchor: defaults.anchor ?? inferAnchor(input),
@@ -164,6 +195,29 @@ export function mergeVisualNormalization(
 ): VisualNormalization {
   return {
     contentBounds: itemLevel?.contentBounds,
+    contentWidthPct:
+      itemLevel?.contentWidthPct ?? itemLevel?.contentBounds?.widthPct,
+    contentHeightPct:
+      itemLevel?.contentHeightPct ?? itemLevel?.contentBounds?.heightPct,
+    visualFillRatio:
+      itemLevel?.visualFillRatio ??
+      (() => {
+        const widthPct =
+          itemLevel?.contentWidthPct ?? itemLevel?.contentBounds?.widthPct;
+        const heightPct =
+          itemLevel?.contentHeightPct ?? itemLevel?.contentBounds?.heightPct;
+        if (!widthPct || !heightPct) return undefined;
+        return Number(((widthPct * heightPct) / 10000).toFixed(4));
+      })(),
+    verticalBias:
+      itemLevel?.verticalBias ??
+      (() => {
+        const topPct = itemLevel?.contentBounds?.topPct;
+        const heightPct =
+          itemLevel?.contentHeightPct ?? itemLevel?.contentBounds?.heightPct;
+        if (topPct == null || heightPct == null) return undefined;
+        return Number((100 - (topPct + heightPct) - topPct).toFixed(2));
+      })(),
     recommendedScale: itemLevel?.recommendedScale ?? defaults.recommendedScale ?? 1,
     recommendedTranslateY:
       itemLevel?.recommendedTranslateY ?? defaults.recommendedTranslateY ?? 0,

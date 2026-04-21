@@ -1,7 +1,19 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { deleteDoc, deleteField, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import {
+  Alert,
+  Dimensions,
+  Image,
+  Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SafeScreen } from "../../../src/components/SafeScreen";
@@ -10,7 +22,7 @@ import { useAuth } from "../../../src/hooks/useAuth";
 import { useAppTheme } from "../../../src/hooks/useAppTheme";
 import { useResponsiveLayout } from "../../../src/hooks/useResponsiveLayout";
 import { db } from "../../../src/lib/firebase";
-import { getItemImageUrl } from "../../../src/lib/itemImage";
+import { getItemImagePresentation, getItemImageUrl } from "../../../src/lib/itemImage";
 import {
   getIngestionStatus,
   markWashed as markWashedItem,
@@ -22,6 +34,83 @@ import { ClothingItem } from "../../../src/types/ClothingItem";
 type ItemDetails = ClothingItem & {
   id: string;
 };
+
+type DetailImageAsset = {
+  uri: string;
+  isPrimary: boolean;
+};
+
+function isValidUrl(value?: string | null) {
+  const url = String(value ?? "").trim();
+  if (!url) return false;
+  return url.startsWith("file://") || /^https?:\/\//i.test(url);
+}
+
+function dedupeImageAssets(images: DetailImageAsset[]) {
+  const seen = new Set<string>();
+  return images.filter((image) => {
+    const key = image.uri.trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function getItemDetailImages(item: ItemDetails | null): DetailImageAsset[] {
+  if (!item) return [];
+
+  const next: DetailImageAsset[] = [];
+  const sources = [
+    ...(item.images ?? []),
+    ...(item.photos?.images ?? []),
+  ];
+
+  for (const image of sources) {
+    const candidate = getItemImageUrl(
+      {
+        ...item,
+        images: image
+          ? [
+              {
+                originalUrl: image.originalUrl ?? null,
+                cleanedUrl: image.cleanedUrl ?? null,
+                isPrimary: Boolean(image.isPrimary),
+              },
+            ]
+          : [],
+        photos: {
+          ...item.photos,
+          images: image
+            ? [
+                {
+                  originalUrl: image.originalUrl ?? null,
+                  cleanedUrl: image.cleanedUrl ?? null,
+                  isPrimary: Boolean(image.isPrimary),
+                },
+              ]
+            : [],
+          primaryUrl: image?.originalUrl ?? item.photos?.primaryUrl ?? null,
+        },
+      },
+      { variant: "hero" },
+    );
+
+    if (candidate && isValidUrl(candidate)) {
+      next.push({
+        uri: candidate,
+        isPrimary: Boolean(image?.isPrimary),
+      });
+    }
+  }
+
+  const fallback = getItemImageUrl(item, { variant: "hero" });
+  if (fallback && isValidUrl(fallback)) {
+    next.push({ uri: fallback, isPrimary: next.length === 0 });
+  }
+
+  const deduped = dedupeImageAssets(next);
+  return deduped.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
+}
 
 function formatDate(value?: any | null) {
   if (!value) return "—";
@@ -39,7 +128,7 @@ function formatDateOrNotSet(value?: any | null) {
   return formatDate(value);
 }
 
-function ingestionStatusLabel(item: ItemDetails) {
+function ingestionStatusLabel(item: ItemDetails | null | undefined) {
   const status = getIngestionStatus(item) ?? "pending";
   if (status === "done") return "done";
   if (status === "failed") return "failed";
@@ -133,10 +222,15 @@ export default function ItemDetailsScreen() {
   const [colorSaving, setColorSaving] = useState(false);
   const [colorSavedAt, setColorSavedAt] = useState<number | null>(null);
   const [detailImageOpen, setDetailImageOpen] = useState(false);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [patternDraft, setPatternDraft] = useState("");
   const [materialDraft, setMaterialDraft] = useState("");
   const [footerHeight, setFooterHeight] = useState(0);
   const itemImageUri = getItemImageUrl(item, { variant: "hero" });
+  const detailImages = useMemo(() => getItemDetailImages(item), [item]);
+  const imagePresentation = getItemImagePresentation(item, {
+    surface: "item_detail",
+  });
   const footerOffset = layout.composerOffset;
   const quickFacts = item
     ? [
@@ -185,6 +279,11 @@ export default function ItemDetailsScreen() {
         },
       ]
     : [];
+
+  useEffect(() => {
+    if (activeImageIndex <= Math.max(detailImages.length - 1, 0)) return;
+    setActiveImageIndex(0);
+  }, [activeImageIndex, detailImages.length]);
 
   useEffect(() => {
     if (!itemImageUri) return;
@@ -394,7 +493,8 @@ export default function ItemDetailsScreen() {
     <SafeScreen backgroundColor={colors.background} includeBottomInset={false}>
       <ItemImageModal
         visible={detailImageOpen}
-        uri={itemImageUri}
+        images={detailImages}
+        initialIndex={activeImageIndex}
         onClose={() => setDetailImageOpen(false)}
       />
       <ScrollView
@@ -444,30 +544,16 @@ export default function ItemDetailsScreen() {
         ) : (
           <>
             <SectionCard title="Product view" subtitle="Tap the image to inspect the full asset.">
-              {itemImageUri ? (
-                <Pressable
-                  onPress={() => setDetailImageOpen(true)}
-                  style={{ width: "100%", height: 216, borderRadius: 18 }}
-                >
-                  <View
-                    style={{
-                      width: "100%",
-                      height: 216,
-                      borderRadius: 18,
-                      backgroundColor: "rgba(255,255,255,0.04)",
-                      overflow: "hidden",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      padding: 18,
-                    }}
-                  >
-                    <Image
-                      source={{ uri: itemImageUri }}
-                      style={{ width: "100%", height: "100%" }}
-                      resizeMode="contain"
-                    />
-                  </View>
-                </Pressable>
+              {detailImages.length > 0 ? (
+                <DetailImageCarousel
+                  images={detailImages}
+                  activeIndex={activeImageIndex}
+                  onIndexChange={setActiveImageIndex}
+                  onPressImage={() => setDetailImageOpen(true)}
+                  containerAspectRatio={imagePresentation.containerAspectRatio}
+                  imageStyle={imagePresentation.imageStyle}
+                  resizeMode={imagePresentation.resizeMode}
+                />
               ) : (
                 <View
                   style={{
@@ -816,11 +902,26 @@ const textInput = {
 
 function ItemImageModal(props: {
   visible: boolean;
-  uri: string | null;
+  images: DetailImageAsset[];
+  initialIndex: number;
   onClose: () => void;
 }) {
-  const { visible, uri, onClose } = props;
+  const { visible, images, initialIndex, onClose } = props;
   const insets = useSafeAreaInsets();
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
+  const windowWidth = Dimensions.get("window").width;
+
+  useEffect(() => {
+    if (!visible) return;
+    setActiveIndex(initialIndex);
+  }, [initialIndex, visible]);
+
+  const imageWidth = Math.max(windowWidth - 32, 1);
+
+  function onMomentumScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    const nextIndex = Math.round(event.nativeEvent.contentOffset.x / imageWidth);
+    setActiveIndex(Math.max(0, Math.min(images.length - 1, nextIndex)));
+  }
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
@@ -864,23 +965,154 @@ function ItemImageModal(props: {
           bouncesZoom={false}
           centerContent
         >
-          {uri ? (
-            <View
-              style={{
-                width: "100%",
-                minHeight: 360,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "#fff",
-                borderRadius: 20,
-                overflow: "hidden",
-              }}
+          {images.length > 0 ? (
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              contentOffset={{ x: imageWidth * activeIndex, y: 0 }}
+              onMomentumScrollEnd={onMomentumScrollEnd}
             >
-              <Image source={{ uri }} style={{ width: "100%", height: 520 }} resizeMode="contain" />
+              {images.map((image) => (
+                <View
+                  key={image.uri}
+                  style={{
+                    width: imageWidth,
+                    minHeight: 360,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <View
+                    style={{
+                      width: "100%",
+                      minHeight: 360,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: "#fff",
+                      borderRadius: 20,
+                      overflow: "hidden",
+                      padding: 16,
+                    }}
+                  >
+                    <Image
+                      source={{ uri: image.uri }}
+                      style={{ width: "100%", height: 520 }}
+                      resizeMode="contain"
+                    />
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+          ) : null}
+          {images.length > 1 ? (
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14 }}>
+              {images.map((image, index) => (
+                <View
+                  key={`${image.uri}-dot`}
+                  style={{
+                    width: index === activeIndex ? 18 : 8,
+                    height: 8,
+                    borderRadius: 999,
+                    backgroundColor: index === activeIndex ? "#fff" : "rgba(255,255,255,0.3)",
+                  }}
+                />
+              ))}
+              <Text style={{ color: "rgba(255,255,255,0.78)", fontWeight: "700", marginLeft: 8 }}>
+                {activeIndex + 1} / {images.length}
+              </Text>
             </View>
           ) : null}
         </ScrollView>
       </View>
     </Modal>
+  );
+}
+
+function DetailImageCarousel(props: {
+  images: DetailImageAsset[];
+  activeIndex: number;
+  onIndexChange: (index: number) => void;
+  onPressImage: () => void;
+  containerAspectRatio: number;
+  imageStyle: object;
+  resizeMode: "contain";
+}) {
+  const {
+    images,
+    activeIndex,
+    onIndexChange,
+    onPressImage,
+    containerAspectRatio,
+    imageStyle,
+    resizeMode,
+  } = props;
+  const layout = useResponsiveLayout();
+  const windowWidth = Dimensions.get("window").width;
+  const cardWidth = Math.max(windowWidth - layout.horizontalPadding * 2 - 36, 1);
+  const cardHeight = Math.min(520, Math.max(280, cardWidth / Math.max(containerAspectRatio, 0.55)));
+
+  function onMomentumScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    const nextIndex = Math.round(event.nativeEvent.contentOffset.x / cardWidth);
+    onIndexChange(Math.max(0, Math.min(images.length - 1, nextIndex)));
+  }
+
+  return (
+    <View style={{ gap: 12 }}>
+      <ScrollView
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        contentOffset={{ x: cardWidth * activeIndex, y: 0 }}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+      >
+        {images.map((image) => (
+          <Pressable
+            key={image.uri}
+            onPress={onPressImage}
+            style={{ width: cardWidth, borderRadius: 18 }}
+          >
+            <View
+              style={{
+                width: "100%",
+                height: cardHeight,
+                borderRadius: 18,
+                backgroundColor: "rgba(255,255,255,0.04)",
+                overflow: "hidden",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 12,
+              }}
+            >
+              <Image
+                source={{ uri: image.uri }}
+                style={[{ width: "100%", height: "100%" }, imageStyle]}
+                resizeMode={resizeMode}
+              />
+            </View>
+          </Pressable>
+        ))}
+      </ScrollView>
+      {images.length > 1 ? (
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            {images.map((image, index) => (
+              <View
+                key={`${image.uri}-pagination`}
+                style={{
+                  width: index === activeIndex ? 18 : 8,
+                  height: 8,
+                  borderRadius: 999,
+                  backgroundColor: index === activeIndex ? "#8bcfff" : "rgba(255,255,255,0.18)",
+                }}
+              />
+            ))}
+          </View>
+          <Text style={{ color: "#9aa3af", fontSize: 13, fontWeight: "700" }}>
+            {activeIndex + 1} / {images.length}
+          </Text>
+        </View>
+      ) : null}
+    </View>
   );
 }
