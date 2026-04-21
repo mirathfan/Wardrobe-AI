@@ -9,6 +9,29 @@ export type UserAccountProfile = {
 };
 
 export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
+  onboardingCompleted: false,
+  firstName: null,
+  region: null,
+  unitsPreference: "metric",
+  wardrobeMode: "mixed",
+  selectedCategories: [],
+  styleAesthetics: [],
+  preferredFit: null,
+  favoriteColors: [],
+  avoidedColors: [],
+  accessoryPreferences: [],
+  occasionPriority: [],
+  goals: [],
+  height: {
+    value: null,
+    unit: "cm",
+  },
+  weight: {
+    value: null,
+    unit: "kg",
+  },
+  createdAt: null,
+  updatedAt: null,
   units: {
     length: "cm",
     weight: "kg",
@@ -17,6 +40,7 @@ export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
   },
   body: {},
   defaultSizes: {},
+  advancedFit: {},
   fitPreferences: {},
   stylePreferences: {},
   closetPreferences: {},
@@ -53,13 +77,57 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
   const root = readRecord(value);
   const units = readRecord(root.units);
   const body = readRecord(root.body);
+  const height = readRecord(root.height);
+  const weight = readRecord(root.weight);
   const defaultSizes = readRecord(root.defaultSizes);
+  const advancedFit = readRecord(root.advancedFit);
   const fitPreferences = readRecord(root.fitPreferences);
   const stylePreferences = readRecord(root.stylePreferences);
   const closetPreferences = readRecord(root.closetPreferences);
   const notifications = readRecord(root.notifications);
 
   return {
+    onboardingCompleted: typeof root.onboardingCompleted === "boolean" ? root.onboardingCompleted : false,
+    firstName: cleanString(root.firstName),
+    region: cleanString(root.region),
+    unitsPreference:
+      root.unitsPreference === "imperial" || root.unitsPreference === "metric"
+        ? root.unitsPreference
+        : units.length === "in" || units.weight === "lb"
+          ? "imperial"
+          : "metric",
+    wardrobeMode:
+      root.wardrobeMode === "masculine" ||
+      root.wardrobeMode === "feminine" ||
+      root.wardrobeMode === "neutral" ||
+      root.wardrobeMode === "mixed" ||
+      root.wardrobeMode === "custom"
+        ? root.wardrobeMode
+        : "mixed",
+    selectedCategories: cleanStringList(root.selectedCategories),
+    styleAesthetics: cleanStringList(root.styleAesthetics),
+    preferredFit:
+      root.preferredFit === "slim" ||
+      root.preferredFit === "regular" ||
+      root.preferredFit === "relaxed" ||
+      root.preferredFit === "oversized"
+        ? root.preferredFit
+        : null,
+    favoriteColors: cleanStringList(root.favoriteColors),
+    avoidedColors: cleanStringList(root.avoidedColors),
+    accessoryPreferences: cleanStringList(root.accessoryPreferences),
+    occasionPriority: cleanStringList(root.occasionPriority),
+    goals: cleanStringList(root.goals),
+    height: {
+      value: cleanNumber(height.value ?? body.height),
+      unit: height.unit === "ft_in" ? "ft_in" : "cm",
+    },
+    weight: {
+      value: cleanNumber(weight.value ?? body.weight),
+      unit: weight.unit === "lb" ? "lb" : "kg",
+    },
+    createdAt: cleanNumber(root.createdAt),
+    updatedAt: cleanNumber(root.updatedAt),
     units: {
       length: units.length === "in" ? "in" : "cm",
       weight: units.weight === "lb" ? "lb" : "kg",
@@ -87,14 +155,29 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
       footLength: cleanNumber(body.footLength),
     },
     defaultSizes: {
+      tops: cleanString(defaultSizes.tops ?? defaultSizes.top),
       top: cleanString(defaultSizes.top),
       outerwear: cleanString(defaultSizes.outerwear),
       hoodie: cleanString(defaultSizes.hoodie),
       formalShirt: cleanString(defaultSizes.formalShirt),
+      bottoms: cleanString(defaultSizes.bottoms ?? defaultSizes.bottomWaist),
       bottomWaist: cleanString(defaultSizes.bottomWaist),
+      bottomsWaist: cleanString(defaultSizes.bottomsWaist ?? defaultSizes.bottomWaist),
+      bottomsLength: cleanString(defaultSizes.bottomsLength ?? defaultSizes.bottomLength),
       bottomLength: cleanString(defaultSizes.bottomLength),
       jeans: cleanString(defaultSizes.jeans),
+      dresses: cleanString(defaultSizes.dresses),
+      skirts: cleanString(defaultSizes.skirts),
       shoes: cleanString(defaultSizes.shoes),
+    },
+    advancedFit: {
+      bust: cleanString(advancedFit.bust ?? body.chest),
+      waistMeasurement: cleanString(advancedFit.waistMeasurement ?? body.waist),
+      hips: cleanString(advancedFit.hips ?? body.hips),
+      inseam: cleanString(advancedFit.inseam ?? body.inseam),
+      shoulderWidth: cleanString(advancedFit.shoulderWidth ?? body.shoulders),
+      sleeveLength: cleanString(advancedFit.sleeveLength ?? body.sleeve),
+      braSize: cleanString(advancedFit.braSize),
     },
     fitPreferences: {
       tops:
@@ -132,9 +215,9 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
           : null,
     },
     stylePreferences: {
-      preferredStyles: cleanStringList(stylePreferences.preferredStyles),
-      favoriteColors: cleanStringList(stylePreferences.favoriteColors),
-      avoidedColors: cleanStringList(stylePreferences.avoidedColors),
+      preferredStyles: cleanStringList(stylePreferences.preferredStyles ?? root.styleAesthetics),
+      favoriteColors: cleanStringList(stylePreferences.favoriteColors ?? root.favoriteColors),
+      avoidedColors: cleanStringList(stylePreferences.avoidedColors ?? root.avoidedColors),
       preferredBrands: cleanStringList(stylePreferences.preferredBrands),
     },
     closetPreferences: {
@@ -201,10 +284,71 @@ export async function saveUserProfilePreferences(
   profilePreferences: UserProfilePreferences,
 ) {
   const normalized = normalizeUserProfilePreferences(profilePreferences);
+  const timestamp = Date.now();
   await setDoc(
     doc(db, "users", uid),
     {
-      profilePreferences: normalized,
+      profilePreferences: {
+        ...normalized,
+        createdAt: normalized.createdAt ?? timestamp,
+        updatedAt: timestamp,
+        height: normalized.height,
+        weight: normalized.weight,
+        stylePreferences: {
+          ...normalized.stylePreferences,
+          preferredStyles: normalized.styleAesthetics,
+          favoriteColors: normalized.favoriteColors,
+          avoidedColors: normalized.avoidedColors,
+        },
+        fitPreferences: {
+          ...normalized.fitPreferences,
+          tops: normalized.preferredFit ?? normalized.fitPreferences.tops ?? null,
+        },
+        defaultSizes: {
+          ...normalized.defaultSizes,
+          top: normalized.defaultSizes.top ?? normalized.defaultSizes.tops ?? null,
+          tops: normalized.defaultSizes.tops ?? normalized.defaultSizes.top ?? null,
+          bottomWaist:
+            normalized.defaultSizes.bottomWaist ?? normalized.defaultSizes.bottoms ?? null,
+          bottomsWaist:
+            normalized.defaultSizes.bottomsWaist ??
+            normalized.defaultSizes.bottomWaist ??
+            normalized.defaultSizes.bottoms ??
+            null,
+          bottoms:
+            normalized.defaultSizes.bottoms ?? normalized.defaultSizes.bottomWaist ?? null,
+          bottomLength:
+            normalized.defaultSizes.bottomLength ?? normalized.defaultSizes.bottomsLength ?? null,
+          bottomsLength:
+            normalized.defaultSizes.bottomsLength ?? normalized.defaultSizes.bottomLength ?? null,
+          dresses: normalized.defaultSizes.dresses ?? null,
+          skirts: normalized.defaultSizes.skirts ?? null,
+        },
+        advancedFit: {
+          ...normalized.advancedFit,
+          bust: normalized.advancedFit.bust ?? null,
+          waistMeasurement: normalized.advancedFit.waistMeasurement ?? null,
+          hips: normalized.advancedFit.hips ?? null,
+          inseam: normalized.advancedFit.inseam ?? null,
+          shoulderWidth: normalized.advancedFit.shoulderWidth ?? null,
+          sleeveLength: normalized.advancedFit.sleeveLength ?? null,
+          braSize: normalized.advancedFit.braSize ?? null,
+        },
+        body: {
+          ...normalized.body,
+          height: normalized.height.value ?? normalized.body.height ?? null,
+          weight: normalized.weight.value ?? normalized.body.weight ?? null,
+          chest: normalized.advancedFit.bust ?? normalized.body.chest ?? null,
+          waist:
+            normalized.advancedFit.waistMeasurement ?? normalized.body.waist ?? null,
+          hips: normalized.advancedFit.hips ?? normalized.body.hips ?? null,
+          inseam: normalized.advancedFit.inseam ?? normalized.body.inseam ?? null,
+          shoulders:
+            normalized.advancedFit.shoulderWidth ?? normalized.body.shoulders ?? null,
+          sleeve:
+            normalized.advancedFit.sleeveLength ?? normalized.body.sleeve ?? null,
+        },
+      },
       profileUpdatedAt: Date.now(),
     },
     { merge: true },
@@ -221,15 +365,23 @@ export function getDefaultSizeForSelection(
   const defaults = profile.defaultSizes;
   if (category === Category.OUTERWEAR) return defaults.outerwear ?? "";
   if (category === Category.FOOTWEAR) return defaults.shoes ?? "";
+  if (category === Category.ONE_PIECE) {
+    if (sub === "dress" && defaults.dresses) return defaults.dresses;
+    return defaults.dresses ?? defaults.tops ?? defaults.top ?? "";
+  }
   if (category === Category.BOTTOM) {
     if (sub === "jeans" && defaults.jeans) return defaults.jeans;
-    const parts = [defaults.bottomWaist, defaults.bottomLength].filter(Boolean);
+    if (sub === "skirt" && defaults.skirts) return defaults.skirts;
+    const parts = [
+      defaults.bottoms ?? defaults.bottomsWaist ?? defaults.bottomWaist,
+      defaults.bottomsLength ?? defaults.bottomLength,
+    ].filter(Boolean);
     return parts.join(" / ");
   }
   if (category === Category.TOP) {
     if (sub === "hoodie" || sub === "sweatshirt") return defaults.hoodie ?? defaults.top ?? "";
     if (sub === "shirt" || sub === "polo") return defaults.formalShirt ?? defaults.top ?? "";
-    return defaults.top ?? "";
+    return defaults.tops ?? defaults.top ?? "";
   }
   return "";
 }
