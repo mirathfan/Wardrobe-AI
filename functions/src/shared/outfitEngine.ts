@@ -4,6 +4,7 @@ import {
   AllowedColor,
   Category,
 } from "./wardrobeTaxonomy";
+import type {CompactAuraMemoryContext} from "../../../shared/auraMemory";
 
 export const MODEL = "gpt-4.1-mini";
 const ALLOWED_COLOR_SET = new Set<string>(ALLOWED_COLORS);
@@ -54,6 +55,7 @@ export type OutfitIntentV1 = {
   colorsAvoid: AllowedColor[];
   avoidLogos: boolean;
   excludeLaundry: boolean;
+  requireOuterwear?: boolean;
 };
 
 export type OutfitChatConstraints = {
@@ -95,6 +97,9 @@ export type WardrobeItem = {
   id: string;
   category?: string;
   subCategory?: string;
+  fit?: string | null;
+  rise?: string | null;
+  legShape?: string | null;
   colors?: string[];
   primaryColor?: string;
   status?: string;
@@ -146,6 +151,21 @@ type OutfitCandidate = {
   score: number;
   reason: string;
   itemIds: string[];
+};
+
+type PreferenceBiasContext = {
+  explicitFavoriteColors: AllowedColor[];
+  explicitAvoidColors: AllowedColor[];
+  learnedFavoriteColors: AllowedColor[];
+  learnedAvoidColors: AllowedColor[];
+  explicitFavoriteCategories: string[];
+  explicitAvoidCategories: string[];
+  learnedFavoriteCategories: string[];
+  learnedAvoidCategories: string[];
+  preferredFits: string[];
+  learnedFits: string[];
+  learnedConfidence: number;
+  experimentationLevel: "low" | "medium" | "high";
 };
 
 function clamp01(value: unknown, fallback = 0.5): number {
@@ -223,19 +243,52 @@ export function inferWarmth(prompt: string): number {
   return 0.5;
 }
 
+function wantsOuterwear(prompt: string): boolean {
+  const normalized = normalizedText(prompt);
+  if (!normalized) return false;
+  const outerwearHints = [
+    "with jacket",
+    "with jackets",
+    "jacket look",
+    "jacket looks",
+    "outerwear",
+    "with outerwear",
+    "layered",
+    "layers",
+    "layer up",
+    "hoodie",
+    "blazer",
+    "coat",
+    "coats",
+    "cardigan",
+    "cardigans",
+    "overshirt",
+    "overshirts",
+    "shacket",
+    "shackets",
+    "parka",
+    "parkas",
+    "bomber",
+    "bombers",
+  ];
+  return outerwearHints.some((hint) => normalized.includes(hint));
+}
+
 export function fallbackIntent(prompt: string): OutfitIntentV1 {
   const normalized = prompt.toLowerCase();
   const occasion = (
     ["casual", "formal", "gym", "date", "work", "party", "travel"] as const
   ).find((value) => normalized.includes(value)) ?? "unknown";
   const warmthTarget = inferWarmth(prompt);
+  const needsOuterwear = wantsOuterwear(prompt);
 
   return {
     occasion,
     formalityTarget: FORMALITY_BY_OCCASION[occasion] ?? 0.5,
     warmthTarget,
     needs: ["top", "bottom", "footwear"],
-    niceToHave: warmthTarget > 0.65 ? ["outerwear"] : [],
+    niceToHave:
+      warmthTarget > 0.65 || needsOuterwear ? ["outerwear"] : [],
     colorsWanted: normalizeColorList(
       ALLOWED_COLORS.filter((color) => normalized.includes(color)),
       2
@@ -243,6 +296,7 @@ export function fallbackIntent(prompt: string): OutfitIntentV1 {
     colorsAvoid: [],
     avoidLogos: normalized.includes("no logo") || normalized.includes("avoid logo"),
     excludeLaundry: true,
+    requireOuterwear: needsOuterwear,
   };
 }
 
@@ -278,6 +332,11 @@ export function normalizeParsedIntent(
         value === "outerwear" || value === "accessory"
       )
     : [];
+  const needsOuterwear = wantsOuterwear(sourceText);
+  const enrichedNiceToHave: Array<"outerwear" | "accessory"> =
+    needsOuterwear && !niceToHave.includes("outerwear")
+      ? [...niceToHave, "outerwear"]
+      : niceToHave;
 
   return {
     occasion,
@@ -287,11 +346,12 @@ export function normalizeParsedIntent(
     ),
     warmthTarget: clamp01(parsed.warmthTarget, inferWarmth(sourceText)),
     needs: needs.length > 0 ? needs : ["top", "bottom", "footwear"],
-    niceToHave,
+    niceToHave: enrichedNiceToHave,
     colorsWanted: normalizeColorList(parsed.colorsWanted, 2),
     colorsAvoid: normalizeColorList(parsed.colorsAvoid, 2),
     avoidLogos: !!parsed.avoidLogos,
     excludeLaundry: parsed.excludeLaundry !== false,
+    requireOuterwear: needsOuterwear,
   };
 }
 
@@ -319,12 +379,49 @@ function normalizeItemColors(item: WardrobeItem): AllowedColor[] {
   return out;
 }
 
+function normalizeCategoryToken(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function normalizeTokenList(values: unknown, limit: number): string[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const value of values) {
+    const token = normalizeCategoryToken(value);
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    next.push(token);
+    if (next.length >= limit) break;
+  }
+  return next;
+}
+
 function bucketForItem(item: WardrobeItem): Slot | null {
   const category = String(item.category ?? "").trim().toLowerCase();
+  const joined = normalizedText(
+    [
+      item.category,
+      item.subCategory,
+      (item as { type?: string | null }).type,
+      item.name,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+  if (
+    category === Category.OUTERWEAR ||
+    /\b(jacket|coat|outerwear|overshirt|blazer|trench|parka|bomber|shacket|cardigan)\b/.test(joined)
+  ) {
+    return "outerwear";
+  }
   if (category === Category.TOP || category === Category.ONE_PIECE) return "top";
   if (category === Category.BOTTOM) return "bottom";
   if (category === Category.FOOTWEAR || category === "shoes") return "footwear";
-  if (category === Category.OUTERWEAR) return "outerwear";
   return null;
 }
 
@@ -374,6 +471,97 @@ function itemHintScore(item: WardrobeItem, hint: string): number {
   }
 
   return score;
+}
+
+function buildPreferenceBiasContext(
+  memory?: CompactAuraMemoryContext | null
+): PreferenceBiasContext {
+  const explicit = memory?.explicitProfile;
+  const learned = memory?.learnedProfile;
+
+  return {
+    explicitFavoriteColors: normalizeColorList(explicit?.favoriteColors ?? [], 3),
+    explicitAvoidColors: normalizeColorList(explicit?.avoidColors ?? [], 3),
+    learnedFavoriteColors:
+      (learned?.confidence ?? 0) >= 0.35
+        ? normalizeColorList(learned?.inferredFavoriteColors ?? [], 3)
+        : [],
+    learnedAvoidColors:
+      (learned?.confidence ?? 0) >= 0.35
+        ? normalizeColorList(learned?.inferredAvoidColors ?? [], 2)
+        : [],
+    explicitFavoriteCategories: normalizeTokenList(explicit?.favoriteCategories ?? [], 4),
+    explicitAvoidCategories: normalizeTokenList(explicit?.avoidCategories ?? [], 3),
+    learnedFavoriteCategories:
+      (learned?.confidence ?? 0) >= 0.45
+        ? normalizeTokenList(learned?.inferredFavoriteCategories ?? [], 4)
+        : [],
+    learnedAvoidCategories:
+      (learned?.confidence ?? 0) >= 0.45
+        ? normalizeTokenList(learned?.inferredAvoidCategories ?? [], 3)
+        : [],
+    preferredFits: normalizeTokenList(explicit?.preferredFits ?? [], 3),
+    learnedFits:
+      (learned?.confidence ?? 0) >= 0.45
+        ? normalizeTokenList(learned?.inferredFits ?? [], 3)
+        : [],
+    learnedConfidence: clamp01(learned?.confidence, 0),
+    experimentationLevel: explicit?.experimentationLevel ?? "medium",
+  };
+}
+
+function itemCategoryTokens(item: WardrobeItem): string[] {
+  return [
+    normalizeCategoryToken(item.category),
+    normalizeCategoryToken(item.subCategory),
+    normalizeCategoryToken(bucketForItem(item)),
+  ].filter(Boolean);
+}
+
+function categoryPreferenceScore(
+  item: WardrobeItem,
+  preferenceBias: PreferenceBiasContext
+): number {
+  const tokens = itemCategoryTokens(item);
+  const learnedWeight = 0.04 + 0.05 * preferenceBias.learnedConfidence;
+  let score = 0;
+  if (tokens.some((token) => preferenceBias.explicitFavoriteCategories.includes(token))) score += 0.12;
+  if (tokens.some((token) => preferenceBias.learnedFavoriteCategories.includes(token))) score += learnedWeight;
+  if (tokens.some((token) => preferenceBias.explicitAvoidCategories.includes(token))) score -= 0.14;
+  if (tokens.some((token) => preferenceBias.learnedAvoidCategories.includes(token))) score -= learnedWeight;
+  return score;
+}
+
+function fitPreferenceScore(
+  item: WardrobeItem,
+  preferenceBias: PreferenceBiasContext
+): number {
+  const tokens = [
+    normalizeCategoryToken(item.fit),
+    normalizeCategoryToken(item.rise),
+    normalizeCategoryToken(item.legShape),
+  ].filter(Boolean);
+  let score = 0;
+  if (tokens.some((token) => preferenceBias.preferredFits.includes(token))) score += 0.09;
+  if (tokens.some((token) => preferenceBias.learnedFits.includes(token))) {
+    score += 0.03 + 0.04 * preferenceBias.learnedConfidence;
+  }
+  return score;
+}
+
+function experimentationBias(
+  item: WardrobeItem,
+  preferenceBias: PreferenceBiasContext
+): number {
+  const colors = normalizeItemColors(item);
+  const nonNeutralCount = colors.filter((color) => !NEUTRAL_COLORS.has(color)).length;
+  if (preferenceBias.experimentationLevel === "low") {
+    return nonNeutralCount > 1 ? -0.08 : 0.03;
+  }
+  if (preferenceBias.experimentationLevel === "high") {
+    return nonNeutralCount > 1 ? 0.06 : nonNeutralCount > 0 ? 0.03 : 0;
+  }
+  return nonNeutralCount > 1 ? -0.01 : 0.01;
 }
 
 export function resolveItemHints(
@@ -494,13 +682,30 @@ function recencyPenalty(item: WardrobeItem): number {
   return 0;
 }
 
-function scoreItem(item: WardrobeItem, intent: OutfitIntentV1): number {
+function scoreItem(
+  item: WardrobeItem,
+  intent: OutfitIntentV1,
+  preferenceBias: PreferenceBiasContext
+): number {
   const formalityScore = clamp01(item.formalityScore, 0.5);
   const warmthScore = clamp01(item.warmthScore, 0.5);
   const itemColors = normalizeItemColors(item);
   const logoPenalty = intent.avoidLogos && item.hasLogo ? 0.5 : 0;
   const missingPenalty =
     item.formalityScore == null || item.warmthScore == null ? 0.05 : 0;
+  const explicitColorBias = colorMatchScore(
+    itemColors,
+    preferenceBias.explicitFavoriteColors,
+    preferenceBias.explicitAvoidColors
+  );
+  const learnedColorBias = colorMatchScore(
+    itemColors,
+    preferenceBias.learnedFavoriteColors,
+    preferenceBias.learnedAvoidColors
+  );
+  const categoryBias = categoryPreferenceScore(item, preferenceBias);
+  const fitBias = fitPreferenceScore(item, preferenceBias);
+  const experimentationScore = experimentationBias(item, preferenceBias);
 
   const score =
     0.35 * closeness(formalityScore, intent.formalityTarget) +
@@ -509,16 +714,34 @@ function scoreItem(item: WardrobeItem, intent: OutfitIntentV1): number {
     0.1 * tagMatchScore(item, intent) -
     0.05 * recencyPenalty(item) -
     logoPenalty -
-    missingPenalty;
+    missingPenalty +
+    0.18 * explicitColorBias +
+    0.12 * learnedColorBias +
+    categoryBias +
+    fitBias +
+    experimentationScore;
 
   return score;
 }
 
-function compatibilityBonus(items: WardrobeItem[]): number {
+function compatibilityBonus(
+  items: WardrobeItem[],
+  preferenceBias: PreferenceBiasContext
+): number {
   const colors = items.flatMap((item) => normalizeItemColors(item));
   if (colors.length === 0) return 0;
   const unique = new Set(colors);
   const neutralCount = colors.filter((color) => NEUTRAL_COLORS.has(color)).length;
+  if (preferenceBias.experimentationLevel === "low") {
+    if (neutralCount >= 2) return 0.07;
+    if (unique.size >= 4) return -0.08;
+    return 0;
+  }
+  if (preferenceBias.experimentationLevel === "high") {
+    if (unique.size >= 3) return 0.04;
+    if (neutralCount >= 2) return 0.03;
+    return 0;
+  }
   if (neutralCount >= 2) return 0.05;
   if (unique.size >= 4) return -0.05;
   return 0;
@@ -529,10 +752,14 @@ function buildReason(
   picks: Array<{slot: Slot; item: WardrobeItem}>
 ): string {
   const reasons: string[] = [];
+  const hasOuterwear = picks.some((pick) => pick.slot === "outerwear");
   if (intent.warmthTarget > 0.65) {
     reasons.push("Warm enough for colder weather");
   } else if (intent.warmthTarget < 0.35) {
     reasons.push("Light enough for warmer weather");
+  }
+  if ((intent.requireOuterwear || intent.niceToHave.includes("outerwear")) && hasOuterwear) {
+    reasons.push("layered with outerwear");
   }
 
   const occasionLabel =
@@ -561,10 +788,11 @@ function selectTopCandidates(
   items: WardrobeItem[],
   slot: Slot,
   intent: OutfitIntentV1,
-  limit: number
+  limit: number,
+  preferenceBias: PreferenceBiasContext
 ): ScoredItem[] {
   return items
-    .map((item) => ({item, slot, score: scoreItem(item, intent)}))
+    .map((item) => ({item, slot, score: scoreItem(item, intent, preferenceBias)}))
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 }
@@ -575,6 +803,7 @@ function assembleOutfits(
   footwearItems: ScoredItem[],
   outerwearItems: ScoredItem[],
   intent: OutfitIntentV1,
+  preferenceBias: PreferenceBiasContext,
   count: number,
   lockedBySlot?: Partial<Record<Slot, WardrobeItem>>
 ): OutfitCandidate[] {
@@ -590,79 +819,154 @@ function assembleOutfits(
   const outerwearCandidates = lockedBySlot?.outerwear
     ? outerwearItems.filter((item) => item.item.id === lockedBySlot.outerwear?.id).slice(0, 1)
     : outerwearItems.slice(0, 5);
+  const shouldIncludeOuterwear =
+    intent.warmthTarget > 0.65 || intent.niceToHave.includes("outerwear");
+  const requiresOuterwear = intent.requireOuterwear === true;
+
+  if (requiresOuterwear && outerwearCandidates.length === 0) {
+    return [];
+  }
 
   const combos: OutfitCandidate[] = [];
   for (const top of topCandidates) {
     for (const bottom of bottomCandidates) {
       for (const footwear of footwearCandidates) {
         const base = [top, bottom, footwear];
-        let chosen = base;
-        let bonus = compatibilityBonus(base.map((value) => value.item));
+        const outfitOuterwearCandidates =
+          (shouldIncludeOuterwear || requiresOuterwear) && outerwearCandidates.length > 0
+            ? outerwearCandidates.filter(
+                (candidate) =>
+                  candidate.item.id !== top.item.id &&
+                  candidate.item.id !== bottom.item.id &&
+                  candidate.item.id !== footwear.item.id
+              )
+            : [];
 
-        if (intent.warmthTarget > 0.65 && outerwearCandidates.length > 0) {
-          const outerwear = outerwearCandidates.find(
-            (candidate) =>
-              candidate.item.id !== top.item.id &&
-              candidate.item.id !== bottom.item.id &&
-              candidate.item.id !== footwear.item.id
-          );
-          if (outerwear) {
-            chosen = [...base, outerwear];
-            bonus += 0.03;
-          }
+        const variantChoices = outfitOuterwearCandidates.length
+          ? outfitOuterwearCandidates.map((outerwear) => ({
+              chosen: [...base, outerwear],
+              bonus: intent.niceToHave.includes("outerwear") || requiresOuterwear ? 0.09 : 0.03,
+            }))
+          : requiresOuterwear
+            ? []
+            : [{chosen: base, bonus: 0}];
+
+        for (const variant of variantChoices) {
+          const itemScores = variant.chosen.map((value) => value.score);
+          const outfitScore =
+            itemScores.reduce((sum, value) => sum + value, 0) / itemScores.length +
+            compatibilityBonus(
+              variant.chosen.map((value) => value.item),
+              preferenceBias
+            ) +
+            variant.bonus;
+          const picks = variant.chosen.map((value) => ({
+            slot: value.slot,
+            itemId: value.item.id,
+          }));
+          combos.push({
+            picks,
+            score: outfitScore,
+            reason: buildReason(
+              intent,
+              variant.chosen.map((value) => ({slot: value.slot, item: value.item}))
+            ),
+            itemIds: picks.map((pick) => pick.itemId),
+          });
         }
-
-        const itemScores = chosen.map((value) => value.score);
-        const outfitScore =
-          itemScores.reduce((sum, value) => sum + value, 0) / itemScores.length + bonus;
-        const picks = chosen.map((value) => ({
-          slot: value.slot,
-          itemId: value.item.id,
-        }));
-        combos.push({
-          picks,
-          score: outfitScore,
-          reason: buildReason(
-            intent,
-            chosen.map((value) => ({slot: value.slot, item: value.item}))
-          ),
-          itemIds: picks.map((pick) => pick.itemId),
-        });
       }
     }
   }
 
-  combos.sort((a, b) => b.score - a.score);
+  const dedupedCombos = Array.from(
+    new Map(combos.map((combo) => [combo.itemIds.slice().sort().join("|"), combo])).values()
+  ).sort((a, b) => b.score - a.score);
 
   const selected: OutfitCandidate[] = [];
   const usedTops = new Set<string>();
   const usedBottoms = new Set<string>();
   const usedFootwear = new Set<string>();
-  for (const combo of combos) {
+  const usedOuterwear = new Set<string>();
+  const usedSignatures = new Set<string>();
+
+  const candidatePool = dedupedCombos
+    .slice(0, Math.max(count * 6, 18))
+    .map((combo) => ({
+      combo,
+      score: combo.score,
+      randomSeed: Math.random(),
+    }));
+
+  while (selected.length < count && candidatePool.length > 0) {
+    const rankedPool = [...candidatePool].sort((a, b) => {
+      const aCombo = a.combo;
+      const bCombo = b.combo;
+      const aTopId = aCombo.picks.find((pick) => pick.slot === "top")?.itemId ?? "";
+      const bTopId = bCombo.picks.find((pick) => pick.slot === "top")?.itemId ?? "";
+      const aBottomId = aCombo.picks.find((pick) => pick.slot === "bottom")?.itemId ?? "";
+      const bBottomId = bCombo.picks.find((pick) => pick.slot === "bottom")?.itemId ?? "";
+      const aFootwearId = aCombo.picks.find((pick) => pick.slot === "footwear")?.itemId ?? "";
+      const bFootwearId = bCombo.picks.find((pick) => pick.slot === "footwear")?.itemId ?? "";
+      const aOuterwearId = aCombo.picks.find((pick) => pick.slot === "outerwear")?.itemId ?? "";
+      const bOuterwearId = bCombo.picks.find((pick) => pick.slot === "outerwear")?.itemId ?? "";
+      const aAdjusted =
+        a.score +
+        (!aTopId || !usedTops.has(aTopId) ? 0.07 : 0) +
+        (!aBottomId || !usedBottoms.has(aBottomId) ? 0.06 : 0) +
+        (!aFootwearId || !usedFootwear.has(aFootwearId) ? 0.04 : 0) +
+        (!aOuterwearId || !usedOuterwear.has(aOuterwearId) ? 0.05 : 0) +
+        a.randomSeed * 0.035;
+      const bAdjusted =
+        b.score +
+        (!bTopId || !usedTops.has(bTopId) ? 0.07 : 0) +
+        (!bBottomId || !usedBottoms.has(bBottomId) ? 0.06 : 0) +
+        (!bFootwearId || !usedFootwear.has(bFootwearId) ? 0.04 : 0) +
+        (!bOuterwearId || !usedOuterwear.has(bOuterwearId) ? 0.05 : 0) +
+        b.randomSeed * 0.035;
+      return bAdjusted - aAdjusted;
+    });
+
+    const choice = rankedPool[0];
+    const combo = choice.combo;
+    const signature = combo.itemIds.slice().sort().join("|");
+    if (usedSignatures.has(signature)) continue;
     const topId = combo.picks.find((pick) => pick.slot === "top")?.itemId ?? "";
     const bottomId = combo.picks.find((pick) => pick.slot === "bottom")?.itemId ?? "";
     const footwearId = combo.picks.find((pick) => pick.slot === "footwear")?.itemId ?? "";
+    const outerwearId = combo.picks.find((pick) => pick.slot === "outerwear")?.itemId ?? "";
     const canUseFresh =
-      (!usedTops.has(topId) || selected.length >= combos.length - 1) &&
-      (!usedBottoms.has(bottomId) || selected.length >= combos.length - 1) &&
-      (!usedFootwear.has(footwearId) || selected.length >= combos.length - 1);
+      (!topId || !usedTops.has(topId) || selected.length >= dedupedCombos.length - 1) &&
+      (!bottomId || !usedBottoms.has(bottomId) || selected.length >= dedupedCombos.length - 1) &&
+      (!footwearId || !usedFootwear.has(footwearId) || selected.length >= dedupedCombos.length - 1) &&
+      (!outerwearId || !usedOuterwear.has(outerwearId) || selected.length >= dedupedCombos.length - 1);
     if (!canUseFresh && selected.length < count - 1) {
+      candidatePool.splice(
+        candidatePool.findIndex((entry) => entry.combo === combo),
+        1,
+      );
       continue;
     }
 
     selected.push(combo);
+    usedSignatures.add(signature);
     usedTops.add(topId);
     usedBottoms.add(bottomId);
     usedFootwear.add(footwearId);
-    if (selected.length >= count) break;
+    if (outerwearId) usedOuterwear.add(outerwearId);
+    candidatePool.splice(
+      candidatePool.findIndex((entry) => entry.combo === combo),
+      1,
+    );
   }
 
   if (selected.length < count) {
-    for (const combo of combos) {
-      if (selected.find((value) => value.itemIds.join("|") === combo.itemIds.join("|"))) {
+    for (const combo of dedupedCombos) {
+      const signature = combo.itemIds.slice().sort().join("|");
+      if (usedSignatures.has(signature)) {
         continue;
       }
       selected.push(combo);
+      usedSignatures.add(signature);
       if (selected.length >= count) break;
     }
   }
@@ -754,6 +1058,111 @@ export function filterEligibleItems(
   });
 }
 
+function filterEligibleItemsRelaxed(items: WardrobeItem[]): WardrobeItem[] {
+  return items.filter((item) => {
+    const draftState = String(item.draftState ?? "").trim().toLowerCase();
+    if (item.isDraft === true) return false;
+    if (draftState === "cancelled" || draftState === "failed") return false;
+    return !!bucketForItem(item);
+  });
+}
+
+function slotCountsForItems(items: WardrobeItem[]) {
+  return {
+    top: items.filter((item) => bucketForItem(item) === "top").length,
+    bottom: items.filter((item) => bucketForItem(item) === "bottom").length,
+    footwear: items.filter((item) => bucketForItem(item) === "footwear").length,
+    outerwear: items.filter((item) => bucketForItem(item) === "outerwear").length,
+  };
+}
+
+function hasRequiredCoreSlots(slotCounts: Record<Slot, number>) {
+  return slotCounts.top > 0 && slotCounts.bottom > 0 && slotCounts.footwear > 0;
+}
+
+function buildCandidatesFromPool(
+  pool: WardrobeItem[],
+  baseIntent: OutfitIntentV1,
+  options: {
+    constraints?: OutfitChatConstraints;
+    excludeItemIds?: string[];
+    memory?: CompactAuraMemoryContext | null;
+    numOutfits: number;
+    preferredSlot?: Slot | null;
+    lockedItemsBySlot?: Partial<Record<Slot, WardrobeItem>>;
+  },
+) {
+  const memory = options.memory ?? null;
+  const memoryConstraints: OutfitChatConstraints = {
+    ...(options.constraints ?? {}),
+    ...(options.constraints?.occasion ? {} : memory?.session?.currentOccasion ? {occasion: memory.session.currentOccasion} : {}),
+    ...(Array.isArray(options.constraints?.colorsWanted) && options.constraints?.colorsWanted.length
+      ? {}
+      : memory?.explicitProfile?.favoriteColors?.length
+        ? {colorsWanted: memory.explicitProfile.favoriteColors.slice(0, 2)}
+        : (memory?.learnedProfile?.confidence ?? 0) >= 0.62 && memory?.learnedProfile?.inferredFavoriteColors?.length
+          ? {colorsWanted: memory.learnedProfile.inferredFavoriteColors.slice(0, 2)}
+          : {}),
+    ...(Array.isArray(options.constraints?.colorsAvoid) && options.constraints?.colorsAvoid.length
+      ? {}
+      : memory?.explicitProfile?.avoidColors?.length
+        ? {colorsAvoid: memory.explicitProfile.avoidColors.slice(0, 2)}
+        : (memory?.learnedProfile?.confidence ?? 0) >= 0.62 && memory?.learnedProfile?.inferredAvoidColors?.length
+          ? {colorsAvoid: memory.learnedProfile.inferredAvoidColors.slice(0, 2)}
+          : {}),
+  };
+  const constrained = applyConstraints(pool, baseIntent, memoryConstraints);
+  const preferenceBias = buildPreferenceBiasContext(memory);
+  const explicitExclude = new Set(options.excludeItemIds ?? []);
+  const finalItems = constrained.items.filter((item) => !explicitExclude.has(item.id));
+  const topBucket = finalItems.filter((item) => bucketForItem(item) === "top");
+  const bottomBucket = finalItems.filter((item) => bucketForItem(item) === "bottom");
+  const footwearBucket = finalItems.filter((item) => bucketForItem(item) === "footwear");
+  const outerwearBucket = finalItems.filter((item) => bucketForItem(item) === "outerwear");
+  const slotCounts = slotCountsForItems(finalItems);
+
+  if (!hasRequiredCoreSlots(slotCounts)) {
+    return {
+      outfits: [] as OutfitCandidate[],
+      slotCounts,
+      eligibleCount: finalItems.length,
+      intent: constrained.intent,
+    };
+  }
+
+  const scoredTop = selectTopCandidates(topBucket, "top", constrained.intent, 25, preferenceBias);
+  const scoredBottom = selectTopCandidates(bottomBucket, "bottom", constrained.intent, 25, preferenceBias);
+  const scoredFootwear = selectTopCandidates(footwearBucket, "footwear", constrained.intent, 25, preferenceBias);
+  const scoredOuterwear = selectTopCandidates(outerwearBucket, "outerwear", constrained.intent, 5, preferenceBias);
+
+  let outfits = assembleOutfits(
+    scoredTop,
+    scoredBottom,
+    scoredFootwear,
+    scoredOuterwear,
+    constrained.intent,
+    preferenceBias,
+    options.numOutfits,
+    options.lockedItemsBySlot,
+  );
+
+  if (options.preferredSlot) {
+    outfits = outfits.sort((a, b) => {
+      const aHas = a.picks.some((pick) => pick.slot === options.preferredSlot);
+      const bHas = b.picks.some((pick) => pick.slot === options.preferredSlot);
+      if (aHas === bHas) return b.score - a.score;
+      return aHas ? -1 : 1;
+    });
+  }
+
+  return {
+    outfits,
+    slotCounts,
+    eligibleCount: finalItems.length,
+    intent: constrained.intent,
+  };
+}
+
 export function generateOutfitCandidates(
   allItems: WardrobeItem[],
   baseIntent: OutfitIntentV1,
@@ -763,60 +1172,61 @@ export function generateOutfitCandidates(
     preferredSlot?: Slot | null;
     excludeItemIds?: string[];
     lockedItemsBySlot?: Partial<Record<Slot, WardrobeItem>>;
+    memory?: CompactAuraMemoryContext | null;
   }
 ): {
   outfits: OutfitCandidate[];
   slotCounts: Record<Slot, number>;
   eligibleCount: number;
   intent: OutfitIntentV1;
+  fallbackMode?: "relaxed_filters" | "relaxed_filters_no_constraints";
 } {
   const count = clampNumOutfits(options?.numOutfits ?? 3, 3);
   const eligible = filterEligibleItems(allItems, baseIntent);
-  const constrained = applyConstraints(eligible, baseIntent, options?.constraints);
-  const explicitExclude = new Set(options?.excludeItemIds ?? []);
-  const finalItems = constrained.items.filter((item) => !explicitExclude.has(item.id));
-
-  const topBucket = finalItems.filter((item) => bucketForItem(item) === "top");
-  const bottomBucket = finalItems.filter((item) => bucketForItem(item) === "bottom");
-  const footwearBucket = finalItems.filter((item) => bucketForItem(item) === "footwear");
-  const outerwearBucket = finalItems.filter((item) => bucketForItem(item) === "outerwear");
-
-  const slotCounts = {
-    top: topBucket.length,
-    bottom: bottomBucket.length,
-    footwear: footwearBucket.length,
-    outerwear: outerwearBucket.length,
-  };
-
-  if (topBucket.length === 0 || bottomBucket.length === 0 || footwearBucket.length === 0) {
-    return {outfits: [], slotCounts, eligibleCount: finalItems.length, intent: constrained.intent};
+  const strictResult = buildCandidatesFromPool(eligible, baseIntent, {
+    constraints: options?.constraints,
+    excludeItemIds: options?.excludeItemIds,
+    memory: options?.memory,
+    numOutfits: count,
+    preferredSlot: options?.preferredSlot,
+    lockedItemsBySlot: options?.lockedItemsBySlot,
+  });
+  if (strictResult.outfits.length > 0) {
+    return strictResult;
   }
 
-  const scoredTop = selectTopCandidates(topBucket, "top", constrained.intent, 25);
-  const scoredBottom = selectTopCandidates(bottomBucket, "bottom", constrained.intent, 25);
-  const scoredFootwear = selectTopCandidates(footwearBucket, "footwear", constrained.intent, 25);
-  const scoredOuterwear = selectTopCandidates(outerwearBucket, "outerwear", constrained.intent, 5);
-
-  let outfits = assembleOutfits(
-    scoredTop,
-    scoredBottom,
-    scoredFootwear,
-    scoredOuterwear,
-    constrained.intent,
-    count,
-    options?.lockedItemsBySlot
-  );
-
-  if (options?.preferredSlot) {
-    outfits = outfits.sort((a, b) => {
-      const aHas = a.picks.some((pick) => pick.slot === options.preferredSlot);
-      const bHas = b.picks.some((pick) => pick.slot === options.preferredSlot);
-      if (aHas === bHas) return b.score - a.score;
-      return aHas ? -1 : 1;
-    });
+  const relaxedPool = filterEligibleItemsRelaxed(allItems);
+  const relaxedResult = buildCandidatesFromPool(relaxedPool, baseIntent, {
+    constraints: options?.constraints,
+    excludeItemIds: options?.excludeItemIds,
+    memory: options?.memory,
+    numOutfits: count,
+    preferredSlot: options?.preferredSlot,
+    lockedItemsBySlot: options?.lockedItemsBySlot,
+  });
+  if (relaxedResult.outfits.length > 0) {
+    return {
+      ...relaxedResult,
+      fallbackMode: "relaxed_filters",
+    };
   }
 
-  return {outfits, slotCounts, eligibleCount: finalItems.length, intent: constrained.intent};
+  const unconstrainedRelaxedResult = buildCandidatesFromPool(relaxedPool, baseIntent, {
+    constraints: undefined,
+    excludeItemIds: options?.excludeItemIds,
+    memory: options?.memory,
+    numOutfits: count,
+    preferredSlot: options?.preferredSlot,
+    lockedItemsBySlot: options?.lockedItemsBySlot,
+  });
+  if (unconstrainedRelaxedResult.outfits.length > 0) {
+    return {
+      ...unconstrainedRelaxedResult,
+      fallbackMode: "relaxed_filters_no_constraints",
+    };
+  }
+
+  return strictResult;
 }
 
 export function swapOutfitSlot(

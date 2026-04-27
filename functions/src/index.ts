@@ -3,9 +3,12 @@ import { getFirestore } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 import { parseOutfitIntentFromPrompt } from "./parseOutfitIntent";
 export { generateOutfitsV1 } from "./generateOutfitsV1";
+export { generateAuraSwipeBatch } from "./generateAuraSwipeBatch";
 export { outfitChatV1 } from "./outfitChatV1";
 export { askAura } from "./askAura";
 export { askAuraStream } from "./askAuraStream";
+export { transcribeAuraAudio } from "./transcribeAuraAudio";
+export { importProductLink } from "./importProductLink";
 export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
 export { generateCleanedProductImages } from "./generateCleanedProductImages";
 

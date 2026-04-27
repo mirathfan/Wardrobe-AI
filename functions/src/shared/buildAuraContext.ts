@@ -1,3 +1,9 @@
+import type {CompactAuraMemoryContext} from "../../../shared/auraMemory";
+import {
+  detectWardrobeGaps,
+  type WardrobeCategoryCounts,
+} from "./detectWardrobeGaps";
+
 type WardrobeItem = {
   id: string;
   name?: string;
@@ -28,6 +34,7 @@ type AuraContextArgs = {
   } | null;
   occasion?: string | null;
   selectedDate?: string | null;
+  memory?: CompactAuraMemoryContext | null;
 };
 
 type AuraCategory =
@@ -159,7 +166,10 @@ export function buildAuraContext({
   weather,
   occasion,
   selectedDate,
+  memory,
 }: AuraContextArgs) {
+  const DEBUG_AURA_SPARSE =
+    process.env.FUNCTIONS_EMULATOR === "true" || process.env.NODE_ENV !== "production";
   const excluded = {
     drafts: [] as Record<string, string>[],
     laundry: [] as Record<string, string>[],
@@ -219,6 +229,34 @@ export function buildAuraContext({
     wardrobe[category].push(summary);
   });
 
+  const categoryCounts: WardrobeCategoryCounts = {
+    tops: wardrobe.tops.length,
+    outerwear: wardrobe.outerwear.length,
+    bottoms: wardrobe.bottoms.length,
+    footwear: wardrobe.footwear.length,
+    accessories: wardrobe.accessories.length,
+  };
+  const totalItemCount =
+    categoryCounts.tops +
+    categoryCounts.outerwear +
+    categoryCounts.bottoms +
+    categoryCounts.footwear +
+    categoryCounts.accessories;
+  const isSparseWardrobe = totalItemCount < 15;
+  const wardrobeGaps = detectWardrobeGaps(categoryCounts);
+
+  if (DEBUG_AURA_SPARSE) {
+    console.log("[AURA_SPARSE_CONTEXT]", {
+      isSparseWardrobe,
+      categoryCounts,
+      detectedGaps: {
+        missingCore: wardrobeGaps.missingCore.map((gap) => gap.label),
+        weakAreas: wardrobeGaps.weakAreas.map((gap) => gap.label),
+      },
+      suggestions: wardrobeGaps.suggestions.map((suggestion) => suggestion.label),
+    });
+  }
+
   return {
     selectedDate: selectedDate ?? null,
     occasion: occasion ?? null,
@@ -227,27 +265,15 @@ export function buildAuraContext({
       condition: weather?.condition ?? null,
     },
     wardrobe,
-    counts: {
-      tops: wardrobe.tops.length,
-      outerwear: wardrobe.outerwear.length,
-      bottoms: wardrobe.bottoms.length,
-      footwear: wardrobe.footwear.length,
-      accessories: wardrobe.accessories.length,
-    },
+    counts: categoryCounts,
+    categoryCounts,
+    isSparseWardrobe,
+    wardrobeGaps,
     inventory: {
-      total:
-        wardrobe.tops.length +
-        wardrobe.outerwear.length +
-        wardrobe.bottoms.length +
-        wardrobe.footwear.length +
-        wardrobe.accessories.length,
-      hasAnyItems:
-        wardrobe.tops.length +
-          wardrobe.outerwear.length +
-          wardrobe.bottoms.length +
-          wardrobe.footwear.length +
-          wardrobe.accessories.length >
-        0,
+      total: totalItemCount,
+      totalItemCount,
+      hasAnyItems: totalItemCount > 0,
+      isSparseWardrobe,
       missingCoreCategories: [
         ...(wardrobe.tops.length ? [] : ["tops"]),
         ...(wardrobe.bottoms.length ? [] : ["bottoms"]),
@@ -268,5 +294,7 @@ export function buildAuraContext({
       preferOwnedBottoms: true,
       suggestMissingPiecesOnlyWhenNoReasonableOwnedOptionExists: true,
     },
+    preferenceContext: memory ?? null,
+    stylistBrief: memory?.stylistBrief ?? "",
   };
 }

@@ -13,9 +13,92 @@ import {
   persistGeneratedOutfits,
   safeJsonExtract,
 } from "./shared/outfitEngine";
+import { loadCompactAuraMemoryContext } from "./shared/auraMemory";
 
 if (!getApps().length) {
   initializeApp();
+}
+
+function normalizedText(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isOuterwearItem(item: { category?: string | null; subCategory?: string | null; type?: string | null; name?: string | null }) {
+  const category = String(item.category ?? "").trim().toLowerCase();
+  const tokens = normalizedText(
+    [item.category, item.subCategory, item.type, item.name].filter(Boolean).join(" "),
+  );
+  return (
+    category === "outerwear" ||
+    /\b(jacket|coat|outerwear|overshirt|blazer|hoodie|cardigan|shacket|trench|parka|bomber|denim jacket)\b/.test(
+      tokens,
+    )
+  );
+}
+
+function enforceOuterwearOnOutfits(params: {
+  outfits: Array<{
+    picks: Array<{ slot: "top" | "bottom" | "footwear" | "outerwear"; itemId: string }>;
+    score: number;
+    reason: string;
+    itemIds: string[];
+  }>;
+  allItems: Array<{ id: string; category?: string; subCategory?: string; type?: string | null; name?: string | null }>;
+  requireOuterwear: boolean;
+}) {
+  const { outfits, allItems, requireOuterwear } = params;
+  const outerwearPool = allItems.filter(isOuterwearItem);
+  if (!requireOuterwear || outerwearPool.length === 0) {
+    return {
+      outfits,
+      availableOuterwearCount: outerwearPool.length,
+      repairedCount: 0,
+    };
+  }
+
+  const usedOuterwearIds = new Set<string>();
+  let repairedCount = 0;
+  const repaired = outfits.map((outfit) => {
+    if (outfit.picks.some((pick) => pick.slot === "outerwear")) {
+      const currentOuterwearId = outfit.picks.find((pick) => pick.slot === "outerwear")?.itemId;
+      if (currentOuterwearId) usedOuterwearIds.add(currentOuterwearId);
+      return {
+        ...outfit,
+        itemIds: outfit.itemIds,
+      };
+    }
+
+    const existingIds = new Set(outfit.picks.map((pick) => pick.itemId));
+    const candidate =
+      outerwearPool.find((item) => !existingIds.has(item.id) && !usedOuterwearIds.has(item.id)) ??
+      outerwearPool.find((item) => !existingIds.has(item.id)) ??
+      outerwearPool[0];
+
+    if (!candidate) {
+      return outfit;
+    }
+
+    usedOuterwearIds.add(candidate.id);
+    repairedCount += 1;
+    return {
+      ...outfit,
+      picks: [{ slot: "outerwear" as const, itemId: candidate.id }, ...outfit.picks],
+      itemIds: [candidate.id, ...outfit.itemIds],
+      reason: outfit.reason.includes("outerwear")
+        ? outfit.reason
+        : `${outfit.reason.replace(/\.\s*$/, "")}, layered with ${candidate.name ?? "outerwear"}.`,
+    };
+  });
+
+  return {
+    outfits: repaired.filter((outfit) => outfit.picks.some((pick) => pick.slot === "outerwear")),
+    availableOuterwearCount: outerwearPool.length,
+    repairedCount,
+  };
 }
 
 async function parseOutfitIntent(
@@ -110,13 +193,53 @@ export const generateOutfitsV1 = onCall(
 
     const db = getFirestore();
     const allItems = await fetchWardrobeItems(db, uid);
-    const generated = generateOutfitCandidates(allItems, parsedIntent, {numOutfits});
+    const memory = await loadCompactAuraMemoryContext(db, uid, null);
+    const generated = generateOutfitCandidates(allItems, parsedIntent, {
+      numOutfits,
+      memory,
+    });
+    const outerwearAvailable = allItems.filter((item) =>
+      isOuterwearItem({
+        category: item.category,
+        subCategory: item.subCategory,
+        type: (item as { type?: string | null }).type ?? null,
+        name: item.name ?? null,
+      }),
+    ).length;
 
     logger.info("generateOutfitsV1 slot counts", {
       uid,
       total: allItems.length,
       eligible: generated.eligibleCount,
       ...generated.slotCounts,
+      fallbackMode: generated.fallbackMode ?? "strict",
+      requiresOuterwear: parsedIntent.requireOuterwear === true,
+      availableOuterwearCount: outerwearAvailable,
+    });
+
+    const enforced = enforceOuterwearOnOutfits({
+      outfits: generated.outfits,
+      allItems: allItems.map((item) => ({
+        id: item.id,
+        category: item.category,
+        subCategory: item.subCategory,
+        type: (item as { type?: string | null }).type ?? null,
+        name: item.name ?? null,
+      })),
+      requireOuterwear: parsedIntent.requireOuterwear === true,
+    });
+    const enforcedOutfits = enforced.outfits;
+
+    logger.info("generateOutfitsV1 outerwear enforcement", {
+      uid,
+      requiresOuterwear: parsedIntent.requireOuterwear === true,
+      availableOuterwearCount: enforced.availableOuterwearCount,
+      generatedCount: generated.outfits.length,
+      enforcedCount: enforcedOutfits.length,
+      repairedCount: enforced.repairedCount,
+      outerwearCountPerLook: enforcedOutfits.map(
+        (outfit) => outfit.picks.filter((pick) => pick.slot === "outerwear").length,
+      ),
     });
 
     const outfits = await persistGeneratedOutfits({
@@ -124,17 +247,19 @@ export const generateOutfitsV1 = onCall(
       uid,
       intentText,
       intent: generated.intent,
-      outfits: generated.outfits,
+      outfits: enforcedOutfits,
     });
 
     logger.info("generateOutfitsV1 selected outfits", {
       uid,
       requestedNumOutfits,
       numOutfits,
+      fallbackMode: generated.fallbackMode ?? "strict",
       outfits: outfits.map((outfit) => ({
         id: outfit.id,
         score: outfit.score,
         itemIds: outfit.picks.map((pick) => pick.itemId),
+        outerwearCount: outfit.picks.filter((pick) => pick.slot === "outerwear").length,
       })),
     });
 

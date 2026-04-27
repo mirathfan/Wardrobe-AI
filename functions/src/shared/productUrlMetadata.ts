@@ -1,0 +1,404 @@
+import * as cheerio from "cheerio";
+import { logger } from "firebase-functions/v2";
+import {
+  extractAmazonLinkData,
+  extractNikeSelectedVariantData,
+  extractProductImagesFromHtml,
+  isAmazonProductUrl,
+  validateProductUrl,
+} from "./productLinkExtractor";
+
+export type ProductUrlMetadata = {
+  sourceUrl: string;
+  title: string | null;
+  imageUrl: string | null;
+  imageUrls?: string[];
+  description: string | null;
+  brand?: string | null;
+  category?: string | null;
+  subCategory?: string | null;
+  confidence?: number | null;
+  status?: "ready" | "needs_review";
+};
+
+const FETCH_TIMEOUT_MS = 9000;
+const USER_AGENT =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) " +
+  "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
+function isHmHost(url: URL) {
+  const hostname = url.hostname.toLowerCase();
+  return hostname === "hm.com" || hostname.endsWith(".hm.com");
+}
+
+function isZaraHost(url: URL) {
+  const hostname = url.hostname.toLowerCase();
+  return hostname === "zara.com" || hostname.endsWith(".zara.com");
+}
+
+function zaraProductIdFromUrl(url: URL) {
+  const v1 = url.searchParams.get("v1");
+  if (v1 && /^\d+$/.test(v1)) return v1;
+  return url.pathname.match(/-p0*(\d+)\.html$/i)?.[1] ?? null;
+}
+
+function hmContentFallbackUrls(url: URL) {
+  if (!isHmHost(url) || !/\/productpage\.\d+\.html$/i.test(url.pathname)) {
+    return [];
+  }
+  return [
+    new URL(`${url.pathname}/_jcr_content.product.json`, url).toString(),
+    new URL(`${url.pathname}/_jcr_content/product.json`, url).toString(),
+  ];
+}
+
+async function fetchTextWithTimeout(url: string, headers: HeadersInit) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers,
+      redirect: "follow",
+    });
+    const text = await response.text();
+    return { response, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function cleanText(value: unknown, maxLength = 300) {
+  const text = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
+function normalizeImageUrl(baseUrl: URL, value: string | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw.startsWith("data:")) return null;
+  try {
+    const parsed = new URL(raw, baseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+type ZaraProductDetailsResponse = {
+  name?: unknown;
+  detail?: {
+    description?: unknown;
+    colors?: {
+      name?: unknown;
+      productId?: unknown;
+      xmedia?: {
+        type?: unknown;
+        kind?: unknown;
+        order?: unknown;
+        url?: unknown;
+        extraInfo?: {
+          deliveryUrl?: unknown;
+        };
+      }[];
+    }[];
+  };
+}[];
+
+function zaraImageUrl(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const resolved = raw.replace("{width}", "1200");
+  try {
+    const url = new URL(resolved);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function extractZaraProductUrlMetadata(url: URL): Promise<ProductUrlMetadata | null> {
+  if (!isZaraHost(url)) return null;
+  const productId = zaraProductIdFromUrl(url);
+  if (!productId) return null;
+
+  const detailsUrl = new URL(`${url.origin}${url.pathname.split("/").slice(0, 3).join("/")}/products-details`);
+  detailsUrl.searchParams.set("productIds", productId);
+  logger.info("[AURA_URL_FETCH] trying Zara product details API", {
+    host: url.hostname,
+    productId,
+    path: detailsUrl.pathname,
+  });
+
+  const { response, text } = await fetchTextWithTimeout(detailsUrl.toString(), {
+    accept: "application/json,text/plain,*/*",
+    "accept-language": "en-US,en;q=0.9",
+    "user-agent": USER_AGENT,
+  });
+  if (!response.ok) {
+    logger.warn("[AURA_URL_FETCH] Zara product details API failed", {
+      host: url.hostname,
+      productId,
+      status: response.status,
+      bodyLength: text.length,
+    });
+    return null;
+  }
+
+  let parsed: ZaraProductDetailsResponse;
+  try {
+    parsed = JSON.parse(text) as ZaraProductDetailsResponse;
+  } catch (error) {
+    logger.warn("[AURA_URL_FETCH] Zara product details API returned invalid JSON", {
+      host: url.hostname,
+      productId,
+      error,
+    });
+    return null;
+  }
+
+  const product = parsed[0];
+  const colors = product?.detail?.colors ?? [];
+  const selectedColor =
+    colors.find((color) => String(color.productId ?? "") === productId) ??
+    colors[0];
+  const imageUrls = (selectedColor?.xmedia ?? [])
+    .filter((media) => String(media.type ?? "").toLowerCase() === "image")
+    .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
+    .map((media) => zaraImageUrl(media.extraInfo?.deliveryUrl ?? media.url))
+    .filter((imageUrl): imageUrl is string => !!imageUrl);
+  const deduped = Array.from(new Set(imageUrls)).slice(0, 12);
+  const metadata = {
+    sourceUrl: url.toString(),
+    title: cleanText(product?.name, 220),
+    imageUrl: deduped[0] ?? null,
+    imageUrls: deduped,
+    description: cleanText(product?.detail?.description, 500),
+  };
+  logger.info("[AURA_URL_METADATA] extracted Zara product URL metadata", {
+    host: url.hostname,
+    productId,
+    hasTitle: !!metadata.title,
+    imageCount: metadata.imageUrls.length,
+    selectedColor: cleanText(selectedColor?.name, 80),
+  });
+  return metadata.imageUrl || metadata.title || metadata.description ? metadata : null;
+}
+
+async function fetchHtml(url: URL) {
+  const headers = {
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.9",
+    "user-agent": USER_AGENT,
+  };
+
+  logger.info("[AURA_URL_FETCH] fetching product URL", {
+    host: url.hostname,
+    path: url.pathname,
+  });
+  const fallbackUrls = hmContentFallbackUrls(url);
+  if (fallbackUrls.length) {
+  const fallbackHtml = await tryHmContentFallback(url, fallbackUrls, headers, null, null);
+  if (fallbackHtml) return fallbackHtml;
+  }
+
+  let originalStatus: number | null = null;
+  let originalError: unknown = null;
+  try {
+    const { response, text } = await fetchTextWithTimeout(url.toString(), headers);
+    originalStatus = response.status;
+    if (response.ok) {
+      const finalUrl = (() => {
+        try {
+          return new URL(response.url || url.toString());
+        } catch {
+          return url;
+        }
+      })();
+      logger.info("[AURA_URL_FETCH] fetched product URL", {
+        host: url.hostname,
+        htmlLength: text.length,
+        fallback: null,
+        finalUrl: finalUrl.toString(),
+      });
+      return {
+        html: text,
+        finalUrl,
+      };
+    }
+  } catch (error) {
+    originalError = error;
+    if (!isHmHost(url)) {
+      throw error;
+    }
+    logger.warn("[AURA_URL_FETCH] product URL fetch failed; trying retailer fallback", {
+      host: url.hostname,
+      error,
+    });
+  }
+
+  const fallbackHtml = await tryHmContentFallback(
+    url,
+    fallbackUrls,
+    headers,
+    originalStatus,
+    originalError,
+  );
+  if (fallbackHtml) return fallbackHtml;
+
+  if (originalError instanceof Error) {
+    throw originalError;
+  }
+  throw new Error(`Product page returned ${originalStatus ?? "unknown status"}`);
+}
+
+async function tryHmContentFallback(
+  url: URL,
+  fallbackUrls: string[],
+  headers: HeadersInit,
+  originalStatus: number | null,
+  originalError: unknown,
+) {
+  for (const fallbackUrl of fallbackUrls) {
+    try {
+      logger.info("[AURA_URL_FETCH] trying H&M content fallback", {
+        host: url.hostname,
+        fallbackPath: new URL(fallbackUrl).pathname,
+        originalStatus,
+        originalError: originalError instanceof Error ? originalError.message : null,
+      });
+      const fallbackResult = await fetchTextWithTimeout(fallbackUrl, headers);
+      if (
+        fallbackResult.response.ok &&
+        /<html|og:image|productArticleDetails/i.test(fallbackResult.text)
+      ) {
+        const finalUrl = (() => {
+          try {
+            return new URL(fallbackResult.response.url || url.toString());
+          } catch {
+            return url;
+          }
+        })();
+        logger.info("[AURA_URL_FETCH] fetched H&M content fallback", {
+          host: url.hostname,
+          htmlLength: fallbackResult.text.length,
+          status: fallbackResult.response.status,
+          finalUrl: finalUrl.toString(),
+        });
+        return {
+          html: fallbackResult.text,
+          finalUrl,
+        };
+      }
+      logger.warn("[AURA_URL_FETCH] H&M content fallback unusable", {
+        host: url.hostname,
+        status: fallbackResult.response.status,
+        htmlLength: fallbackResult.text.length,
+      });
+    } catch (error) {
+      logger.warn("[AURA_URL_FETCH] H&M content fallback failed", {
+        host: url.hostname,
+        fallbackHost: new URL(fallbackUrl).hostname,
+        error,
+      });
+    }
+  }
+  return null;
+}
+
+function metaContent($: cheerio.CheerioAPI, key: string) {
+  return cleanText(
+    $(`meta[property="${key}"]`).attr("content") ??
+      $(`meta[name="${key}"]`).attr("content"),
+    500,
+  );
+}
+
+function firstLargeImage($: cheerio.CheerioAPI, baseUrl: URL) {
+  let fallback: string | null = null;
+  let best: string | null = null;
+
+  $("img").each((_, element) => {
+    const img = $(element);
+    const src =
+      img.attr("src") ??
+      img.attr("data-src") ??
+      img.attr("data-original") ??
+      img.attr("data-zoom-image") ??
+      img.attr("srcset")?.split(",").at(-1)?.trim().split(/\s+/)[0];
+    const normalized = normalizeImageUrl(baseUrl, src);
+    if (!normalized) return;
+    const lower = normalized.toLowerCase();
+    if (/(logo|icon|sprite|favicon|placeholder|badge|payment|loader)/i.test(lower)) {
+      return;
+    }
+    fallback = fallback ?? normalized;
+    const width = Number(img.attr("width") ?? img.attr("data-width") ?? 0);
+    const height = Number(img.attr("height") ?? img.attr("data-height") ?? 0);
+    const hasProductHint = /(product|pdp|gallery|model|main|image|photo)/i.test(lower);
+    if (!best && ((width >= 300 && height >= 300) || hasProductHint)) {
+      best = normalized;
+    }
+  });
+
+  return best ?? fallback;
+}
+
+export async function extractProductUrlMetadata(rawUrl: string): Promise<ProductUrlMetadata> {
+  const url = await validateProductUrl(rawUrl);
+  const zaraMetadata = await extractZaraProductUrlMetadata(url);
+  if (zaraMetadata?.imageUrl) return zaraMetadata;
+
+  const fetched = await fetchHtml(url);
+  const html = fetched.html;
+  const finalUrl = fetched.finalUrl;
+  if (isAmazonProductUrl(finalUrl)) {
+    const amazon = extractAmazonLinkData(finalUrl, html);
+    return {
+      sourceUrl: amazon.metadata.sourceUrl,
+      title: amazon.metadata.title ?? amazon.partialData?.title ?? null,
+      imageUrl: amazon.imageUrls[0] ?? null,
+      imageUrls: amazon.imageUrls,
+      description: null,
+      brand: amazon.status === "ready" ? amazon.metadata.brand ?? null : null,
+      category: amazon.status === "ready" ? amazon.metadata.categoryHints?.[0] ?? null : null,
+      subCategory: amazon.status === "ready" ? amazon.metadata.categoryHints?.[1] ?? null : null,
+      confidence: amazon.confidence,
+      status: amazon.status,
+    };
+  }
+  const $ = cheerio.load(html);
+  const nikeVariant = extractNikeSelectedVariantData(finalUrl.toString(), html);
+  const imageUrls =
+    nikeVariant?.imageUrls?.length
+      ? nikeVariant.imageUrls
+      : extractProductImagesFromHtml(finalUrl.toString(), html);
+  const ogImage = normalizeImageUrl(finalUrl, metaContent($, "og:image") ?? undefined);
+  const metadata = {
+    sourceUrl: nikeVariant?.metadata?.sourceUrl ?? finalUrl.toString(),
+    title:
+      nikeVariant?.metadata?.title ??
+      metaContent($, "og:title") ??
+      cleanText($("title").first().text(), 220),
+    imageUrl: imageUrls[0] ?? ogImage ?? firstLargeImage($, finalUrl),
+    imageUrls: imageUrls.length ? imageUrls : [ogImage ?? firstLargeImage($, finalUrl)].filter((value): value is string => !!value),
+    description:
+      nikeVariant?.metadata?.description ??
+      metaContent($, "og:description") ??
+      metaContent($, "description"),
+  };
+  logger.info("[AURA_URL_METADATA] extracted product URL metadata", {
+    host: finalUrl.hostname,
+    hasTitle: !!metadata.title,
+    hasImageUrl: !!metadata.imageUrl,
+    imageCount: metadata.imageUrls.length,
+    hasDescription: !!metadata.description,
+    imageHost: metadata.imageUrl ? new URL(metadata.imageUrl).hostname : null,
+    sourceUrl: metadata.sourceUrl,
+  });
+  return metadata;
+}

@@ -27,6 +27,7 @@ import {
   loadAssistantProfile,
   loadBehaviorProfile,
 } from "./shared/assistantMemory";
+import { loadCompactAuraMemoryContext } from "./shared/auraMemory";
 import { getOrRefreshWardrobeSummary } from "./shared/wardrobeSummary";
 
 if (!getApps().length) {
@@ -433,12 +434,13 @@ export const outfitChatV1 = onCall(
       }, {merge: true});
     }
 
-    const [recentMessagesSnap, userSnap, allItems, assistantProfile, behaviorProfile] = await Promise.all([
+    const [recentMessagesSnap, userSnap, allItems, assistantProfile, behaviorProfile, memory] = await Promise.all([
       threadRef.collection("messages").orderBy("createdAt", "asc").limitToLast(12).get(),
       userRef.get(),
       fetchWardrobeItems(db, uid),
       loadAssistantProfile(db, uid),
       loadBehaviorProfile(db, uid),
+      loadCompactAuraMemoryContext(db, uid, null),
     ]);
 
     const recentMessages = recentMessagesSnap.docs.map((docSnap) => docSnap.data() as ChatMessageDoc);
@@ -555,6 +557,7 @@ export const outfitChatV1 = onCall(
           constraints: mergedConstraints,
           excludeItemIds: explicitExcludes,
           lockedItemsBySlot,
+          memory,
         });
 
         logger.info("outfitChatV1 slot counts", {
