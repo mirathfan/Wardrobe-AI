@@ -35,7 +35,7 @@ service cloud.firestore {
     }
 
     function validDraftState(state) {
-      return state in ["draft", "photo_uploaded", "ingesting", "ready", "failed"];
+      return state in ["draft", "photo_uploaded", "ingesting", "ready", "failed", "cancelled"];
     }
 
     function validOptionalString(value) {
@@ -197,8 +197,12 @@ service cloud.firestore {
         && data.keys().hasAll(["type", "createdAt"])
         && data.type in ["user", "assistant", "outfit", "system/action"]
         && data.createdAt is number
+        && (!("kind" in data) || validOptionalString(data.kind))
         && (!("text" in data) || validOptionalString(data.text))
+        && (!("attachments" in data) || data.attachments is list)
+        && (!("streaming" in data) || data.streaming is bool)
         && (!("outfits" in data) || data.outfits is list)
+        && (!("aura" in data) || data.aura is map)
         && noForeignUidField(data, uid);
     }
 
@@ -239,6 +243,13 @@ service cloud.firestore {
         allow read, write: if isOwner(uid) && (docId == "main" || docId == "behavior");
       }
 
+      match /profile/{docId} {
+        allow read, write: if isOwner(uid) && (
+          docId == "styleProfile" ||
+          docId == "learnedStyleMemory"
+        );
+      }
+
       match /aiChats/{chatId} {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid) && validAiChatDoc(request.resource.data, uid);
@@ -249,6 +260,26 @@ service cloud.firestore {
           allow create, update: if isOwner(uid) && validAiChatMessageDoc(request.resource.data, uid);
           allow delete: if isOwner(uid);
         }
+
+        match /sessionContext/{docId} {
+          allow read, write: if isOwner(uid) && docId == "current";
+        }
+      }
+
+      match /styleEvents/{eventId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /savedLooks/{lookId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /savedOutfits/{lookId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /outfitFeedback/{feedbackId} {
+        allow read, write: if isOwner(uid);
       }
     }
 
