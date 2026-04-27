@@ -1,4 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Storage } from "@/src/lib/storage";
 
 const CACHE_PREFIX = "outfit-chat:";
 const MAX_MESSAGES_PER_SESSION = 30;
@@ -46,7 +46,7 @@ function sortSessions<T>(sessions: LocalChatSession<T>[]) {
 
 async function loadRawStore<T>(uid: string): Promise<SessionStore<T> | null> {
   try {
-    const raw = await AsyncStorage.getItem(getScopedKey(uid, "sessions-v2"));
+    const raw = await Storage.getItem(getScopedKey(uid, "sessions-v2"));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SessionStore<T>;
     if (!parsed || !Array.isArray(parsed.sessions)) return null;
@@ -81,7 +81,7 @@ async function loadStore<T>(uid: string): Promise<SessionStore<T>> {
 
 async function persistStore<T>(uid: string, store: SessionStore<T>): Promise<void> {
   try {
-    await AsyncStorage.setItem(
+    await Storage.setItem(
       getScopedKey(uid, "sessions-v2"),
       JSON.stringify({
         latestSessionId: store.latestSessionId,
@@ -161,7 +161,7 @@ export async function clearSession(uid: string, sessionId?: string): Promise<voi
 
 export async function loadLatestChatCache<T>(uid: string): Promise<CachePayload<T> | null> {
   try {
-    const raw = await AsyncStorage.getItem(getScopedKey(uid, "latest-chat-v3"));
+    const raw = await Storage.getItem(getScopedKey(uid, "latest-chat-v3"));
     if (raw) {
       const parsed = JSON.parse(raw) as CachePayload<T>;
       if (parsed && Array.isArray(parsed.messages)) {
@@ -194,10 +194,10 @@ export async function saveLatestChatCache<T>(
 ): Promise<void> {
   try {
     if (!chatId) {
-      await AsyncStorage.removeItem(getScopedKey(uid, "latest-chat-v3"));
+      await Storage.removeItem(getScopedKey(uid, "latest-chat-v3"));
       return;
     }
-    await AsyncStorage.setItem(
+    await Storage.setItem(
       getScopedKey(uid, "latest-chat-v3"),
       JSON.stringify({
         chatId,
@@ -213,7 +213,7 @@ export async function saveLatestChatCache<T>(
 
 export async function clearLatestChatCache(uid: string): Promise<void> {
   try {
-    await AsyncStorage.removeItem(getScopedKey(uid, "latest-chat-v3"));
+    await Storage.removeItem(getScopedKey(uid, "latest-chat-v3"));
   } catch {
     // ignore
   }

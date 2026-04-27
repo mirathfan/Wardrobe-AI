@@ -1,8 +1,10 @@
 import React from "react";
-import { Animated, Pressable, ScrollView, Text, View } from "react-native";
+import { Animated, Pressable, ScrollView, Text } from "react-native";
 
 import { Fonts } from "@/constants/theme";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+
+import { auraTheme } from "./aiTheme";
 
 const DEFAULT_CHIPS = [
   "What should I wear today?",
@@ -23,27 +25,22 @@ export default function AuraQuickChips({
   onPress: (chip: string) => void;
 }) {
   const { colors } = useAppTheme();
-
-  if (variant === "cards" && items?.length) {
-    return (
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 14, paddingHorizontal: 20, paddingRight: 30 }}
-      >
-        {items.map((item) => (
-          <ChipCard key={item.prompt} item={item} onPress={onPress} colors={colors} />
-        ))}
-      </ScrollView>
-    );
-  }
+  const source = variant === "cards" && items?.length ? items : chips;
 
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-      {chips.map((chip) => (
-        <Chip key={chip} label={chip} onPress={onPress} colors={colors} />
-      ))}
-    </View>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={{ gap: 6, paddingHorizontal: 20, paddingRight: 22 }}
+    >
+      {source.map((item, index) =>
+        typeof item === "string" ? (
+          <Chip key={`${item}-${index}`} label={item} onPress={onPress} colors={colors} index={index} />
+        ) : (
+          <ChipCard key={item.prompt} item={item} onPress={onPress} colors={colors} index={index} />
+        )
+      )}
+    </ScrollView>
   );
 }
 
@@ -51,12 +48,33 @@ function ChipCard({
   item,
   onPress,
   colors,
+  index,
 }: {
   item: { title: string; subtitle: string; prompt: string };
   onPress: (chip: string) => void;
   colors: ReturnType<typeof useAppTheme>["colors"];
+  index: number;
 }) {
   const scale = React.useRef(new Animated.Value(1)).current;
+  const opacity = React.useRef(new Animated.Value(0)).current;
+  const translateY = React.useRef(new Animated.Value(6)).current;
+
+  React.useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 180,
+        delay: index * 30,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 180,
+        delay: index * 30,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [index, opacity, translateY]);
 
   function animateTo(value: number) {
     Animated.timing(scale, {
@@ -67,31 +85,35 @@ function ChipCard({
   }
 
   return (
-    <Animated.View style={{ transform: [{ scale }] }}>
+    <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
       <Pressable
         onPress={() => onPress(item.prompt)}
         onPressIn={() => animateTo(0.98)}
         onPressOut={() => animateTo(1)}
         style={{
-          width: 286,
-          minHeight: 104,
-          borderRadius: 28,
-          backgroundColor: "rgba(255,255,255,0.062)",
+          width: 164,
+          minHeight: 46,
+          borderRadius: 15,
+          backgroundColor: "rgba(255,255,255,0.018)",
           borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.05)",
-          paddingHorizontal: 18,
-          paddingVertical: 16,
-          justifyContent: "flex-end",
-          shadowColor: "#000",
-          shadowOpacity: 0.13,
-          shadowRadius: 16,
-          shadowOffset: { width: 0, height: 10 },
+          borderColor: auraTheme.borderSoft,
+          paddingHorizontal: 10,
+          paddingVertical: 7,
+          justifyContent: "center",
         }}
       >
-        <Text style={{ color: colors.text, fontSize: 17, fontWeight: "700", fontFamily: Fonts.sans }}>
+        <Text style={{ color: colors.text, fontSize: 12, fontWeight: "700", fontFamily: Fonts.sans }}>
           {item.title}
         </Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 13.5, lineHeight: 18, marginTop: 4, fontFamily: Fonts.sans }}>
+        <Text
+          style={{
+            color: auraTheme.textMuted,
+            fontSize: 10.5,
+            lineHeight: 13,
+            marginTop: 1,
+            fontFamily: Fonts.sans,
+          }}
+        >
           {item.subtitle}
         </Text>
       </Pressable>
@@ -103,12 +125,33 @@ function Chip({
   label,
   onPress,
   colors,
+  index,
 }: {
   label: string;
   onPress: (chip: string) => void;
   colors: ReturnType<typeof useAppTheme>["colors"];
+  index: number;
 }) {
   const scale = React.useRef(new Animated.Value(1)).current;
+  const opacity = React.useRef(new Animated.Value(0)).current;
+  const translateY = React.useRef(new Animated.Value(6)).current;
+
+  React.useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 180,
+        delay: index * 30,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 180,
+        delay: index * 30,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [index, opacity, translateY]);
 
   function animateTo(value: number) {
     Animated.timing(scale, {
@@ -119,22 +162,26 @@ function Chip({
   }
 
   return (
-    <Animated.View style={{ transform: [{ scale }] }}>
+    <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
       <Pressable
-        key={label}
         onPress={() => onPress(label)}
         onPressIn={() => animateTo(0.97)}
         onPressOut={() => animateTo(1)}
         style={{
-          paddingHorizontal: 13,
-          paddingVertical: 7,
+          maxWidth: 210,
+          paddingHorizontal: 10,
+          paddingVertical: 5,
           borderRadius: 999,
-          backgroundColor: "rgba(255,255,255,0.03)",
+          backgroundColor: "rgba(255,255,255,0.018)",
           borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.04)",
+          borderColor: auraTheme.borderSoft,
         }}
       >
-        <Text style={{ color: colors.text, fontSize: 11.5, fontWeight: "600", fontFamily: Fonts.sans }}>
+        <Text
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          style={{ color: auraTheme.textMuted, fontSize: 10.5, fontWeight: "600", fontFamily: Fonts.sans }}
+        >
           {label}
         </Text>
       </Pressable>

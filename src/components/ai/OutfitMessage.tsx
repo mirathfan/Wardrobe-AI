@@ -1,13 +1,15 @@
+import FastImage from "@d11/react-native-fast-image";
 import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
-import { Image, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
-import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
+import { getItemImageDecoration, getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 import type { ChatOutfit } from "./chatTypes";
+import { auraShadow, auraTheme } from "./aiTheme";
 
 function displayName(item: ClothingItem) {
   return item.name || `${item.displayColor ?? item.primaryColor ?? ""} ${item.category}`.trim();
@@ -49,28 +51,24 @@ export default function OutfitMessage({
 
   return (
     <LinearGradient
-      colors={["rgba(28,34,47,0.96)", "rgba(19,23,31,0.98)"]}
+      colors={["rgba(16,18,24,0.98)", "rgba(10,12,18,0.98)"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{
-        borderRadius: 24,
+        borderRadius: 28,
         padding: 18,
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.08)",
-        shadowColor: "#000",
-        shadowOpacity: 0.22,
-        shadowRadius: 18,
-        shadowOffset: { width: 0, height: 12 },
-        elevation: 12,
+        borderColor: auraTheme.border,
         gap: 16,
+        ...auraShadow(0.2),
       }}
     >
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <View style={{ gap: 4 }}>
-          <Text style={{ color: "rgba(255,255,255,0.56)", fontSize: 12, fontWeight: "700", letterSpacing: 0.8 }}>
+          <Text style={{ color: auraTheme.textMuted, fontSize: 12, fontWeight: "700", letterSpacing: 0.8 }}>
             LOOK {index + 1}
           </Text>
-          <Text style={{ color: colors.text, fontSize: 22, fontWeight: "800" }} numberOfLines={1} ellipsizeMode="tail">
+          <Text style={{ color: colors.text, fontSize: 22, fontWeight: "800" }} numberOfLines={1}>
             Styled for right now
           </Text>
         </View>
@@ -79,10 +77,12 @@ export default function OutfitMessage({
             paddingHorizontal: 12,
             paddingVertical: 7,
             borderRadius: 999,
-            backgroundColor: "rgba(139,157,255,0.14)",
+            backgroundColor: "rgba(243,190,221,0.12)",
+            borderWidth: 1,
+            borderColor: "rgba(243,223,195,0.18)",
           }}
         >
-          <Text style={{ color: colors.aiAccent, fontSize: 12, fontWeight: "800" }}>
+          <Text style={{ color: colors.text, fontSize: 12, fontWeight: "800" }}>
             {Math.round(outfit.score * 100)}% match
           </Text>
         </View>
@@ -94,9 +94,9 @@ export default function OutfitMessage({
             paddingHorizontal: 12,
             paddingVertical: 10,
             borderRadius: 16,
-            backgroundColor: "rgba(255,255,255,0.045)",
+            backgroundColor: "rgba(255,255,255,0.04)",
             borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.06)",
+            borderColor: auraTheme.borderSoft,
           }}
         >
           <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 13, lineHeight: 18, fontWeight: "600" }}>
@@ -105,36 +105,54 @@ export default function OutfitMessage({
         </View>
       ) : null}
 
-      <Text style={{ color: "rgba(236,237,238,0.76)", fontSize: 15, lineHeight: 22 }} numberOfLines={4} ellipsizeMode="tail">
+      <Text style={{ color: "rgba(236,237,238,0.78)", fontSize: 15, lineHeight: 23 }} numberOfLines={4}>
         {cleanReason}
       </Text>
 
       <View style={{ flexDirection: "row", gap: 12 }}>
         {pickedItems.map(({ slot, item }) => {
           const imageUri = getItemImageUrl(item, { variant: "thumb" });
+          const imagePresentation = getItemImagePresentation(item, { surface: "ai_outfit" });
+          const imageDecoration = getItemImageDecoration(item, "ai_outfit");
           return (
             <View key={`${outfit.id}-${slot}-${item.id}`} style={{ flex: 1, minWidth: 0, gap: 10 }}>
-              {(() => {
-                const imagePresentation = getItemImagePresentation(item, {
-                  surface: "ai_outfit",
-                });
-                return (
               <View
                 style={{
                   borderRadius: 20,
                   padding: 12,
                   backgroundColor: "rgba(255,255,255,0.04)",
                   borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.06)",
+                  borderColor: "rgba(243,223,195,0.14)",
                   aspectRatio: imagePresentation.containerAspectRatio,
                   justifyContent: "center",
                   alignItems: "center",
                 }}
               >
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: "absolute",
+                    width: imageDecoration.shadowStyle.width as any,
+                    height: imageDecoration.shadowStyle.height as any,
+                    bottom: imageDecoration.shadowStyle.bottom as any,
+                    borderRadius: 999,
+                    backgroundColor: "#000",
+                    opacity: imageDecoration.shadowStyle.opacity,
+                    shadowColor: "#000",
+                    shadowOpacity: imageDecoration.shadowStyle.opacity * 0.7,
+                    shadowRadius: 14,
+                    shadowOffset: { width: 0, height: 8 },
+                    elevation: 2,
+                  }}
+                />
                 {imageUri ? (
-                  <Image
-                    source={{ uri: imageUri }}
-                    resizeMode={imagePresentation.resizeMode}
+                  <FastImage
+                    source={{
+                      uri: imageUri,
+                      priority: FastImage.priority.normal,
+                      cache: FastImage.cacheControl.immutable,
+                    }}
+                    resizeMode={FastImage.resizeMode.contain}
                     style={[
                       { width: "100%", height: "100%", borderRadius: 14 },
                       imagePresentation.imageStyle,
@@ -151,13 +169,11 @@ export default function OutfitMessage({
                   />
                 )}
               </View>
-                );
-              })()}
               <View style={{ gap: 3 }}>
-                <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: "700", letterSpacing: 0.7 }} numberOfLines={1} ellipsizeMode="tail">
+                <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: "700", letterSpacing: 0.7 }}>
                   {slotLabel(slot)}
                 </Text>
-                <Text numberOfLines={2} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 13, fontWeight: "700", lineHeight: 18 }}>
+                <Text numberOfLines={2} style={{ color: colors.text, fontSize: 13, fontWeight: "700", lineHeight: 18 }}>
                   {displayName(item)}
                 </Text>
               </View>
@@ -174,13 +190,13 @@ export default function OutfitMessage({
             paddingHorizontal: 14,
             paddingVertical: 10,
             borderRadius: 999,
-            backgroundColor: colors.aiAccent,
+            backgroundColor: "rgba(243,223,195,0.16)",
+            borderWidth: 1,
+            borderColor: "rgba(243,223,195,0.24)",
             opacity: pressed ? 0.86 : 1,
           })}
         >
-          <Text style={{ color: "#0f1420", fontWeight: "800" }} numberOfLines={1} ellipsizeMode="tail">
-            {saving ? "Saving..." : "Save to Today"}
-          </Text>
+          <Text style={{ color: colors.text, fontWeight: "800" }}>{saving ? "Saving..." : "Save to Today"}</Text>
         </Pressable>
         <Pressable
           onPress={() => onSwap(outfit)}
@@ -188,13 +204,13 @@ export default function OutfitMessage({
             paddingHorizontal: 14,
             paddingVertical: 10,
             borderRadius: 999,
-            backgroundColor: "rgba(255,255,255,0.02)",
+            backgroundColor: auraTheme.surfaceSoft,
             borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.08)",
+            borderColor: auraTheme.borderSoft,
             opacity: pressed ? 0.82 : 1,
           })}
         >
-          <Text style={{ color: "rgba(236,237,238,0.84)", fontWeight: "700" }} numberOfLines={1} ellipsizeMode="tail">Swap item</Text>
+          <Text style={{ color: "rgba(236,237,238,0.84)", fontWeight: "700" }}>Swap item</Text>
         </Pressable>
         <Pressable
           onPress={() => onMoreLikeThis(outfit)}
@@ -202,11 +218,12 @@ export default function OutfitMessage({
             paddingHorizontal: 14,
             paddingVertical: 10,
             borderRadius: 999,
-            backgroundColor: "transparent",
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.04)",
             opacity: pressed ? 0.82 : 1,
           })}
         >
-          <Text style={{ color: "rgba(236,237,238,0.7)", fontWeight: "700" }} numberOfLines={1} ellipsizeMode="tail">More like this</Text>
+          <Text style={{ color: "rgba(236,237,238,0.7)", fontWeight: "700" }}>More like this</Text>
         </Pressable>
       </View>
     </LinearGradient>

@@ -11,8 +11,17 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
-import type { AIMessage } from "@/src/components/ai/chatTypes";
-import type { AuraLook, AuraLookAction, AuraLookPiece, AuraResponse } from "@/src/types/aura";
+import type { AIMessage, ChatAttachment } from "@/src/components/ai/chatTypes";
+import type {
+  AuraLook,
+  AuraLookAction,
+  AuraLookPiece,
+  AuraResponse,
+  AuraSuggestionItem,
+} from "@/src/types/aura";
+
+const DEBUG_AURA_CLIENT =
+  __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 
 export type AIChatThread = {
   chatId: string;
@@ -69,6 +78,15 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
   if (type !== "user" && type !== "assistant" && type !== "outfit" && type !== "system/action") {
     return null;
   }
+  const aura = isAuraResponse(data.aura) ? normalizeAuraCandidatePayload(data.aura) : undefined;
+  if (DEBUG_AURA_CLIENT && aura?.lookOptions?.length) {
+    console.log("[AURA_MULTI]", "loaded multi-look chat message", {
+      messageId: snapshot.id,
+      lookOptionsCount: aura.lookOptions.length,
+      hasLook: !!aura.look,
+      presentation: aura.presentation,
+    });
+  }
   return {
     id: snapshot.id,
     type,
@@ -80,11 +98,80 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
         ? data.kind
         : undefined,
     text: typeof data.text === "string" ? data.text : undefined,
+    assistantIntroText:
+      typeof data.assistantIntroText === "string" ? data.assistantIntroText : undefined,
+    attachments: parseChatAttachments(data.attachments),
     streaming: typeof data.streaming === "boolean" ? data.streaming : undefined,
     outfits: Array.isArray(data.outfits) ? (data.outfits as AIMessage["outfits"]) : undefined,
-    aura: isAuraResponse(data.aura) ? data.aura : undefined,
+    aura,
     createdAt: typeof data.createdAt === "number" ? data.createdAt : Date.now(),
   };
+}
+
+function normalizeAuraCandidatePayload(value: unknown): AuraResponse {
+  const response = value as AuraResponse;
+  const candidateItems = response.candidateItems ?? response.candidates ?? [];
+  if (!candidateItems.length) return response;
+  return {
+    ...response,
+    presentation: "candidate_preview",
+    candidateItems,
+    candidates: candidateItems,
+  };
+}
+
+function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripUndefinedDeep(entry)) as T;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .map(([key, entry]) => [key, stripUndefinedDeep(entry)])
+    ) as T;
+  }
+  return value;
+}
+
+function parseChatAttachments(value: unknown): ChatAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const attachments = value.reduce<ChatAttachment[]>((out, entry) => {
+      if (!entry || typeof entry !== "object") return out;
+      const candidate = entry as Record<string, unknown>;
+      const type = candidate.type === "audio" ? "audio" : candidate.type === "image" ? "image" : null;
+      const uri = typeof candidate.uri === "string" ? candidate.uri : "";
+      const id = typeof candidate.id === "string" ? candidate.id : "";
+      if (!type || !uri || !id) return out;
+      if (type === "image") {
+        out.push({
+          id,
+          type,
+          uri,
+          localUri: typeof candidate.localUri === "string" ? candidate.localUri : null,
+          groupId: typeof candidate.groupId === "string" ? candidate.groupId : null,
+          role:
+            candidate.role === "same_item" ||
+            candidate.role === "separate_items" ||
+            candidate.role === "reference"
+              ? candidate.role
+              : undefined,
+          width: typeof candidate.width === "number" ? candidate.width : null,
+          height: typeof candidate.height === "number" ? candidate.height : null,
+        });
+        return out;
+      }
+      out.push({
+        id,
+        type,
+        uri,
+        localUri: typeof candidate.localUri === "string" ? candidate.localUri : null,
+        durationMs: typeof candidate.durationMs === "number" ? candidate.durationMs : null,
+        transcript: typeof candidate.transcript === "string" ? candidate.transcript : null,
+      });
+      return out;
+    }, []);
+  return attachments.length ? attachments : undefined;
 }
 
 function isAuraResponse(value: unknown): value is AuraResponse {
@@ -93,16 +180,67 @@ function isAuraResponse(value: unknown): value is AuraResponse {
   return (
     (candidate.presentation === undefined ||
       candidate.presentation === "chat" ||
-      candidate.presentation === "card") &&
+      candidate.presentation === "card" ||
+      candidate.presentation === "candidate_preview") &&
     typeof candidate.title === "string" &&
     typeof candidate.reply === "string" &&
     typeof candidate.reason === "string" &&
     Array.isArray(candidate.outfitItems) &&
     (candidate.ownedPieces === undefined || Array.isArray(candidate.ownedPieces)) &&
     (candidate.recommendedAdditions === undefined || Array.isArray(candidate.recommendedAdditions)) &&
+    (candidate.missingPieces === undefined || Array.isArray(candidate.missingPieces)) &&
+    (candidate.upgradeSuggestions === undefined || Array.isArray(candidate.upgradeSuggestions)) &&
+    (candidate.upgradeSuggestionItems === undefined ||
+      (Array.isArray(candidate.upgradeSuggestionItems) &&
+        candidate.upgradeSuggestionItems.every(isAuraSuggestionItem))) &&
     Array.isArray(candidate.chips) &&
     typeof candidate.swapSuggestion === "string" &&
-    (candidate.look === undefined || candidate.look === null || isAuraLook(candidate.look))
+    (candidate.look === undefined || candidate.look === null || isAuraLook(candidate.look)) &&
+    (candidate.lookOptions === undefined ||
+      (Array.isArray(candidate.lookOptions) && candidate.lookOptions.every(isAuraLook))) &&
+    (candidate.candidates === undefined ||
+      (Array.isArray(candidate.candidates) && candidate.candidates.every(isAuraCandidateItem))) &&
+    (candidate.candidateItems === undefined ||
+      (Array.isArray(candidate.candidateItems) && candidate.candidateItems.every(isAuraCandidateItem)))
+  );
+}
+
+function isAuraSuggestionItem(value: unknown): value is AuraSuggestionItem {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.label === "string" &&
+    (candidate.searchQuery === undefined ||
+      candidate.searchQuery === null ||
+      typeof candidate.searchQuery === "string")
+  );
+}
+
+function isAuraCandidateItem(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.candidateId === "string" &&
+    Array.isArray(candidate.imageUrls) &&
+    candidate.imageUrls.every((url) => typeof url === "string") &&
+    (candidate.primaryImageUrl === undefined || candidate.primaryImageUrl === null || typeof candidate.primaryImageUrl === "string") &&
+    (candidate.secondaryImageUrls === undefined ||
+      (Array.isArray(candidate.secondaryImageUrls) && candidate.secondaryImageUrls.every((url) => typeof url === "string"))) &&
+    (candidate.title === undefined || candidate.title === null || typeof candidate.title === "string") &&
+    (candidate.category === undefined || candidate.category === null || typeof candidate.category === "string") &&
+    (candidate.subCategory === undefined || candidate.subCategory === null || typeof candidate.subCategory === "string") &&
+    (candidate.color === undefined || candidate.color === null || typeof candidate.color === "string") &&
+    (candidate.brand === undefined || candidate.brand === null || typeof candidate.brand === "string") &&
+    (candidate.material === undefined || candidate.material === null || typeof candidate.material === "string") &&
+    (candidate.fit === undefined || candidate.fit === null || typeof candidate.fit === "string") &&
+    (candidate.pattern === undefined || candidate.pattern === null || typeof candidate.pattern === "string") &&
+    (candidate.confidence === undefined || candidate.confidence === null || typeof candidate.confidence === "number") &&
+    (candidate.sourceType === "image" || candidate.sourceType === "link" || candidate.sourceType === "batch") &&
+    (candidate.sourceUrl === undefined || candidate.sourceUrl === null || typeof candidate.sourceUrl === "string") &&
+    (candidate.status === "awaiting_confirmation" ||
+      candidate.status === "added" ||
+      candidate.status === "cancelled" ||
+      candidate.status === "failed")
   );
 }
 
@@ -144,7 +282,10 @@ function isAuraLookAction(value: unknown): value is AuraLookAction {
   return (
     value === "saveLook" ||
     value === "planForToday" ||
+    value === "likeLook" ||
+    value === "notMyVibe" ||
     value === "showMoreLikeThis" ||
+    value === "lessLikeThis" ||
     value === "shopMissingPieces" ||
     value === "useOnlyMyCloset" ||
     value === "makeItDressier"
@@ -208,16 +349,36 @@ export async function appendMessageToChat(
     existingChat.exists() && typeof existingChat.data()?.messageCount === "number"
       ? (existingChat.data()?.messageCount as number)
       : 0;
+  const sanitizedAura = message.aura ? stripUndefinedDeep(message.aura) : undefined;
   const batch = writeBatch(db);
   batch.set(messageRef, {
     type: message.type,
     ...(message.kind ? { kind: message.kind } : {}),
     ...(message.text ? { text: message.text } : {}),
+    ...(message.assistantIntroText ? { assistantIntroText: message.assistantIntroText } : {}),
+    ...(message.attachments?.length ? { attachments: message.attachments } : {}),
     ...(typeof message.streaming === "boolean" ? { streaming: message.streaming } : {}),
     ...(message.outfits ? { outfits: message.outfits } : {}),
-    ...(message.aura ? { aura: message.aura } : {}),
+    ...(sanitizedAura ? { aura: sanitizedAura } : {}),
     createdAt: typeof message.createdAt === "number" ? message.createdAt : now,
   });
+  if (DEBUG_AURA_CLIENT && sanitizedAura?.lookOptions?.length) {
+    console.log("[AURA_MULTI]", "storing multi-look chat message", {
+      messageId: message.id,
+      lookOptionsCount: sanitizedAura.lookOptions.length,
+      hasLook: !!sanitizedAura.look,
+      presentation: sanitizedAura.presentation,
+    });
+  }
+  if (DEBUG_AURA_CLIENT && (sanitizedAura?.candidateItems?.length || sanitizedAura?.candidates?.length)) {
+    console.log("[AURA_STORE]", "storing candidate preview message", {
+      messageId: message.id,
+      kind: message.kind,
+      candidateItemsCount: sanitizedAura.candidateItems?.length ?? 0,
+      candidatesCount: sanitizedAura.candidates?.length ?? 0,
+      auraKeys: Object.keys(sanitizedAura),
+    });
+  }
   batch.set(
     chatRef,
     {

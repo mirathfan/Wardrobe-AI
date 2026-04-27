@@ -3,9 +3,12 @@ import { Platform } from "react-native";
 
 import { auth, app } from "@/src/lib/firebase";
 import type { AuraResponse } from "@/src/types/aura";
+import type { ChatAttachment } from "@/src/components/ai/chatTypes";
 
 type AskAuraArgs = {
   message: string;
+  chatId?: string | null;
+  attachments?: ChatAttachment[];
   history?: {
     role: "user" | "assistant";
     text: string;
@@ -16,16 +19,46 @@ type AskAuraArgs = {
     tempF?: number | null;
     condition?: string | null;
   } | null;
+  clientIntent?: string | null;
+  linkPreview?: {
+    sourceUrl: string;
+    title?: string | null;
+    imageUrl?: string | null;
+    imageUrls?: string[];
+    description?: string | null;
+  } | null;
 };
+
+const URL_RE = /https?:\/\/[^\s<>"']+/i;
+const LINK_PREVIEW_TIMEOUT_MS = 9000;
+
+function normalizeAuraCandidatePayload(data: AuraResponse): AuraResponse {
+  const candidateItems = data.candidateItems ?? data.candidates ?? [];
+  if (!candidateItems.length) return data;
+  const normalized = {
+    ...data,
+    presentation: "candidate_preview" as const,
+    candidateItems,
+    candidates: candidateItems,
+  };
+  console.log("[AURA_PARSE]", "normalized candidate preview payload", {
+    candidateCount: candidateItems.length,
+    candidateIds: candidateItems.map((candidate) => candidate.candidateId),
+    presentation: normalized.presentation,
+    rawKeys: Object.keys(data),
+  });
+  return normalized;
+}
 
 export async function askAura(args: AskAuraArgs): Promise<AuraResponse> {
   const functions = getFunctions(app);
+  logAuraRequest("callable_send", args);
   const callable = httpsCallable<AskAuraArgs, { ok: boolean; data: AuraResponse }>(
     functions,
     "askAura"
   );
   const result = await callable(args);
-  return result.data.data;
+  return normalizeAuraCandidatePayload(result.data.data);
 }
 
 type AskAuraStreamCallbacks = {
@@ -40,6 +73,327 @@ const MAX_STREAM_SEGMENT_LENGTH = 12;
 function getAskAuraStreamUrl() {
   const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
   return `https://us-central1-${projectId}.cloudfunctions.net/askAuraStream`;
+}
+
+function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
+  console.log("[AURA_STREAM_REQUEST]", label, {
+    url: url ?? null,
+    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? null,
+    requestKeys: Object.keys(args),
+    prompt: args.message,
+    attachmentCount: args.attachments?.length ?? 0,
+    attachments: args.attachments?.map((attachment) => ({
+      type: attachment.type,
+      hasUri: !!attachment.uri,
+      role: attachment.type === "image" ? attachment.role ?? null : null,
+      groupId: attachment.type === "image" ? attachment.groupId ?? null : null,
+    })),
+    clientIntent: args.clientIntent ?? null,
+    hasLinkPreview: !!args.linkPreview,
+    linkPreviewHasImage: !!args.linkPreview?.imageUrl,
+  });
+}
+
+function firstUrlFromText(text: string) {
+  const match = String(text ?? "").match(URL_RE)?.[0];
+  if (!match) return null;
+  try {
+    const url = new URL(match.replace(/[),.;!?]+$/g, ""));
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function metaContent(html: string, key: string) {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${escaped}["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${escaped}["'][^>]*>`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const value = html.match(pattern)?.[1];
+    if (value) return decodeHtmlEntities(value).slice(0, 500);
+  }
+  return null;
+}
+
+function titleTag(html: string) {
+  const value = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+  return value ? decodeHtmlEntities(value).slice(0, 220) : null;
+}
+
+function normalizePreviewImage(sourceUrl: string, value?: string | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw.startsWith("data:")) return null;
+  try {
+    const url = new URL(raw, sourceUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function isHmProductUrl(sourceUrl: string) {
+  try {
+    const url = new URL(sourceUrl);
+    return (
+      (url.hostname === "hm.com" || url.hostname.endsWith(".hm.com")) &&
+      /\/productpage\.\d+\.html$/i.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hmClientFallbackUrls(sourceUrl: string) {
+  if (!isHmProductUrl(sourceUrl)) return [];
+  const url = new URL(sourceUrl);
+  return [
+    new URL(`${url.pathname}/_jcr_content.product.json`, url).toString(),
+    new URL(`${url.pathname}/_jcr_content/product.json`, url).toString(),
+  ];
+}
+
+function hmArticleIdFromUrl(sourceUrl: string) {
+  try {
+    return new URL(sourceUrl).pathname.match(/\/productpage\.(\d+)\.html$/i)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeJsonLdImages(sourceUrl: string, imageValue: unknown) {
+  const values = Array.isArray(imageValue) ? imageValue : [imageValue];
+  return values
+    .flatMap((image) => {
+      if (typeof image === "string") return [image];
+      if (image && typeof image === "object") {
+        return [
+          (image as { url?: string }).url,
+          (image as { contentUrl?: string }).contentUrl,
+        ];
+      }
+      return [];
+    })
+    .map((image) => normalizePreviewImage(sourceUrl, image))
+    .filter((image): image is string => !!image);
+}
+
+function jsonLdProductNodes(html: string) {
+  const nodes: Record<string, unknown>[] = [];
+  const append = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach(append);
+      return;
+    }
+    const object = value as Record<string, unknown>;
+    nodes.push(object);
+    append(object["@graph"]);
+  };
+  const jsonLdRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = jsonLdRe.exec(html))) {
+    try {
+      append(JSON.parse(String(match[1] ?? "").trim()));
+    } catch {
+      // Ignore malformed JSON-LD; the generic image scan can still run for non-H&M pages.
+    }
+  }
+  return nodes.filter((node) => {
+    const type = Array.isArray(node["@type"]) ? node["@type"] : [node["@type"]];
+    return type.some((entry) => String(entry).toLowerCase() === "product");
+  });
+}
+
+function scopedHmPreviewImages(sourceUrl: string, html: string) {
+  if (!isHmProductUrl(sourceUrl)) return null;
+  const articleId = hmArticleIdFromUrl(sourceUrl);
+  const products = jsonLdProductNodes(html);
+  const product = articleId
+    ? products.find((node) =>
+        [node.sku, node.mpn, node.productID, node.productId, node.url]
+          .map((value) => String(value ?? ""))
+          .some((value) => value.includes(articleId)),
+      )
+    : products[0];
+  const images = product ? normalizeJsonLdImages(sourceUrl, product.image) : [];
+  const seen = new Set<string>();
+  const scoped = images.filter((image) => {
+    const key = image.toLowerCase().replace(/([?&])(imwidth|width|height|w|h)=\d+/g, "$1");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 8);
+  console.log("[LINK_PRODUCT_SCOPE]", "client H&M preview scope", {
+    sourceUrl,
+    articleId,
+    productNodeCount: products.length,
+    matchedSku: product?.sku ?? null,
+    matchedTitle: product?.name ?? null,
+    scopedImageCount: scoped.length,
+  });
+  console.log("[LINK_IMAGE_CANDIDATES_SCOPED]", "client H&M preview images", {
+    sourceUrl,
+    articleId,
+    candidateCount: scoped.length,
+    urls: scoped,
+  });
+  return scoped.length ? scoped : null;
+}
+
+function stablePreviewImages(sourceUrl: string, html: string) {
+  const scopedHmImages = scopedHmPreviewImages(sourceUrl, html);
+  if (scopedHmImages) return scopedHmImages;
+
+  const urls: string[] = [];
+  const push = (value?: string | null) => {
+    const normalized = normalizePreviewImage(sourceUrl, value);
+    if (normalized) urls.push(normalized);
+  };
+  push(metaContent(html, "og:image"));
+  push(metaContent(html, "og:image:secure_url"));
+  push(metaContent(html, "twitter:image"));
+
+  for (const node of jsonLdProductNodes(html)) {
+    for (const image of normalizeJsonLdImages(sourceUrl, node.image)) {
+      push(image);
+    }
+  }
+
+  const quotedImageRe = /["']((?:https?:)?\/\/[^\s"']+\.(?:jpg|jpeg|png|webp)(?:\?[^\s"']*)?)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = quotedImageRe.exec(html))) push(match[1]);
+
+  const seen = new Set<string>();
+  return urls.filter((url) => {
+    const lower = url.toLowerCase();
+    if (/(logo|icon|sprite|favicon|placeholder|badge|payment|loader)/.test(lower)) return false;
+    if (/\s/.test(url)) return false;
+    const key = lower.replace(/([?&])(imwidth|width|height|w|h)=\d+/g, "$1");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 32);
+}
+
+async function fetchPreviewHtml(url: string, signal: AbortSignal) {
+  const response = await fetch(url, {
+    signal,
+    headers: {
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "accept-language": "en-US,en;q=0.9",
+      "user-agent":
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+    },
+  });
+  const html = await response.text();
+  return { response, html };
+}
+
+async function bestClientPreviewHtml(sourceUrl: string, signal: AbortSignal) {
+  const attempts = [sourceUrl, ...hmClientFallbackUrls(sourceUrl)];
+  let best: { url: string; status: number; html: string; imageCount: number } | null = null;
+  const isHm = isHmProductUrl(sourceUrl);
+  for (const attemptUrl of attempts) {
+    try {
+      const { response, html } = await fetchPreviewHtml(attemptUrl, signal);
+      const scopedHmImages = scopedHmPreviewImages(sourceUrl, html);
+      const imageCount = (scopedHmImages ?? stablePreviewImages(sourceUrl, html)).length;
+      console.log("[AURA_LINK_PREVIEW]", "client preview html attempt", {
+        sourceHost: new URL(sourceUrl).host,
+        attemptPath: new URL(attemptUrl).pathname,
+        status: response.status,
+        htmlLength: html.length,
+        imageCount,
+        scopedHmImageCount: scopedHmImages?.length ?? 0,
+      });
+      if (isHm && scopedHmImages?.length) {
+        best = { url: attemptUrl, status: response.status, html, imageCount };
+        break;
+      }
+      if (!best || imageCount > best.imageCount || (!best.imageCount && html.length > best.html.length)) {
+        best = { url: attemptUrl, status: response.status, html, imageCount };
+      }
+      if (!isHm && imageCount > 1) break;
+    } catch (error) {
+      console.log("[AURA_LINK_PREVIEW]", "client preview html attempt failed", {
+        sourceHost: new URL(sourceUrl).host,
+        attemptPath: new URL(attemptUrl).pathname,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return best;
+}
+
+async function buildClientLinkPreview(sourceUrl: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LINK_PREVIEW_TIMEOUT_MS);
+  try {
+    console.log("[AURA_LINK_PREVIEW]", "client preview fetch start", {
+      host: new URL(sourceUrl).host,
+    });
+    const best = await bestClientPreviewHtml(sourceUrl, controller.signal);
+    if (!best) return null;
+    const html = best.html;
+    const imageUrl = normalizePreviewImage(
+      sourceUrl,
+      metaContent(html, "og:image") ?? metaContent(html, "twitter:image"),
+    );
+    const imageUrls = stablePreviewImages(sourceUrl, html);
+    const preview = {
+      sourceUrl,
+      title: metaContent(html, "og:title") ?? titleTag(html),
+      imageUrl: imageUrls[0] ?? imageUrl,
+      imageUrls,
+      description: metaContent(html, "og:description") ?? metaContent(html, "description"),
+    };
+    console.log("[AURA_LINK_PREVIEW]", "client preview fetch complete", {
+      host: new URL(sourceUrl).host,
+      status: best.status,
+      htmlSourcePath: new URL(best.url).pathname,
+      htmlLength: html.length,
+      hasTitle: !!preview.title,
+      hasImageUrl: !!preview.imageUrl,
+      imageCount: preview.imageUrls.length,
+      hasDescription: !!preview.description,
+    });
+    return preview.imageUrl || preview.title || preview.description ? preview : null;
+  } catch (error) {
+    console.log("[AURA_LINK_PREVIEW]", "client preview fetch failed", {
+      host: new URL(sourceUrl).host,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function withClientLinkPreview(args: AskAuraArgs): Promise<AskAuraArgs> {
+  if (args.linkPreview) return args;
+  const sourceUrl = firstUrlFromText(args.message);
+  if (!sourceUrl) return args;
+  const linkPreview = await buildClientLinkPreview(sourceUrl);
+  return linkPreview ? { ...args, linkPreview } : args;
 }
 
 function sleep(ms: number) {
@@ -90,8 +444,22 @@ function processEventLines(
       await emitDeltaSmoothly(event.delta, callbacks.onDelta);
     }
     if (event.type === "final") {
-      setFinalData(event.data);
-      callbacks.onFinal?.(event.data);
+      console.log("[AURA_STREAM_RAW_FINAL]", trimmed);
+      console.log("[AURA_STREAM_RAW]", "raw final stream payload", {
+        keys: Object.keys(event.data ?? {}),
+        presentation: event.data?.presentation,
+        candidateItemsCount: event.data?.candidateItems?.length ?? 0,
+        candidatesCount: event.data?.candidates?.length ?? 0,
+        payload: event.data,
+      });
+      const data = normalizeAuraCandidatePayload(event.data);
+      console.log("[AURA_STREAM_FINAL]", "parsed final stream payload", {
+        presentation: data.presentation,
+        hasLook: !!data.look,
+        candidateCount: data.candidateItems?.length ?? data.candidates?.length ?? 0,
+      });
+      setFinalData(data);
+      callbacks.onFinal?.(data);
     }
     if (event.type === "error") {
       throw new Error(event.error || "AURA stream failed.");
@@ -179,11 +547,12 @@ async function askAuraStreamWithXhr(
 
     xhr.onerror = () => settleError(new Error("AURA stream request failed."));
     xhr.ontimeout = () => settleError(new Error("AURA stream request timed out."));
-    xhr.send(
-      JSON.stringify({
-        ...args,
-      })
-    );
+    const body = JSON.stringify({
+      ...args,
+    });
+    logAuraRequest("xhr_send", args, getAskAuraStreamUrl());
+    console.log("[AURA_STREAM_REQUEST]", "xhr raw body", body);
+    xhr.send(body);
   });
 }
 
@@ -191,33 +560,65 @@ export async function askAuraStream(
   args: AskAuraArgs,
   callbacks: AskAuraStreamCallbacks = {}
 ): Promise<AuraResponse> {
+  const enrichedArgs = await withClientLinkPreview(args);
   const currentUser = auth.currentUser;
   const token = await currentUser?.getIdToken();
 
   if (!token) {
-    return askAura(args);
+    logAuraRequest("callable_fallback_no_token", enrichedArgs);
+    return askAura(enrichedArgs);
   }
 
   if (Platform.OS !== "web") {
-    return askAuraStreamWithXhr(args, token, callbacks);
+    try {
+      return await askAuraStreamWithXhr(enrichedArgs, token, callbacks);
+    } catch (error) {
+      console.log("[AURA_STREAM_FALLBACK]", "xhr stream failed, using callable fallback", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      const fallback = await askAura(enrichedArgs);
+      callbacks.onFinal?.(fallback);
+      return fallback;
+    }
   }
 
-  const response = await fetch(getAskAuraStreamUrl(), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(args),
-  });
+  const url = getAskAuraStreamUrl();
+  logAuraRequest("fetch_send", enrichedArgs, url);
+  const body = JSON.stringify(enrichedArgs);
+  console.log("[AURA_STREAM_REQUEST]", "fetch raw body", body);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body,
+    });
+  } catch (error) {
+    console.log("[AURA_STREAM_FALLBACK]", "fetch stream failed before response, using callable fallback", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    const fallback = await askAura(enrichedArgs);
+    callbacks.onFinal?.(fallback);
+    return fallback;
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(errorText || "AURA stream failed.");
+    console.log("[AURA_STREAM_FALLBACK]", "fetch stream returned non-200, using callable fallback", {
+      status: response.status,
+      errorText,
+    });
+    const fallback = await askAura(enrichedArgs);
+    callbacks.onFinal?.(fallback);
+    return fallback;
   }
 
   if (!response.body || typeof response.body.getReader !== "function") {
-    const fallback = await askAura(args);
+    logAuraRequest("callable_fallback_no_reader", args);
+    const fallback = await askAura(enrichedArgs);
     callbacks.onFinal?.(fallback);
     return fallback;
   }
@@ -241,7 +642,36 @@ export async function askAuraStream(
 
   if (finalData) return finalData;
 
-  const fallback = await askAura(args);
+  const fallback = await askAura(enrichedArgs);
   callbacks.onFinal?.(fallback);
   return fallback;
+}
+
+export async function transcribeAuraAudio(audioUrl: string): Promise<string> {
+  const functions = getFunctions(app);
+  const callable = httpsCallable<{ audioUrl: string }, { ok: boolean; transcript: string }>(
+    functions,
+    "transcribeAuraAudio"
+  );
+  const result = await callable({ audioUrl });
+  return result.data.transcript;
+}
+
+export async function importProductLinkToWardrobe(
+  url: string,
+  itemId?: string
+): Promise<{ itemId: string; imageCount: number }> {
+  const functions = getFunctions(app);
+  const callable = httpsCallable<
+    { url: string; itemId?: string },
+    { ok: boolean; itemId: string; imageCount: number }
+  >(
+    functions,
+    "importProductLink"
+  );
+  const result = await callable({ url, ...(itemId ? { itemId } : {}) });
+  return {
+    itemId: result.data.itemId,
+    imageCount: result.data.imageCount,
+  };
 }
