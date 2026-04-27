@@ -1,7 +1,10 @@
+import FastImage from "@d11/react-native-fast-image";
 import React from "react";
-import { Image, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
+import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -41,16 +44,14 @@ export default function TodayOutfitCard({
   const slots: SlotKey[] = ["outerwear", "top", "bottom", "shoes"];
 
   return (
-    <View
+    <AuraGlassCard
+      auraBorder
       style={{
         borderRadius: layout.largeRadius,
-        padding: layout.cardPadding,
-        backgroundColor: "rgba(255,255,255,0.035)",
-        borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.08)",
         gap: 16,
       }}
     >
+      <View style={{ padding: layout.cardPadding, gap: 16 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <View style={{ gap: 4 }}>
           <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800", letterSpacing: 0.8 }}>
@@ -90,10 +91,14 @@ export default function TodayOutfitCard({
                   }}
                 >
                   {imageUri ? (
-                    <Image
-                      source={{ uri: imageUri }}
+                    <FastImage
+                      source={{
+                        uri: imageUri,
+                        priority: FastImage.priority.normal,
+                        cache: FastImage.cacheControl.immutable,
+                      }}
                       style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
-                      resizeMode={imagePresentation.resizeMode}
+                      resizeMode={FastImage.resizeMode.contain}
                     />
                   ) : null}
                 </View>
@@ -121,22 +126,12 @@ export default function TodayOutfitCard({
       ) : null}
 
       <View style={{ flexDirection: "row", gap: 10 }}>
-        <Pressable
-          onPress={hasPlan || hasWorn ? onOpenCalendar : onPlanToday}
-          style={({ pressed }) => ({
-            flex: 1,
-            borderRadius: layout.mediumRadius,
-            paddingVertical: 13,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: colors.accent,
-            opacity: pressed ? 0.88 : 1,
-          })}
-        >
-          <Text style={{ color: "#fff", fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">
-            {hasPlan || hasWorn ? "View in Calendar" : "Plan Today"}
-          </Text>
-        </Pressable>
+        <View style={{ flex: 1 }}>
+          <AuraGradientButton
+            label={hasPlan || hasWorn ? "View in Calendar" : "Plan Today"}
+            onPress={hasPlan || hasWorn ? onOpenCalendar : onPlanToday}
+          />
+        </View>
         <Pressable
           onPress={onAskStylist}
           style={({ pressed }) => ({
@@ -145,15 +140,16 @@ export default function TodayOutfitCard({
             paddingVertical: 13,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: "rgba(255,255,255,0.05)",
+            backgroundColor: "rgba(255,255,255,0.04)",
             borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.08)",
+            borderColor: "rgba(243,223,195,0.14)",
             opacity: pressed ? 0.82 : 1,
           })}
         >
           <Text style={{ color: colors.text, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">Ask Stylist</Text>
         </Pressable>
       </View>
-    </View>
+      </View>
+    </AuraGlassCard>
   );
 }

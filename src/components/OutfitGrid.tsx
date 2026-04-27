@@ -1,5 +1,6 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import FastImage from "@d11/react-native-fast-image";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getItemImageUrl } from "../../src/lib/itemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
@@ -35,7 +36,15 @@ function Tile({
       style={[styles.tile, editable ? styles.tileEditable : null]}
     >
       {uri ? (
-        <Image source={{ uri }} style={styles.image} resizeMode="contain" />
+        <FastImage
+          source={{
+            uri,
+            priority: FastImage.priority.normal,
+            cache: FastImage.cacheControl.immutable,
+          }}
+          style={styles.image}
+          resizeMode={FastImage.resizeMode.contain}
+        />
       ) : (
         <View style={styles.placeholder}>
           <Text style={styles.placeholderText}>Pick item</Text>

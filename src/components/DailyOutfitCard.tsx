@@ -4,9 +4,10 @@ import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { ClothingItem } from "../../src/types/ClothingItem";
 import { DailyOutfitRecord, PlannedOutfit } from "../utils/dailyOutfits";
 import { lookToItems, PlannedLook } from "../utils/outfitPlanning";
-import OutfitGrid from "./OutfitGrid";
+import FlatLayCanvas from "@/src/components/outfit/FlatLayCanvas";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
+import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
 
 type SlotKey = "outerwear" | "top" | "bottom" | "shoes";
 
@@ -107,11 +108,7 @@ export default function DailyOutfitCard({
 
       {thinking ? <Text style={[styles.thinking, { color: colors.textSecondary }]}>✨ Thinking…</Text> : null}
       <View style={{ height: 10 }} />
-      <OutfitGrid
-        items={gridItems}
-        editable={!hasWorn && !isPastDate}
-        onPressSlot={onSwapSlot}
-      />
+      <FlatLayCanvas items={gridItems} />
 
       {activeLook ? (
         <View style={styles.scoreWrap}>
@@ -127,18 +124,26 @@ export default function DailyOutfitCard({
           <Text style={[styles.muted, { color: colors.textSecondary }]}>Outfit already marked worn.</Text>
         ) : hasPlanned ? (
           <>
-            <Pressable style={[styles.primaryBtn, { backgroundColor: colors.accent }]} onPress={onMarkWorn}>
-              <Text style={styles.primaryBtnText}>Mark Worn</Text>
-            </Pressable>
+            <AuraGradientButton
+              label="Mark Worn"
+              onPress={onMarkWorn}
+              gradientColors={[colors.iridescentStart, colors.iridescentMid, colors.iridescentEnd]}
+              labelColor={colors.background}
+              style={styles.primaryBtn}
+            />
             <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={() => Alert.alert("Edit", "Tap a slot to swap an item.") }>
               <Text style={[styles.secondaryBtnText, { color: colors.text }]}>Edit/Swap</Text>
             </Pressable>
           </>
         ) : (
           <>
-            <Pressable style={[styles.primaryBtn, { backgroundColor: colors.accent }]} onPress={onUseOutfit}>
-              <Text style={styles.primaryBtnText}>Use this outfit</Text>
-            </Pressable>
+            <AuraGradientButton
+              label="Use this outfit"
+              onPress={onUseOutfit}
+              gradientColors={[colors.iridescentStart, colors.iridescentMid, colors.iridescentEnd]}
+              labelColor={colors.background}
+              style={styles.primaryBtn}
+            />
             <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={onWhy}>
               <Text style={[styles.secondaryBtnText, { color: colors.text }]}>Why?</Text>
             </Pressable>
@@ -170,8 +175,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   title: {
-    fontSize: 16,
-    fontWeight: "800",
+    fontSize: 18,
+    fontWeight: "700",
+    letterSpacing: -0.3,
   },
   segRow: {
     marginTop: 10,
@@ -203,6 +209,8 @@ const styles = StyleSheet.create({
   },
   reason: {
     fontSize: 12,
+    lineHeight: 18,
+    opacity: 0.65,
   },
   actionsRow: {
     marginTop: 12,
@@ -215,10 +223,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
     paddingVertical: 11,
-  },
-  primaryBtnText: {
-    color: "#fff",
-    fontWeight: "800",
   },
   secondaryBtn: {
     borderWidth: 1,

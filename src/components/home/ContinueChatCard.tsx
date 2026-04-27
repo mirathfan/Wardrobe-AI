@@ -37,7 +37,7 @@ export default function ContinueChatCard({
       style={({ pressed }) => ({
         borderRadius: layout.largeRadius,
         padding: layout.cardPadding,
-        backgroundColor: "rgba(255,255,255,0.045)",
+        backgroundColor: colors.surface1,
         borderWidth: 1,
         borderColor: "rgba(255,255,255,0.08)",
         opacity: pressed ? 0.86 : 1,
@@ -45,15 +45,15 @@ export default function ContinueChatCard({
       })}
     >
       <View style={{ gap: 4 }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800", letterSpacing: 0.8 }}>
-          CONTINUE STYLING CHAT
+        <Text style={{ color: colors.iridescentStart, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }}>
+          PICK UP THE THREAD
         </Text>
-        <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">
-          {title?.trim() || "Pick up where you left off"}
+        <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900", letterSpacing: -0.5 }} numberOfLines={1} ellipsizeMode="tail">
+          {title?.trim() || "Resume your last fitting"}
         </Text>
       </View>
 
-      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21 }} numberOfLines={2} ellipsizeMode="tail">
+      <Text style={{ color: colors.textSecondary, opacity: 0.65, fontSize: 14, lineHeight: 23 }} numberOfLines={2} ellipsizeMode="tail">
         {cleanPreview}
       </Text>
 
@@ -61,7 +61,18 @@ export default function ContinueChatCard({
         <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
           {formatRelativeTime(updatedAt)}
         </Text>
-        <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800" }}>Resume in AI</Text>
+        <View
+          style={{
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 999,
+            backgroundColor: "rgba(255,255,255,0.06)",
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.08)",
+          }}
+        >
+          <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "800" }}>Continue in AURA</Text>
+        </View>
       </View>
     </Pressable>
   );

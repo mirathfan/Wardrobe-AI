@@ -1,5 +1,6 @@
+import FastImage from "@d11/react-native-fast-image";
 import React from "react";
-import { Image, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
@@ -63,10 +64,14 @@ export default function ContinueSection({
                 }}
               >
                 {imageUri ? (
-                  <Image
-                    source={{ uri: imageUri }}
+                  <FastImage
+                    source={{
+                      uri: imageUri,
+                      priority: FastImage.priority.normal,
+                      cache: FastImage.cacheControl.immutable,
+                    }}
                     style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
-                    resizeMode={imagePresentation.resizeMode}
+                    resizeMode={FastImage.resizeMode.contain}
                   />
                 ) : (
                   <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>No image</Text>
@@ -79,6 +84,14 @@ export default function ContinueSection({
                 <Text style={{ color: colors.textSecondary, fontSize: 12 }} numberOfLines={1}>
                   {[item.brand || null, item.status].filter(Boolean).join(" • ")}
                 </Text>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: "800" }} numberOfLines={1}>
+                    Build around this
+                  </Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }}>
+                    →
+                  </Text>
+                </View>
               </View>
             </Pressable>
           );

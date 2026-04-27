@@ -26,7 +26,7 @@ export function ClosetSearchBar({
         borderColor: colors.border,
         backgroundColor: colors.surface,
         paddingHorizontal: 16,
-        paddingVertical: 12,
+        height: 50,
       }}
     >
       <Ionicons name="search-outline" size={18} color={colors.textSecondary} />
@@ -35,7 +35,14 @@ export function ClosetSearchBar({
         onChangeText={onChangeText}
         placeholder="Search by item, brand, category, color"
         placeholderTextColor={colors.textSecondary}
-        style={{ flex: 1, color: colors.text, fontSize: 15 }}
+        numberOfLines={1}
+        style={{
+          flex: 1,
+          color: colors.text,
+          fontSize: 15,
+          paddingVertical: 0,
+          includeFontPadding: false,
+        }}
       />
     </View>
   );

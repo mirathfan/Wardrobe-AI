@@ -1,5 +1,6 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import FastImage from "@d11/react-native-fast-image";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getItemImageUrl } from "../../src/lib/itemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
@@ -22,7 +23,17 @@ function SlotTile({ label, item }: { label: string; item: ClothingItem | null })
   const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
   return (
     <View style={styles.tile}>
-      {uri ? <Image source={{ uri }} style={styles.image} resizeMode="contain" /> : <View style={styles.placeholder} />}
+      {uri ? (
+        <FastImage
+          source={{
+            uri,
+            priority: FastImage.priority.normal,
+            cache: FastImage.cacheControl.immutable,
+          }}
+          style={styles.image}
+          resizeMode={FastImage.resizeMode.contain}
+        />
+      ) : <View style={styles.placeholder} />}
       <Text style={styles.slotLabel}>{label}</Text>
       <Text style={styles.slotValue} numberOfLines={1}>
         {slotTitle(item, label)}

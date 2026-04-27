@@ -1,5 +1,6 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import FastImage from "@d11/react-native-fast-image";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getItemImageUrl } from "../../src/lib/itemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
@@ -30,7 +31,15 @@ function SlotCard({ label, item }: { label: string; item: ClothingItem | null })
   return (
     <View style={styles.slotCard}>
       {uri ? (
-        <Image source={{ uri }} style={styles.slotImage} resizeMode="contain" />
+        <FastImage
+          source={{
+            uri,
+            priority: FastImage.priority.normal,
+            cache: FastImage.cacheControl.immutable,
+          }}
+          style={styles.slotImage}
+          resizeMode={FastImage.resizeMode.contain}
+        />
       ) : (
         <View style={styles.slotPlaceholder}>
           <Text style={styles.placeholderText}>No photo</Text>

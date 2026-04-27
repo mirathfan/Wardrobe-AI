@@ -18,7 +18,7 @@ export function ClosetControlsRow({
   const layout = useResponsiveLayout();
 
   return (
-    <View style={{ flexDirection: "row", gap: 10 }}>
+    <View style={{ flexDirection: "row", gap: 11 }}>
       <Pressable
         onPress={onOpenFilters}
         style={{
@@ -30,7 +30,7 @@ export function ClosetControlsRow({
           borderColor: colors.border,
           backgroundColor: colors.surface,
           paddingHorizontal: 14,
-          paddingVertical: 9,
+          height: 42,
         }}
       >
         <Ionicons name="options-outline" size={16} color={colors.text} />
@@ -45,8 +45,8 @@ export function ClosetControlsRow({
           borderColor: colors.border,
           backgroundColor: colors.surface,
           paddingHorizontal: 14,
-          paddingVertical: 9,
           justifyContent: "center",
+          height: 42,
         }}
       >
         <Text
