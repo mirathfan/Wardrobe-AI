@@ -1,6 +1,10 @@
 import React from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View } from "react-native";
 
+import { Fonts } from "@/constants/theme";
+import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
+import AuraGlowBackground from "@/src/components/aura/AuraGlowBackground";
+import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
 import { SafeScreen } from "@/src/components/SafeScreen";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
@@ -17,53 +21,60 @@ export function AuthScaffold({
   children: React.ReactNode;
   footer?: React.ReactNode;
 }) {
-  const { colors } = useAppTheme();
+  const { colors, theme } = useAppTheme();
+  const { width, height } = useWindowDimensions();
+  const compactAuth = width < 390 || height < 760;
+  const titleSize = compactAuth ? 34 : 38;
+  const titleLineHeight = compactAuth ? 38 : 42;
+  const contentGap = compactAuth ? 22 : 28;
+  const headerGap = compactAuth ? 8 : 10;
 
   return (
-    <SafeScreen backgroundColor={colors.background} includeBottomInset={false} style={{ flex: 1 }}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
-      >
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{
-            flexGrow: 1,
-            paddingHorizontal: 20,
-            paddingBottom: 36,
-            justifyContent: "center",
-            gap: 28,
-          }}
+    <AuraGlowBackground>
+      <SafeScreen backgroundColor="transparent" includeBottomInset={false} style={{ flex: 1 }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={{ flex: 1 }}
         >
-          <View style={{ gap: 10 }}>
-            <Text style={{ color: colors.aiAccent, fontSize: 12, fontWeight: "800", letterSpacing: 1.4 }}>
-              {eyebrow}
-            </Text>
-            <Text style={{ color: colors.text, fontSize: 38, fontWeight: "900", lineHeight: 42 }}>
-              {title}
-            </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 16, lineHeight: 24 }}>
-              {subtitle}
-            </Text>
-          </View>
-
-          <View
-            style={{
-              backgroundColor: "rgba(255,255,255,0.04)",
-              borderRadius: 28,
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.08)",
-              padding: 18,
-              gap: 14,
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{
+              flexGrow: 1,
+              paddingHorizontal: 20,
+              paddingBottom: compactAuth ? 28 : 36,
+              justifyContent: "center",
+              gap: contentGap,
             }}
           >
-            {children}
-          </View>
+            <View style={{ gap: headerGap }}>
+              <Text
+                style={{
+                  color: colors.textSecondary,
+                  fontSize: theme.typography.eyebrow.fontSize,
+                  fontWeight: theme.typography.eyebrow.fontWeight,
+                  letterSpacing: theme.typography.eyebrow.letterSpacing,
+                  fontFamily: Fonts.sans,
+                }}
+              >
+                {eyebrow}
+              </Text>
+              <Text style={{ color: colors.text, fontSize: titleSize, fontWeight: "700", lineHeight: titleLineHeight, fontFamily: Fonts.sans }}>
+                {title}
+              </Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 16, lineHeight: 24, fontFamily: Fonts.sans }}>
+                {subtitle}
+              </Text>
+            </View>
 
-          {footer ? <View style={{ gap: 10 }}>{footer}</View> : null}
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeScreen>
+            <AuraGlassCard contentStyle={{ padding: 18, gap: 14 }}>
+              {children}
+            </AuraGlassCard>
+
+            {footer ? <View style={{ gap: 10 }}>{footer}</View> : null}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeScreen>
+    </AuraGlowBackground>
   );
 }
 
@@ -99,23 +110,8 @@ export function PrimaryAuthButton({
   onPress: () => void;
   disabled?: boolean;
 }) {
-  const { colors } = useAppTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => ({
-        borderRadius: 18,
-        paddingVertical: 16,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: colors.aiAccent,
-        opacity: disabled ? 0.55 : pressed ? 0.86 : 1,
-      })}
-    >
-      <Text style={{ color: "#071018", fontSize: 16, fontWeight: "900" }}>{label}</Text>
-    </Pressable>
-  );
+  useAppTheme();
+  return <AuraGradientButton label={label} onPress={onPress} disabled={disabled} />;
 }
 
 export function SecondaryAuthButton({
@@ -159,4 +155,3 @@ export function AuthInlineLink({
     </Pressable>
   );
 }
-

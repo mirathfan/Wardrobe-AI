@@ -1,25 +1,31 @@
+import Slider from "@react-native-community/slider";
 import { router } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
+  LayoutChangeEvent,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { Easing, FadeInUp, runOnJS } from "react-native-reanimated";
 
 import { SafeScreen } from "@/src/components/SafeScreen";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import {
-  getAdaptiveSizeFields,
-  normalizeProfileSizePayload,
   ONBOARDING_CATEGORY_OPTIONS,
-  shouldShowAdvancedBraSize,
+  normalizeProfileSizePayload,
 } from "@/src/lib/adaptiveSizing";
 import {
   EMPTY_USER_PROFILE_PREFERENCES,
@@ -27,9 +33,44 @@ import {
   saveUserAccountProfile,
   saveUserProfilePreferences,
 } from "@/src/lib/userProfile";
-import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
+import type {
+  UnitsPreference,
+  UserProfilePreferences,
+  WardrobeMode,
+} from "@/src/types/UserProfilePreferences";
 
-const WARDROBE_MODES = ["masculine", "feminine", "neutral", "mixed", "custom"] as const;
+const WARDROBE_MODE_CARDS: {
+  value: Exclude<WardrobeMode, "custom">;
+  icon: string;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "masculine",
+    icon: "M",
+    label: "Masculine",
+    description: "Menswear cuts and silhouettes",
+  },
+  {
+    value: "feminine",
+    icon: "F",
+    label: "Feminine",
+    description: "Womenswear cuts and silhouettes",
+  },
+  {
+    value: "neutral",
+    icon: "N",
+    label: "Neutral",
+    description: "Unisex and gender-neutral pieces",
+  },
+  {
+    value: "mixed",
+    icon: "A",
+    label: "Mixed",
+    description: "Across all categories freely",
+  },
+];
+
 const STYLE_OPTIONS = [
   "streetwear",
   "casual",
@@ -42,17 +83,7 @@ const STYLE_OPTIONS = [
   "vintage",
   "edgy",
 ] as const;
-const FIT_OPTIONS = ["slim", "regular", "relaxed", "oversized"] as const;
-const ACCESSORY_OPTIONS = [
-  "watches",
-  "jewelry",
-  "handbags",
-  "caps",
-  "belts",
-  "scarves",
-  "perfumes",
-  "sunglasses",
-] as const;
+
 const OCCASION_OPTIONS = [
   "daily",
   "work",
@@ -63,37 +94,12 @@ const OCCASION_OPTIONS = [
   "travel",
   "formal_events",
 ] as const;
-const GOAL_OPTIONS = [
-  "outfit_suggestions",
-  "shopping_suggestions",
-  "packing_help",
-  "laundry_reminders",
-  "styling_confidence",
-] as const;
-const COLOR_OPTIONS = [
-  "black",
-  "white",
-  "navy",
-  "blue",
-  "grey",
-  "brown",
-  "beige",
-  "green",
-  "olive",
-  "red",
-  "pink",
-  "cream",
-] as const;
 
-type StepKey =
-  | "basics"
-  | "wardrobeMode"
-  | "categories"
-  | "style"
-  | "body"
-  | "sizes"
-  | "preferences"
-  | "goals";
+const FIT_OPTIONS = ["slim", "regular", "relaxed", "oversized"] as const;
+const SHOE_SIZES_EU = Array.from({ length: 14 }, (_, index) => 35 + index);
+const IMPERIAL_REGIONS = new Set(["US", "LR", "MM"]);
+
+type StepKey = "wardrobeMode" | "style" | "categories" | "profile";
 
 type Step = {
   key: StepKey;
@@ -103,77 +109,103 @@ type Step = {
 
 const STEPS: Step[] = [
   {
-    key: "basics",
-    title: "Set your foundation",
-    subtitle: "Tell Wardrobe AI how to size, greet, and localize your experience.",
-  },
-  {
     key: "wardrobeMode",
-    title: "Choose your wardrobe mode",
-    subtitle: "This shapes organization, sizing emphasis, and styling logic, not a separate UI.",
-  },
-  {
-    key: "categories",
-    title: "Choose what you actually wear",
-    subtitle: "We’ll only ask size questions for categories that matter to your real wardrobe.",
+    title: "How do you dress?",
+    subtitle: "Choose the wardrobe language AURA should use for silhouettes and styling.",
   },
   {
     key: "style",
-    title: "Define your style direction",
-    subtitle: "Pick the aesthetics you want AURA to lean into most.",
+    title: "What's your style?",
+    subtitle: "Pick up to three aesthetics, then add where you usually dress up.",
   },
   {
-    key: "body",
-    title: "Add body & fit context",
-    subtitle: "This helps with fit-based sizing and better silhouette recommendations.",
+    key: "categories",
+    title: "What's in your wardrobe?",
+    subtitle: "AURA will only suggest items in these categories.",
   },
   {
-    key: "sizes",
-    title: "Save your default sizes",
-    subtitle: "These defaults prefill new items and make shopping guidance more useful.",
-  },
-  {
-    key: "preferences",
-    title: "Tune preferences",
-    subtitle: "Set colors, accessories, and occasions so recommendations feel more personal.",
-  },
-  {
-    key: "goals",
-    title: "Choose what Wardrobe AI should help with first",
-    subtitle: "This changes what shows up first in Home, Closet, and AURA.",
+    key: "profile",
+    title: "Quick profile",
+    subtitle: "A few fit basics so AURA can personalize recommendations without the long form.",
   },
 ];
 
 function toggleValue(list: string[], value: string) {
-  return list.includes(value) ? list.filter((entry) => entry !== value) : [...list, value];
+  return list.includes(value)
+    ? list.filter((entry) => entry !== value)
+    : [...list, value];
 }
 
 function humanize(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function chipSelected(selected: string[] | undefined, value: string) {
-  return Array.isArray(selected) && selected.includes(value);
+function getLocaleParts() {
+  const locale =
+    Intl.DateTimeFormat().resolvedOptions().locale ||
+    (typeof navigator !== "undefined" ? navigator.language : "") ||
+    "en-US";
+  const region = locale.split("-").find((part) => part.length === 2)?.toUpperCase() ?? "US";
+  const unitsPreference: UnitsPreference = IMPERIAL_REGIONS.has(region) ? "imperial" : "metric";
+  return { locale, region, unitsPreference };
 }
 
-function sizeSectionTitle(key: string) {
-  if (key === "tops") return "Tops";
-  if (key === "outerwear") return "Outerwear";
-  if (key === "bottoms" || key === "bottomsWaist" || key === "bottomsLength") return "Bottoms";
-  if (key === "dresses") return "Dresses";
-  if (key === "skirts") return "Skirts";
-  if (key === "shoes") return "Footwear";
-  return "Sizing";
+function unitsForPreference(unitsPreference: UnitsPreference) {
+  if (unitsPreference === "imperial") {
+    return { length: "in", weight: "lb", shoeRegion: "US", clothingRegion: "US" } as const;
+  }
+  return { length: "cm", weight: "kg", shoeRegion: "EU", clothingRegion: "INTL" } as const;
+}
+
+function formatHeight(value: number, unitsPreference: UnitsPreference) {
+  if (unitsPreference === "imperial") {
+    const feet = Math.floor(value / 12);
+    const inches = value % 12;
+    return `${feet}'${inches}"`;
+  }
+  return `${value} cm`;
+}
+
+function euShoeConversion(euSize: number) {
+  const usMen = Math.max(1, euSize - 33.5);
+  const usWomen = Math.max(1, euSize - 31);
+  const uk = Math.max(1, euSize - 34);
+  return `US M ${formatShoeHalf(usMen)} / US W ${formatShoeHalf(usWomen)} / UK ${formatShoeHalf(uk)}`;
+}
+
+function formatShoeHalf(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function shoeValueFromDraft(draft: UserProfilePreferences) {
+  const raw = String(draft.defaultSizes.shoes ?? "").match(/\d+/)?.[0];
+  const next = raw ? Number(raw) : 42;
+  return SHOE_SIZES_EU.includes(next) ? next : 42;
 }
 
 export default function OnboardingScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
+  const { width } = useWindowDimensions();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [autoAdvancing, setAutoAdvancing] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
-  const [advancedFitOpen, setAdvancedFitOpen] = useState(false);
   const [draft, setDraft] = useState<UserProfilePreferences>(EMPTY_USER_PROFILE_PREFERENCES);
+  const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const detected = useMemo(() => getLocaleParts(), []);
+  const step = STEPS[stepIndex];
+  const progress = (stepIndex + 1) / STEPS.length;
+  const isFirstStep = step.key === "wardrobeMode";
+  const canContinue =
+    step.key === "style"
+      ? draft.styleAesthetics.length > 0
+      : step.key === "categories"
+        ? draft.selectedCategories.length > 0
+        : step.key === "profile"
+          ? Boolean((draft.firstName ?? "").trim()) && Boolean(draft.preferredFit)
+          : true;
 
   useEffect(() => {
     let cancelled = false;
@@ -181,65 +213,109 @@ export default function OnboardingScreen() {
       router.replace("/(auth)/welcome");
       return;
     }
+
     void loadUserProfilePreferences(user.uid)
       .then((profile) => {
         if (cancelled) return;
-        setDraft((prev) => ({
-          ...prev,
+        const unitsPreference = profile.onboardingCompleted
+          ? profile.unitsPreference
+          : detected.unitsPreference;
+        const heightDefault = unitsPreference === "imperial" ? 67 : 170;
+        setDraft({
+          ...EMPTY_USER_PROFILE_PREFERENCES,
           ...profile,
-          firstName: profile.firstName ?? prev.firstName ?? user.displayName ?? "",
-        }));
+          region: profile.region ?? detected.region,
+          unitsPreference,
+          units: unitsForPreference(unitsPreference),
+          firstName:
+            profile.firstName ??
+            user.displayName?.split(" ")[0] ??
+            user.email?.split("@")[0] ??
+            "",
+          body: {
+            ...profile.body,
+            height: profile.body.height ?? profile.height.value ?? heightDefault,
+          },
+          height: {
+            value: profile.height.value ?? profile.body.height ?? heightDefault,
+            unit: unitsPreference === "imperial" ? "ft_in" : "cm",
+          },
+          defaultSizes: {
+            ...profile.defaultSizes,
+            shoes: profile.defaultSizes.shoes ?? "EU 42",
+          },
+          preferredFit: profile.preferredFit ?? "regular",
+        });
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+
     return () => {
       cancelled = true;
+      if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
     };
-  }, [user?.displayName, user?.uid]);
+  }, [detected.region, detected.unitsPreference, user?.displayName, user?.email, user?.uid]);
 
-  const step = STEPS[stepIndex];
-  const progress = (stepIndex + 1) / STEPS.length;
-
-  const units = useMemo(() => {
-    if (draft.unitsPreference === "imperial") {
-      return { length: "in", weight: "lb", shoeRegion: "US", clothingRegion: "US" } as const;
-    }
-    return { length: "cm", weight: "kg", shoeRegion: "EU", clothingRegion: "INTL" } as const;
-  }, [draft.unitsPreference]);
-
-  const adaptiveSizeFields = useMemo(
-    () => getAdaptiveSizeFields(draft.selectedCategories, draft.wardrobeMode),
-    [draft.selectedCategories, draft.wardrobeMode]
+  const units = useMemo(
+    () => unitsForPreference(draft.unitsPreference),
+    [draft.unitsPreference],
   );
-  const shouldRenderBraSize = useMemo(
-    () => shouldShowAdvancedBraSize(draft.selectedCategories, draft.wardrobeMode),
-    [draft.selectedCategories, draft.wardrobeMode]
-  );
-  const groupedAdaptiveSizeFields = useMemo(() => {
-    const groups = new Map<string, typeof adaptiveSizeFields>();
-    adaptiveSizeFields.forEach((field) => {
-      const section = sizeSectionTitle(field.key);
-      const current = groups.get(section) ?? [];
-      current.push(field);
-      groups.set(section, current);
-    });
-    return Array.from(groups.entries()).map(([title, fields]) => ({ title, fields }));
-  }, [adaptiveSizeFields]);
+
+  function goToStep(nextIndex: number) {
+    setStepIndex(Math.max(0, Math.min(nextIndex, STEPS.length - 1)));
+  }
+
+  function goBack() {
+    if (stepIndex > 0) goToStep(stepIndex - 1);
+  }
+
+  function selectWardrobeMode(value: Exclude<WardrobeMode, "custom">) {
+    setDraft((prev) => ({ ...prev, wardrobeMode: value }));
+    setAutoAdvancing(true);
+    if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
+    autoAdvanceTimer.current = setTimeout(() => {
+      setAutoAdvancing(false);
+      goToStep(1);
+    }, 400);
+  }
 
   async function onFinish() {
     if (!user?.uid) return;
     try {
       setSaving(true);
-      const normalizedSizingDraft = normalizeProfileSizePayload(draft);
+      const normalizedSizingDraft = normalizeProfileSizePayload({
+        ...draft,
+        region: draft.region ?? detected.region,
+        units,
+        favoriteColors: [],
+        avoidedColors: [],
+        accessoryPreferences: [],
+        goals: ["outfit_suggestions"],
+        defaultSizes: {
+          ...draft.defaultSizes,
+          shoes: draft.defaultSizes.shoes ?? "EU 42",
+        },
+      });
+
+      const heightValue =
+        normalizedSizingDraft.body.height ??
+        normalizedSizingDraft.height.value ??
+        (draft.unitsPreference === "imperial" ? 67 : 170);
+
       const profileToSave: UserProfilePreferences = {
         ...normalizedSizingDraft,
         onboardingCompleted: true,
+        region: normalizedSizingDraft.region ?? detected.region,
+        unitsPreference: draft.unitsPreference,
         units,
-        favoriteColors: normalizedSizingDraft.favoriteColors,
-        avoidedColors: normalizedSizingDraft.avoidedColors,
+        favoriteColors: [],
+        avoidedColors: [],
+        accessoryPreferences: [],
+        goals: ["outfit_suggestions"],
         defaultSizes: {
           ...normalizedSizingDraft.defaultSizes,
+          shoes: normalizedSizingDraft.defaultSizes.shoes ?? "EU 42",
           top:
             normalizedSizingDraft.defaultSizes.top ??
             normalizedSizingDraft.defaultSizes.tops ??
@@ -271,18 +347,32 @@ export default function OnboardingScreen() {
             null,
         },
         height: {
-          value: normalizedSizingDraft.body.height ?? null,
+          value: heightValue,
           unit: draft.unitsPreference === "imperial" ? "ft_in" : "cm",
         },
         weight: {
-          value: normalizedSizingDraft.body.weight ?? null,
+          value: null,
           unit: draft.unitsPreference === "imperial" ? "lb" : "kg",
+        },
+        body: {
+          ...normalizedSizingDraft.body,
+          height: heightValue,
+          weight: null,
+        },
+        advancedFit: {
+          bust: null,
+          waistMeasurement: null,
+          hips: null,
+          inseam: null,
+          shoulderWidth: null,
+          sleeveLength: null,
+          braSize: null,
         },
         stylePreferences: {
           ...normalizedSizingDraft.stylePreferences,
           preferredStyles: normalizedSizingDraft.styleAesthetics,
-          favoriteColors: normalizedSizingDraft.favoriteColors,
-          avoidedColors: normalizedSizingDraft.avoidedColors,
+          favoriteColors: [],
+          avoidedColors: [],
         },
         fitPreferences: {
           ...normalizedSizingDraft.fitPreferences,
@@ -292,10 +382,15 @@ export default function OnboardingScreen() {
             null,
         },
       };
+
       await Promise.all([
         saveUserProfilePreferences(user.uid, profileToSave),
         saveUserAccountProfile(user.uid, {
-          name: (draft.firstName ?? "").trim() || user.displayName || user.email?.split("@")[0] || null,
+          name:
+            (draft.firstName ?? "").trim() ||
+            user.displayName ||
+            user.email?.split("@")[0] ||
+            null,
         }),
       ]);
       router.replace("/(tabs)");
@@ -305,424 +400,506 @@ export default function OnboardingScreen() {
   }
 
   function nextStep() {
-    if (step.key === "categories" && draft.selectedCategories.length === 0) {
-      Alert.alert(
-        "Choose a few categories",
-        "Pick the clothing categories you actually wear so we can tailor the size questions."
-      );
+    if (!canContinue) {
+      if (step.key === "style") {
+        Alert.alert("Choose your style", "Pick at least one style aesthetic.");
+      } else if (step.key === "categories") {
+        Alert.alert("Choose categories", "Pick the categories you actually wear.");
+      } else if (step.key === "profile") {
+        Alert.alert("Finish your profile", "Add your name and choose a preferred fit.");
+      }
       return;
     }
-    if (step.key === "sizes") {
-      const missingRequiredFields = adaptiveSizeFields
-        .filter((field) => field.required)
-        .filter((field) => {
-          const value = draft.defaultSizes[field.key];
-          return !String(value ?? "").trim();
-        });
-      if (missingRequiredFields.length > 0) {
-        Alert.alert(
-          "Finish the key sizes",
-          `Add ${missingRequiredFields[0].label.toLowerCase()} so Wardrobe AI can size recommendations more accurately.`
-        );
-        return;
-      }
-    }
+
     if (stepIndex === STEPS.length - 1) {
       void onFinish();
       return;
     }
-    setStepIndex((current) => Math.min(current + 1, STEPS.length - 1));
+    goToStep(stepIndex + 1);
   }
+
+  const swipeGesture = Gesture.Pan()
+    .activeOffsetX([-999, 24])
+    .failOffsetY([-18, 18])
+    .onEnd((event) => {
+      if (event.translationX > 84 && event.velocityX > 250) {
+        runOnJS(goBack)();
+      }
+    });
 
   if (loading) {
     return (
-      <SafeScreen backgroundColor={colors.background} style={{ flex: 1 }}>
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 12 }}>
-          <ActivityIndicator color={colors.aiAccent} />
-          <Text style={{ color: colors.textSecondary }}>Preparing your style profile…</Text>
-        </View>
+      <SafeScreen backgroundColor={colors.background} style={styles.loadingScreen}>
+        <ActivityIndicator color={colors.aiAccent} />
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+          Preparing your style profile...
+        </Text>
       </SafeScreen>
     );
   }
 
   return (
-    <SafeScreen backgroundColor={colors.background} includeBottomInset={false} style={{ flex: 1 }}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 140, gap: 22 }}
+    <SafeScreen backgroundColor={colors.background} includeBottomInset={false} style={styles.screen}>
+      <GestureDetector gesture={swipeGesture}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.screen}
         >
-          <View style={{ gap: 10 }}>
-            <Text style={{ color: colors.aiAccent, fontSize: 12, fontWeight: "800", letterSpacing: 1.2 }}>
-              WARDROBE AI SETUP
-            </Text>
-            <View
-              style={{
-                height: 6,
-                borderRadius: 999,
-                backgroundColor: "rgba(255,255,255,0.06)",
-                overflow: "hidden",
-              }}
-            >
-              <View style={{ width: `${progress * 100}%`, height: "100%", backgroundColor: colors.aiAccent }} />
+          <View style={styles.header}>
+            <Text style={[styles.eyebrow, { color: colors.aiAccent }]}>AURA SETUP</Text>
+            <View style={styles.progressTrack}>
+              <View
+                style={[
+                  styles.progressFill,
+                  { width: `${progress * 100}%`, backgroundColor: colors.aiAccent },
+                ]}
+              />
             </View>
-            <Text style={{ color: colors.text, fontSize: 34, fontWeight: "900" }}>{step.title}</Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 16, lineHeight: 24 }}>{step.subtitle}</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{step.title}</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{step.subtitle}</Text>
           </View>
 
-          <View
-            style={{
-              backgroundColor: "rgba(255,255,255,0.04)",
-              borderRadius: 28,
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.08)",
-              padding: 18,
-              gap: 14,
-            }}
+          <ScrollView
+            key={step.key}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={[
+              styles.content,
+              { paddingBottom: isFirstStep ? 28 : 18 },
+            ]}
           >
-            {step.key === "basics" ? (
-              <>
-                <OnboardingInput
-                  label="First name"
-                  value={draft.firstName ?? ""}
-                  onChangeText={(value) => setDraft((prev) => ({ ...prev, firstName: value }))}
-                  placeholder="What should AURA call you?"
+            <Animated.View
+              entering={FadeInUp.duration(300).easing(Easing.out(Easing.cubic))}
+              style={styles.stepBody}
+            >
+              {step.key === "wardrobeMode" ? (
+                <WardrobeModeStep
+                  selected={draft.wardrobeMode}
+                  onSelect={selectWardrobeMode}
+                  disabled={autoAdvancing}
                 />
-                <OnboardingInput
-                  label="Region / country"
-                  value={draft.region ?? ""}
-                  onChangeText={(value) => setDraft((prev) => ({ ...prev, region: value }))}
-                  placeholder="e.g. United States"
-                />
-                <ChipGroup
-                  label="Units"
-                  values={["imperial", "metric"]}
-                  selected={[draft.unitsPreference]}
-                  onToggle={(value) => setDraft((prev) => ({ ...prev, unitsPreference: value as UserProfilePreferences["unitsPreference"] }))}
-                />
-              </>
-            ) : null}
+              ) : null}
 
-            {step.key === "wardrobeMode" ? (
-              <ChipGroup
-                label="Wardrobe mode"
-                values={WARDROBE_MODES as unknown as string[]}
-                selected={[draft.wardrobeMode]}
-                onToggle={(value) => setDraft((prev) => ({ ...prev, wardrobeMode: value as UserProfilePreferences["wardrobeMode"] }))}
-              />
-            ) : null}
-
-            {step.key === "categories" ? (
-              <ChipGroup
-                label="Categories worn"
-                values={ONBOARDING_CATEGORY_OPTIONS as unknown as string[]}
-                selected={draft.selectedCategories}
-                onToggle={(value) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    selectedCategories: toggleValue(prev.selectedCategories, value),
-                  }))
-                }
-              />
-            ) : null}
-
-            {step.key === "style" ? (
-              <ChipGroup
-                label="Style aesthetics"
-                values={STYLE_OPTIONS as unknown as string[]}
-                selected={draft.styleAesthetics}
-                onToggle={(value) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    styleAesthetics: toggleValue(prev.styleAesthetics, value),
-                  }))
-                }
-              />
-            ) : null}
-
-            {step.key === "body" ? (
-              <>
-                <OnboardingInput
-                  label={`Height (${draft.unitsPreference === "imperial" ? "ft / in" : "cm"})`}
-                  value={draft.body.height == null ? "" : String(draft.body.height)}
-                  onChangeText={(value) =>
+              {step.key === "style" ? (
+                <StyleStep
+                  styleAesthetics={draft.styleAesthetics}
+                  occasionPriority={draft.occasionPriority}
+                  onStyleToggle={(value) =>
                     setDraft((prev) => ({
                       ...prev,
-                      body: { ...prev.body, height: value ? Number(value) : null },
+                      styleAesthetics: toggleValue(prev.styleAesthetics, value),
                     }))
                   }
-                  keyboardType="numeric"
-                />
-                <OnboardingInput
-                  label={`Weight (${draft.unitsPreference === "imperial" ? "lb" : "kg"})`}
-                  value={draft.body.weight == null ? "" : String(draft.body.weight)}
-                  onChangeText={(value) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      body: { ...prev.body, weight: value ? Number(value) : null },
-                    }))
-                  }
-                  keyboardType="numeric"
-                />
-                <ChipGroup
-                  label="Preferred fit"
-                  values={FIT_OPTIONS as unknown as string[]}
-                  selected={draft.preferredFit ? [draft.preferredFit] : []}
-                  onToggle={(value) => setDraft((prev) => ({ ...prev, preferredFit: value as UserProfilePreferences["preferredFit"] }))}
-                />
-              </>
-            ) : null}
-
-            {step.key === "sizes" ? (
-              <>
-                <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }}>
-                  We&apos;ll tailor sizing to what you actually wear. Core sizes stay upfront, and deeper fit details are always optional.
-                </Text>
-
-                {groupedAdaptiveSizeFields.map((group) => (
-                  <View
-                    key={group.title}
-                    style={{
-                      gap: 10,
-                      paddingTop: 4,
-                      borderTopWidth: 1,
-                      borderTopColor: "rgba(255,255,255,0.05)",
-                    }}
-                  >
-                    <Text style={{ color: colors.aiAccent, fontSize: 12, fontWeight: "800", letterSpacing: 1.1 }}>
-                      {group.title.toUpperCase()}
-                    </Text>
-                    {group.fields.map((field) => (
-                      <OnboardingInput
-                        key={field.key}
-                        label={`${field.label}${field.required ? "" : " (optional)"}`}
-                        value={String(draft.defaultSizes[field.key] ?? "")}
-                        onChangeText={(value) =>
-                          setDraft((prev) => {
-                            const nextDefaultSizes = { ...prev.defaultSizes, [field.key]: value };
-                            if (field.key === "tops") nextDefaultSizes.top = value;
-                            if (field.key === "bottoms") {
-                              nextDefaultSizes.bottomWaist =
-                                nextDefaultSizes.bottomWaist ?? value;
-                            }
-                            if (field.key === "bottomsWaist") {
-                              nextDefaultSizes.bottomWaist = value;
-                              nextDefaultSizes.bottomsWaist = value;
-                            }
-                            if (field.key === "bottomsLength") nextDefaultSizes.bottomLength = value;
-                            return {
-                              ...prev,
-                              defaultSizes: nextDefaultSizes,
-                            };
-                          })
-                        }
-                        placeholder={field.placeholder}
-                      />
-                    ))}
-                  </View>
-                ))}
-
-                <View
-                  style={{
-                    marginTop: 4,
-                    borderRadius: 22,
-                    borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.08)",
-                    backgroundColor: "rgba(255,255,255,0.025)",
-                    overflow: "hidden",
-                  }}
-                >
-                  <Pressable
-                    onPress={() => setAdvancedFitOpen((current) => !current)}
-                    style={({ pressed }) => ({
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      opacity: pressed ? 0.84 : 1,
-                      gap: 4,
-                    })}
-                  >
-                    <Text style={{ color: colors.text, fontSize: 15, fontWeight: "800" }}>
-                      Advanced fit details
-                    </Text>
-                    <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19 }}>
-                      Optional measurements for more precise tailoring and styling.
-                    </Text>
-                  </Pressable>
-
-                  {advancedFitOpen ? (
-                    <View style={{ paddingHorizontal: 16, paddingBottom: 16, gap: 12 }}>
-                      <OnboardingInput
-                        label="Bust (optional)"
-                        value={draft.advancedFit.bust ?? ""}
-                        onChangeText={(value) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            advancedFit: { ...prev.advancedFit, bust: value },
-                          }))
-                        }
-                      />
-                      <OnboardingInput
-                        label="Waist measurement (optional)"
-                        value={draft.advancedFit.waistMeasurement ?? ""}
-                        onChangeText={(value) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            advancedFit: { ...prev.advancedFit, waistMeasurement: value },
-                          }))
-                        }
-                      />
-                      <OnboardingInput
-                        label="Hips (optional)"
-                        value={draft.advancedFit.hips ?? ""}
-                        onChangeText={(value) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            advancedFit: { ...prev.advancedFit, hips: value },
-                          }))
-                        }
-                      />
-                      <OnboardingInput
-                        label="Inseam (optional)"
-                        value={draft.advancedFit.inseam ?? ""}
-                        onChangeText={(value) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            advancedFit: { ...prev.advancedFit, inseam: value },
-                          }))
-                        }
-                      />
-                      <OnboardingInput
-                        label="Shoulder width (optional)"
-                        value={draft.advancedFit.shoulderWidth ?? ""}
-                        onChangeText={(value) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            advancedFit: { ...prev.advancedFit, shoulderWidth: value },
-                          }))
-                        }
-                      />
-                      <OnboardingInput
-                        label="Sleeve length (optional)"
-                        value={draft.advancedFit.sleeveLength ?? ""}
-                        onChangeText={(value) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            advancedFit: { ...prev.advancedFit, sleeveLength: value },
-                          }))
-                        }
-                      />
-                      {shouldRenderBraSize ? (
-                        <OnboardingInput
-                          label="Bra size (optional)"
-                          value={draft.advancedFit.braSize ?? ""}
-                          onChangeText={(value) =>
-                            setDraft((prev) => ({
-                              ...prev,
-                              advancedFit: { ...prev.advancedFit, braSize: value },
-                            }))
-                          }
-                        />
-                      ) : null}
-                    </View>
-                  ) : null}
-                </View>
-              </>
-            ) : null}
-
-            {step.key === "preferences" ? (
-              <>
-                <ChipGroup
-                  label="Favorite colors"
-                  values={COLOR_OPTIONS as unknown as string[]}
-                  selected={draft.favoriteColors}
-                  onToggle={(value) =>
-                    setDraft((prev) => ({ ...prev, favoriteColors: toggleValue(prev.favoriteColors, value) }))
-                  }
-                />
-                <ChipGroup
-                  label="Colors to avoid"
-                  values={COLOR_OPTIONS as unknown as string[]}
-                  selected={draft.avoidedColors}
-                  onToggle={(value) =>
-                    setDraft((prev) => ({ ...prev, avoidedColors: toggleValue(prev.avoidedColors, value) }))
-                  }
-                />
-                <ChipGroup
-                  label="Accessory preferences"
-                  values={ACCESSORY_OPTIONS as unknown as string[]}
-                  selected={draft.accessoryPreferences}
-                  onToggle={(value) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      accessoryPreferences: toggleValue(prev.accessoryPreferences, value),
-                    }))
-                  }
-                />
-                <ChipGroup
-                  label="Occasions"
-                  values={OCCASION_OPTIONS as unknown as string[]}
-                  selected={draft.occasionPriority}
-                  onToggle={(value) =>
+                  onOccasionToggle={(value) =>
                     setDraft((prev) => ({
                       ...prev,
                       occasionPriority: toggleValue(prev.occasionPriority, value),
                     }))
                   }
                 />
-              </>
-            ) : null}
+              ) : null}
 
-            {step.key === "goals" ? (
-              <ChipGroup
-                label="Goals"
-                values={GOAL_OPTIONS as unknown as string[]}
-                selected={draft.goals}
-                onToggle={(value) =>
-                  setDraft((prev) => ({ ...prev, goals: toggleValue(prev.goals, value) }))
-                }
-              />
-            ) : null}
-          </View>
-        </ScrollView>
+              {step.key === "categories" ? (
+                <CategoriesStep
+                  selected={draft.selectedCategories}
+                  onToggle={(value) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      selectedCategories: toggleValue(prev.selectedCategories, value),
+                    }))
+                  }
+                  onSetAll={(selectedCategories) =>
+                    setDraft((prev) => ({ ...prev, selectedCategories }))
+                  }
+                />
+              ) : null}
 
-        <View
-          style={{
-            paddingHorizontal: 20,
-            paddingTop: 12,
-            paddingBottom: 20,
-            gap: 10,
-            borderTopWidth: 1,
-            borderTopColor: "rgba(255,255,255,0.06)",
-            backgroundColor: colors.background,
-          }}
-        >
+              {step.key === "profile" ? (
+                <QuickProfileStep
+                  draft={draft}
+                  width={width}
+                  onDraftChange={setDraft}
+                />
+              ) : null}
+            </Animated.View>
+          </ScrollView>
+
+          {!isFirstStep ? (
+            <View style={[styles.footer, { backgroundColor: colors.background }]}>
+              <Pressable
+                onPress={nextStep}
+                disabled={saving || !canContinue}
+                style={({ pressed }) => [
+                  styles.primaryButton,
+                  {
+                    backgroundColor: colors.aiAccent,
+                    opacity: saving || !canContinue ? 0.45 : pressed ? 0.86 : 1,
+                  },
+                ]}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {stepIndex === STEPS.length - 1
+                    ? saving
+                      ? "Saving..."
+                      : "Finish setup"
+                    : "Continue"}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={goBack}
+                style={({ pressed }) => [
+                  styles.backButton,
+                  { opacity: pressed ? 0.72 : 1 },
+                ]}
+              >
+                <Text style={[styles.backButtonText, { color: colors.textSecondary }]}>Back</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </KeyboardAvoidingView>
+      </GestureDetector>
+    </SafeScreen>
+  );
+}
+
+function WardrobeModeStep({
+  selected,
+  disabled,
+  onSelect,
+}: {
+  selected: WardrobeMode;
+  disabled: boolean;
+  onSelect: (value: Exclude<WardrobeMode, "custom">) => void;
+}) {
+  const { colors } = useAppTheme();
+  return (
+    <View style={styles.cardGrid}>
+      {WARDROBE_MODE_CARDS.map((card) => {
+        const active = selected === card.value;
+        return (
           <Pressable
-            onPress={nextStep}
-            disabled={saving}
-            style={({ pressed }) => ({
-              borderRadius: 18,
-              paddingVertical: 16,
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor: colors.aiAccent,
-              opacity: saving ? 0.55 : pressed ? 0.86 : 1,
-            })}
+            key={card.value}
+            onPress={() => onSelect(card.value)}
+            disabled={disabled}
+            style={({ pressed }) => [
+              styles.modeCard,
+              {
+                backgroundColor: active ? "rgba(255,255,255,0.05)" : "#1A1A1A",
+                borderColor: active ? "rgba(255,255,255,0.92)" : "transparent",
+                borderWidth: active ? 2 : 0,
+                opacity: pressed ? 0.86 : 1,
+              },
+            ]}
           >
-            <Text style={{ color: "#071018", fontSize: 16, fontWeight: "900" }}>
-              {stepIndex === STEPS.length - 1 ? (saving ? "Saving..." : "Finish setup") : "Continue"}
+            <Text style={[styles.modeIcon, { color: colors.aiAccent }]}>{card.icon}</Text>
+            <Text style={[styles.modeLabel, { color: colors.text }]}>{card.label}</Text>
+            <Text style={[styles.modeDescription, { color: colors.textSecondary }]}>
+              {card.description}
             </Text>
           </Pressable>
-          {stepIndex > 0 ? (
-            <Pressable
-              onPress={() => setStepIndex((current) => Math.max(current - 1, 0))}
-              style={({ pressed }) => ({ alignItems: "center", paddingVertical: 8, opacity: pressed ? 0.72 : 1 })}
-            >
-              <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>Back</Text>
-            </Pressable>
-          ) : null}
+        );
+      })}
+    </View>
+  );
+}
+
+function StyleStep({
+  styleAesthetics,
+  occasionPriority,
+  onStyleToggle,
+  onOccasionToggle,
+}: {
+  styleAesthetics: string[];
+  occasionPriority: string[];
+  onStyleToggle: (value: string) => void;
+  onOccasionToggle: (value: string) => void;
+}) {
+  const capped = styleAesthetics.length >= 3;
+  return (
+    <View style={styles.sectionStack}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionKicker}>{styleAesthetics.length}/3 selected</Text>
+      </View>
+      <ChipGroup
+        label="Style aesthetics"
+        values={STYLE_OPTIONS as unknown as string[]}
+        selected={styleAesthetics}
+        onToggle={onStyleToggle}
+        disabledValue={(value) => capped && !styleAesthetics.includes(value)}
+      />
+      <View style={styles.sectionDivider} />
+      <ChipGroup
+        label="When do you dress up?"
+        values={OCCASION_OPTIONS as unknown as string[]}
+        selected={occasionPriority}
+        onToggle={onOccasionToggle}
+      />
+    </View>
+  );
+}
+
+function CategoriesStep({
+  selected,
+  onToggle,
+  onSetAll,
+}: {
+  selected: string[];
+  onToggle: (value: string) => void;
+  onSetAll: (value: string[]) => void;
+}) {
+  const { colors } = useAppTheme();
+  const allSelected = selected.length === ONBOARDING_CATEGORY_OPTIONS.length;
+  return (
+    <View style={styles.sectionStack}>
+      <View style={styles.categoryHeader}>
+        <View style={{ flex: 1, gap: 4 }}>
+          <Text style={[styles.sectionLabel, { color: colors.text }]}>
+            What do you actually wear?
+          </Text>
+          <Text style={[styles.sectionSubtext, { color: colors.textSecondary }]}>
+            AURA will only suggest items in these categories
+          </Text>
         </View>
-      </KeyboardAvoidingView>
-    </SafeScreen>
+        <Pressable
+          onPress={() => onSetAll(allSelected ? [] : [...ONBOARDING_CATEGORY_OPTIONS])}
+          style={({ pressed }) => [
+            styles.selectAllButton,
+            {
+              borderColor: "rgba(255,255,255,0.12)",
+              opacity: pressed ? 0.72 : 1,
+            },
+          ]}
+        >
+          <Text style={[styles.selectAllText, { color: colors.aiAccent }]}>
+            {allSelected ? "Clear all" : "Select all"}
+          </Text>
+        </Pressable>
+      </View>
+      <ChipGroup
+        values={ONBOARDING_CATEGORY_OPTIONS as unknown as string[]}
+        selected={selected}
+        onToggle={onToggle}
+      />
+    </View>
+  );
+}
+
+function QuickProfileStep({
+  draft,
+  width,
+  onDraftChange,
+}: {
+  draft: UserProfilePreferences;
+  width: number;
+  onDraftChange: React.Dispatch<React.SetStateAction<UserProfilePreferences>>;
+}) {
+  const { colors } = useAppTheme();
+  const heightMin = draft.unitsPreference === "imperial" ? 55 : 140;
+  const heightMax = draft.unitsPreference === "imperial" ? 84 : 215;
+  const heightValue =
+    draft.body.height ??
+    draft.height.value ??
+    (draft.unitsPreference === "imperial" ? 67 : 170);
+  const shoeValue = shoeValueFromDraft(draft);
+
+  return (
+    <View style={styles.sectionStack}>
+      <OnboardingInput
+        label="Name"
+        value={draft.firstName ?? ""}
+        onChangeText={(value) =>
+          onDraftChange((prev) => ({ ...prev, firstName: value }))
+        }
+        placeholder="First name"
+      />
+
+      <View style={styles.controlSection}>
+        <Text style={[styles.sectionLabel, { color: colors.text }]}>Height</Text>
+        <HeightSlider
+          min={heightMin}
+          max={heightMax}
+          value={heightValue}
+          unitsPreference={draft.unitsPreference}
+          onChange={(value) =>
+            onDraftChange((prev) => ({
+              ...prev,
+              body: { ...prev.body, height: value },
+              height: {
+                value,
+                unit: prev.unitsPreference === "imperial" ? "ft_in" : "cm",
+              },
+            }))
+          }
+        />
+      </View>
+
+      <View style={styles.controlSection}>
+        <Text style={[styles.sectionLabel, { color: colors.text }]}>Shoe size</Text>
+        <ShoeSizePicker
+          width={width}
+          value={shoeValue}
+          onChange={(value) =>
+            onDraftChange((prev) => ({
+              ...prev,
+              defaultSizes: { ...prev.defaultSizes, shoes: `EU ${value}` },
+            }))
+          }
+        />
+      </View>
+
+      <ChipGroup
+        label="Preferred fit"
+        values={FIT_OPTIONS as unknown as string[]}
+        selected={draft.preferredFit ? [draft.preferredFit] : []}
+        onToggle={(value) =>
+          onDraftChange((prev) => ({
+            ...prev,
+            preferredFit: value as UserProfilePreferences["preferredFit"],
+          }))
+        }
+        singleSelect
+      />
+    </View>
+  );
+}
+
+function HeightSlider({
+  min,
+  max,
+  value,
+  unitsPreference,
+  onChange,
+}: {
+  min: number;
+  max: number;
+  value: number;
+  unitsPreference: UnitsPreference;
+  onChange: (value: number) => void;
+}) {
+  const { colors } = useAppTheme();
+  const [trackWidth, setTrackWidth] = useState(0);
+  const clamped = Math.max(min, Math.min(max, Math.round(value)));
+  const progress = (clamped - min) / (max - min);
+  const pillLeft = trackWidth > 0 ? progress * Math.max(trackWidth - 64, 1) : 0;
+
+  return (
+    <View
+      style={styles.sliderWrap}
+      onLayout={(event: LayoutChangeEvent) => setTrackWidth(event.nativeEvent.layout.width)}
+    >
+      <View
+        pointerEvents="none"
+        style={[
+          styles.heightPill,
+          {
+            left: pillLeft,
+            backgroundColor: "rgba(255,255,255,0.08)",
+            borderColor: "rgba(255,255,255,0.13)",
+          },
+        ]}
+      >
+        <Text style={[styles.heightPillText, { color: colors.text }]}>
+          {formatHeight(clamped, unitsPreference)}
+        </Text>
+      </View>
+      <Slider
+        minimumValue={min}
+        maximumValue={max}
+        step={1}
+        value={clamped}
+        minimumTrackTintColor={colors.aiAccent}
+        maximumTrackTintColor="rgba(255,255,255,0.14)"
+        thumbTintColor="#FFFFFF"
+        onValueChange={(next) => onChange(Math.round(next))}
+        style={styles.slider}
+      />
+    </View>
+  );
+}
+
+function ShoeSizePicker({
+  value,
+  width,
+  onChange,
+}: {
+  value: number;
+  width: number;
+  onChange: (value: number) => void;
+}) {
+  const { colors } = useAppTheme();
+  const itemWidth = 64;
+  const pickerWidth = Math.min(width - 40, 360);
+  const sidePadding = Math.max((pickerWidth - itemWidth) / 2, 0);
+  const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    const index = SHOE_SIZES_EU.indexOf(value);
+    const id = requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ x: Math.max(index, 0) * itemWidth, animated: false });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [itemWidth, value]);
+
+  function updateFromOffset(offsetX: number) {
+    const index = Math.max(
+      0,
+      Math.min(SHOE_SIZES_EU.length - 1, Math.round(offsetX / itemWidth)),
+    );
+    const next = SHOE_SIZES_EU[index];
+    if (next !== value) onChange(next);
+  }
+
+  return (
+    <View style={[styles.pickerShell, { width: pickerWidth }]}>
+      <View
+        pointerEvents="none"
+        style={[
+          styles.pickerCenter,
+          {
+            left: sidePadding,
+            width: itemWidth,
+            borderColor: "rgba(255,255,255,0.18)",
+            backgroundColor: "rgba(255,255,255,0.05)",
+          },
+        ]}
+      />
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        snapToInterval={itemWidth}
+        decelerationRate="fast"
+        contentContainerStyle={{ paddingHorizontal: sidePadding }}
+        onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) =>
+          updateFromOffset(event.nativeEvent.contentOffset.x)
+        }
+        onMomentumScrollEnd={(event) => updateFromOffset(event.nativeEvent.contentOffset.x)}
+        scrollEventThrottle={16}
+      >
+        {SHOE_SIZES_EU.map((size) => {
+          const active = size === value;
+          return (
+            <View key={size} style={[styles.shoeItem, { width: itemWidth }]}>
+              <Text
+                style={[
+                  styles.shoeValue,
+                  {
+                    color: active ? colors.text : colors.textSecondary,
+                    opacity: active ? 1 : 0.5,
+                    fontSize: active ? 24 : 18,
+                  },
+                ]}
+              >
+                {size}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+      <Text style={[styles.shoeConversion, { color: colors.textSecondary }]}>
+        EU {value} · {euShoeConversion(value)}
+      </Text>
+    </View>
   );
 }
 
@@ -731,34 +908,30 @@ function OnboardingInput({
   value,
   onChangeText,
   placeholder,
-  keyboardType,
 }: {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
   placeholder?: string;
-  keyboardType?: "default" | "numeric";
 }) {
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ color: colors.text, fontSize: 14, fontWeight: "800" }}>{label}</Text>
+      <Text style={[styles.sectionLabel, { color: colors.text }]}>{label}</Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        keyboardType={keyboardType}
+        autoCapitalize="words"
         placeholderTextColor={colors.textSecondary}
-        style={{
-          borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.08)",
-          borderRadius: 18,
-          backgroundColor: "rgba(255,255,255,0.03)",
-          color: colors.text,
-          paddingHorizontal: 16,
-          paddingVertical: 15,
-          fontSize: 16,
-        }}
+        style={[
+          styles.input,
+          {
+            borderColor: "rgba(255,255,255,0.08)",
+            backgroundColor: "rgba(255,255,255,0.03)",
+            color: colors.text,
+          },
+        ]}
       />
     </View>
   );
@@ -769,34 +942,47 @@ function ChipGroup({
   values,
   selected,
   onToggle,
+  disabledValue,
+  singleSelect,
 }: {
-  label: string;
+  label?: string;
   values: string[];
   selected: string[];
   onToggle: (value: string) => void;
+  disabledValue?: (value: string) => boolean;
+  singleSelect?: boolean;
 }) {
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 10 }}>
-      <Text style={{ color: colors.text, fontSize: 14, fontWeight: "800" }}>{label}</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+      {label ? <Text style={[styles.sectionLabel, { color: colors.text }]}>{label}</Text> : null}
+      <View style={styles.chipWrap}>
         {values.map((value) => {
-          const active = chipSelected(selected, value);
+          const active = selected.includes(value);
+          const disabled = disabledValue?.(value) ?? false;
           return (
             <Pressable
               key={value}
-              onPress={() => onToggle(value)}
-              style={({ pressed }) => ({
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                borderRadius: 999,
-                backgroundColor: active ? "rgba(143,216,255,0.18)" : "rgba(255,255,255,0.04)",
-                borderWidth: 1,
-                borderColor: active ? "rgba(143,216,255,0.4)" : "rgba(255,255,255,0.08)",
-                opacity: pressed ? 0.82 : 1,
-              })}
+              disabled={disabled}
+              onPress={() => {
+                if (singleSelect && active) return;
+                onToggle(value);
+              }}
+              style={({ pressed }) => [
+                styles.chip,
+                {
+                  backgroundColor: active ? "rgba(217,207,255,0.17)" : "rgba(255,255,255,0.04)",
+                  borderColor: active ? "rgba(217,207,255,0.52)" : "rgba(255,255,255,0.08)",
+                  opacity: disabled ? 0.5 : pressed ? 0.82 : 1,
+                },
+              ]}
             >
-              <Text style={{ color: active ? colors.aiAccent : colors.text, fontWeight: "800", fontSize: 13 }}>
+              <Text
+                style={[
+                  styles.chipText,
+                  { color: active ? colors.aiAccent : colors.text },
+                ]}
+              >
                 {humanize(value)}
               </Text>
             </Pressable>
@@ -806,3 +992,215 @@ function ChipGroup({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
+  loadingScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    gap: 10,
+  },
+  eyebrow: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  title: {
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: "900",
+  },
+  subtitle: {
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  content: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingTop: 22,
+  },
+  stepBody: {
+    flex: 1,
+  },
+  cardGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  modeCard: {
+    width: "48%",
+    minHeight: 158,
+    borderRadius: 8,
+    padding: 16,
+    justifyContent: "space-between",
+  },
+  modeIcon: {
+    fontSize: 24,
+    fontWeight: "900",
+  },
+  modeLabel: {
+    fontSize: 19,
+    fontWeight: "900",
+  },
+  modeDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+  },
+  sectionStack: {
+    gap: 22,
+  },
+  sectionHeader: {
+    alignItems: "flex-start",
+  },
+  sectionKicker: {
+    color: "rgba(255,255,255,0.54)",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.07)",
+  },
+  sectionLabel: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  sectionSubtext: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  categoryHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  selectAllButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  selectAllText: {
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  chipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  chipText: {
+    fontWeight: "800",
+    fontSize: 13,
+  },
+  controlSection: {
+    gap: 12,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    fontSize: 16,
+  },
+  sliderWrap: {
+    paddingTop: 34,
+  },
+  heightPill: {
+    position: "absolute",
+    top: 0,
+    minWidth: 64,
+    alignItems: "center",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  heightPillText: {
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  slider: {
+    width: "100%",
+    height: 44,
+  },
+  pickerShell: {
+    alignSelf: "center",
+    gap: 8,
+  },
+  pickerCenter: {
+    position: "absolute",
+    top: 0,
+    height: 56,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  shoeItem: {
+    height: 56,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  shoeValue: {
+    fontWeight: "900",
+  },
+  shoeConversion: {
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  footer: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 20,
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.06)",
+  },
+  primaryButton: {
+    borderRadius: 18,
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryButtonText: {
+    color: "#071018",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  backButton: {
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  backButtonText: {
+    fontWeight: "800",
+  },
+});

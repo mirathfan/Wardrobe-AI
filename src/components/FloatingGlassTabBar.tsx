@@ -4,6 +4,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import Reanimated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -11,8 +17,10 @@ import {
   DOCK_ITEM_COUNT,
   DOCK_RADIUS,
   DOCK_SIDE_MARGIN,
+  floatingTabBarBottomInset,
 } from '../constants/dock';
 import { useAppTheme } from '../hooks/useAppTheme';
+import { useReduceMotion } from '@/hooks/useReduceMotion';
 
 const TAB_META: Record<string, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
   index: { label: 'Home', icon: 'home-outline' },
@@ -40,7 +48,7 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
   const insets = useSafeAreaInsets();
   const [dockWidth, setDockWidth] = useState(0);
   const bubbleX = useRef(new Animated.Value(0)).current;
-  const dockBottom = Math.max(16, insets.bottom * 0.35);
+  const dockBottom = floatingTabBarBottomInset(insets.bottom);
 
   const visibleRoutes = useMemo(
     () =>
@@ -53,9 +61,14 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
   );
 
   const currentKey = state.routes[state.index]?.key;
+  const currentRoute = state.routes[state.index];
+  const hiddenRouteSourceTab =
+    (currentRoute?.params as { sourceTab?: string } | undefined)?.sourceTab ?? null;
   const focusedVisibleIndex = Math.max(
     0,
-    visibleRoutes.findIndex((route) => route.key === currentKey)
+    visibleRoutes.findIndex(
+      (route) => route.key === currentKey || route.name === hiddenRouteSourceTab
+    )
   );
 
   const segmentWidth = dockWidth > 0 ? dockWidth / DOCK_ITEM_COUNT : 0;
@@ -143,34 +156,107 @@ export default function FloatingGlassTabBar({ state, descriptors, navigation }: 
             };
 
             return (
-              <Pressable
+              <TabBarItem
                 key={route.key}
-                accessibilityRole="button"
-                accessibilityState={isFocused ? { selected: true } : {}}
+                isFocused={isFocused}
+                iconName={iconName}
+                iconSize={route.name === 'ai' ? 24 : 22}
+                label={meta.label}
+                color={color}
                 onPress={onPress}
                 onLongPress={onLongPress}
-                style={styles.item}
-              >
-                <Ionicons name={iconName} size={route.name === 'ai' ? 24 : 22} color={color} />
-                <Text
-                  style={[
-                    styles.label,
-                    {
-                      color,
-                      opacity: isFocused ? 1 : 0.55,
-                      fontWeight: isFocused ? '600' : '500',
-                    },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {meta.label}
-                </Text>
-              </Pressable>
+              />
             );
           })}
         </View>
       </View>
     </View>
+  );
+}
+
+function TabBarItem({
+  isFocused,
+  iconName,
+  iconSize,
+  label,
+  color,
+  onPress,
+  onLongPress,
+}: {
+  isFocused: boolean;
+  iconName: keyof typeof Ionicons.glyphMap;
+  iconSize: number;
+  label: string;
+  color: string;
+  onPress: () => void;
+  onLongPress: () => void;
+}) {
+  const { colors } = useAppTheme();
+  const reduceMotion = useReduceMotion();
+  const dotOpacity = useSharedValue(isFocused ? 1 : 0);
+  const dotScale = useSharedValue(isFocused ? 1 : 0);
+  const iconScale = useSharedValue(isFocused ? 1.12 : 1);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      dotOpacity.value = isFocused ? 1 : 0;
+      dotScale.value = isFocused ? 1 : 0;
+      iconScale.value = isFocused ? 1.12 : 1;
+      return;
+    }
+    dotOpacity.value = withTiming(isFocused ? 1 : 0, {
+      duration: isFocused ? 200 : 150,
+    });
+    dotScale.value = isFocused
+      ? withSpring(1, { damping: 10 })
+      : withTiming(0, { duration: 150 });
+    iconScale.value = isFocused
+      ? withSpring(1.12, { damping: 10 })
+      : withTiming(1, { duration: 150 });
+  }, [dotOpacity, dotScale, iconScale, isFocused, reduceMotion]);
+
+  const dotStyle = useAnimatedStyle(() => ({
+    opacity: dotOpacity.value,
+    transform: [{ scale: dotScale.value }],
+  }));
+
+  const iconStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: iconScale.value }],
+  }));
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={isFocused ? { selected: true } : {}}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={styles.item}
+    >
+      <Reanimated.View style={iconStyle}>
+        <Ionicons name={iconName} size={iconSize} color={color} />
+      </Reanimated.View>
+      <Reanimated.View
+        pointerEvents="none"
+        style={[
+          styles.activeDot,
+          { backgroundColor: colors.iridescentStart },
+          dotStyle,
+        ]}
+      />
+      <Text
+        style={[
+          styles.label,
+          {
+            color,
+            opacity: isFocused ? 1 : 0.55,
+            fontWeight: isFocused ? '600' : '500',
+          },
+        ]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -237,7 +323,12 @@ const styles = StyleSheet.create({
     height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
+    gap: 3,
+  },
+  activeDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
   },
   label: {
     fontSize: 11,

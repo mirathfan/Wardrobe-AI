@@ -1,9 +1,17 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
+import { DarkTheme, ThemeProvider } from "@react-navigation/native";
 import { router, Stack, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import "react-native-reanimated";
-import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Platform, StyleSheet, View } from "react-native";
+import LottieView from "lottie-react-native";
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 
 import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
 import { isVisionBackgroundRemovalAvailable } from "../src/bg/removeBackground";
@@ -11,16 +19,64 @@ import { loadUserProfilePreferences } from "../src/lib/userProfile";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Colors } from "@/constants/theme";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import AuraRing, { RING_SIZE_LG } from "@/src/components/brand/AuraRing";
 
 export const unstable_settings = {
   anchor: "(tabs)",
 };
 
+const LOADING_MESSAGES = [
+  "Reading your style profile...",
+  "Mapping your wardrobe preferences...",
+  "Calibrating your AURA...",
+  "Almost ready...",
+];
+
+function BrandedLoadingScreen() {
+  const reducedMotion = useReducedMotion();
+  const [messageIndex, setMessageIndex] = useState(0);
+  const opacity = useSharedValue(1);
+  const advanceMessage = useCallback(() => {
+    setMessageIndex((current) => (current + 1) % LOADING_MESSAGES.length);
+  }, []);
+
+  useEffect(() => {
+    if (reducedMotion) return;
+    const interval = setInterval(() => {
+      opacity.value = withTiming(0, { duration: 300, easing: Easing.inOut(Easing.quad) }, (finished) => {
+        if (!finished) return;
+        runOnJS(advanceMessage)();
+        opacity.value = withTiming(1, { duration: 300, easing: Easing.inOut(Easing.quad) });
+      });
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [advanceMessage, opacity, reducedMotion]);
+
+  const messageStyle = useAnimatedStyle(() => ({
+    opacity: reducedMotion ? 1 : opacity.value,
+  }));
+
+  return (
+    <View style={loadingStyles.container}>
+      <View style={loadingStyles.loadingStack}>
+        <AuraRing size={RING_SIZE_LG} animated={!reducedMotion} />
+        <Animated.Text style={[loadingStyles.message, messageStyle]}>
+          {LOADING_MESSAGES[messageIndex]}
+        </Animated.Text>
+        <LottieView
+          source={require("../assets/animations/loading.json")}
+          autoPlay={!reducedMotion}
+          loop={!reducedMotion}
+          style={loadingStyles.lottie}
+        />
+      </View>
+    </View>
+  );
+}
+
 function AuthGate() {
   const { user, loading } = useAuth();
   const segments = useSegments();
-  const colorScheme = useColorScheme();
-  const palette = Colors[colorScheme === "dark" ? "dark" : "light"];
   const [profileLoading, setProfileLoading] = useState(true);
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
   const isRevalidatingOnboarding = useRef(false);
@@ -101,14 +157,7 @@ function AuthGate() {
   }, [loading, onboardingCompleted, profileLoading, segments, user]);
 
   if (loading || profileLoading) {
-    return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 10 }}>
-        <ActivityIndicator />
-        <Text style={{ color: palette.text }}>
-          {loading ? "Checking session…" : "Preparing your wardrobe profile…"}
-        </Text>
-      </View>
-    );
+    return <BrandedLoadingScreen />;
   }
 
   return (
@@ -116,6 +165,7 @@ function AuthGate() {
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="aura/swipe" options={{ headerShown: false }} />
       <Stack.Screen
         name="modal"
         options={{ presentation: "modal", title: "Modal" }}
@@ -124,33 +174,47 @@ function AuthGate() {
   );
 }
 
+const loadingStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: "center",
+    backgroundColor: "#080808",
+    overflow: "hidden",
+  },
+  loadingStack: {
+    position: "absolute",
+    top: "40%",
+    alignItems: "center",
+    gap: 22,
+    transform: [{ translateY: -80 }],
+  },
+  message: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    letterSpacing: 1,
+    textAlign: "center",
+    fontWeight: "700",
+  },
+  lottie: {
+    width: 40,
+    height: 40,
+  },
+});
+
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const palette = Colors[colorScheme === "dark" ? "dark" : "light"];
-  const navigationTheme =
-    colorScheme === "dark"
-      ? {
-          ...DarkTheme,
-          colors: {
-            ...DarkTheme.colors,
-            background: palette.background,
-            card: palette.surface,
-            border: palette.border,
-            primary: palette.tint,
-            text: palette.text,
-          },
-        }
-      : {
-          ...DefaultTheme,
-          colors: {
-            ...DefaultTheme.colors,
-            background: palette.background,
-            card: palette.surface,
-            border: palette.border,
-            primary: palette.tint,
-            text: palette.text,
-          },
-        };
+  useColorScheme();
+  const palette = Colors.dark;
+  const navigationTheme = {
+    ...DarkTheme,
+    colors: {
+      ...DarkTheme.colors,
+      background: palette.background,
+      card: palette.surface,
+      border: palette.border,
+      primary: palette.tint,
+      text: palette.text,
+    },
+  };
 
   useEffect(() => {
     if (Platform.OS !== "ios" || !__DEV__) return;
@@ -168,7 +232,7 @@ export default function RootLayout() {
           </View>
         </AuthProvider>
 
-        <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+        <StatusBar style="light" />
       </ThemeProvider>
     </SafeAreaProvider>
   );

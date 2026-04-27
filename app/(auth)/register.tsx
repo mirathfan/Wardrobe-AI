@@ -57,7 +57,7 @@ export default function RegisterScreen() {
     <AuthScaffold
       eyebrow="NEW ACCOUNT"
       title="Create your wardrobe profile"
-      subtitle="Set up Wardrobe AI so AURA can personalize from your first session."
+      subtitle="Set up AURA so your stylist can personalize from day one."
       footer={
         <View style={{ alignItems: "flex-start" }}>
           <AuthInlineLink label="Already have an account? Sign in" onPress={() => router.replace("/(auth)/login")} />
@@ -91,4 +91,3 @@ export default function RegisterScreen() {
     </AuthScaffold>
   );
 }
-
