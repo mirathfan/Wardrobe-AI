@@ -26,7 +26,7 @@ export default function CalendarHeader({ selectedDate, today, onJumpToToday }: P
 
   return (
     <View style={[styles.wrap, { gap: 8 }]}>
-      <Text style={[styles.kicker, { color: colors.textSecondary }]}>Plan the week</Text>
+      <Text style={[styles.kicker, { color: colors.iridescentStart }]}>Plan the week</Text>
       <Text style={[styles.title, { color: colors.text, fontSize: 30 * layout.titleScale }]}>Calendar</Text>
       <Text style={[styles.date, { color: colors.textSecondary }]}>{formatHeaderDate(selectedDate)}</Text>
       <View style={styles.row}>
@@ -48,9 +48,9 @@ const styles = StyleSheet.create({
   wrap: {
     marginBottom: 8,
   },
-  kicker: { fontSize: 13, fontWeight: "700" },
-  title: { fontWeight: "900" },
-  date: { marginTop: 2, fontSize: 14 },
+  kicker: { fontSize: 11, fontWeight: "800", letterSpacing: 1.5, textTransform: "uppercase" },
+  title: { fontWeight: "900", letterSpacing: -0.5 },
+  date: { marginTop: 2, fontSize: 14, lineHeight: 22, opacity: 0.65 },
   row: {
     marginTop: 10,
     flexDirection: "row",

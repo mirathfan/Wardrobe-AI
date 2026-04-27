@@ -172,8 +172,8 @@ export default function LaundryScreen() {
     <View style={{ paddingBottom: 12 }}>
       {/* Title */}
       <View style={{ marginBottom: 10 }}>
-        <Text style={{ fontSize: 28, fontWeight: "800", color: colors.text }}>Laundry</Text>
-        <Text style={{ marginTop: 4, opacity: 0.7, color: colors.textSecondary }}>
+        <Text style={{ fontSize: 28, fontWeight: "800", color: colors.text, letterSpacing: -0.5 }}>Laundry</Text>
+        <Text style={{ marginTop: 4, opacity: 0.65, lineHeight: 22, color: colors.textSecondary }}>
           Track what needs washing, what’s in progress, and what’s clean.
         </Text>
       </View>

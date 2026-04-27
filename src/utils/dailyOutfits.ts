@@ -17,6 +17,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "../lib/firebase";
+import { logWornOutfitStyleEvent } from "../lib/auraMemory";
 import { toDayKey } from "./date";
 
 export type OutfitItemsByCategory = {
@@ -260,6 +261,7 @@ export async function markOutfitWorn(
     payload,
     { merge: true }
   );
+  void logWornOutfitStyleEvent(uid, wornOutfit);
   return getOutfitByDate(uid, key);
 }
 

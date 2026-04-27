@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
 import { addDays, isSameLocalDate, toDayKey } from "../../utils/date";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -19,10 +19,13 @@ type Props = {
 const WINDOW = 365 * 2 + 1;
 const HALF = Math.floor(WINDOW / 2);
 const ITEM_WIDTH = 62;
+const RAIL_SIDE_PADDING = 24;
 
 export default function DateRail({ selectedDate, onSelectDate, statuses = {} }: Props) {
   const { colors } = useAppTheme();
+  const { width } = useWindowDimensions();
   const listRef = useRef<FlatList<Date>>(null);
+  const didInitialScrollRef = useRef(false);
 
   const dates = useMemo(
     () => Array.from({ length: WINDOW }, (_, index) => addDays(new Date(), index - HALF)),
@@ -37,12 +40,16 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {} }: 
   }, [dates, selectedKey]);
 
   useEffect(() => {
-    listRef.current?.scrollToIndex({
-      index: selectedIndex,
-      animated: true,
-      viewPosition: 0.5,
-    });
-  }, [selectedIndex]);
+    const timer = setTimeout(() => {
+      listRef.current?.scrollToIndex({
+        index: selectedIndex,
+        viewPosition: 0.5,
+        animated: didInitialScrollRef.current,
+      });
+      didInitialScrollRef.current = true;
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [selectedIndex, width]);
 
   return (
     <FlatList
@@ -52,6 +59,15 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {} }: 
       keyExtractor={(item) => toDayKey(item)}
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.content}
+      initialScrollIndex={Math.max(0, selectedIndex - 1)}
+      onScrollToIndexFailed={(info) => {
+        requestAnimationFrame(() => {
+          listRef.current?.scrollToOffset({
+            offset: Math.max(0, info.averageItemLength * info.index - ITEM_WIDTH * 2),
+            animated: false,
+          });
+        });
+      }}
       snapToAlignment="center"
       decelerationRate="fast"
       getItemLayout={(_, index) => ({ length: ITEM_WIDTH, offset: ITEM_WIDTH * index, index })}
@@ -89,7 +105,7 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {} }: 
 const styles = StyleSheet.create({
   content: {
     paddingVertical: 8,
-    paddingHorizontal: 2,
+    paddingHorizontal: RAIL_SIDE_PADDING,
   },
   cell: {
     width: ITEM_WIDTH - 6,

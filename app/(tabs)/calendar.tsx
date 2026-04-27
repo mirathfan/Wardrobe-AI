@@ -4,6 +4,13 @@ import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import Reanimated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from "react-native-reanimated";
 
 import AgendaCard from "@/src/components/AgendaCard";
 import DailyOutfitCard from "@/src/components/DailyOutfitCard";
@@ -36,8 +43,10 @@ import { getDailyWeather } from "@/src/utils/weatherDaily";
 import { getLoggedOutfitDays, getOutfitStreak } from "@/src/utils/streak";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useAuth } from "@/src/hooks/useAuth";
+import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { db } from "@/src/lib/firebase";
 import { MAX_WEARS_BEFORE_WASH, isVisibleWardrobeItem, toCanonicalCategory } from "@/src/lib/items";
+import { Toast } from "@/src/lib/toast";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 type SectionIconName = "calendar" | "sparkles" | "chart.bar.xaxis";
@@ -65,8 +74,8 @@ function SectionHeader({ icon, title }: { icon: SectionIconName; title: string }
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   return (
     <View style={styles.sectionHeader}>
-      <Ionicons name={iconFallback(icon)} size={17} color={colors.text} />
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>{title}</Text>
+      <Ionicons name={iconFallback(icon)} size={17} color={colors.iridescentStart} />
+      <Text style={[styles.sectionTitle, { color: colors.iridescentStart }]}>{title}</Text>
     </View>
   );
 }
@@ -168,7 +177,7 @@ export default function CalendarScreen() {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const uid = user?.uid ?? null;
-  const bottomDockPadding = layout.bottomDockPadding;
+  const bottomDockPadding = layout.bottomDockPadding + 112;
 
   const { greeting, timeLabel } = useNow();
   const day = useSelectedDate();
@@ -589,7 +598,7 @@ export default function CalendarScreen() {
         await batch.commit();
       } catch (e: unknown) {
         const err = e as { message?: string };
-        Alert.alert("Error", err.message ?? "Failed to update worn status");
+        Toast.error("Error", err.message ?? "Failed to update worn status");
       } finally {
         setSaving(false);
       }
@@ -602,6 +611,7 @@ export default function CalendarScreen() {
       wornAt: Date.now(),
     });
     setRecord(next);
+    Toast.worn();
     await loadStreakData();
     await hapticLight();
   }, [day.selectedDate, itemsById, loadStreakData, record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
@@ -637,7 +647,7 @@ export default function CalendarScreen() {
         contentContainerStyle={{
           paddingHorizontal: layout.horizontalPadding,
           paddingTop: layout.topContentInset,
-          paddingBottom: Math.max(bottomDockPadding, 120),
+          paddingBottom: Math.max(bottomDockPadding, 180),
         }}
         showsVerticalScrollIndicator={false}
       >
@@ -724,7 +734,7 @@ export default function CalendarScreen() {
           <View style={themedStyles.weekBars}>
             {weeklyFlags.map((value, index) => (
               <View key={`week-${index}`} style={themedStyles.weekBarTrack}>
-                <View style={[themedStyles.weekBarFill, { height: value ? 18 : 6 }]} />
+                <AnimatedWeekBar active={Boolean(value)} index={index} />
               </View>
             ))}
           </View>
@@ -784,6 +794,33 @@ export default function CalendarScreen() {
   );
 }
 
+function AnimatedWeekBar({ active, index }: { active: boolean; index: number }) {
+  const { colors } = useAppTheme();
+  const reduceMotion = useReduceMotion();
+  const height = useSharedValue(reduceMotion ? (active ? 18 : 6) : 0);
+
+  useEffect(() => {
+    const target = active ? 18 : 6;
+    if (reduceMotion) {
+      height.value = target;
+      return;
+    }
+    height.value = withDelay(
+      index * 80,
+      withTiming(target, {
+        duration: 400,
+        easing: Easing.out(Easing.cubic),
+      }),
+    );
+  }, [active, height, index, reduceMotion]);
+
+  const barStyle = useAnimatedStyle(() => ({
+    height: height.value,
+  }));
+
+  return <Reanimated.View style={[{ borderRadius: 5, backgroundColor: colors.iridescentStart, width: "100%" }, barStyle]} />;
+}
+
 function createStyles(
   colors: ReturnType<typeof useAppTheme>["colors"],
   layout: ReturnType<typeof useResponsiveLayout>
@@ -801,8 +838,10 @@ return StyleSheet.create({
     gap: 8,
   },
   sectionTitle: {
-    fontSize: 15,
+    fontSize: 11,
     fontWeight: "800",
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
   },
   monthPicker: {
     marginTop: 8,
