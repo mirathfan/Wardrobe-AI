@@ -9,6 +9,7 @@ type UploadItemPhotoParams = {
   imageId?: string;
   cleanedLocalUri?: string | null;
   normalizedLocalUri?: string | null;
+  saveNormalizedAsCleaned?: boolean;
   originalWidth?: number | null;
   maxWidth?: number;
   quality?: number;
@@ -66,6 +67,7 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     imageId = "",
     cleanedLocalUri = null,
     normalizedLocalUri = null,
+    saveNormalizedAsCleaned = false,
     originalWidth = null,
     maxWidth = 1000,
     quality = 0.7,
@@ -88,6 +90,7 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
   const primaryUrl = await getDownloadURL(fileRef);
 
   const cleanedCandidateUri =
+    (saveNormalizedAsCleaned ? normalizedLocalUri : null) ||
     cleanedLocalUri ||
     (String(localUri).trim().toLowerCase().endsWith(".png") ? localUri : null);
   let cleanedUrl: string | null = null;

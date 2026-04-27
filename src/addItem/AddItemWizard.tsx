@@ -86,7 +86,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                   <Text style={styles.btnSecondaryText}>Back</Text>
                 </Pressable>
 
-                <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>
+                <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, letterSpacing: -0.5 }}>
                   {state.isEdit ? "Edit Item" : "Add Item"}
                 </Text>
 

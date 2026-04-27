@@ -1,3 +1,5 @@
+import type { DimensionValue } from "react-native";
+
 import { getVisualNormalizationDefaults, mergeVisualNormalization } from "./visualNormalization";
 
 export type ItemImageSurface =
@@ -61,6 +63,18 @@ type ImageLikeItem = {
   };
 };
 
+export type ItemImageDecoration = {
+  shadowStyle: {
+    width: DimensionValue;
+    height: DimensionValue;
+    bottom: DimensionValue;
+    opacity: number;
+  };
+};
+
+const DEBUG_ITEM_IMAGES =
+  __DEV__ && process.env.EXPO_PUBLIC_DEBUG_ITEM_IMAGES === "1";
+
 function isValidImageUrl(value: string | null | undefined): boolean {
   const url = String(value ?? "").trim();
   if (!url) return false;
@@ -75,6 +89,34 @@ function firstValidUrl(values: (string | null | undefined)[]): string | null {
     if (isValidImageUrl(url)) return url;
   }
   return null;
+}
+
+function isLikelyUiScreenshotUrl(value: string | null | undefined): boolean {
+  const lower = String(value ?? "").trim().toLowerCase();
+  if (!lower) return false;
+  return /screenshot|screen[-_ ]?shot|share[-_ ]?image|social|thumbnail|thumb|icon|sprite|logo|badge|placeholder|swatch|avatar|banner|ui|chrome|header|footer/.test(
+    lower
+  );
+}
+
+function scoreImageCandidate(url: string | null | undefined, context: "cutout" | "original"): number {
+  const lower = String(url ?? "").trim().toLowerCase();
+  if (!lower) return -100;
+  let score = 0;
+  if (context === "cutout") score += 12;
+  if (lower.endsWith(".png") || lower.includes(".png?")) score += 3;
+  if (/normalized|cleaned|vision-cutout|cutout|transparent|alpha|isolated/.test(lower)) score += 10;
+  if (/product|pdp|gallery|main|image|photo|model/.test(lower)) score += 4;
+  if (/cropped|crop|thumb|thumbnail/.test(lower)) score -= 4;
+  if (isLikelyUiScreenshotUrl(lower)) score -= 14;
+  return score;
+}
+
+function pickBestUrl(values: (string | null | undefined)[], context: "cutout" | "original") {
+  return values
+    .map((value) => String(value ?? "").trim())
+    .filter((value) => isValidImageUrl(value))
+    .sort((a, b) => scoreImageCandidate(b, context) - scoreImageCandidate(a, context))[0] ?? null;
 }
 
 function getCleanedSource(item: ImageLikeItem): string {
@@ -183,6 +225,18 @@ function getFrameAspectRatio(item: ImageLikeItem | null | undefined): number {
   return 0.86;
 }
 
+function isTopLikeItem(item: ImageLikeItem | null | undefined) {
+  const joined = [
+    normalizeToken(item?.category),
+    normalizeToken(item?.subCategory),
+    normalizeToken(item?.type),
+  ].join(" ");
+
+  return /shirt|polo|blouse|tee|t-shirt|top|crop top|sweater|overshirt|hoodie|jacket|coat|outerwear/.test(
+    joined
+  );
+}
+
 type SurfaceProfile = {
   aspectRatioMin: number;
   aspectRatioMax: number;
@@ -202,27 +256,27 @@ const SURFACE_PROFILES: Record<ItemImageSurface, SurfaceProfile> = {
     aspectRatioMin: 0.66,
     aspectRatioMax: 0.92,
     aspectRatioWeight: 0.76,
-    fillTargetHeight: 96,
-    fillTargetWidth: 90,
-    fillAggressiveness: 1.12,
-    minScale: 1.02,
-    maxScale: 1.58,
-    translateMin: -10,
-    translateMax: 20,
-    verticalBiasStrength: 0.2,
+    fillTargetHeight: 82,
+    fillTargetWidth: 78,
+    fillAggressiveness: 0.9,
+    minScale: 0.88,
+    maxScale: 1.18,
+    translateMin: -6,
+    translateMax: 10,
+    verticalBiasStrength: 0.08,
   },
   item_detail: {
     aspectRatioMin: 0.62,
     aspectRatioMax: 1.06,
     aspectRatioWeight: 0.68,
-    fillTargetHeight: 95,
-    fillTargetWidth: 92,
-    fillAggressiveness: 1.08,
-    minScale: 1,
-    maxScale: 1.5,
-    translateMin: -12,
-    translateMax: 22,
-    verticalBiasStrength: 0.18,
+    fillTargetHeight: 84,
+    fillTargetWidth: 82,
+    fillAggressiveness: 0.9,
+    minScale: 0.9,
+    maxScale: 1.16,
+    translateMin: -8,
+    translateMax: 12,
+    verticalBiasStrength: 0.08,
   },
   home_today: {
     aspectRatioMin: 0.72,
@@ -254,14 +308,14 @@ const SURFACE_PROFILES: Record<ItemImageSurface, SurfaceProfile> = {
     aspectRatioMin: 0.78,
     aspectRatioMax: 1.08,
     aspectRatioWeight: 0.56,
-    fillTargetHeight: 90,
-    fillTargetWidth: 86,
-    fillAggressiveness: 1,
-    minScale: 0.96,
-    maxScale: 1.34,
-    translateMin: -10,
-    translateMax: 14,
-    verticalBiasStrength: 0.1,
+    fillTargetHeight: 82,
+    fillTargetWidth: 80,
+    fillAggressiveness: 0.94,
+    minScale: 0.88,
+    maxScale: 1.24,
+    translateMin: -8,
+    translateMax: 12,
+    verticalBiasStrength: 0.08,
   },
 };
 
@@ -275,6 +329,23 @@ function getContentAspectRatio(item: ImageLikeItem | null | undefined, fallback:
     item?.visualNormalization?.contentHeightPct ?? item?.visualNormalization?.contentBounds?.heightPct;
   if (!widthPct || !heightPct) return fallback;
   return clampAspectRatio(widthPct / heightPct, 0.45, 1.6);
+}
+
+function hasMeasuredVisualNormalization(item: ImageLikeItem | null | undefined) {
+  return Boolean(
+    item?.visualNormalization?.contentBounds ||
+      item?.visualNormalization?.contentWidthPct ||
+      item?.visualNormalization?.contentHeightPct
+  );
+}
+
+function hasItemLevelVisualNormalization(item: ImageLikeItem | null | undefined) {
+  return Boolean(
+    hasMeasuredVisualNormalization(item) ||
+      item?.visualNormalization?.recommendedScale != null ||
+      item?.visualNormalization?.recommendedTranslateY != null ||
+      item?.visualNormalization?.verticalBias != null
+  );
 }
 
 export function getItemImagePresentation(
@@ -298,24 +369,54 @@ export function getItemImagePresentation(
     }),
     item?.visualNormalization,
   );
+  const hasMeasuredNormalization = hasMeasuredVisualNormalization(item);
+  const hasItemNormalization = hasItemLevelVisualNormalization(item);
   const fallbackAspectRatio = getFrameAspectRatio(item);
-  const contentWidthPct =
+  const topLike = isTopLikeItem(item);
+  const rawContentWidthPct =
     normalization.contentWidthPct ?? normalization.contentBounds?.widthPct ?? 82;
-  const contentHeightPct =
+  const rawContentHeightPct =
     normalization.contentHeightPct ?? normalization.contentBounds?.heightPct ?? 88;
-  const contentAspectRatio = getContentAspectRatio(item, fallbackAspectRatio);
+  const contentWidthPct =
+    topLike && (surface === "closet_card" || surface === "item_detail")
+      ? clamp(rawContentWidthPct, 72, 80)
+      : rawContentWidthPct;
+  const contentHeightPct =
+    topLike && (surface === "closet_card" || surface === "item_detail")
+      ? clamp(rawContentHeightPct, 74, 84)
+      : rawContentHeightPct;
+  const rawContentAspectRatio = getContentAspectRatio(item, fallbackAspectRatio);
+  const contentAspectRatio =
+    topLike && (surface === "closet_card" || surface === "item_detail")
+      ? clampAspectRatio(rawContentAspectRatio, 0.72, 0.92)
+      : rawContentAspectRatio;
   const containerAspectRatio = clampAspectRatio(
-    fallbackAspectRatio * (1 - surfaceProfile.aspectRatioWeight) +
-      contentAspectRatio * surfaceProfile.aspectRatioWeight,
+    fallbackAspectRatio *
+      (1 -
+        (surface === "closet_card" && !hasMeasuredNormalization
+          ? surfaceProfile.aspectRatioWeight * 0.45
+          : topLike && (surface === "closet_card" || surface === "item_detail")
+            ? surfaceProfile.aspectRatioWeight * 0.55
+            : surfaceProfile.aspectRatioWeight)) +
+      contentAspectRatio *
+        (surface === "closet_card" && !hasMeasuredNormalization
+          ? surfaceProfile.aspectRatioWeight * 0.45
+          : topLike && (surface === "closet_card" || surface === "item_detail")
+            ? surfaceProfile.aspectRatioWeight * 0.55
+            : surfaceProfile.aspectRatioWeight),
     surfaceProfile.aspectRatioMin,
     surfaceProfile.aspectRatioMax,
   );
   const fillHeightBoost = surfaceProfile.fillTargetHeight / contentHeightPct;
   const fillWidthBoost = surfaceProfile.fillTargetWidth / contentWidthPct;
   const fillBoost = clamp(
-    Math.max(fillHeightBoost, fillWidthBoost) * surfaceProfile.fillAggressiveness,
+    (topLike && (surface === "closet_card" || surface === "item_detail")
+      ? ((fillHeightBoost + fillWidthBoost) / 2) * surfaceProfile.fillAggressiveness
+      : Math.max(fillHeightBoost, fillWidthBoost) * surfaceProfile.fillAggressiveness),
     surfaceProfile.minScale,
-    surfaceProfile.maxScale,
+    surface === "closet_card" && !hasMeasuredNormalization
+      ? Math.min(surfaceProfile.maxScale, 1.06)
+      : surfaceProfile.maxScale,
   );
   const anchorBias =
     normalization.anchor === "top"
@@ -329,14 +430,20 @@ export function getItemImagePresentation(
   const scale = clamp(
     (normalization.recommendedScale ?? 1) * fillBoost,
     surfaceProfile.minScale,
-    surfaceProfile.maxScale,
+    surface === "closet_card" && !hasItemNormalization
+      ? Math.min(surfaceProfile.maxScale, 1.08)
+      : surfaceProfile.maxScale,
   );
   const translateY = clamp(
     (normalization.recommendedTranslateY ?? 0) +
       anchorBias +
       verticalBias * surfaceProfile.verticalBiasStrength,
-    surfaceProfile.translateMin,
-    surfaceProfile.translateMax,
+    surface === "closet_card" && !hasMeasuredNormalization
+      ? Math.max(surfaceProfile.translateMin, -4)
+      : surfaceProfile.translateMin,
+    surface === "closet_card" && !hasMeasuredNormalization
+      ? Math.min(surfaceProfile.translateMax, 8)
+      : surfaceProfile.translateMax,
   );
 
   return {
@@ -346,6 +453,39 @@ export function getItemImagePresentation(
       transform: [{ translateY }, { scale }],
     } as const,
   };
+}
+
+export function getItemImageDecoration(
+  item: ImageLikeItem | null | undefined,
+  surface: ItemImageSurface,
+): ItemImageDecoration {
+  const joined = [
+    normalizeToken(item?.category),
+    normalizeToken(item?.subCategory),
+    normalizeToken(item?.type),
+  ].join(" ");
+
+  if (surface === "ai_outfit") {
+    if (/shoe|sneaker|loafer|boot|heel/.test(joined)) {
+      return { shadowStyle: { width: "56%", height: "11%", bottom: "14%", opacity: 0.16 } };
+    }
+    if (/watch|glasses|bracelet|necklace|ring|earrings/.test(joined)) {
+      return { shadowStyle: { width: "34%", height: "8%", bottom: "18%", opacity: 0.12 } };
+    }
+    return { shadowStyle: { width: "48%", height: "9%", bottom: "14%", opacity: 0.14 } };
+  }
+
+  if (surface === "item_detail") {
+    if (/shoe|sneaker|loafer|boot|heel/.test(joined)) {
+      return { shadowStyle: { width: "54%", height: "10%", bottom: "13%", opacity: 0.12 } };
+    }
+    if (/watch|glasses|bracelet|necklace|ring|earrings/.test(joined)) {
+      return { shadowStyle: { width: "30%", height: "7%", bottom: "16%", opacity: 0.08 } };
+    }
+    return { shadowStyle: { width: "46%", height: "8%", bottom: "12%", opacity: 0.1 } };
+  }
+
+  return { shadowStyle: { width: "42%", height: "8%", bottom: "10%", opacity: 0.1 } };
 }
 
 export function getItemImageUrl(
@@ -358,9 +498,9 @@ export function getItemImageUrl(
   const preferredVisionCleaned =
     cleanedSource === "vision"
       ? [
-          primaryImage.cleanedUrl,
           item.photos?.normalizedUrl,
           item.normalizedUrl,
+          primaryImage.cleanedUrl,
           item.photos?.previewUrl,
           item.photos?.cleanedUrl,
           item.cleanedUrl,
@@ -369,9 +509,9 @@ export function getItemImageUrl(
         ]
       : [];
   const fallbackCleaned = [
-    primaryImage.cleanedUrl,
     item.photos?.normalizedUrl,
     item.normalizedUrl,
+    primaryImage.cleanedUrl,
     item.photos?.previewUrl,
     item.photos?.cleanedUrl,
     item.cleanedUrl,
@@ -379,35 +519,57 @@ export function getItemImageUrl(
     item.cleanedPhotoUrl,
   ];
 
-  if (options.variant === "hero") {
-    return firstValidUrl([
+  const preferredCutout = pickBestUrl(
+    [
       ...preferredVisionCleaned,
+      ...fallbackCleaned,
+      item.photos?.cleanedThumbUrl,
+      item.cleanedLocalUri,
+    ],
+    "cutout"
+  );
+  const preferredOriginal = pickBestUrl(
+    [
+      primaryImage.originalUrl,
+      item.photos?.primaryUrl,
+      item.photoUrl,
+      item.photos?.urls?.[0],
+      ...(item.photos?.urls ?? []),
+      item.photoUri,
+      item.pendingPhotoUri,
+      item.photos?.thumbUrl,
+      item.photos?.croppedUrl,
+    ],
+    "original"
+  );
+  const picked =
+    preferredCutout ??
+    preferredOriginal ??
+    firstValidUrl([
+      ...fallbackCleaned,
       primaryImage.originalUrl,
       item.photos?.primaryUrl,
       item.photoUrl,
       item.photoUri,
-      ...fallbackCleaned,
       item.cleanedLocalUri,
       item.pendingPhotoUri,
-      item.photos?.cleanedThumbUrl,
       item.photos?.thumbUrl,
       item.photos?.croppedUrl,
       item.photos?.urls?.[0],
     ]);
+  if (DEBUG_ITEM_IMAGES) {
+    console.log("[ITEM_IMAGE_PICK]", {
+      variant: options.variant,
+      picked,
+      preferredCutout,
+      preferredOriginal,
+      hasPrimaryCleaned: !!primaryImage.cleanedUrl,
+      hasCleanedImageUrl: !!item.cleanedImageUrl,
+      hasPhotosCleanedUrl: !!item.photos?.cleanedUrl,
+      hasNormalizedUrl: !!item.photos?.normalizedUrl || !!item.normalizedUrl,
+      hasOriginal: !!primaryImage.originalUrl,
+      cleanedSource,
+    });
   }
-
-  return firstValidUrl([
-    ...preferredVisionCleaned,
-    primaryImage.originalUrl,
-    item.photos?.primaryUrl,
-    item.photoUrl,
-    item.photoUri,
-    ...fallbackCleaned,
-    item.cleanedLocalUri,
-    item.pendingPhotoUri,
-    item.photos?.cleanedThumbUrl,
-    item.photos?.thumbUrl,
-    item.photos?.croppedUrl,
-    item.photos?.urls?.[0],
-  ]);
+  return picked;
 }

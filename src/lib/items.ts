@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "./firebase";
+import { logItemStyleEvent } from "./auraMemory";
 import { buildSignalFromItem, updateAssistantMemoryFromAction } from "./assistantMemory";
 import { ClothingItem, ClothingStatus } from "../types/ClothingItem";
 import { Category } from "../shared/wardrobeTaxonomy";
@@ -37,7 +38,15 @@ export type CategoryFilter =
   | "ACCESSORY";
 export const MAX_WEARS_BEFORE_WASH = 2;
 export type IngestionStatus = "pending" | "processing" | "done" | "failed";
-export type DraftState = "draft" | "photo_uploaded" | "ingesting" | "ready" | "failed";
+export type DraftState = "draft" | "awaiting_confirmation" | "photo_uploaded" | "ingesting" | "ready" | "failed" | "cancelled";
+export type ItemLifecycleStatus =
+  | "candidate"
+  | "uploading"
+  | "processing"
+  | "needs_review"
+  | "ready"
+  | "failed"
+  | "deleted";
 
 const CATEGORY_MAP: Record<Exclude<CategoryFilter, "ALL">, string[]> = {
   TOP: ["top"],
@@ -79,10 +88,12 @@ export function getDraftState(
     .toLowerCase();
   if (
     raw === "draft" ||
+    raw === "awaiting_confirmation" ||
     raw === "photo_uploaded" ||
     raw === "ingesting" ||
     raw === "ready" ||
-    raw === "failed"
+    raw === "failed" ||
+    raw === "cancelled"
   ) {
     return raw;
   }
@@ -105,10 +116,64 @@ export function isVisibleWardrobeItem(
   item: Partial<ClosetItem> | null | undefined
 ): boolean {
   if (!item) return false;
+  const lifecycle = getItemLifecycleStatus(item);
+  if (lifecycle === "candidate" || lifecycle === "deleted") return false;
   if ((item as any).isDraft === true) return false;
   const draftState = getDraftState(item);
   if (draftState && draftState !== "ready") return false;
   return true;
+}
+
+function hasItemVisualSource(item: Partial<ClosetItem> | null | undefined): boolean {
+  if (!item) return false;
+  const candidate = item as any;
+  return Boolean(
+    candidate.photoUrl ||
+      candidate.originalImageUrl ||
+      candidate.cleanedImageUrl ||
+      candidate.photos?.primaryUrl ||
+      candidate.photos?.urls?.length ||
+      candidate.images?.length ||
+      candidate.sourceUrl
+  );
+}
+
+export function getItemLifecycleStatus(
+  item: Partial<ClosetItem> | null | undefined
+): ItemLifecycleStatus {
+  if (!item) return "ready";
+  const explicit = String((item as any)?.itemLifecycleStatus ?? "")
+    .trim()
+    .toLowerCase();
+  if (
+    explicit === "candidate" ||
+    explicit === "uploading" ||
+    explicit === "processing" ||
+    explicit === "needs_review" ||
+    explicit === "ready" ||
+    explicit === "failed" ||
+    explicit === "deleted"
+  ) {
+    return explicit;
+  }
+
+  const ingestionStatus = getIngestionStatus(item);
+  const draftState = getDraftState(item);
+  if (draftState === "awaiting_confirmation") return "candidate";
+  if (draftState === "cancelled") return "deleted";
+  if (ingestionStatus === "failed" || draftState === "failed") return "failed";
+  if (draftState === "photo_uploaded" && ingestionStatus === "done") return "needs_review";
+  if (ingestionStatus === "pending" || ingestionStatus === "processing") return "processing";
+  if ((item as any)?.isDraft === true && hasItemVisualSource(item)) return "needs_review";
+  return "ready";
+}
+
+export function isProcessingWardrobeItem(
+  item: Partial<ClosetItem> | null | undefined
+): boolean {
+  if (!item || !hasItemVisualSource(item)) return false;
+  const lifecycle = getItemLifecycleStatus(item);
+  return lifecycle === "uploading" || lifecycle === "processing" || lifecycle === "needs_review" || lifecycle === "failed";
 }
 
 export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
@@ -212,6 +277,7 @@ export function listenToItems(
   options?: {
     status?: StatusFilter;
     sort?: ItemSort;
+    includeDrafts?: boolean;
     onError?: (message: string) => void;
   }
 ) {
@@ -239,7 +305,7 @@ export function listenToItems(
         id: d.id,
         ...(d.data() as any),
       }));
-      cb(next.filter((item) => isVisibleWardrobeItem(item)));
+      cb(options?.includeDrafts ? next : next.filter((item) => isVisibleWardrobeItem(item)));
     },
     (err) => options?.onError?.(err.message)
   );
@@ -296,6 +362,10 @@ export async function safeMarkWorn(uid: string, itemId: string) {
     status: "WORN",
     wearCountSinceWash: increment(1),
     lastWornDate: serverTimestamp(),
+  });
+  void logItemStyleEvent(uid, "item_worn", {
+    ...(data as ClothingItem),
+    id: itemId,
   });
   void updateAssistantMemoryFromAction(uid, "wear_item", buildSignalFromItem({
     ...(data as ClothingItem),

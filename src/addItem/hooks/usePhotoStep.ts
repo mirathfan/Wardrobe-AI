@@ -19,6 +19,7 @@ import {
   isVisionBackgroundRemovalAvailable,
   removeBackground,
 } from "../../bg/removeBackground";
+import { normalizeCutoutImage } from "../../lib/cutoutNormalize";
 import { detectBrandLogo } from "../../lib/detectBrandLogo";
 import { db } from "../../lib/firebase";
 import { uploadItemPhoto } from "../../lib/uploadImage";
@@ -49,6 +50,14 @@ type SelectedPhotoEntry = {
   hasTransparency: boolean;
   transparentPixelRatio: number;
   maskUri: string | null;
+  contentBounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
+  cutoutWidth?: number | null;
+  cutoutHeight?: number | null;
   visualNormalization: VisualNormalization | null;
   uploaded?: UploadedPhotoRecord | null;
 };
@@ -71,8 +80,6 @@ type ResolvedPhotoFields = {
 };
 
 const MIN_USABLE_CUTOUT_TRANSPARENCY = 0.05;
-const TRIM_GUARD_PIXELS = 2;
-const NORMALIZED_CANVAS_PADDING_RATIO = 0.14;
 
 function makeSelectedPhotoId() {
   return randomId();
@@ -109,6 +116,8 @@ export function usePhotoStep({
   extractionRef: MutableRefObject<any>;
   beginAsyncRequest: () => { sessionId: string; requestId: number };
 }) {
+  const selectedCategory = draft?.derived?.selectedCategory ?? draft?.state?.category ?? null;
+  const selectedSubCategory = draft?.state?.subCategory ?? null;
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [bgRemovalError, setBgRemovalError] = useState<string | null>(null);
@@ -144,6 +153,7 @@ export function usePhotoStep({
   );
   const [selectedPhotos, setSelectedPhotos] = useState<SelectedPhotoEntry[]>([]);
   const [primaryPhotoId, setPrimaryPhotoId] = useState<string | null>(null);
+  const selectedPhotoIdsKey = selectedPhotos.map((entry) => entry.id).join("|");
 
   const lastCompletedRefineKeyRef = useRef("");
   const latestRefineRequestIdRef = useRef(0);
@@ -152,6 +162,7 @@ export function usePhotoStep({
   const latestUploadAttemptIdRef = useRef(0);
   const syncedPreviewUriRef = useRef<string | null>(null);
   const refineExecCountRef = useRef(0);
+  const selectedPhotosRef = useRef<SelectedPhotoEntry[]>([]);
 
   const clearPendingCutoutState = useCallback((reason: string) => {
     void reason;
@@ -292,6 +303,10 @@ export function usePhotoStep({
   }, [commitPendingCutoutState]);
 
   useEffect(() => {
+    selectedPhotosRef.current = selectedPhotos;
+  }, [selectedPhotos]);
+
+  useEffect(() => {
     const primary =
       selectedPhotos.find((entry) => entry.id === primaryPhotoId) ??
       selectedPhotos[0] ??
@@ -353,108 +368,46 @@ export function usePhotoStep({
       imageWidth?: number | null;
       imageHeight?: number | null;
     }) => {
-      const { cutoutUri, contentBounds, imageWidth, imageHeight } = params;
-      if (__DEV__) {
-        console.log("[AddItemPreview] normalized:start", {
-          cutoutUri,
-          imageWidth,
-          imageHeight,
-          contentBounds,
-        });
-      }
-      if (!contentBounds || !imageWidth || !imageHeight) {
-        if (__DEV__) {
-          console.log("[AddItemPreview] normalized:fallback", {
-            reason: "missing_content_bounds_or_dimensions",
-            fallbackUri: cutoutUri,
-          });
-        }
-        return cutoutUri;
-      }
-
-      const sourceWidth = Math.max(1, Math.round(imageWidth));
-      const sourceHeight = Math.max(1, Math.round(imageHeight));
-      const rawX = Math.max(0, Math.round(contentBounds.x));
-      const rawY = Math.max(0, Math.round(contentBounds.y));
-      const rawWidth = Math.max(1, Math.round(contentBounds.width));
-      const rawHeight = Math.max(1, Math.round(contentBounds.height));
-      const trimOriginX = Math.max(0, rawX - TRIM_GUARD_PIXELS);
-      const trimOriginY = Math.max(0, rawY - TRIM_GUARD_PIXELS);
-      const trimWidth = Math.min(
-        sourceWidth - trimOriginX,
-        rawWidth + TRIM_GUARD_PIXELS * 2
-      );
-      const trimHeight = Math.min(
-        sourceHeight - trimOriginY,
-        rawHeight + TRIM_GUARD_PIXELS * 2
-      );
-
-      if (trimWidth <= 0 || trimHeight <= 0) {
-        if (__DEV__) {
-          console.log("[AddItemPreview] normalized:fallback", {
-            reason: "invalid_trim_size",
-            trimWidth,
-            trimHeight,
-            fallbackUri: cutoutUri,
-          });
-        }
-        return cutoutUri;
-      }
-
-      const trimmed = await ImageManipulator.manipulateAsync(
-        cutoutUri,
-        [{ crop: { originX: trimOriginX, originY: trimOriginY, width: trimWidth, height: trimHeight } }],
-        { compress: 1, format: ImageManipulator.SaveFormat.PNG }
-      );
-
-      const trimmedWidth = Math.max(1, Math.round(trimmed.width ?? trimWidth));
-      const trimmedHeight = Math.max(1, Math.round(trimmed.height ?? trimHeight));
-      const maxTrimmedDimension = Math.max(trimmedWidth, trimmedHeight);
-      const canvasSize = Math.max(
-        trimmedWidth,
-        trimmedHeight,
-        Math.round(maxTrimmedDimension * (1 + NORMALIZED_CANVAS_PADDING_RATIO * 2))
-      );
-      const centeredX = Math.round((canvasSize - trimmedWidth) / 2);
-      const centeredY = Math.round((canvasSize - trimmedHeight) / 2);
-
-      if (__DEV__) {
-        console.log("[AddItemPreview] normalized:trimmed", {
-          trimmedSize: `${trimmedWidth}x${trimmedHeight}`,
-          trimOrigin: { x: trimOriginX, y: trimOriginY },
-          canvasSize,
-          centeredOrigin: { x: centeredX, y: centeredY },
-        });
-      }
-
-      const normalized = await ImageManipulator.manipulateAsync(
-        trimmed.uri,
-        [
-          {
-            extent: {
-              originX: centeredX,
-              originY: centeredY,
-              width: canvasSize,
-              height: canvasSize,
-              backgroundColor: "#00000000",
-            },
-          },
-        ],
-        { compress: 1, format: ImageManipulator.SaveFormat.PNG }
-      );
-
+      const normalized = await normalizeCutoutImage({
+        ...params,
+        category: selectedCategory,
+        subCategory: selectedSubCategory,
+      });
       if (__DEV__) {
         console.log("[AddItemPreview] normalized:success", {
           normalizedUri: normalized.uri,
-          cutoutUri,
-          normalizedSize: `${canvasSize}x${canvasSize}`,
-          distinctFromCutout: normalized.uri !== cutoutUri,
+          cutoutUri: params.cutoutUri,
+          normalizedSize:
+            normalized.outputWidth && normalized.outputHeight
+              ? `${normalized.outputWidth}x${normalized.outputHeight}`
+              : null,
+          scaleRatioUsed: normalized.scaleRatio,
+          distinctFromCutout: normalized.uri !== params.cutoutUri,
         });
       }
 
-      return normalized.uri || trimmed.uri || cutoutUri;
+      return normalized.uri;
     },
-    []
+    [selectedCategory, selectedSubCategory]
+  );
+
+  const analyzeCurrentVisualNormalization = useCallback(
+    async (params: {
+      contentBounds?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      } | null;
+      imageWidth?: number | null;
+      imageHeight?: number | null;
+    }) =>
+      analyzeCutoutVisualNormalization({
+        ...params,
+        category: selectedCategory,
+        subCategory: selectedSubCategory,
+      }),
+    [selectedCategory, selectedSubCategory]
   );
 
   const runBackgroundRemoval = useCallback(
@@ -520,7 +473,7 @@ export function usePhotoStep({
             })
           : null;
       const visualNormalization = usableCutout
-        ? await analyzeCutoutVisualNormalization({
+        ? await analyzeCurrentVisualNormalization({
             contentBounds: cutout.contentBounds,
             imageWidth: cutout.width,
             imageHeight: cutout.height,
@@ -556,6 +509,7 @@ export function usePhotoStep({
     originalPickedPhotoUri,
     pendingPhotoWidth,
     refineValue,
+    analyzeCurrentVisualNormalization,
     runBackgroundRemoval,
   ]);
 
@@ -610,7 +564,7 @@ export function usePhotoStep({
                 })
               : null;
           const visualNormalization = usableCutout
-            ? await analyzeCutoutVisualNormalization({
+            ? await analyzeCurrentVisualNormalization({
                 contentBounds: cutout.contentBounds,
                 imageWidth: cutout.width,
                 imageHeight: cutout.height,
@@ -662,6 +616,7 @@ export function usePhotoStep({
       extractionRef,
       originalPickedPhotoUri,
       pendingPhotoWidth,
+      analyzeCurrentVisualNormalization,
       runBackgroundRemoval,
     ]
   );
@@ -837,7 +792,7 @@ export function usePhotoStep({
 
       const visualNormalization =
         cutoutUri && cutoutContentBounds && cutoutWidth && cutoutHeight
-          ? await analyzeCutoutVisualNormalization({
+          ? await analyzeCurrentVisualNormalization({
               contentBounds: cutoutContentBounds,
               imageWidth: cutoutWidth,
               imageHeight: cutoutHeight,
@@ -869,12 +824,95 @@ export function usePhotoStep({
         hasTransparency: cutoutHasTransparency,
         transparentPixelRatio: cutoutTransparencyRatio,
         maskUri: cutoutMaskUri,
+        contentBounds: cutoutContentBounds,
+        cutoutWidth,
+        cutoutHeight,
         visualNormalization,
         uploaded: null,
       };
     },
-    [buildNormalizedPreviewCutout, normalizeImageForCutout, runBackgroundRemoval]
+    [
+      analyzeCurrentVisualNormalization,
+      buildNormalizedPreviewCutout,
+      normalizeImageForCutout,
+      runBackgroundRemoval,
+    ]
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const entries = selectedPhotosRef.current;
+    const canReprocess = entries.some(
+      (entry) =>
+        !!entry.cleanedLocalUri &&
+        !!entry.contentBounds &&
+        !!entry.cutoutWidth &&
+        !!entry.cutoutHeight
+    );
+
+    if (!canReprocess) {
+      return;
+    }
+
+    const reprocessSelectedPhotos = async () => {
+      const nextEntries = await Promise.all(
+        entries.map(async (entry) => {
+          if (
+            !entry.cleanedLocalUri ||
+            !entry.contentBounds ||
+            !entry.cutoutWidth ||
+            !entry.cutoutHeight
+          ) {
+            return entry;
+          }
+
+          const normalizedLocalUri = await buildNormalizedPreviewCutout({
+            cutoutUri: entry.cleanedLocalUri,
+            contentBounds: entry.contentBounds,
+            imageWidth: entry.cutoutWidth,
+            imageHeight: entry.cutoutHeight,
+          });
+          const visualNormalization = await analyzeCurrentVisualNormalization({
+            contentBounds: entry.contentBounds,
+            imageWidth: entry.cutoutWidth,
+            imageHeight: entry.cutoutHeight,
+          });
+
+          return {
+            ...entry,
+            normalizedLocalUri,
+            visualNormalization,
+            uploaded: null,
+          };
+        })
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setSelectedPhotos((prev) => {
+        if (!prev.length) {
+          return prev;
+        }
+        return nextEntries;
+      });
+      setUploadedPhotoRecord(null);
+    };
+
+    void reprocessSelectedPhotos();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    analyzeCurrentVisualNormalization,
+    buildNormalizedPreviewCutout,
+    primaryPhotoId,
+    selectedPhotoIdsKey,
+    selectedCategory,
+    selectedSubCategory,
+  ]);
 
   const pickPhoto = useCallback(async (source: "library" | "camera") => {
     try {
@@ -1053,6 +1091,7 @@ export function usePhotoStep({
                 localUri: entry.localUri,
                 cleanedLocalUri: entry.cleanedLocalUri,
                 normalizedLocalUri: entry.normalizedLocalUri,
+                saveNormalizedAsCleaned: entry.id === primaryId,
                 originalWidth: entry.originalWidth,
               }),
               UPLOAD_TIMEOUT_MS,
@@ -1162,6 +1201,7 @@ export function usePhotoStep({
             localUri: pendingPhotoUri,
             cleanedLocalUri: pendingCleanedPhotoUri,
             normalizedLocalUri: pendingNormalizedPreviewUri,
+            saveNormalizedAsCleaned: true,
             originalWidth: pendingPhotoWidth,
           }),
           UPLOAD_TIMEOUT_MS,

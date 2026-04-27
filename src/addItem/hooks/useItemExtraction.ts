@@ -910,6 +910,7 @@ export function useItemExtraction({
             localUri: localPhotoUri,
             cleanedLocalUri,
             normalizedLocalUri,
+            saveNormalizedAsCleaned: true,
             originalWidth,
           }),
           UPLOAD_TIMEOUT_MS,

@@ -20,6 +20,8 @@ type CategoryNormalizationDefaults = {
   recommendedScale?: number;
   recommendedTranslateY?: number;
   anchor?: VisualNormalizationAnchor;
+  targetContentWidthPct?: number;
+  targetContentHeightPct?: number;
 };
 
 type CutoutBoundsInput = {
@@ -93,16 +95,16 @@ export function getVisualNormalizationDefaults(input: {
   const joined = `${category} ${subCategory} ${type}`;
 
   if (joined.includes("shirt")) {
-    return { recommendedScale: 1.1, recommendedTranslateY: 10, anchor: "top" };
+    return { recommendedScale: 1.04, recommendedTranslateY: 6, anchor: "top", targetContentWidthPct: 76, targetContentHeightPct: 78 };
   }
   if (joined.includes("blouse")) {
-    return { recommendedScale: 1.08, recommendedTranslateY: 8, anchor: "top" };
+    return { recommendedScale: 1.02, recommendedTranslateY: 6, anchor: "top", targetContentWidthPct: 74, targetContentHeightPct: 76 };
   }
   if (joined.includes("crop top")) {
-    return { recommendedScale: 1.04, recommendedTranslateY: 6, anchor: "top" };
+    return { recommendedScale: 0.98, recommendedTranslateY: 3, anchor: "top", targetContentWidthPct: 72, targetContentHeightPct: 68 };
   }
   if (joined.includes("tee") || joined.includes("t-shirt")) {
-    return { recommendedScale: 1.06, recommendedTranslateY: 8, anchor: "top" };
+    return { recommendedScale: 1.01, recommendedTranslateY: 5, anchor: "top", targetContentWidthPct: 74, targetContentHeightPct: 75 };
   }
   if (
     joined.includes("jacket") ||
@@ -110,16 +112,16 @@ export function getVisualNormalizationDefaults(input: {
     joined.includes("overshirt") ||
     joined.includes("hoodie")
   ) {
-    return { recommendedScale: 1.1, recommendedTranslateY: 6, anchor: "top" };
+    return { recommendedScale: 1.03, recommendedTranslateY: 2, anchor: "top", targetContentWidthPct: 80, targetContentHeightPct: 82 };
   }
   if (joined.includes("jeans") || joined.includes("pants") || joined.includes("trousers")) {
-    return { recommendedScale: 1.08, recommendedTranslateY: 4, anchor: "waist" };
+    return { recommendedScale: 1.01, recommendedTranslateY: 1, anchor: "waist", targetContentWidthPct: 72, targetContentHeightPct: 84 };
   }
   if (joined.includes("skirt")) {
-    return { recommendedScale: 1.06, recommendedTranslateY: 3, anchor: "waist" };
+    return { recommendedScale: 1, recommendedTranslateY: 1, anchor: "waist", targetContentWidthPct: 72, targetContentHeightPct: 82 };
   }
   if (joined.includes("dress") || joined.includes("romper") || joined.includes("jumpsuit")) {
-    return { recommendedScale: 1.1, recommendedTranslateY: 4, anchor: "top" };
+    return { recommendedScale: 1.03, recommendedTranslateY: 2, anchor: "top", targetContentWidthPct: 74, targetContentHeightPct: 86 };
   }
   if (
     joined.includes("shoe") ||
@@ -128,13 +130,13 @@ export function getVisualNormalizationDefaults(input: {
     joined.includes("boot") ||
     joined.includes("heel")
   ) {
-    return { recommendedScale: 1.04, recommendedTranslateY: 4, anchor: "foot" };
+    return { recommendedScale: 0.94, recommendedTranslateY: 2, anchor: "foot", targetContentWidthPct: 78, targetContentHeightPct: 62 };
   }
   if (joined.includes("watch")) {
-    return { recommendedScale: 1.0, recommendedTranslateY: 0, anchor: "center" };
+    return { recommendedScale: 0.86, recommendedTranslateY: 0, anchor: "center", targetContentWidthPct: 56, targetContentHeightPct: 56 };
   }
   if (joined.includes("glasses") || joined.includes("sunglasses")) {
-    return { recommendedScale: 1.0, recommendedTranslateY: 0, anchor: "center" };
+    return { recommendedScale: 0.9, recommendedTranslateY: 0, anchor: "center", targetContentWidthPct: 60, targetContentHeightPct: 54 };
   }
   if (
     joined.includes("bag") ||
@@ -142,9 +144,9 @@ export function getVisualNormalizationDefaults(input: {
     joined.includes("backpack") ||
     joined.includes("crossbody")
   ) {
-    return { recommendedScale: 1.08, recommendedTranslateY: 0, anchor: "center" };
+    return { recommendedScale: 0.96, recommendedTranslateY: 0, anchor: "center", targetContentWidthPct: 68, targetContentHeightPct: 72 };
   }
-  return { recommendedScale: 1, recommendedTranslateY: 0, anchor: inferAnchor(input) };
+  return { recommendedScale: 0.96, recommendedTranslateY: 0, anchor: inferAnchor(input), targetContentWidthPct: 72, targetContentHeightPct: 74 };
 }
 
 export function buildVisualNormalizationFromContentBounds(
@@ -161,10 +163,21 @@ export function buildVisualNormalizationFromContentBounds(
   const heightPct = clamp((contentBounds.height / imageHeight) * 100, 0.1, 100);
 
   const defaults = getVisualNormalizationDefaults(input);
-  const fillHeightTarget = 92;
-  const fillCompensation = clamp(fillHeightTarget / heightPct, 0.95, 1.35);
-  const topBias = 10 - topPct;
-  const translateFromTopBias = clamp(topBias * 0.75, -14, 16);
+  const fillHeightTarget = defaults.targetContentHeightPct ?? 78;
+  const fillWidthTarget = defaults.targetContentWidthPct ?? 74;
+  const fillCompensation = clamp(
+    Math.min(fillHeightTarget / heightPct, fillWidthTarget / widthPct),
+    0.82,
+    1.08,
+  );
+  const targetTopPct = (() => {
+    if (defaults.anchor === "top") return 10;
+    if (defaults.anchor === "waist") return 8;
+    if (defaults.anchor === "foot") return 18;
+    return 14;
+  })();
+  const topBias = targetTopPct - topPct;
+  const translateFromTopBias = clamp(topBias * 0.55, -10, 10);
 
   return {
     contentBounds: {

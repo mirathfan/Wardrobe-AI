@@ -15,6 +15,7 @@ import { Alert, LayoutAnimation, Platform, UIManager } from "react-native";
 
 import { norm, normColor } from "../controllerShared";
 import { db } from "../../lib/firebase";
+import { Toast } from "../../lib/toast";
 import { normalizeCategoryForStorage } from "../../lib/items";
 import {
   Category,
@@ -435,14 +436,20 @@ export function useItemDraft({
         images: nextPhoto.images,
       };
       if (isEdit) {
+        const existingSnap = await getDoc(itemRef);
+        const existingData = existingSnap.exists() ? (existingSnap.data() as any) : null;
+        const isConfirmationDraft =
+          existingData?.isDraft === true &&
+          existingData?.draftState === "awaiting_confirmation";
         const updatePayload: Record<string, any> = {
           ...payload,
           "photos.originalUrl": nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           "photos.primaryUrl": nextPhoto.photoUrl,
           "photos.urls": nextPhoto.imageUrls,
           "photos.images": nextPhoto.images,
+          isDraft: false,
           draftState: "ready",
-          ...(photo.state.pendingPhotoUri && canKickoffIngestion
+          ...((photo.state.pendingPhotoUri || isConfirmationDraft) && canKickoffIngestion
             ? {
                 ingestion: {
                   status: "pending",
@@ -506,7 +513,7 @@ export function useItemDraft({
             submissionKey,
           });
         }
-        Alert.alert("Added ✅", "Item added to wardrobe.");
+        Toast.itemAdded();
         await resetCreateFlow?.("post-save");
         extraction.actions.stopDraftSubscription?.();
         finalizedAndExiting = true;
@@ -566,7 +573,7 @@ export function useItemDraft({
           submissionKey,
         });
       }
-      Alert.alert("Added ✅", "Item added to wardrobe.");
+      Toast.itemAdded();
       await resetCreateFlow?.("post-save");
       extraction.actions.stopDraftSubscription?.();
       finalizedAndExiting = true;
