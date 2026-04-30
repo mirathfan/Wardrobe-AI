@@ -24,6 +24,7 @@ import { ClosetCategorySection } from "@/src/components/closet/ClosetCategorySec
 import { ClosetControlsRow } from "@/src/components/closet/ClosetControlsRow";
 import { ClosetFilterSheet } from "@/src/components/closet/ClosetFilterSheet";
 import { ClosetHeader } from "@/src/components/closet/ClosetHeader";
+import MinimumClosetProgressCard from "@/src/components/closet/MinimumClosetProgressCard";
 import { ClosetProcessingSection } from "@/src/components/closet/ClosetProcessingSection";
 import { ClosetSearchBar } from "@/src/components/closet/ClosetSearchBar";
 import type { ChatImageAttachment } from "@/src/components/ai/chatTypes";
@@ -43,10 +44,12 @@ import {
   isProcessingWardrobeItem,
   isVisibleWardrobeItem,
   listenToItems,
+  normalizeLaundryStatus,
   safeMarkWorn,
   toCanonicalCategory,
 } from "@/src/lib/items";
 import { logItemStyleEvent } from "@/src/lib/auraMemory";
+import { getMinimumClosetProgress, getSuggestedAddItemCategory } from "@/src/lib/minimumCloset";
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
 import { Toast } from "@/src/lib/toast";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
@@ -123,9 +126,9 @@ const SORT_OPTIONS: { key: SortMode; label: string }[] = [
 
 const STATUS_OPTIONS: { key: "ALL" | ClothingStatus; label: string }[] = [
   { key: "ALL", label: "All" },
-  { key: "AVAILABLE", label: "Available" },
-  { key: "WORN", label: "Worn" },
-  { key: "IN_LAUNDRY", label: "In Laundry" },
+  { key: "AVAILABLE", label: "Clean" },
+  { key: "WORN", label: "Needs wash" },
+  { key: "IN_LAUNDRY", label: "In laundry" },
 ];
 
 const PROCESSING_STALE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -336,6 +339,18 @@ export default function ClosetScreen() {
     () => items.filter((item) => isVisibleWardrobeItem(item)),
     [items]
   );
+  const minimumClosetProgress = useMemo(
+    () => getMinimumClosetProgress(visibleItems),
+    [visibleItems]
+  );
+  const showMinimumClosetCard = !loading && !minimumClosetProgress.isUnlocked;
+  const openAddMissingItem = React.useCallback(() => {
+    const suggestedCategory = getSuggestedAddItemCategory(visibleItems);
+    router.push({
+      pathname: "/(tabs)/add",
+      params: suggestedCategory ? { suggestedCategory } : {},
+    });
+  }, [visibleItems]);
   const processingItems = useMemo(
     () =>
       items
@@ -423,7 +438,12 @@ export default function ClosetScreen() {
     const query = normalizeText(search);
     return sortItems(
       visibleItems.filter((item) => {
-        if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
+        if (statusFilter !== "ALL") {
+          const laundryStatus = normalizeLaundryStatus(item);
+          if (statusFilter === "AVAILABLE" && laundryStatus !== "clean") return false;
+          if (statusFilter === "WORN" && laundryStatus !== "needs_wash") return false;
+          if (statusFilter === "IN_LAUNDRY" && laundryStatus !== "in_laundry") return false;
+        }
         if (categoryFilter !== "ALL" && toCanonicalCategory(item.category) !== categoryFilter) return false;
         if (brandFilter !== "ALL" && sanitizeDisplayText(item.brand) !== brandFilter) return false;
         if (
@@ -547,14 +567,19 @@ export default function ClosetScreen() {
         if (status === "AVAILABLE") {
           batch.update(ref, {
             status,
+            laundryStatus: "clean",
             wearCountSinceWash: 0,
             lastWashedDate: now,
+            lastWashedAt: now,
+            laundryUpdatedAt: now,
             updatedAt: now,
           });
           return;
         }
         batch.update(ref, {
           status,
+          laundryStatus: status === "IN_LAUNDRY" ? "in_laundry" : "needs_wash",
+          laundryUpdatedAt: now,
           updatedAt: now,
         });
       });
@@ -1072,6 +1097,14 @@ export default function ClosetScreen() {
           onRetry={(item) => void handleRetryProcessingItem(item)}
           onRemove={(item) => void handleRemoveProcessingItem(item)}
         />
+
+        {showMinimumClosetCard ? (
+          <MinimumClosetProgressCard
+            colors={colors}
+            items={visibleItems}
+            onAddMissingItem={openAddMissingItem}
+          />
+        ) : null}
 
         {loading ? (
           <View style={{ paddingVertical: 48, alignItems: "center" }}>

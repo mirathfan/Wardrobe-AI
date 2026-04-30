@@ -348,6 +348,10 @@ function hasItemLevelVisualNormalization(item: ImageLikeItem | null | undefined)
   );
 }
 
+function hasNormalizedImage(item: ImageLikeItem | null | undefined) {
+  return isValidImageUrl(item?.photos?.normalizedUrl) || isValidImageUrl(item?.normalizedUrl);
+}
+
 export function getItemImagePresentation(
   item: ImageLikeItem | null | undefined,
   options:
@@ -373,6 +377,7 @@ export function getItemImagePresentation(
   const hasItemNormalization = hasItemLevelVisualNormalization(item);
   const fallbackAspectRatio = getFrameAspectRatio(item);
   const topLike = isTopLikeItem(item);
+  const usesNormalizedImage = hasNormalizedImage(item);
   const rawContentWidthPct =
     normalization.contentWidthPct ?? normalization.contentBounds?.widthPct ?? 82;
   const rawContentHeightPct =
@@ -445,12 +450,16 @@ export function getItemImagePresentation(
       ? Math.min(surfaceProfile.translateMax, 8)
       : surfaceProfile.translateMax,
   );
+  const imageTransform =
+    usesNormalizedImage && (surface === "closet_card" || surface === "item_detail")
+      ? [{ translateY: 0 }, { scale: 1 }]
+      : [{ translateY }, { scale }];
 
   return {
     resizeMode: "contain" as const,
     containerAspectRatio,
     imageStyle: {
-      transform: [{ translateY }, { scale }],
+      transform: imageTransform,
     } as const,
   };
 }

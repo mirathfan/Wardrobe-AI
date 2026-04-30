@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import React, { useMemo, useRef } from "react";
+import React, { useMemo } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   Keyboard,
@@ -24,16 +24,19 @@ import { Pill } from "./ui/Pill";
 import { SafeScreen } from "../components/SafeScreen";
 import { dockSpace } from "@/src/constants/dock";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import type { Category } from "@/src/shared/wardrobeTaxonomy";
 
 export const AddItemWizard = React.memo(function AddItemWizard({
   editItemId,
+  initialCategory,
 }: {
   editItemId: string | null;
+  initialCategory?: Category | null;
 }) {
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
   const floatingDockSpace = dockSpace(insets.bottom);
-  const controller = useAddItemController({ editItemId });
+  const controller = useAddItemController({ editItemId, initialCategory: initialCategory ?? null });
   const { state, derived, actions, styles } = controller;
   const renderLog = useMemo(() => makeDevThrottleLogger("AddItemWizard"), []);
 

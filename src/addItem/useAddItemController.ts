@@ -25,13 +25,15 @@ import { useAuth } from "../hooks/useAuth";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { db } from "../lib/firebase";
 import { getDefaultSizeForSelection, loadUserProfilePreferences } from "../lib/userProfile";
-import { SUB_CATEGORIES } from "../shared/wardrobeTaxonomy";
+import { SUB_CATEGORIES, type Category } from "../shared/wardrobeTaxonomy";
 import type { UserProfilePreferences } from "../types/UserProfilePreferences";
 
 export function useAddItemController({
   editItemId,
+  initialCategory,
 }: {
   editItemId: string | null;
+  initialCategory?: Category | null;
 }) {
   const { user } = useAuth();
   const { colors } = useAppTheme();
@@ -100,6 +102,7 @@ export function useAddItemController({
     uid,
     editItemId,
     isEdit,
+    initialCategory: initialCategory ?? null,
     photoRef,
     extractionRef,
     resetCreateFlowRef,

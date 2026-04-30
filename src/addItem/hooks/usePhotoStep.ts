@@ -3,7 +3,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 
 import {
   buildPhotoHash,
@@ -16,7 +16,7 @@ import {
   uploadWithTimeout,
 } from "../controllerShared";
 import {
-  isVisionBackgroundRemovalAvailable,
+  isBackgroundRemovalAvailable,
   removeBackground,
 } from "../../bg/removeBackground";
 import { normalizeCutoutImage } from "../../lib/cutoutNormalize";
@@ -230,7 +230,7 @@ export function usePhotoStep({
     null;
 
   const canRefineCutout =
-    isVisionBackgroundRemovalAvailable() &&
+    isBackgroundRemovalAvailable() &&
     !!originalPickedPhotoUri;
 
   const currentDebugRefineOptions = useCallback(
@@ -778,7 +778,12 @@ export function usePhotoStep({
           cutoutTransparencyRatio = 0;
           cutoutMaskUri = null;
         }
-      } catch {
+      } catch (error) {
+        if (Platform.OS === "android") {
+          throw error instanceof Error
+            ? error
+            : new Error("Android background removal failed.");
+        }
         cutoutUri = null;
         previewCutoutUri = null;
         cutoutHasTransparency = false;

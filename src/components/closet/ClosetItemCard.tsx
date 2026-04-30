@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import FastImage from "@d11/react-native-fast-image";
+import AppImage from "@/src/components/common/AppImage";
 import React, { useEffect } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -11,9 +11,11 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { useReduceMotion } from "@/hooks/useReduceMotion";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
+import { LAUNDRY_STATUS_LABELS, normalizeLaundryStatus } from "@/src/lib/items";
 import type { ClosetItem } from "@/src/lib/items";
 import { sanitizeDisplayText } from "@/src/lib/text";
 
@@ -46,6 +48,7 @@ export function ClosetItemCard({
   const reduceMotion = useReduceMotion();
   const imageUrl = getItemImageUrl(item, { variant: "thumb" });
   const imagePresentation = getItemImagePresentation(item, { surface: "closet_card" });
+  const laundryStatus = normalizeLaundryStatus(item);
   const cardWidth = width ?? (layout.screenSize === "compact" ? 132 : 144);
   const imageHeight = width ? cardWidth * 1.2 : layout.screenSize === "compact" ? 150 : 160;
   const textBlockHeight = 70;
@@ -76,11 +79,15 @@ export function ClosetItemCard({
 
   return (
     <Animated.View style={entryStyle}>
-      <Pressable
+      <AuraPressable
         onPress={onPress}
         onLongPress={onLongPress}
+        haptic={onLongPress ? "selection" : undefined}
+        hapticTrigger="longPress"
+        pressedScale={0.985}
+        pressedOpacity={0.94}
         delayLongPress={180}
-        style={({ pressed }) => ({
+        style={{
           width: cardWidth,
           borderRadius: 20,
           backgroundColor: colors.surface2,
@@ -92,8 +99,7 @@ export function ClosetItemCard({
           shadowRadius: 18,
           shadowOffset: { width: 0, height: 10 },
           elevation: 6,
-          opacity: pressed ? 0.9 : 1,
-        })}
+        }}
       >
       <View
         style={{
@@ -118,14 +124,12 @@ export function ClosetItemCard({
               overflow: "hidden",
             }}
           >
-            <FastImage
+            <AppImage
               source={{
                 uri: imageUrl,
-                priority: FastImage.priority.normal,
-                cache: FastImage.cacheControl.immutable,
               }}
               style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
-              resizeMode={FastImage.resizeMode.contain}
+              resizeMode="contain"
             />
           </View>
         ) : (
@@ -183,7 +187,7 @@ export function ClosetItemCard({
           numberOfLines={1}
           ellipsizeMode="tail"
         >
-          {item.status.replace(/_/g, " ")}
+          {LAUNDRY_STATUS_LABELS[laundryStatus]}
           {item.primaryColor ? ` · ${sanitizeDisplayText(item.primaryColor)}` : ""}
         </Text>
       </View>
@@ -211,7 +215,7 @@ export function ClosetItemCard({
           <Ionicons name="checkmark" size={14} color={colors.text} />
         </View>
       ) : null}
-      </Pressable>
+      </AuraPressable>
     </Animated.View>
   );
 }

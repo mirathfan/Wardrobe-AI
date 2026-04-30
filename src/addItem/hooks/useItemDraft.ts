@@ -27,6 +27,7 @@ export function useItemDraft({
   uid,
   editItemId,
   isEdit,
+  initialCategory,
   photoRef,
   extractionRef,
   resetCreateFlowRef,
@@ -34,6 +35,7 @@ export function useItemDraft({
   uid: string | null;
   editItemId: string | null;
   isEdit: boolean;
+  initialCategory?: Category | null;
   photoRef: MutableRefObject<any>;
   extractionRef: MutableRefObject<any>;
   resetCreateFlowRef: MutableRefObject<any>;
@@ -45,7 +47,7 @@ export function useItemDraft({
   const [loading, setLoading] = useState(false);
   const [brand, setBrand] = useState("");
   const [name, setName] = useState("");
-  const [category, setCategory] = useState<Category | null>(null);
+  const [category, setCategory] = useState<Category | null>(() => initialCategory ?? null);
   const [subCategory, setSubCategory] = useState("");
   const [pattern, setPattern] = useState<string | null>(null);
   const [material, setMaterial] = useState<string | null>(null);
@@ -221,7 +223,7 @@ export function useItemDraft({
     setLoading(false);
     setBrand("");
     setName("");
-    setCategory(null);
+    setCategory(initialCategory ?? null);
     setSubCategory("");
     setPattern(null);
     setMaterial(null);
@@ -252,7 +254,7 @@ export function useItemDraft({
     setSeasonExpanded(false);
     setFitExpanded(false);
     userEditedKeysRef.current.clear();
-  }, []);
+  }, [initialCategory]);
 
   const duplicateLastItem = useCallback(async () => {
     if (!uid || isEdit) return;

@@ -1,4 +1,4 @@
-import FastImage from "@d11/react-native-fast-image";
+import AppImage from "@/src/components/common/AppImage";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -128,13 +128,11 @@ function ProcessingItemRow({
         }}
       >
         {imageUrl ? (
-          <FastImage
+          <AppImage
             source={{
               uri: imageUrl,
-              priority: FastImage.priority.normal,
-              cache: FastImage.cacheControl.immutable,
             }}
-            resizeMode={FastImage.resizeMode.contain}
+            resizeMode="contain"
             style={[{ width: "92%", height: "92%" }, presentation.imageStyle]}
           />
         ) : (

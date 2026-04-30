@@ -1,10 +1,11 @@
 import { router, useLocalSearchParams } from "expo-router";
+import AppImage from "@/src/components/common/AppImage";
 import { deleteDoc, deleteField, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  type DimensionValue,
   Dimensions,
-  Image,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -22,13 +23,17 @@ import { useAuth } from "../../../src/hooks/useAuth";
 import { useAppTheme } from "../../../src/hooks/useAppTheme";
 import { useResponsiveLayout } from "../../../src/hooks/useResponsiveLayout";
 import { db } from "../../../src/lib/firebase";
-import { getItemImagePresentation, getItemImageUrl } from "../../../src/lib/itemImage";
+import { getItemImageDecoration, getItemImagePresentation, getItemImageUrl } from "../../../src/lib/itemImage";
 import {
   getIngestionStatus,
+  LAUNDRY_STATUS_LABELS,
   markWashed as markWashedItem,
+  markNeedsWash,
+  normalizeLaundryStatus,
   safeMarkWorn,
   sendToLaundry,
 } from "../../../src/lib/items";
+import type { LaundryStatus } from "../../../src/types/ClothingItem";
 import { ClothingItem } from "../../../src/types/ClothingItem";
 
 type ItemDetails = ClothingItem & {
@@ -66,39 +71,15 @@ function getItemDetailImages(item: ItemDetails | null): DetailImageAsset[] {
   ];
 
   for (const image of sources) {
-    const candidate = getItemImageUrl(
-      {
-        ...item,
-        images: image
-          ? [
-              {
-                originalUrl: image.originalUrl ?? null,
-                cleanedUrl: image.cleanedUrl ?? null,
-                isPrimary: Boolean(image.isPrimary),
-              },
-            ]
-          : [],
-        photos: {
-          ...item.photos,
-          images: image
-            ? [
-                {
-                  originalUrl: image.originalUrl ?? null,
-                  cleanedUrl: image.cleanedUrl ?? null,
-                  isPrimary: Boolean(image.isPrimary),
-                },
-              ]
-            : [],
-          primaryUrl: image?.originalUrl ?? item.photos?.primaryUrl ?? null,
-        },
-      },
-      { variant: "hero" },
-    );
+    const isPrimary = Boolean(image?.isPrimary);
+    const candidate = isPrimary
+      ? getItemImageUrl(item, { variant: "hero" })
+      : String(image?.cleanedUrl ?? image?.originalUrl ?? "").trim() || null;
 
     if (candidate && isValidUrl(candidate)) {
       next.push({
         uri: candidate,
-        isPrimary: Boolean(image?.isPrimary),
+        isPrimary,
       });
     }
   }
@@ -213,8 +194,29 @@ export default function ItemDetailsScreen() {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const uid = user?.uid ?? null;
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, sourceTab } = useLocalSearchParams<{ id: string; sourceTab?: string }>();
   const itemId = useMemo(() => (Array.isArray(id) ? id[0] : id), [id]);
+  const resolvedSourceTab = useMemo(() => {
+    const value = Array.isArray(sourceTab) ? sourceTab[0] : sourceTab;
+    if (value === "closet" || value === "index" || value === "ai" || value === "calendar" || value === "profile") {
+      return value;
+    }
+    return null;
+  }, [sourceTab]);
+
+  function navigateBackToSource() {
+    if (resolvedSourceTab) {
+      const destination =
+        resolvedSourceTab === "index"
+          ? "/"
+          : (`/(tabs)/${resolvedSourceTab}` as "/(tabs)/closet" | "/(tabs)/ai" | "/(tabs)/calendar" | "/(tabs)/profile");
+      router.replace({
+        pathname: destination,
+      });
+      return;
+    }
+    router.back();
+  }
 
   const [item, setItem] = useState<ItemDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -231,6 +233,7 @@ export default function ItemDetailsScreen() {
   const imagePresentation = getItemImagePresentation(item, {
     surface: "item_detail",
   });
+  const imageDecoration = getItemImageDecoration(item, "item_detail");
   const footerOffset = layout.composerOffset;
   const quickFacts = item
     ? [
@@ -238,9 +241,9 @@ export default function ItemDetailsScreen() {
         { label: "Sub-category", value: formatValue(item.subCategory) },
         { label: "Size", value: formatValue(item.size) },
         {
-          label: "Status",
-          value: formatValue(item.status || "available"),
-          tone: item.status === "IN_LAUNDRY" ? ("danger" as const) : ("default" as const),
+          label: "Laundry",
+          value: LAUNDRY_STATUS_LABELS[normalizeLaundryStatus(item)],
+          tone: normalizeLaundryStatus(item) === "in_laundry" ? ("danger" as const) : ("default" as const),
         },
         { label: "Last worn", value: formatDate(item.lastWornDate) },
         {
@@ -369,6 +372,29 @@ export default function ItemDetailsScreen() {
     }
   }
 
+  async function onMarkNeedsWash() {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+    try {
+      setActionLoading(true);
+      await markNeedsWash(uid, itemId);
+    } catch (e: any) {
+      console.log(e);
+      Alert.alert("Error", e?.message ?? "Failed to mark item as needs wash");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function onLaundryStatusPress(status: LaundryStatus) {
+    if (status === "clean") {
+      onConfirmWashed();
+    } else if (status === "in_laundry") {
+      void onSendToLaundry();
+    } else {
+      void onMarkNeedsWash();
+    }
+  }
+
   function onConfirmWashed() {
     if (!uid || !itemId) return router.replace("/(auth)/login");
 
@@ -405,7 +431,7 @@ export default function ItemDetailsScreen() {
           onPress: async () => {
             try {
               await deleteDoc(doc(db, "users", uid, "items", itemId));
-              router.back();
+              navigateBackToSource();
             } catch (e: any) {
               console.log(e);
               Alert.alert("Error", e?.message ?? "Failed to delete");
@@ -514,7 +540,7 @@ export default function ItemDetailsScreen() {
           }}
         >
           <Pressable
-            onPress={() => router.back()}
+            onPress={navigateBackToSource}
             style={[pill, { backgroundColor: colors.surface, borderColor: colors.border }]}
           >
             <Text style={pillText}>Back</Text>
@@ -552,7 +578,7 @@ export default function ItemDetailsScreen() {
                   onPressImage={() => setDetailImageOpen(true)}
                   containerAspectRatio={imagePresentation.containerAspectRatio}
                   imageStyle={imagePresentation.imageStyle}
-                  resizeMode={imagePresentation.resizeMode}
+                  imageDecoration={imageDecoration}
                 />
               ) : (
                 <View
@@ -622,6 +648,34 @@ export default function ItemDetailsScreen() {
                   <Text style={{ color: colors.text, lineHeight: 20 }}>{item.notes}</Text>
                 </View>
               ) : null}
+            </SectionCard>
+
+            <SectionCard title="Laundry status" subtitle="This feeds Closet, Home, outfit generation, and AURA chat.">
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                {(["needs_wash", "in_laundry", "clean"] as LaundryStatus[]).map((status) => {
+                  const selected = normalizeLaundryStatus(item) === status;
+                  return (
+                    <Pressable
+                      key={status}
+                      onPress={() => onLaundryStatusPress(status)}
+                      disabled={actionLoading || selected}
+                      style={{
+                        borderRadius: 999,
+                        paddingHorizontal: 12,
+                        paddingVertical: 9,
+                        backgroundColor: selected ? colors.ctaCream : "rgba(255,255,255,0.045)",
+                        borderWidth: selected ? 0 : 1,
+                        borderColor: "rgba(255,255,255,0.1)",
+                        opacity: actionLoading || selected ? 0.72 : 1,
+                      }}
+                    >
+                      <Text style={{ color: selected ? colors.ctaText : colors.text, fontWeight: "900" }}>
+                        {LAUNDRY_STATUS_LABELS[status]}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </SectionCard>
 
             <SectionCard
@@ -792,7 +846,7 @@ export default function ItemDetailsScreen() {
             }
           }}
         >
-          {item.status === "IN_LAUNDRY" ? (
+          {normalizeLaundryStatus(item) === "in_laundry" ? (
             <Pressable
               onPress={onConfirmWashed}
               disabled={actionLoading}
@@ -989,14 +1043,17 @@ function ItemImageModal(props: {
                       minHeight: 360,
                       alignItems: "center",
                       justifyContent: "center",
-                      backgroundColor: "#fff",
+                      backgroundColor: "#e5d6bf",
                       borderRadius: 20,
                       overflow: "hidden",
-                      padding: 16,
+                      paddingHorizontal: 24,
+                      paddingVertical: 24,
                     }}
                   >
-                    <Image
-                      source={{ uri: image.uri }}
+                    <AppImage
+                      source={{
+                        uri: image.uri,
+                      }}
                       style={{ width: "100%", height: 520 }}
                       resizeMode="contain"
                     />
@@ -1036,7 +1093,14 @@ function DetailImageCarousel(props: {
   onPressImage: () => void;
   containerAspectRatio: number;
   imageStyle: object;
-  resizeMode: "contain";
+  imageDecoration: {
+    shadowStyle: {
+      width: DimensionValue;
+      height: DimensionValue;
+      bottom: DimensionValue;
+      opacity: number;
+    };
+  };
 }) {
   const {
     images,
@@ -1045,15 +1109,17 @@ function DetailImageCarousel(props: {
     onPressImage,
     containerAspectRatio,
     imageStyle,
-    resizeMode,
+    imageDecoration,
   } = props;
   const layout = useResponsiveLayout();
   const windowWidth = Dimensions.get("window").width;
   const cardWidth = Math.max(windowWidth - layout.horizontalPadding * 2 - 36, 1);
-  const cardHeight = Math.min(520, Math.max(280, cardWidth / Math.max(containerAspectRatio, 0.55)));
+  const cardHeight = Math.min(540, Math.max(300, cardWidth / Math.max(containerAspectRatio, 0.58)));
+  const cardGap = 14;
+  const pageWidth = cardWidth + cardGap;
 
   function onMomentumScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
-    const nextIndex = Math.round(event.nativeEvent.contentOffset.x / cardWidth);
+    const nextIndex = Math.round(event.nativeEvent.contentOffset.x / pageWidth);
     onIndexChange(Math.max(0, Math.min(images.length - 1, nextIndex)));
   }
 
@@ -1061,37 +1127,74 @@ function DetailImageCarousel(props: {
     <View style={{ gap: 12 }}>
       <ScrollView
         horizontal
-        pagingEnabled
+        decelerationRate="fast"
+        snapToInterval={pageWidth}
+        snapToAlignment="start"
         showsHorizontalScrollIndicator={false}
-        contentOffset={{ x: cardWidth * activeIndex, y: 0 }}
+        contentContainerStyle={{ paddingRight: cardGap }}
+        contentOffset={{ x: pageWidth * activeIndex, y: 0 }}
         onMomentumScrollEnd={onMomentumScrollEnd}
       >
-        {images.map((image) => (
+        {images.map((image, index) => {
+          const isHeroImage = index === 0;
+          return (
           <Pressable
             key={image.uri}
             onPress={onPressImage}
-            style={{ width: cardWidth, borderRadius: 18 }}
+            style={{
+              width: cardWidth,
+              borderRadius: 18,
+              marginRight: index === images.length - 1 ? 0 : cardGap,
+            }}
           >
             <View
               style={{
                 width: "100%",
                 height: cardHeight,
                 borderRadius: 18,
-                backgroundColor: "rgba(255,255,255,0.04)",
+                backgroundColor: isHeroImage ? "#e5d6bf" : "rgba(255,255,255,0.04)",
                 overflow: "hidden",
                 alignItems: "center",
                 justifyContent: "center",
-                padding: 12,
+                borderWidth: 1,
+                borderColor: isHeroImage ? "rgba(88,66,38,0.08)" : "rgba(255,255,255,0.08)",
+                paddingHorizontal: isHeroImage ? 22 : 0,
+                paddingVertical: isHeroImage ? 24 : 0,
               }}
             >
-              <Image
-                source={{ uri: image.uri }}
-                style={[{ width: "100%", height: "100%" }, imageStyle]}
-                resizeMode={resizeMode}
+              {isHeroImage ? (
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: "absolute",
+                    width: imageDecoration.shadowStyle.width,
+                    height: imageDecoration.shadowStyle.height,
+                    bottom: imageDecoration.shadowStyle.bottom,
+                    borderRadius: 999,
+                    backgroundColor: "#6a5131",
+                    opacity: imageDecoration.shadowStyle.opacity,
+                  }}
+                />
+              ) : null}
+              <AppImage
+                source={{
+                  uri: image.uri,
+                }}
+                style={[
+                  {
+                    width: "100%",
+                    height: "100%",
+                  },
+                  isHeroImage
+                    ? imageStyle
+                    : null,
+                ]}
+                resizeMode="contain"
               />
             </View>
           </Pressable>
-        ))}
+        );
+        })}
       </ScrollView>
       {images.length > 1 ? (
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
