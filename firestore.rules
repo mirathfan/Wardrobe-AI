@@ -14,6 +14,10 @@ service cloud.firestore {
       return status in ["AVAILABLE", "WORN", "IN_LAUNDRY"];
     }
 
+    function validLaundryStatus(status) {
+      return status in ["clean", "needs_wash", "in_laundry"];
+    }
+
     function validCategory(category) {
       return category in [
         "top",
@@ -95,6 +99,9 @@ service cloud.firestore {
       let changed = data.diff(resource.data).affectedKeys();
       return data is map
         && (!changed.hasAny(["status"]) || validStatus(data.status))
+        && (!changed.hasAny(["laundryStatus"]) || validLaundryStatus(data.laundryStatus))
+        && (!changed.hasAny(["laundryUpdatedAt"]) || data.laundryUpdatedAt is timestamp || data.laundryUpdatedAt is number)
+        && (!changed.hasAny(["lastWornAt"]) || data.lastWornAt is timestamp || data.lastWornAt is number || data.lastWornAt == null)
         && (!changed.hasAny(["category"]) || validCategory(data.category))
         && (!changed.hasAny(["subCategory"]) || validOptionalString(data.subCategory))
         && (!changed.hasAny(["brand"]) || validOptionalString(data.brand))
@@ -189,6 +196,9 @@ service cloud.firestore {
         && (!("lastMessagePreview" in data) || validOptionalString(data.lastMessagePreview))
         && (!("messageCount" in data) || data.messageCount is number)
         && (!("threadId" in data) || validOptionalString(data.threadId))
+        && (!("pinned" in data) || data.pinned is bool)
+        && (!("archived" in data) || data.archived is bool)
+        && (!("titleEdited" in data) || data.titleEdited is bool)
         && noForeignUidField(data, uid);
     }
 
@@ -204,6 +214,42 @@ service cloud.firestore {
         && (!("outfits" in data) || data.outfits is list)
         && (!("aura" in data) || data.aura is map)
         && noForeignUidField(data, uid);
+    }
+
+    function validStyleEventDoc(data, uid) {
+      return data is map
+        && data.size() <= 50
+        && data.keys().hasAll(["type", "createdAt"])
+        && data.type is string
+        && (data.createdAt is number || data.createdAt is timestamp)
+        && noForeignUidField(data, uid);
+    }
+
+    function validSavedLookDoc(data, uid) {
+      return data is map
+        && data.size() <= 50
+        && data.keys().hasOnly([
+          "id",
+          "pieces",
+          "vibe",
+          "title",
+          "createdAt",
+          "updatedAt",
+          "source",
+          "sessionId",
+          "itemIds",
+          "stylingNote",
+          "previewImageUrls",
+          "outfitSnapshot",
+          "look",
+          "savedLookEventWritten",
+          "feedbackProcessed"
+        ])
+        && noForeignUidField(data, uid);
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
 
     match /users/{uid} {
@@ -267,11 +313,15 @@ service cloud.firestore {
       }
 
       match /styleEvents/{eventId} {
-        allow read, write: if isOwner(uid);
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validStyleEventDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
       }
 
       match /savedLooks/{lookId} {
-        allow read, write: if isOwner(uid);
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validSavedLookDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
       }
 
       match /savedOutfits/{lookId} {

@@ -103,6 +103,7 @@ export type WardrobeItem = {
   colors?: string[];
   primaryColor?: string;
   status?: string;
+  laundryStatus?: string | null;
   isDraft?: boolean;
   draftState?: string | null;
   brand?: string | null;
@@ -1046,15 +1047,16 @@ export function filterEligibleItems(
 ): WardrobeItem[] {
   return items.filter((item) => {
     const ingestionStatus = getIngestionStatus(item);
+    const laundryStatus = String(item.laundryStatus ?? "").trim().toLowerCase();
     const status = String(item.status ?? "").trim().toUpperCase();
     const draftState = String(item.draftState ?? "").trim().toLowerCase();
     if (item.isDraft === true) return false;
     if (draftState && draftState !== "ready") return false;
     if (ingestionStatus !== "done") return false;
     if (intent.excludeLaundry) {
-      return status === "AVAILABLE";
+      return (laundryStatus ? laundryStatus === "clean" : status === "AVAILABLE");
     }
-    return status !== "IN_LAUNDRY";
+    return laundryStatus ? laundryStatus !== "in_laundry" : status !== "IN_LAUNDRY";
   });
 }
 

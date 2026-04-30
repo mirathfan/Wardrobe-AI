@@ -1,5 +1,5 @@
 import { ClothingItem } from "../types/ClothingItem";
-import { MAX_WEARS_BEFORE_WASH, toCanonicalCategory } from "./items";
+import { MAX_WEARS_BEFORE_WASH, normalizeLaundryStatus, toCanonicalCategory } from "./items";
 
 export type OutfitIntent = {
   occasion?: string;
@@ -15,6 +15,7 @@ export type OutfitSuggestion = {
   itemIds: string[];
   title: string;
   reason: string;
+  missingSuggestions?: string[];
 };
 
 type DatedValue = { toDate?: () => Date } | number | Date | null | undefined;
@@ -183,14 +184,91 @@ function buildAccessoryOptions(items: ClothingItem[], includeAccessory: boolean)
   return out;
 }
 
+function missingCoreSuggestions({
+  tops,
+  bottoms,
+  shoes,
+}: {
+  tops: ClothingItem[];
+  bottoms: ClothingItem[];
+  shoes: ClothingItem[];
+}) {
+  return [
+    tops.length === 0 ? "Add to complete: a versatile top" : "",
+    bottoms.length === 0 ? "Add to complete: an easy bottom" : "",
+    shoes.length === 0 ? "Add to complete: a pair of shoes" : "",
+  ].filter(Boolean);
+}
+
+function generateSparseOutfits({
+  tops,
+  bottoms,
+  shoes,
+  outerwear,
+  accessories,
+  intent,
+}: {
+  tops: ClothingItem[];
+  bottoms: ClothingItem[];
+  shoes: ClothingItem[];
+  outerwear: ClothingItem[];
+  accessories: ClothingItem[];
+  intent: OutfitIntent;
+}): OutfitSuggestion[] {
+  const pools = [
+    tops.slice(0, 6),
+    bottoms.slice(0, 6),
+    shoes.slice(0, 6),
+    intent.includeOuterwear ? outerwear.slice(0, 4) : [],
+    intent.includeAccessory ? accessories.slice(0, 3) : [],
+  ].filter((pool) => pool.length > 0);
+
+  if (pools.length === 0) return [];
+
+  const missingSuggestions = missingCoreSuggestions({ tops, bottoms, shoes });
+  const candidates: ScoredOutfit[] = [];
+  const maxRows = Math.max(...pools.map((pool) => pool.length));
+
+  for (let index = 0; index < maxRows; index += 1) {
+    const comboItems = pools
+      .map((pool) => pool[index % pool.length])
+      .filter((item, itemIndex, list) => list.findIndex((entry) => entry.id === item.id) === itemIndex);
+    if (!comboItems.length) continue;
+    candidates.push({
+      itemIds: comboItems.map((item) => item.id),
+      score:
+        comboItems.length * 5 +
+        comboColorScore(comboItems) +
+        brandContinuityScore(comboItems) +
+        colorPreferenceBonus(comboItems, intent) -
+        wearPenalty(comboItems),
+      title: "",
+      reason:
+        missingSuggestions.length > 0
+          ? `Built only from available closet pieces. ${missingSuggestions.join("; ")}.`
+          : reasonText(comboItems, intent),
+    });
+  }
+
+  candidates.sort((a, b) => b.score - a.score || b.itemIds.length - a.itemIds.length);
+
+  return candidates.slice(0, 3).map((candidate, index) => ({
+    itemIds: candidate.itemIds,
+    title: `Closest Closet Look ${index + 1}`,
+    reason: candidate.reason,
+    missingSuggestions,
+  }));
+}
+
 export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): OutfitSuggestion[] {
   const today = new Date();
   const allowWornStatus = !!intent.allowRewearToday || !!intent.allowOverWearLimit;
 
   const filtered = items.filter((item) => {
     if (!item?.id) return false;
-    if (item.status === "IN_LAUNDRY") return false;
-    if (!allowWornStatus && item.status !== "AVAILABLE") return false;
+    const laundryStatus = normalizeLaundryStatus(item);
+    if (laundryStatus === "in_laundry") return false;
+    if (!allowWornStatus && laundryStatus !== "clean") return false;
     if (!intent.allowRewearToday && wasWornToday(item, today)) return false;
     if (!intent.allowOverWearLimit && Number(item.wearCountSinceWash ?? 0) >= MAX_WEARS_BEFORE_WASH) {
       return false;
@@ -205,7 +283,14 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
   const accessories = filtered.filter((i) => toCanonicalCategory(i.category) === "accessory");
 
   if (tops.length === 0 || bottoms.length === 0 || shoes.length === 0) {
-    return [];
+    return generateSparseOutfits({
+      tops,
+      bottoms,
+      shoes,
+      outerwear,
+      accessories,
+      intent,
+    });
   }
 
   const outerOptions = intent.includeOuterwear ? [null, ...outerwear.slice(0, 8)] : [null];
