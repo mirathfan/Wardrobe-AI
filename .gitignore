@@ -29,8 +29,8 @@ GoogleService-Info.plist
 expo-env.d.ts
 # @end expo-cli
 
-ios/
-android/
+/ios/
+/android/
 ios.build/
 android.build/
 .claude/

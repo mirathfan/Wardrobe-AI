@@ -106,12 +106,11 @@ export function normColor(s: string) {
 
 export function getRefineOptions(value: number) {
   const normalizedValue = Math.max(0, Math.min(1, value));
-  const edgeTighten =
-    normalizedValue >= 0.7 ? 0.03 + ((normalizedValue - 0.7) / 0.3) * 0.12 : 0.03;
+  const edgeTighten = 0.45 + normalizedValue * 0.2;
   return {
-    threshold: 0.60 + normalizedValue * 0.08,
+    threshold: 0.63 + normalizedValue * 0.03,
     cleanupRadius: 2,
-    feather: 1,
+    feather: 0,
     edgeTighten,
     edgePolish: 0.5,
     maskToAlpha: true,

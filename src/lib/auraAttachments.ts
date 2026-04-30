@@ -732,10 +732,10 @@ async function prepareAuraCandidateCutout(params: {
     });
     const cutout = await withTimeout(
       removeBackground(localUri, {
-        threshold: 0.6,
+        threshold: 0.64,
         cleanupRadius: 2,
-        feather: 1,
-        edgeTighten: 0.03,
+        feather: 0,
+        edgeTighten: 0.45,
         edgePolish: 0.5,
         maskToAlpha: true,
       }),

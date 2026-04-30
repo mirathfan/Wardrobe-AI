@@ -64,16 +64,16 @@ function normalizeOptions(
 ): Required<RemoveBackgroundOptions> {
   const threshold = Number.isFinite(options?.threshold)
     ? Number(options?.threshold)
-    : 0.60;
+    : 0.64;
   const cleanupRadius = Number.isFinite(options?.cleanupRadius)
     ? Number(options?.cleanupRadius)
     : 2;
   const feather = Number.isFinite(options?.feather)
     ? Number(options?.feather)
-    : 1;
+    : 0;
   const edgeTighten = Number.isFinite(options?.edgeTighten)
     ? Number(options?.edgeTighten)
-    : 0.03;
+    : 0.45;
   const edgePolish = Number.isFinite(options?.edgePolish)
     ? Number(options?.edgePolish)
     : 0.5;

@@ -14,11 +14,11 @@ export function normColor(s: string) {
 
 export function getRefineOptions(value: number) {
   const normalizedValue = Math.max(0, Math.min(1, value));
-  const edgeTighten = normalizedValue >= 0.8 ? (normalizedValue - 0.8) / 0.2 : 0;
+  const edgeTighten = 0.45 + normalizedValue * 0.2;
   return {
-    threshold: 0.58 + normalizedValue * 0.12,
-    cleanupRadius: Math.round(2 + normalizedValue * 2),
-    feather: Math.round(normalizedValue * 2),
+    threshold: 0.63 + normalizedValue * 0.03,
+    cleanupRadius: Math.round(2 + normalizedValue),
+    feather: 0,
     edgeTighten,
     maskToAlpha: true,
   };
