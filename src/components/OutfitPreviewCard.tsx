@@ -1,5 +1,5 @@
 import React from "react";
-import FastImage from "@d11/react-native-fast-image";
+import AppImage from "@/src/components/common/AppImage";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getItemImageUrl } from "../../src/lib/itemImage";
@@ -24,14 +24,12 @@ function SlotTile({ label, item }: { label: string; item: ClothingItem | null })
   return (
     <View style={styles.tile}>
       {uri ? (
-        <FastImage
+        <AppImage
           source={{
             uri,
-            priority: FastImage.priority.normal,
-            cache: FastImage.cacheControl.immutable,
           }}
           style={styles.image}
-          resizeMode={FastImage.resizeMode.contain}
+          resizeMode="contain"
         />
       ) : <View style={styles.placeholder} />}
       <Text style={styles.slotLabel}>{label}</Text>

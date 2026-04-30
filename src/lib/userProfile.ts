@@ -6,6 +6,7 @@ import type { UserProfilePreferences } from "../types/UserProfilePreferences";
 
 export type UserAccountProfile = {
   name: string | null;
+  photoURL?: string | null;
 };
 
 export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
@@ -49,6 +50,7 @@ export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
 
 export const EMPTY_USER_ACCOUNT_PROFILE: UserAccountProfile = {
   name: null,
+  photoURL: null,
 };
 
 function cleanString(value: unknown) {
@@ -258,6 +260,7 @@ export function normalizeUserAccountProfile(value: unknown): UserAccountProfile 
   const root = readRecord(value);
   return {
     name: cleanString(root.name),
+    photoURL: cleanString(root.photoURL),
   };
 }
 

@@ -45,7 +45,7 @@ import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { db } from "@/src/lib/firebase";
-import { MAX_WEARS_BEFORE_WASH, isVisibleWardrobeItem, toCanonicalCategory } from "@/src/lib/items";
+import { MAX_WEARS_BEFORE_WASH, isVisibleWardrobeItem, normalizeLaundryStatus, toCanonicalCategory } from "@/src/lib/items";
 import { Toast } from "@/src/lib/toast";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
@@ -574,7 +574,7 @@ export default function CalendarScreen() {
       for (const itemId of ids) {
         const item = itemsById.get(itemId);
         if (!item) continue;
-        if (item.status === "IN_LAUNDRY") {
+        if (normalizeLaundryStatus(item) === "in_laundry") {
           Alert.alert("Cannot mark outfit worn", `${item.name || item.category} is in laundry.`);
           return;
         }
@@ -591,8 +591,11 @@ export default function CalendarScreen() {
           const itemRef = doc(db, "users", uid, "items", itemId);
           batch.update(itemRef, {
             status: "WORN",
+            laundryStatus: "needs_wash",
             wearCountSinceWash: increment(1),
             lastWornDate: serverTimestamp(),
+            lastWornAt: serverTimestamp(),
+            laundryUpdatedAt: serverTimestamp(),
           });
         });
         await batch.commit();
@@ -621,7 +624,7 @@ export default function CalendarScreen() {
     const wantedCategory = slotToCategory(swapSlot);
     return items
       .filter((item) => toCanonicalCategory(item.category) === wantedCategory)
-      .filter((item) => item.status !== "IN_LAUNDRY")
+      .filter((item) => normalizeLaundryStatus(item) !== "in_laundry")
       .sort((a, b) => computeDaysSinceLastWorn(b) - computeDaysSinceLastWorn(a))
       .map((item) => ({
         id: item.id,

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { FlatList, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { FlatList, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
 import { addDays, isSameLocalDate, toDayKey } from "../../utils/date";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 type Status = {
@@ -76,7 +77,11 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {} }: 
         const key = toDayKey(item);
         const dayStatus = statuses[key];
         return (
-          <Pressable
+          <AuraPressable
+            haptic="selection"
+            hapticTrigger="press"
+            pressedScale={0.96}
+            pressedOpacity={0.88}
             style={[
               styles.cell,
               { borderColor: colors.border, backgroundColor: colors.surface },
@@ -95,7 +100,7 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {} }: 
               {dayStatus?.worn ? <Text style={styles.check}>✓</Text> : null}
               {dayStatus?.streak ? <Text style={styles.fire}>🔥</Text> : null}
             </View>
-          </Pressable>
+          </AuraPressable>
         );
       }}
     />

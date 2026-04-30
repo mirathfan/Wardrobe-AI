@@ -1,12 +1,19 @@
 import { router } from "expo-router";
-import { signOut } from "firebase/auth";
+import * as Clipboard from "expo-clipboard";
+import Constants from "expo-constants";
+import * as ImagePicker from "expo-image-picker";
+import { deleteUser, sendEmailVerification, sendPasswordResetEmail, signOut, updateProfile } from "firebase/auth";
+import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
+  Share,
   Text,
   TextInput,
   View,
@@ -16,7 +23,11 @@ import { Pill } from "@/src/addItem/ui/Pill";
 import { SafeScreen } from "@/src/components/SafeScreen";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
-import { auth } from "@/src/lib/firebase";
+import { auth, db, storage } from "@/src/lib/firebase";
+import { signOutGoogle } from "@/src/auth/googleAuth";
+import { Storage } from "@/src/lib/storage";
+import { clearAssistantMemory, buildCompactMemorySummary, loadAssistantProfile, loadBehaviorProfile } from "@/src/lib/assistantMemory";
+import { loadStyleProfile, loadLearnedStyleMemory, saveLearnedStyleMemory, saveStyleProfile } from "@/src/lib/auraMemory";
 import {
   EMPTY_USER_ACCOUNT_PROFILE,
   EMPTY_USER_PROFILE_PREFERENCES,
@@ -27,6 +38,7 @@ import {
 } from "@/src/lib/userProfile";
 import type { UserAccountProfile } from "@/src/lib/userProfile";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
+import { emptyLearnedStyleMemory, emptyStyleProfile, type StyleProfile } from "@/shared/auraMemory";
 
 const BODY_FIELDS: { key: keyof UserProfilePreferences["body"]; label: string }[] = [
   { key: "height", label: "Height" },
@@ -96,6 +108,18 @@ function parseInputNumber(value: string) {
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstSupportedPreferredFit(
+  values: string[]
+): UserProfilePreferences["preferredFit"] {
+  const next = values.find((value) =>
+    value === "slim" ||
+    value === "regular" ||
+    value === "relaxed" ||
+    value === "oversized"
+  );
+  return (next as UserProfilePreferences["preferredFit"]) ?? null;
 }
 
 export function useProfilePreferencesState() {
@@ -362,14 +386,270 @@ export function ProfileSectionScreen({
   );
 }
 
+function providerName(providerId: string) {
+  if (providerId === "password") return "Email & Password";
+  if (providerId === "google.com") return "Google";
+  if (providerId === "apple.com") return "Apple";
+  return providerId;
+}
+
+function getAccountInitials(name: string, email?: string | null) {
+  const source = name.trim() || email?.split("@")[0] || "AURA";
+  const parts = source.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? "A";
+  const second = parts.length > 1 ? parts[parts.length - 1]?.[0] : parts[0]?.[1];
+  return `${first}${second ?? ""}`.toUpperCase();
+}
+
+function appVersionLabel() {
+  const version = Constants.expoConfig?.version ?? Constants.manifest2?.extra?.expoClient?.version ?? "Unknown";
+  const build =
+    Constants.expoConfig?.ios?.buildNumber ??
+    Constants.expoConfig?.android?.versionCode ??
+    Constants.nativeBuildVersion ??
+    null;
+  return build ? `${version} (${build})` : String(version);
+}
+
+function cleanExportValue(value: unknown): unknown {
+  if (value == null) return value;
+  if (typeof value === "number" || typeof value === "string" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.map(cleanExportValue);
+  if (typeof value === "object") {
+    if ("toMillis" in value && typeof value.toMillis === "function") return value.toMillis();
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !/image|photo|url|embedding/i.test(key))
+      .map(([key, entry]) => [key, cleanExportValue(entry)]);
+    return Object.fromEntries(entries);
+  }
+  return String(value);
+}
+
+function summarizeClosetItem(data: Record<string, unknown>, id: string) {
+  return {
+    id,
+    name: data.name ?? null,
+    brand: data.brand ?? null,
+    category: data.category ?? null,
+    subCategory: data.subCategory ?? null,
+    colors: data.colors ?? data.displayColors ?? [],
+    status: data.status ?? null,
+    wearCountSinceWash: data.wearCountSinceWash ?? 0,
+    createdAt: cleanExportValue(data.createdAt),
+    lastWornDate: cleanExportValue(data.lastWornDate),
+  };
+}
+
+async function readCollectionSummary(uid: string, collectionName: string, max = 100) {
+  const snap = await getDocs(query(collection(db, "users", uid, collectionName), limit(max)));
+  return snap.docs.map((entry) => ({
+    id: entry.id,
+    ...(cleanExportValue(entry.data()) as Record<string, unknown>),
+  }));
+}
+
+async function buildAccountExport(uid: string, profilePreferences: UserProfilePreferences, accountProfile: UserAccountProfile) {
+  const [userSnap, itemsSnap, savedLooks, savedOutfits, feedbackLooks, assistantMain, assistantBehavior, learnedStyle] =
+    await Promise.all([
+      getDoc(doc(db, "users", uid)),
+      getDocs(query(collection(db, "users", uid, "items"), orderBy("createdAt", "desc"), limit(250))),
+      readCollectionSummary(uid, "savedLooks", 100),
+      readCollectionSummary(uid, "savedOutfits", 100),
+      readCollectionSummary(uid, "outfitFeedback", 100),
+      loadAssistantProfile(uid),
+      loadBehaviorProfile(uid),
+      loadLearnedStyleMemory(uid),
+    ]);
+
+  return {
+    exportedAt: new Date().toISOString(),
+    account: {
+      uid,
+      name: accountProfile.name,
+      email: auth.currentUser?.email ?? null,
+      emailVerified: auth.currentUser?.emailVerified ?? false,
+      memberSince: auth.currentUser?.metadata?.creationTime ?? null,
+      profileUpdatedAt: cleanExportValue(userSnap.data()?.profileUpdatedAt),
+    },
+    profilePreferences,
+    closetItems: itemsSnap.docs.map((entry) => summarizeClosetItem(entry.data(), entry.id)),
+    savedLooks: {
+      savedLooks,
+      savedOutfits,
+      outfitFeedback: feedbackLooks,
+    },
+    auraMemory: {
+      summary: buildCompactMemorySummary(assistantMain, assistantBehavior),
+      assistantProfile: assistantMain,
+      learnedStyle,
+    },
+  };
+}
+
+async function blobFromUri(uri: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onerror = () => reject(new Error("Unable to read selected image."));
+    xhr.onload = () => resolve(xhr.response as Blob);
+    xhr.responseType = "blob";
+    xhr.open("GET", uri, true);
+    xhr.send(null);
+  });
+}
+
+async function uploadAccountPhoto(uid: string, uri: string) {
+  const blob = await blobFromUri(uri);
+  const fileRef = ref(storage, `users/${uid}/profile/avatar.jpg`);
+  await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+  return getDownloadURL(fileRef);
+}
+
+function AccountSection({ title, children }: { title: string; children: React.ReactNode }) {
+  const { colors } = useAppTheme();
+  return (
+    <View style={{ gap: 10 }}>
+      <Text style={{ color: colors.iridescentStart, fontSize: 12, fontWeight: "900" }}>{title}</Text>
+      <View
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: 18,
+          borderWidth: 1,
+          borderColor: colors.border,
+          padding: 16,
+          gap: 14,
+        }}
+      >
+        {children}
+      </View>
+    </View>
+  );
+}
+
+function AccountActionRow({
+  title,
+  subtitle,
+  onPress,
+  disabled,
+  danger,
+}: {
+  title: string;
+  subtitle?: string;
+  onPress: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  const { colors } = useAppTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={{
+        minHeight: 50,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: danger ? "rgba(241,153,153,0.34)" : colors.border,
+        backgroundColor: danger ? "rgba(241,153,153,0.08)" : colors.background,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        opacity: disabled ? 0.55 : 1,
+        gap: 4,
+      }}
+    >
+      <Text style={{ color: danger ? colors.danger : colors.text, fontWeight: "800" }}>{title}</Text>
+      {subtitle ? <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18 }}>{subtitle}</Text> : null}
+    </Pressable>
+  );
+}
+
 export function AccountScreen() {
-  const { user, loading: profileLoading, saving, accountProfile, setAccountProfile, save } = useAccountProfileState();
+  const { user, loading: profileLoading, accountProfile, setAccountProfile } = useAccountProfileState();
+  const { profile, loading: preferencesLoading } = useProfilePreferencesState();
   const { colors } = useAppTheme();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [workingAction, setWorkingAction] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState<UserAccountProfile>(EMPTY_USER_ACCOUNT_PROFILE);
+  const [snapshotHydrated, setSnapshotHydrated] = useState(false);
+  const providerIds = user?.providerData?.map((provider) => provider.providerId).filter(Boolean) ?? [];
+  const isPasswordUser = providerIds.includes("password");
+  const displayName = accountProfile.name ?? user?.displayName ?? user?.email?.split("@")[0] ?? "AURA member";
+  const photoURL = accountProfile.photoURL ?? user?.photoURL ?? null;
+  const accountChanged =
+    (accountProfile.name ?? "") !== (savedSnapshot.name ?? "") ||
+    (accountProfile.photoURL ?? "") !== (savedSnapshot.photoURL ?? "");
+
+  useEffect(() => {
+    if (!profileLoading && !snapshotHydrated) {
+      setSavedSnapshot(accountProfile);
+      setSnapshotHydrated(true);
+    }
+  }, [accountProfile, profileLoading, snapshotHydrated]);
+
+  const runAction = useCallback(async (label: string, action: () => Promise<void>) => {
+    try {
+      setWorkingAction(label);
+      await action();
+    } catch (error: any) {
+      Alert.alert(label, error?.message ?? "Unable to complete this action.");
+    } finally {
+      setWorkingAction(null);
+    }
+  }, []);
+
+  const saveAccount = useCallback(async () => {
+    if (!user?.uid || savingAccount || !accountChanged) return;
+    try {
+      setSavingAccount(true);
+      await saveUserAccountProfile(user.uid, accountProfile);
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, {
+          displayName: accountProfile.name ?? undefined,
+          photoURL: accountProfile.photoURL ?? undefined,
+        });
+      }
+      setSavedSnapshot(accountProfile);
+      Alert.alert("Saved", "Account updated.");
+    } catch (error: any) {
+      Alert.alert("Save failed", error?.message ?? "Unable to save account.");
+    } finally {
+      setSavingAccount(false);
+    }
+  }, [accountChanged, accountProfile, savingAccount, user?.uid]);
+
+  const pickProfilePhoto = useCallback(async () => {
+    if (!user?.uid) {
+      Alert.alert("Account", "Please sign in first.");
+      return;
+    }
+    await runAction("Profile photo", async () => {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Profile photo", "Please allow photo access to choose an avatar.");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.82,
+      });
+      if (result.canceled || !result.assets[0]?.uri) return;
+      const nextPhotoURL = await uploadAccountPhoto(user.uid, result.assets[0].uri);
+      setAccountProfile((prev) => ({ ...prev, photoURL: nextPhotoURL }));
+      await saveUserAccountProfile(user.uid, { ...accountProfile, photoURL: nextPhotoURL });
+      if (auth.currentUser) await updateProfile(auth.currentUser, { photoURL: nextPhotoURL });
+      setSavedSnapshot((prev) => ({ ...prev, photoURL: nextPhotoURL }));
+      Alert.alert("Profile photo", "Avatar updated.");
+    });
+  }, [accountProfile, runAction, setAccountProfile, user?.uid]);
 
   const onLogout = useCallback(async () => {
+    const uid = auth.currentUser?.uid ?? user?.uid ?? null;
     try {
       setLoggingOut(true);
+      await signOutGoogle();
+      if (uid) await Storage.clearUserScopedData(uid);
       await signOut(auth);
       router.replace("/(auth)/login");
     } catch (err: any) {
@@ -377,31 +657,303 @@ export function AccountScreen() {
     } finally {
       setLoggingOut(false);
     }
+  }, [user?.uid]);
+
+  const confirmLogout = useCallback(() => {
+    Alert.alert("Log out?", "You can sign back in any time.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log out", style: "destructive", onPress: () => void onLogout() },
+    ]);
+  }, [onLogout]);
+
+  const sendVerification = useCallback(() => {
+    void runAction("Email verification", async () => {
+      if (!auth.currentUser) throw new Error("Please sign in again first.");
+      await sendEmailVerification(auth.currentUser);
+      Alert.alert("Email sent", "Check your inbox for the verification link.");
+    });
+  }, [runAction]);
+
+  const sendReset = useCallback(() => {
+    void runAction("Reset password", async () => {
+      const email = user?.email;
+      if (!email) throw new Error("No email address is attached to this account.");
+      await sendPasswordResetEmail(auth, email);
+      Alert.alert("Email sent", "Check your inbox for the password reset link.");
+    });
+  }, [runAction, user?.email]);
+
+  const clearMemory = useCallback(() => {
+    Alert.alert(
+      "Clear AURA memory?",
+      "This clears assistant preference-learning data only. Closet items and saved looks will stay untouched.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear memory",
+          style: "destructive",
+          onPress: () => {
+            void runAction("Clear AURA memory", async () => {
+              if (!user?.uid) throw new Error("Please sign in first.");
+              await Promise.all([
+                clearAssistantMemory(user.uid),
+                saveLearnedStyleMemory(user.uid, emptyLearnedStyleMemory(Date.now())),
+              ]);
+              Alert.alert("AURA memory cleared", "Preference-learning memory was reset.");
+            });
+          },
+        },
+      ],
+    );
+  }, [runAction, user?.uid]);
+
+  const exportData = useCallback(() => {
+    void runAction("Export my data", async () => {
+      if (!user?.uid) throw new Error("Please sign in first.");
+      const payload = await buildAccountExport(user.uid, profile, accountProfile);
+      await Share.share({
+        title: "AURA data export",
+        message: JSON.stringify(payload, null, 2),
+      });
+    });
+  }, [accountProfile, profile, runAction, user?.uid]);
+
+  const exportProfileJson = useCallback(() => {
+    void runAction("Download profile JSON", async () => {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        accountProfile,
+        profilePreferences: profile,
+      };
+      await Share.share({
+        title: "AURA profile preferences",
+        message: JSON.stringify(payload, null, 2),
+      });
+    });
+  }, [accountProfile, profile, runAction]);
+
+  const copyUserId = useCallback(() => {
+    if (!user?.uid) return;
+    void Clipboard.setStringAsync(user.uid).then(() => {
+      Alert.alert("Copied", "User ID copied to clipboard.");
+    });
+  }, [user?.uid]);
+
+  const manageSubscription = useCallback(() => {
+    Alert.alert("Subscriptions are coming soon.", "Your current plan is Free.");
   }, []);
 
+  const confirmDeleteAccount = useCallback(() => {
+    Alert.alert(
+      "Delete account?",
+      "This deletes account access in Firebase Auth. Full backend data deletion is not implemented here, so closet data will not be silently deleted.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert("Final confirmation", "Delete this account access now?", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Delete",
+                style: "destructive",
+                onPress: () => {
+                  void runAction("Delete account", async () => {
+                    if (!auth.currentUser) throw new Error("Please sign in again first.");
+                    try {
+                      await deleteUser(auth.currentUser);
+                      router.replace("/(auth)/welcome");
+                    } catch (error: any) {
+                      if (error?.code === "auth/requires-recent-login") {
+                        throw new Error("Please log in again before deleting your account.");
+                      }
+                      throw error;
+                    }
+                  });
+                },
+              },
+            ]);
+          },
+        },
+      ],
+    );
+  }, [runAction]);
+
   return (
-    <ProfileSectionScreen title="Account" subtitle="Personal details and sign-out" onSave={save} saving={saving}>
-      {profileLoading ? <ActivityIndicator color={colors.accent} /> : (
-        <>
-          <ProfileInputRow
-            label="Name"
-            value={accountProfile.name ?? ""}
-            placeholder="How should AURA address you?"
-            onChangeText={(value) =>
-              setAccountProfile((prev) => ({
-                ...prev,
-                name: value,
-              }))
-            }
-          />
-          <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19 }}>
-            AURA may use your name occasionally in greetings and replies, but it will not overdo it.
-          </Text>
-        </>
-      )}
-      <ProfileValueRow label="Email" value={user?.email ?? "No email found."} />
-      <PrimaryButton label={loggingOut ? "Signing out..." : "Log out"} onPress={onLogout} disabled={loggingOut} />
-    </ProfileSectionScreen>
+    <SafeScreen backgroundColor={colors.background} style={{ flex: 1 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 128 }}>
+        <View style={{ gap: 8 }}>
+          <Pressable
+            onPress={() => router.back()}
+            style={{
+              alignSelf: "flex-start",
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: colors.border,
+              backgroundColor: colors.surface,
+            }}
+          >
+            <Text style={{ color: colors.text, fontWeight: "700" }}>Back</Text>
+          </Pressable>
+          <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>Account</Text>
+          <Text style={{ color: colors.textSecondary }}>Identity, security, AURA data, and plan controls.</Text>
+        </View>
+
+        {profileLoading || preferencesLoading ? (
+          <View style={{ paddingVertical: 40, alignItems: "center" }}>
+            <ActivityIndicator color={colors.accent} />
+          </View>
+        ) : (
+          <>
+            <AccountSection title="ACCOUNT">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+                <Pressable
+                  onPress={pickProfilePhoto}
+                  disabled={workingAction === "Profile photo"}
+                  style={{
+                    width: 76,
+                    height: 76,
+                    borderRadius: 38,
+                    borderWidth: 1,
+                    borderColor: colors.glassBorder,
+                    backgroundColor: "rgba(255,255,255,0.06)",
+                    overflow: "hidden",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {photoURL ? (
+                    <Image source={{ uri: photoURL }} style={{ width: 76, height: 76 }} />
+                  ) : (
+                    <Text style={{ color: colors.text, fontSize: 24, fontWeight: "900" }}>
+                      {getAccountInitials(displayName, user?.email)}
+                    </Text>
+                  )}
+                </Pressable>
+                <View style={{ flex: 1, gap: 5 }}>
+                  <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>{displayName}</Text>
+                  <Pressable onPress={pickProfilePhoto} disabled={workingAction === "Profile photo"}>
+                    <Text style={{ color: colors.iridescentStart, fontSize: 13, fontWeight: "900" }}>
+                      {workingAction === "Profile photo" ? "Updating photo..." : "Change profile photo"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+              <ProfileInputRow
+                label="Display name"
+                value={accountProfile.name ?? ""}
+                placeholder="How should AURA address you?"
+                onChangeText={(value) =>
+                  setAccountProfile((prev) => ({
+                    ...prev,
+                    name: value,
+                  }))
+                }
+              />
+              {accountChanged ? (
+                <PrimaryButton
+                  label={savingAccount ? "Saving..." : "Save account changes"}
+                  onPress={saveAccount}
+                  disabled={savingAccount}
+                />
+              ) : null}
+              <ProfileValueRow label="Email" value={user?.email ?? "No email found."} />
+              <ProfileValueRow label="Email status" value={user?.emailVerified ? "Verified" : "Unverified"} />
+              {!user?.emailVerified && user?.email ? (
+                <AccountActionRow
+                  title="Send verification email"
+                  subtitle="Send a fresh verification link to your inbox."
+                  onPress={sendVerification}
+                  disabled={workingAction === "Email verification"}
+                />
+              ) : null}
+              <ProfileValueRow label="Member since" value={user?.metadata?.creationTime ?? "Not available"} />
+            </AccountSection>
+
+            <AccountSection title="SECURITY">
+              <AccountActionRow
+                title="Change password"
+                subtitle={isPasswordUser ? "Send a password reset email to change your password." : "Managed by connected sign-in provider."}
+                onPress={sendReset}
+                disabled={!isPasswordUser || !user?.email || workingAction === "Reset password"}
+              />
+              <AccountActionRow
+                title="Reset password email"
+                subtitle="Send a Firebase password reset email to your current address."
+                onPress={sendReset}
+                disabled={!user?.email || workingAction === "Reset password"}
+              />
+              <ProfileValueRow
+                label="Connected sign-in methods"
+                value={providerIds.length ? providerIds.map(providerName).join(" • ") : "Unknown"}
+              />
+            </AccountSection>
+
+            <AccountSection title="AURA DATA">
+              <AccountActionRow
+                title="Clear AURA memory"
+                subtitle="Reset assistant preference-learning only. Closet and saved looks stay intact."
+                onPress={clearMemory}
+                danger
+                disabled={workingAction === "Clear AURA memory"}
+              />
+              <AccountActionRow
+                title="Export my data"
+                subtitle="Share a lightweight JSON export of profile, closet summaries, looks, and AURA memory."
+                onPress={exportData}
+                disabled={workingAction === "Export my data"}
+              />
+              <AccountActionRow
+                title="Download profile/preferences JSON"
+                subtitle="Share only your account profile and profilePreferences JSON."
+                onPress={exportProfileJson}
+                disabled={workingAction === "Download profile JSON"}
+              />
+            </AccountSection>
+
+            <AccountSection title="PLAN">
+              <ProfileValueRow label="Current plan" value="Free" />
+              <AccountActionRow title="Manage subscription" subtitle="Subscriptions are coming soon." onPress={manageSubscription} />
+              <AccountActionRow title="Billing history" subtitle="Billing history is not available on the Free plan." onPress={manageSubscription} />
+            </AccountSection>
+
+            <AccountSection title="ADVANCED">
+              <AccountActionRow
+                title={showAdvanced ? "Hide advanced details" : "Show advanced details"}
+                onPress={() => setShowAdvanced((prev) => !prev)}
+              />
+              {showAdvanced ? (
+                <>
+                  <ProfileValueRow label="User ID" value={user?.uid ?? "Not signed in"} />
+                  {user?.uid ? <AccountActionRow title="Copy User ID" onPress={copyUserId} /> : null}
+                  <ProfileValueRow label="App version/build" value={appVersionLabel()} />
+                </>
+              ) : null}
+            </AccountSection>
+
+            <AccountSection title="DANGER ZONE">
+              <AccountActionRow
+                title={loggingOut ? "Signing out..." : "Log out"}
+                subtitle="End this session on this device."
+                onPress={confirmLogout}
+                disabled={loggingOut}
+                danger
+              />
+              <AccountActionRow
+                title="Delete account"
+                subtitle="Requires recent login. Backend closet-data deletion is not implemented here."
+                onPress={confirmDeleteAccount}
+                disabled={workingAction === "Delete account"}
+                danger
+              />
+            </AccountSection>
+          </>
+        )}
+      </ScrollView>
+    </SafeScreen>
   );
 }
 
@@ -794,62 +1346,156 @@ export function UnitsRegionScreen() {
 }
 
 export function StylePreferencesScreen() {
-  const { profile, setProfile, save, loading, saving } = useProfilePreferencesState();
+  const { user, profile, loading } = useProfilePreferencesState();
   const { colors } = useAppTheme();
+  const [styleProfile, setStyleProfile] = useState<StyleProfile>(emptyStyleProfile());
+  const [styleProfileLoading, setStyleProfileLoading] = useState(true);
+  const [savingAll, setSavingAll] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.uid) {
+      setStyleProfile(emptyStyleProfile());
+      setStyleProfileLoading(false);
+      return;
+    }
+    setStyleProfileLoading(true);
+    void loadStyleProfile(user.uid)
+      .then((nextProfile) => {
+        if (!cancelled) setStyleProfile(nextProfile);
+      })
+      .catch((error: any) => {
+        if (!cancelled) {
+          Alert.alert("Style profile", error?.message ?? "Unable to load style profile.");
+          setStyleProfile(emptyStyleProfile());
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setStyleProfileLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid]);
+
+  const handleSave = useCallback(async () => {
+    if (!user?.uid) {
+      Alert.alert("Profile", "Please sign in first.");
+      return;
+    }
+    try {
+      setSavingAll(true);
+      const normalizedStyleProfile: StyleProfile = {
+        ...styleProfile,
+        styleVibes: parseCommaText(commaText(styleProfile.styleVibes)),
+        preferredFits: parseCommaText(commaText(styleProfile.preferredFits)),
+        favoriteColors: parseCommaText(commaText(styleProfile.favoriteColors)),
+        avoidColors: parseCommaText(commaText(styleProfile.avoidColors)),
+        dressingGoals: parseCommaText(commaText(styleProfile.dressingGoals)),
+        updatedAt: Date.now(),
+      };
+      const nextProfile: UserProfilePreferences = {
+        ...profile,
+        styleAesthetics: normalizedStyleProfile.styleVibes,
+        preferredFit: firstSupportedPreferredFit(normalizedStyleProfile.preferredFits) ?? profile.preferredFit,
+        favoriteColors: normalizedStyleProfile.favoriteColors,
+        avoidedColors: normalizedStyleProfile.avoidColors,
+        goals: normalizedStyleProfile.dressingGoals,
+        stylePreferences: {
+          ...profile.stylePreferences,
+          preferredStyles: normalizedStyleProfile.styleVibes,
+          favoriteColors: normalizedStyleProfile.favoriteColors,
+          avoidedColors: normalizedStyleProfile.avoidColors,
+        },
+      };
+
+      await saveUserProfilePreferences(user.uid, nextProfile);
+      await saveStyleProfile(user.uid, normalizedStyleProfile);
+      Alert.alert("Saved", "Style preferences updated.");
+    } catch (error: any) {
+      Alert.alert("Save failed", error?.message ?? "Unable to save style preferences.");
+    } finally {
+      setSavingAll(false);
+    }
+  }, [profile, styleProfile, user?.uid]);
+
   return (
     <ProfileSectionScreen
       title="Style Preferences"
-      subtitle="Saved now for later. Not yet wired into outfit logic."
-      onSave={save}
-      saving={saving}
+      subtitle="AURA uses these to personalize tone, outfit direction, and how bold to go."
+      onSave={handleSave}
+      saving={savingAll}
     >
-      {loading ? (
+      {loading || styleProfileLoading ? (
         <ActivityIndicator color={colors.accent} />
       ) : (
         <>
           <ProfileInputRow
-            label="Preferred styles"
-            value={commaText(profile.stylePreferences.preferredStyles)}
+            label="Style vibes"
+            value={commaText(styleProfile.styleVibes)}
             onChangeText={(value) =>
-              setProfile((prev) => ({
+              setStyleProfile((prev) => ({
                 ...prev,
-                stylePreferences: { ...prev.stylePreferences, preferredStyles: parseCommaText(value) },
+                styleVibes: parseCommaText(value),
               }))
             }
-            placeholder="casual, streetwear, luxury"
+            placeholder="clean, layered, relaxed"
+          />
+          <ProfileInputRow
+            label="Preferred fits"
+            value={commaText(styleProfile.preferredFits)}
+            onChangeText={(value) =>
+              setStyleProfile((prev) => ({
+                ...prev,
+                preferredFits: parseCommaText(value),
+              }))
+            }
+            placeholder="relaxed, regular"
           />
           <ProfileInputRow
             label="Favorite colors"
-            value={commaText(profile.stylePreferences.favoriteColors)}
+            value={commaText(styleProfile.favoriteColors)}
             onChangeText={(value) =>
-              setProfile((prev) => ({
+              setStyleProfile((prev) => ({
                 ...prev,
-                stylePreferences: { ...prev.stylePreferences, favoriteColors: parseCommaText(value) },
+                favoriteColors: parseCommaText(value),
               }))
             }
-            placeholder="blue, black, olive"
+            placeholder="navy, black, olive"
           />
           <ProfileInputRow
-            label="Avoided colors"
-            value={commaText(profile.stylePreferences.avoidedColors)}
+            label="Avoid colors"
+            value={commaText(styleProfile.avoidColors)}
             onChangeText={(value) =>
-              setProfile((prev) => ({
+              setStyleProfile((prev) => ({
                 ...prev,
-                stylePreferences: { ...prev.stylePreferences, avoidedColors: parseCommaText(value) },
+                avoidColors: parseCommaText(value),
               }))
             }
             placeholder="orange, neon green"
           />
           <ProfileInputRow
-            label="Preferred brands"
-            value={commaText(profile.stylePreferences.preferredBrands)}
+            label="Dressing goals"
+            value={commaText(styleProfile.dressingGoals)}
             onChangeText={(value) =>
-              setProfile((prev) => ({
+              setStyleProfile((prev) => ({
                 ...prev,
-                stylePreferences: { ...prev.stylePreferences, preferredBrands: parseCommaText(value) },
+                dressingGoals: parseCommaText(value),
               }))
             }
-            placeholder="Moncler, Prada, Stussy"
+            placeholder="sharper, easier everyday, more polished"
+          />
+          <ProfilePillField
+            label="Experimentation level"
+            value={styleProfile.experimentationLevel}
+            options={["low", "medium", "high"] as const}
+            onSelect={(value) =>
+              setStyleProfile((prev) => ({
+                ...prev,
+                experimentationLevel: value,
+              }))
+            }
           />
         </>
       )}
