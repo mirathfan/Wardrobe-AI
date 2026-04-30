@@ -3,12 +3,14 @@ import { sendPasswordResetEmail } from "firebase/auth";
 import React, { useState } from "react";
 import { Alert, Text, View } from "react-native";
 
+import { Colors } from "@/constants/theme";
 import {
   AuthInlineLink,
   AuthInput,
   AuthScaffold,
   PrimaryAuthButton,
 } from "@/src/components/auth/AuthScaffold";
+import { getAuthErrorMessage } from "@/src/auth/authErrors";
 import { auth } from "@/src/lib/firebase";
 
 export default function ForgotPasswordScreen() {
@@ -25,7 +27,7 @@ export default function ForgotPasswordScreen() {
       await sendPasswordResetEmail(auth, normalizedEmail);
       setSent(true);
     } catch (error: any) {
-      Alert.alert("Reset failed", error?.message ?? "Unable to send reset email.");
+      Alert.alert("Reset failed", getAuthErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -52,11 +54,10 @@ export default function ForgotPasswordScreen() {
       />
       <PrimaryAuthButton label={loading ? "Sending..." : "Send reset email"} onPress={onReset} disabled={loading} />
       {sent ? (
-        <Text style={{ color: "#8fd8ff", fontSize: 14, lineHeight: 20 }}>
+        <Text style={{ color: Colors.dark.lightPurple, fontSize: 14, lineHeight: 20 }}>
           Reset link sent. Check your inbox and spam folder.
         </Text>
       ) : null}
     </AuthScaffold>
   );
 }
-

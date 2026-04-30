@@ -4,6 +4,8 @@ import { initializeAuth, type Persistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
+// Certificate pinning is handled by Firebase SDK.
+// Do not override or disable SSL verification anywhere in this codebase.
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,

@@ -80,21 +80,34 @@ export function AuthScaffold({
 
 export function AuthInput(props: React.ComponentProps<typeof TextInput>) {
   const { colors } = useAppTheme();
+  const isWeb = Platform.OS === "web";
+  const webInputStyle = isWeb
+    ? ({
+        outlineStyle: "none",
+        boxShadow: "none",
+        WebkitTextFillColor: colors.background,
+        opacity: 1,
+      } as const)
+    : null;
   return (
     <TextInput
-      placeholderTextColor={colors.textSecondary}
+      placeholderTextColor={isWeb ? "rgba(10,10,15,0.42)" : colors.textMuted}
+      selectionColor={colors.softPurple}
       {...props}
       style={[
         {
           borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.08)",
+          borderColor: isWeb ? "rgba(237,233,227,0.7)" : colors.border,
           borderRadius: 18,
-          backgroundColor: "rgba(255,255,255,0.03)",
-          color: colors.text,
+          backgroundColor: isWeb ? colors.ctaCream : colors.inputBackground,
+          color: isWeb ? colors.background : colors.textPrimary,
           paddingHorizontal: 16,
-          paddingVertical: 15,
-          fontSize: 16,
+          paddingVertical: 16,
+          fontSize: 17,
+          fontWeight: "700",
+          textShadowColor: "transparent",
         },
+        webInputStyle as React.ComponentProps<typeof TextInput>["style"],
         props.style,
       ]}
     />
@@ -131,8 +144,8 @@ export function SecondaryAuthButton({
         alignItems: "center",
         justifyContent: "center",
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.08)",
-        backgroundColor: "rgba(255,255,255,0.03)",
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceSoft,
         opacity: pressed ? 0.82 : 1,
       })}
     >
@@ -151,7 +164,7 @@ export function AuthInlineLink({
   const { colors } = useAppTheme();
   return (
     <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.75 : 1 })}>
-      <Text style={{ color: colors.aiAccent, fontSize: 14, fontWeight: "800" }}>{label}</Text>
+      <Text style={{ color: colors.softPurple, fontSize: 14, fontWeight: "800" }}>{label}</Text>
     </Pressable>
   );
 }

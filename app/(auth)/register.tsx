@@ -9,6 +9,7 @@ import {
   AuthScaffold,
   PrimaryAuthButton,
 } from "@/src/components/auth/AuthScaffold";
+import { getAuthErrorMessage } from "@/src/auth/authErrors";
 import { auth } from "@/src/lib/firebase";
 import { EMPTY_USER_PROFILE_PREFERENCES, saveUserAccountProfile, saveUserProfilePreferences } from "@/src/lib/userProfile";
 
@@ -47,7 +48,7 @@ export default function RegisterScreen() {
       ]);
       router.replace("/(onboarding)");
     } catch (error: any) {
-      Alert.alert("Create account failed", error?.message ?? "Unable to create your account.");
+      Alert.alert("Create account failed", getAuthErrorMessage(error));
     } finally {
       setLoading(false);
     }
