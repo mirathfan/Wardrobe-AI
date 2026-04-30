@@ -34,3 +34,4 @@ android/
 ios.build/
 android.build/
 .claude/
+.idea/
