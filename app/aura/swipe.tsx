@@ -24,7 +24,7 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { Fonts } from "@/constants/theme";
+import { Colors, Fonts } from "@/constants/theme";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
 import AuraRing, { RING_SIZE_MD } from "@/src/components/brand/AuraRing";
 import { auraShadow, auraTheme } from "@/src/components/ai/aiTheme";
@@ -48,6 +48,7 @@ const SWIPE_X_THRESHOLD = 110;
 const SWIPE_Y_THRESHOLD = -110;
 const DOMINANT_AXIS_RATIO = 1.15;
 const NON_DOMINANT_DAMPING = 0.14;
+const palette = Colors.dark;
 
 function createEmptyItemsMap(items: ClothingItem[]) {
   return new Map(items.map((item) => [item.id, item]));
@@ -546,7 +547,7 @@ function HeaderButton({
 }) {
   return (
     <Pressable onPress={onPress} style={styles.headerButton}>
-      <Ionicons name={icon} size={16} color="#E7ECF4" />
+      <Ionicons name={icon} size={16} color={palette.textPrimary} />
       <Text style={styles.headerButtonText}>{label}</Text>
     </Pressable>
   );
@@ -576,8 +577,8 @@ function ActionButton({
         pressed && !disabled ? { transform: [{ scale: 0.98 }] } : null,
       ]}
     >
-      <Ionicons name={icon} size={15} color={primary ? "#07111A" : "#E8EDF5"} />
-      <Text style={[styles.actionButtonText, primary ? { color: "#07111A" } : null]}>{label}</Text>
+      <Ionicons name={icon} size={15} color={primary ? palette.ctaText : palette.textPrimary} />
+      <Text style={[styles.actionButtonText, primary ? { color: palette.ctaText } : null]}>{label}</Text>
     </Pressable>
   );
 }
@@ -641,7 +642,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
   },
   headerTitle: {
-    color: "#F6F8FB",
+    color: palette.textPrimary,
     fontSize: 18,
     fontWeight: "800",
     letterSpacing: -0.35,
@@ -659,7 +660,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   headerButtonText: {
-    color: "#E7ECF4",
+    color: palette.textPrimary,
     fontSize: 12,
     fontWeight: "700",
     fontFamily: Fonts.sans,
@@ -686,7 +687,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
   },
   summaryValue: {
-    color: "#F6F8FB",
+    color: palette.textPrimary,
     fontSize: 13,
     fontWeight: "700",
     fontFamily: Fonts.sans,
@@ -713,7 +714,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: auraTheme.borderAccent,
-    backgroundColor: "rgba(9,17,25,0.92)",
+    backgroundColor: palette.dockBackground,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
@@ -763,15 +764,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   actionPrimary: {
-    backgroundColor: auraTheme.accent,
-    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: palette.ctaCream,
+    borderColor: palette.borderStrong,
   },
   actionSecondary: {
     backgroundColor: auraTheme.surfaceStrong,
     borderColor: auraTheme.borderSoft,
   },
   actionButtonText: {
-    color: "#E8EDF5",
+    color: palette.textPrimary,
     fontSize: 13,
     fontWeight: "800",
     fontFamily: Fonts.sans,
@@ -789,7 +790,7 @@ const styles = StyleSheet.create({
     ...auraShadow(0.18),
   },
   stateTitle: {
-    color: "#F6F8FB",
+    color: palette.textPrimary,
     fontSize: 24,
     lineHeight: 28,
     fontWeight: "800",
@@ -811,7 +812,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   stateButtonText: {
-    color: "#F6F8FB",
+    color: palette.textPrimary,
     fontSize: 12.5,
     fontWeight: "800",
     fontFamily: Fonts.sans,
@@ -852,14 +853,14 @@ const styles = StyleSheet.create({
   },
   modalScrim: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: palette.overlay,
     justifyContent: "flex-end",
   },
   modalCard: {
     maxHeight: "88%",
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    backgroundColor: "#09111A",
+    backgroundColor: palette.surfaceElevated,
     paddingHorizontal: 18,
     paddingTop: 18,
   },
@@ -877,7 +878,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
   },
   modalTitle: {
-    color: "#F6F8FB",
+    color: palette.textPrimary,
     fontSize: 22,
     lineHeight: 26,
     fontWeight: "800",
@@ -914,7 +915,7 @@ const styles = StyleSheet.create({
   },
   pieceName: {
     flex: 1,
-    color: "#EDF1F7",
+    color: palette.textPrimary,
     fontSize: 13.5,
     lineHeight: 18,
     fontFamily: Fonts.sans,
@@ -926,9 +927,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 14,
     borderRadius: 32,
-    backgroundColor: "#0D141D",
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: "rgba(177, 197, 223, 0.1)",
+    borderColor: palette.border,
   },
   shellHeader: {
     gap: 10,
@@ -937,13 +938,13 @@ const styles = StyleSheet.create({
     width: 84,
     height: 22,
     borderRadius: 999,
-    backgroundColor: "rgba(140, 168, 198, 0.09)",
+    backgroundColor: palette.purpleSurface,
     borderWidth: 1,
-    borderColor: "rgba(160, 185, 214, 0.08)",
+    borderColor: palette.purpleBorder,
   },
   shellLine: {
     borderRadius: 999,
-    backgroundColor: "rgba(160, 185, 214, 0.08)",
+    backgroundColor: palette.purpleSurface,
   },
   shellTitleLine: {
     width: "58%",
@@ -957,9 +958,9 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 388,
     borderRadius: 28,
-    backgroundColor: "rgba(244, 240, 235, 0.2)",
+    backgroundColor: palette.outfitBoardBackground,
     borderWidth: 1,
-    borderColor: "rgba(236, 239, 244, 0.08)",
+    borderColor: "rgba(17,19,26,0.08)",
   },
   shellBoardDeep: {
     minHeight: 372,
