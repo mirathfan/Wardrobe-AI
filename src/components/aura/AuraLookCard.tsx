@@ -1,836 +1,987 @@
-import React, { memo, useEffect, useMemo } from "react";
+import React, { memo, useEffect, useMemo, useState } from "react";
+import AppImage from "@/src/components/common/AppImage";
+import { useRouter } from "expo-router";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from "react-native-reanimated";
 import {
-  DimensionValue,
-  Image,
-  Pressable,
   StyleProp,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
   ViewStyle,
+  Platform,
   useWindowDimensions,
 } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
-import { getItemImageUrl } from "@/src/lib/itemImage";
-import {
-  getRenderProfile,
-  type RenderProfile,
-  type RenderSlotType,
-} from "@/src/lib/renderProfiles";
-import {
-  getVisualNormalizationDefaults,
-  mergeVisualNormalization,
-  type VisualNormalization,
-} from "@/src/lib/visualNormalization";
+import { useReduceMotion } from "@/hooks/useReduceMotion";
+import AuraPressable from "@/src/components/aura/AuraPressable";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { ItemDetailSheet } from "@/src/components/aura/ItemDetailSheet";
+import { AccessoryStrip } from "@/src/components/outfit/AccessoryStrip";
+import { buildRenderPlan, type AuraLayoutItem, type AuraLayoutVariant } from "@/src/lib/auraLookLayouts";
 import type { ClothingItem } from "@/src/types/ClothingItem";
-import type { AuraLook, AuraLookAction, AuraLookPiece } from "@/src/types/aura";
-
-type AuraItem = AuraLookPiece & {
-  id?: string;
-  name?: string;
-  title?: string;
-  brand?: string | null;
-  category?: string | null;
-  subCategory?: string | null;
-  type?: string | null;
-  cleanedImageUrl?: string | null;
-  image?: string | null;
-  visualNormalization?: VisualNormalization | null;
-};
+import type { AuraLook, AuraLookAction, AuraLookOptionMeta } from "@/src/types/aura";
 
 type Props = {
   look: AuraLook;
   colors?: AppColors;
   itemsById?: Map<string, ClothingItem>;
   style?: StyleProp<ViewStyle>;
-  onAction?: (action: AuraLookAction) => void;
+  onAction?: (action: AuraLookAction, look: AuraLook, option?: AuraLookOptionMeta) => void;
   onPressSave?: () => void;
   onPressPlan?: () => void;
-};
-
-type AccessorySlots = {
-  headwear?: AuraItem | null;
-  glasses?: AuraItem | null;
-  chain?: AuraItem | null;
-  watch?: AuraItem | null;
-  bracelet?: AuraItem | null;
-  bag?: AuraItem | null;
-};
-
-type BoardSlots = {
-  top?: AuraItem | null;
-  outerwear?: AuraItem | null;
-  bottom?: AuraItem | null;
-  footwear?: AuraItem | null;
-  accessories: AccessorySlots;
-};
-
-type UpperLayoutMode = "single-upper" | "layered-upper";
-
-type RectMetrics = {
-  left: string;
-  top?: string;
-  bottom?: string;
-  width: string;
-  height: string;
-  zIndex?: number;
+  option?: AuraLookOptionMeta | null;
+  viewportWidth?: number;
+  hideActions?: boolean;
+  compact?: boolean;
+  swipeVariant?: boolean;
+  boardVariant?: AuraLayoutVariant;
+  boardOnly?: boolean;
 };
 
 const BOARD_MAX_WIDTH = 760;
-const BOARD_MIN_HEIGHT = 500;
-const BOARD_HEIGHT_RATIO = 1.0;
-
-const ACCESSORY_ORDER: (keyof AccessorySlots)[] = [
-  "headwear",
-  "glasses",
-  "chain",
-  "watch",
-  "bracelet",
-  "bag",
-];
-
-const DEBUG_AURA_BOARD =
-  __DEV__ && process.env.EXPO_PUBLIC_AURA_BOARD_DEBUG === "1";
+const BOARD_ASPECT_RATIO = 1;
 
 function firstNonEmpty<T>(...values: (T | null | undefined)[]): T | undefined {
   return values.find(Boolean) as T | undefined;
 }
 
-function normalizeText(value?: string | null) {
-  return (value ?? "").trim().toLowerCase();
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function getItemLabel(item?: AuraItem | null) {
-  return item?.itemName ?? item?.name ?? item?.title ?? "";
-}
-
-function toAuraItem(
-  piece: AuraLookPiece,
-  itemsById?: Map<string, ClothingItem>,
-) {
-  const sourceItem =
-    piece.itemId && itemsById ? (itemsById.get(piece.itemId) ?? null) : null;
-
-  return {
-    ...piece,
-    id: piece.itemId ?? undefined,
-    name: piece.itemName,
-    brand: sourceItem?.brand ?? null,
-    category: sourceItem?.category ?? null,
-    subCategory: sourceItem?.subCategory ?? null,
-    type: sourceItem?.type ?? null,
-    cleanedImageUrl:
-      getItemImageUrl(sourceItem, { variant: "hero" }) ??
-      getItemImageUrl(sourceItem, { variant: "thumb" }) ??
-      null,
-    imageUrl: piece.imageUrl ?? sourceItem?.photoUrl ?? null,
-    image: sourceItem?.photoUri ?? null,
-    visualNormalization: sourceItem?.visualNormalization ?? null,
-  } satisfies AuraItem;
-}
-
-function getImageSourceForBoardItem(item?: AuraItem | null) {
-  const uri = firstNonEmpty(item?.cleanedImageUrl, item?.imageUrl, item?.image);
+function getImageSourceForBoardItem(item?: AuraLayoutItem | null) {
+  const uri = firstNonEmpty(item?.image, item?.cleanedImageUrl, item?.imageUrl);
   return uri ? { uri } : null;
 }
 
-function isTop(item: AuraItem) {
-  const c = normalizeText(item.category);
-  const s = normalizeText(item.subCategory);
-  const t = normalizeText(item.type);
+function titleCase(value: string) {
+  return value.replace(/\b\w/g, (char) => char.toUpperCase());
+}
 
-  return (
-    c === "tops" ||
-    [
-      "shirt",
-      "t-shirt",
-      "tee",
-      "polo",
-      "top",
-      "button_down",
-      "button-down",
-      "henley",
-    ].includes(s) ||
-    ["shirt", "tshirt", "tee", "polo", "top"].includes(t)
+function cleanShortLabel(value?: string | null) {
+  const normalized = (value ?? "")
+    .replace(/\bdirection\b/gi, "")
+    .replace(/\blook\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "";
+
+  return titleCase(
+    normalized
+      .split(/[,/]/g)
+      .flatMap((part) => part.trim().split(/\s+/))
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(" "),
   );
 }
 
-function isOuterwear(item: AuraItem) {
-  const c = normalizeText(item.category);
-  const s = normalizeText(item.subCategory);
-  const t = normalizeText(item.type);
+function normalizeDirectionLabel(...values: (string | null | undefined)[]) {
+  const joined = values
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (joined.includes("safe")) return "Safe";
+  if (joined.includes("balanced")) return "Balanced";
+  if (joined.includes("bold")) return "Bold";
+  return "";
+}
 
-  return (
-    c === "outerwear" ||
-    ["jacket", "coat", "overshirt", "blazer", "hoodie", "cardigan"].includes(
-      s,
-    ) ||
-    ["jacket", "coat", "overshirt", "blazer", "hoodie"].includes(t)
+function looksLikeRawOutfitTitle(value?: string | null) {
+  const title = (value ?? "").trim();
+  if (!title) return true;
+  if (title.length > 34) return true;
+  if (/[,:;]/.test(title)) return true;
+  if (title.split(/\s+/).length > 4) return true;
+  return /\b(shirt|tee|t-shirt|jeans|pants|trousers|sneaker|shoe|loafer|watch|glasses|jacket|hoodie|shorts)\b/i.test(
+    title,
   );
 }
 
-function isBottom(item: AuraItem) {
-  const c = normalizeText(item.category);
-  const s = normalizeText(item.subCategory);
-  const t = normalizeText(item.type);
-
-  return (
-    c === "bottoms" ||
-    ["jeans", "pants", "trousers", "cargo", "shorts"].includes(s) ||
-    ["jeans", "pants", "trousers", "shorts"].includes(t)
-  );
-}
-
-function isFootwear(item: AuraItem) {
-  const c = normalizeText(item.category);
-  const s = normalizeText(item.subCategory);
-  const t = normalizeText(item.type);
-
-  return (
-    c === "footwear" ||
-    [
-      "shoe",
-      "shoes",
-      "sneaker",
-      "sneakers",
-      "loafer",
-      "derby",
-      "boot",
-      "sandals",
-      "formal_shoe",
-    ].includes(s) ||
-    ["shoe", "sneaker", "loafer", "boot"].includes(t)
-  );
-}
-
-function classifyAccessory(item: AuraItem): keyof AccessorySlots | null {
-  const c = normalizeText(item.category);
-  const s = normalizeText(item.subCategory);
-  const t = normalizeText(item.type);
-  const joined = `${c} ${s} ${t}`;
-
-  if (
-    joined.includes("cap") ||
-    joined.includes("hat") ||
-    joined.includes("headwear")
-  ) {
-    return "headwear";
+function deriveEditorialLookTitle(look: AuraLook) {
+  const explicit = (look.lookTitle ?? "").trim();
+  if (explicit && !looksLikeRawOutfitTitle(explicit)) {
+    return titleCase(explicit);
   }
-
-  if (
-    joined.includes("glasses") ||
-    joined.includes("sunglasses") ||
-    joined.includes("eyewear")
-  ) {
-    return "glasses";
-  }
-
-  if (joined.includes("chain") || joined.includes("necklace")) {
-    return "chain";
-  }
-
-  if (joined.includes("watch")) {
-    return "watch";
-  }
-
-  if (joined.includes("bracelet") || joined.includes("bangle")) {
-    return "bracelet";
-  }
-
-  if (
-    joined.includes("bag") ||
-    joined.includes("crossbody") ||
-    joined.includes("tote") ||
-    joined.includes("backpack")
-  ) {
-    return "bag";
-  }
-
-  return null;
+  const base = cleanShortLabel(look.vibe) || cleanShortLabel(look.personalizationLabel);
+  if (!base) return "Aura Edit";
+  if (/\b(reset|edit|uniform|casual)\b/i.test(base)) return base;
+  if (base.split(/\s+/).length <= 2) return `${base} Reset`;
+  return base;
 }
 
-function dedupeItems(items: AuraItem[]) {
-  const seen = new Set<string>();
-  const out: AuraItem[] = [];
+function deriveEditorialSubtitle(look: AuraLook) {
+  const source = [look.shortExplanation, look.stylingNote, look.personalizationNote]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!source) return "";
+  if (source.length <= 88) return source;
+  return `${source.slice(0, 85).trimEnd()}...`;
+}
 
-  for (const item of items) {
-    const key =
-      item.id ||
-      `${getItemLabel(item)}|${item.category}|${item.subCategory}|${item.cleanedImageUrl}|${item.imageUrl}`;
+function getItemLabel(item?: AuraLayoutItem | null) {
+  return item?.itemName ?? "";
+}
 
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
+function getCategoryPadding(category?: string | null, subCategory?: string | null, accessoryType?: string | null) {
+  if (!category) return 8;
+  const normalizedCategory = String(category).trim().toLowerCase();
+  const normalizedSubCategory = String(subCategory ?? "").trim().toLowerCase();
+  const normalizedAccessoryType = String(accessoryType ?? "").trim().toLowerCase();
+  const accessoryDescriptor = `${normalizedSubCategory} ${normalizedAccessoryType}`;
+  const matchesAccessory = (values: string[]) => values.some((value) => accessoryDescriptor.includes(value));
+
+  switch (normalizedCategory) {
+    case "top":
+      return 8;
+    case "outerwear":
+      return 6;
+    case "bottom":
+      return 4;
+    case "footwear":
+    case "shoes":
+      return 6;
+    case "one_piece":
+      return 4;
+    case "accessory":
+      if (matchesAccessory(["bag", "backpack", "tote_bag", "tote", "clutch", "crossbody", "shoulder_bag", "mini_bag"])) return 6;
+      if (matchesAccessory(["sunglasses", "glasses"])) return 10;
+      if (matchesAccessory(["cap", "hat", "beanie", "bucket_hat"])) return 8;
+      if (matchesAccessory(["perfume", "cologne", "fragrance"])) return 8;
+      if (matchesAccessory(["necklace", "chain", "chain_belt", "jewelry", "jewellery"])) return 12;
+      if (matchesAccessory(["belt"])) return 2;
+      return 8;
+    default:
+      return 8;
   }
-
-  return out;
-}
-
-function resolveAuraBoardSlots(
-  look: AuraLook,
-  itemsById?: Map<string, ClothingItem>,
-): BoardSlots {
-  const pool = dedupeItems(
-    (look.pieces ?? []).map((piece) => toAuraItem(piece, itemsById)),
-  );
-
-  const slots: BoardSlots = {
-    accessories: {},
-  };
-
-  for (const item of pool) {
-    if (!slots.top && isTop(item)) {
-      slots.top = item;
-      continue;
-    }
-
-    if (!slots.outerwear && isOuterwear(item)) {
-      slots.outerwear = item;
-      continue;
-    }
-
-    if (!slots.bottom && isBottom(item)) {
-      slots.bottom = item;
-      continue;
-    }
-
-    if (!slots.footwear && isFootwear(item)) {
-      slots.footwear = item;
-      continue;
-    }
-
-    const accessoryType = classifyAccessory(item);
-    if (accessoryType && !slots.accessories[accessoryType]) {
-      slots.accessories[accessoryType] = item;
-    }
-  }
-
-  return slots;
-}
-
-function getUpperLayoutMode(slots: BoardSlots): UpperLayoutMode {
-  return slots.outerwear ? "layered-upper" : "single-upper";
-}
-
-function getBoardPieceMetrics(mode: UpperLayoutMode): {
-  top: RectMetrics;
-  outerwear?: RectMetrics;
-  bottom: RectMetrics;
-  footwear?: RectMetrics;
-  accessoryBand: RectMetrics;
-} {
-  /*const bottom: RectMetrics = {
-    left: "38%",
-    top: "24%",
-    width: "24%",
-    height: "38%",
-    zIndex: 2,
-  };*/
-
-  const footwear: RectMetrics = {
-    left: "38%",
-    bottom: "18%",
-    width: "24%",
-    height: "8%",
-    zIndex: 5,
-  };
-
-  const accessoryBand: RectMetrics = {
-    left: "10%",
-    top: "85%",
-    width: "84%",
-    height: "12%",
-    zIndex: 4,
-  };
-
-  if (mode === "single-upper") {
-    return {
-      top: {
-        left: "28%",
-        top: "3%",
-        width: "44%",
-        height: "30%",
-        zIndex: 1,
-      },
-      bottom: {
-        left: "38%",
-        top: "30%",
-        width: "24%",
-        height: "40%",
-        zIndex: 2,
-      },
-      footwear,
-      accessoryBand,
-    };
-  }
-
-  return {
-    top: {
-      left: "26%",
-      top: "5%",
-      width: "26%",
-      height: "30%",
-      zIndex: 1,
-    },
-    outerwear: {
-      left: "45%",
-      top: "4%",
-      width: "30%",
-      height: "32%",
-      zIndex: 3,
-    },
-    bottom: {
-      left: "38%",
-      top: "31%",
-      width: "24%",
-      height: "41%",
-      zIndex: 2,
-    },
-    footwear,
-    accessoryBand,
-  };
-}
-
-function getAccessoryRailMetrics(accessories: AccessorySlots) {
-  return ACCESSORY_ORDER.filter((key) => Boolean(accessories[key])).map(
-    (key) => ({
-      key,
-      item: accessories[key] as AuraItem,
-    }),
-  );
-}
-
-const SLOT_NORMALIZATION_DEFAULTS: Record<
-  RenderSlotType,
-  { scale: number; translateY: number }
-> = {
-  top: { scale: 1, translateY: 0 },
-  outerwear: { scale: 1.01, translateY: -2 },
-  bottom: { scale: 1, translateY: 0 },
-  footwear: { scale: 0.98, translateY: 4 },
-  accessory: { scale: 1, translateY: 0 },
-};
-
-type BoardImageCompensation = {
-  profile: RenderProfile;
-  scale: number;
-  translateY: number;
-  usedItemLevelNormalization: boolean;
-  clamped: boolean;
-};
-
-function getBoardImageCompensation(
-  item: AuraItem | null | undefined,
-  slotKind: RenderSlotType,
-): BoardImageCompensation {
-  const slotDefaults = SLOT_NORMALIZATION_DEFAULTS[slotKind];
-  const profile = getRenderProfile({
-    category: item?.category,
-    subCategory: item?.subCategory,
-    type: item?.type,
-  });
-  const normalization = mergeVisualNormalization(
-    getVisualNormalizationDefaults({
-      category: item?.category,
-      subCategory: item?.subCategory,
-      type: item?.type,
-    }),
-    item?.visualNormalization,
-  );
-
-  const rawScale =
-    slotDefaults.scale *
-    (profile.defaultScale ?? 1) *
-    (normalization.recommendedScale ?? 1);
-  const minScale = profile.minScale ?? 0.8;
-  const maxScale = profile.maxScale ?? 1.2;
-  const scale = Number(clamp(rawScale, minScale, maxScale).toFixed(3));
-
-  const rawTranslateY =
-    slotDefaults.translateY +
-    (profile.defaultTranslateY ?? 0) +
-    (normalization.recommendedTranslateY ?? 0);
-  const translateY = Math.round(clamp(rawTranslateY, -20, 20));
-
-  return {
-    profile,
-    scale,
-    translateY,
-    usedItemLevelNormalization: Boolean(item?.visualNormalization),
-    clamped: scale !== Number(rawScale.toFixed(3)) || translateY !== Math.round(rawTranslateY),
-  };
-}
-
-function getDebugBoardEntry(input: {
-  item?: AuraItem | null;
-  slotType: RenderSlotType;
-  compensation: BoardImageCompensation;
-}) {
-  return {
-    piece: getItemLabel(input.item) || "(unnamed)",
-    profile: normalizeText(input.item?.subCategory) || normalizeText(input.item?.type) || "generic",
-    chosenSlotType: input.slotType,
-    finalScale: input.compensation.scale,
-    finalTranslateY: input.compensation.translateY,
-    usedItemLevelNormalization: input.compensation.usedItemLevelNormalization,
-    clamped: input.compensation.clamped,
-  };
-}
-
-function getRectStyle(metrics: RectMetrics): ViewStyle {
-  return {
-    left: metrics.left as DimensionValue,
-    ...(metrics.top ? { top: metrics.top as DimensionValue } : {}),
-    ...(metrics.bottom ? { bottom: metrics.bottom as DimensionValue } : {}),
-    width: metrics.width as DimensionValue,
-    height: metrics.height as DimensionValue,
-    zIndex: metrics.zIndex ?? 1,
-  };
 }
 
 function BoardImage({
   item,
-  metrics,
-  slotKind,
+  leftPct,
+  topPct,
+  widthPct,
+  heightPct,
+  zIndex,
+  shadowIntensity,
+  rotation,
+  animationIndex,
+  animationKey,
+  reduceMotion,
+  onPress,
 }: {
-  item?: AuraItem | null;
-  metrics: RectMetrics;
-  slotKind: RenderSlotType;
+  item?: AuraLayoutItem | null;
+  leftPct: number;
+  topPct: number;
+  widthPct: number;
+  heightPct: number;
+  zIndex: number;
+  shadowIntensity: number;
+  rotation: number;
+  animationIndex: number;
+  animationKey: string;
+  reduceMotion: boolean;
+  onPress: (item: AuraLayoutItem) => void;
 }) {
   const source = getImageSourceForBoardItem(item);
+  const opacity = useSharedValue(reduceMotion ? 1 : 0);
+  const translateY = useSharedValue(reduceMotion ? 0 : 20);
+  const isBelt = item?.accessoryType === "belt";
+
+  useEffect(() => {
+    if (reduceMotion) {
+      opacity.value = 1;
+      translateY.value = 0;
+      return;
+    }
+
+    const delay = Math.min(animationIndex, 4) * 80;
+    opacity.value = 0;
+    translateY.value = 20;
+    opacity.value = withDelay(
+      delay,
+      withTiming(1, {
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+      }),
+    );
+    translateY.value = withDelay(
+      delay,
+      withTiming(0, {
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+      }),
+    );
+  }, [animationIndex, animationKey, opacity, reduceMotion, translateY]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: translateY.value }],
+  }));
+
   if (!item || !source) return null;
-  const compensation = getBoardImageCompensation(item, slotKind);
 
   return (
-    <View
+    <Animated.View
       style={[
-        styles.absolutePiece,
-        getRectStyle(metrics),
+        styles.animatedPiece,
+        {
+          left: `${leftPct}%`,
+          top: `${topPct}%`,
+          width: `${widthPct}%`,
+          height: `${heightPct}%`,
+          zIndex,
+        },
+        animatedStyle,
       ]}
-      pointerEvents="none"
     >
-      <Image
-        source={source}
-        resizeMode="contain"
+      <TouchableOpacity
+        activeOpacity={0.85}
+        hitSlop={16}
         style={[
-          styles.image,
+          styles.absolutePiece,
+          Platform.OS === "android" ? styles.absolutePieceAndroid : null,
           {
-            transform: [
-              { translateY: compensation.translateY },
-              { scale: compensation.scale },
-            ],
+            padding: getCategoryPadding(item.role, item.subCategory, item.accessoryType),
           },
         ]}
-      />
-    </View>
+        onPress={() => onPress(item)}
+      >
+        <View
+          pointerEvents="none"
+          style={[
+            styles.photoShadow,
+            item.role === "footwear" ? styles.photoShadowFootwear : styles.photoShadowGarment,
+            item.role === "accessory" ? styles.photoShadowAccessory : null,
+            {
+              opacity:
+                item.role === "footwear"
+                  ? 0.08 * shadowIntensity
+                  : item.role === "accessory"
+                    ? 0.04 * shadowIntensity
+                    : 0.055 * shadowIntensity,
+            },
+          ]}
+        />
+        <AppImage
+          source={{
+            uri: source.uri,
+          }}
+          resizeMode="contain"
+          style={[
+            styles.image,
+            isBelt ? styles.beltImage : null,
+            {
+              transform: [{ rotate: `${rotation}deg` }],
+            },
+          ]}
+        />
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
 export const AuraLookCard = memo(function AuraLookCard({
   look,
+  colors: providedColors,
   itemsById,
   style,
   onAction,
   onPressSave,
   onPressPlan,
+  option,
+  viewportWidth,
+  hideActions = false,
+  compact = false,
+  swipeVariant = false,
+  boardVariant,
+  boardOnly = false,
 }: Props) {
+  const router = useRouter();
+  const { colors: appColors } = useAppTheme();
+  const colors = providedColors ?? appColors;
   const { width: screenWidth } = useWindowDimensions();
+  const [selectedItem, setSelectedItem] = useState<AuraLayoutItem | null>(null);
+  const reduceMotion = useReduceMotion();
+  const canLikeLook = look.actions.includes("likeLook");
+  const canNotMyVibe = look.actions.includes("notMyVibe");
+  const canShowMoreLikeThis = look.actions.includes("showMoreLikeThis");
+  const canLessLikeThis = look.actions.includes("lessLikeThis");
+  const canShopMissingPieces = look.actions.includes("shopMissingPieces");
+  const canUseOnlyMyCloset = look.actions.includes("useOnlyMyCloset");
+  const canMakeItDressier = look.actions.includes("makeItDressier");
 
-  const boardWidth = Math.min(screenWidth - 24, BOARD_MAX_WIDTH);
-  const boardHeight = Math.max(
-    Math.round(boardWidth * BOARD_HEIGHT_RATIO),
-    BOARD_MIN_HEIGHT,
+  const effectiveVariant = boardVariant ?? (swipeVariant ? "swipe" : "chat");
+  const isStudio = effectiveVariant === "studio";
+  const cardHorizontalPadding = compact || swipeVariant || isStudio ? 12 : 14;
+  const availableBoardWidth = Math.max(
+    1,
+    (viewportWidth ?? screenWidth) - cardHorizontalPadding * 2,
+  );
+  const boardWidth = Math.min(
+    availableBoardWidth,
+    BOARD_MAX_WIDTH,
+  );
+  const boardHeight = Math.round(boardWidth * BOARD_ASPECT_RATIO);
+  const displayTitle = deriveEditorialLookTitle(look);
+  const displayReason = deriveEditorialSubtitle(look);
+  const directionLabel = normalizeDirectionLabel(option?.optionLabel, look.personalizationLabel, look.vibe);
+  const vibeLabelSource =
+    cleanShortLabel(look.vibe) || cleanShortLabel(look.personalizationLabel);
+  const vibeLabel = vibeLabelSource && vibeLabelSource !== directionLabel ? vibeLabelSource : "";
+  const visibleClosetItems = compact
+    ? (look.fromCloset ?? []).filter(Boolean).slice(0, swipeVariant ? 2 : 3)
+    : (look.fromCloset ?? []).filter(Boolean).slice(0, 5);
+  const hiddenClosetCount = Math.max(0, (look.fromCloset ?? []).filter(Boolean).length - visibleClosetItems.length);
+
+  const renderPlan = useMemo(
+    () => buildRenderPlan(look, itemsById, { variant: effectiveVariant }),
+    [effectiveVariant, itemsById, look],
+  );
+  const animationKey = useMemo(() => {
+    const maybeLookId = (look as AuraLook & { id?: string | null }).id;
+    return (
+      maybeLookId ??
+      `${look.lookTitle}|${look.vibe}|${look.pieces
+        .map((piece) => `${piece.itemId ?? piece.itemName}:${piece.role}:${piece.imageUrl ?? ""}`)
+        .join("|")}`
+    );
+  }, [look]);
+  const overflowLabels = Array.from(
+    new Set(renderPlan.overflowItems.map((item) => getItemLabel(item)).filter(Boolean)),
+  ).slice(0, compact ? 2 : 3);
+
+  const boardContent = (
+    <View
+      style={[
+        styles.board,
+        compact ? styles.boardCompact : null,
+        swipeVariant ? styles.boardSwipe : null,
+        isStudio ? styles.boardStudio : null,
+        { width: boardWidth, height: boardHeight, backgroundColor: colors.outfitBoardBackground },
+      ]}
+    >
+      <AccessoryStrip
+        accessories={renderPlan.stripItems}
+        hiddenAccessories={renderPlan.hiddenStripItems}
+        onItemPress={setSelectedItem}
+      />
+      {renderPlan.placedItems.map((entry, index) => (
+        <BoardImage
+          key={entry.key}
+          item={entry.item}
+          leftPct={entry.leftPct}
+          topPct={entry.topPct}
+          widthPct={entry.widthPct}
+          heightPct={entry.heightPct}
+          zIndex={entry.zIndex}
+          shadowIntensity={entry.shadowIntensity}
+          rotation={entry.rotation}
+          animationIndex={index}
+          animationKey={animationKey}
+          reduceMotion={reduceMotion}
+          onPress={setSelectedItem}
+        />
+      ))}
+    </View>
   );
 
-  const slots = useMemo(
-    () => resolveAuraBoardSlots(look, itemsById),
-    [look, itemsById],
-  );
-  const upperLayoutMode = useMemo(() => getUpperLayoutMode(slots), [slots]);
-  const metrics = useMemo(
-    () => getBoardPieceMetrics(upperLayoutMode),
-    [upperLayoutMode],
-  );
-  const accessoryRail = useMemo(
-    () => getAccessoryRailMetrics(slots.accessories),
-    [slots.accessories],
-  );
-
-  const debugEntries = useMemo(() => {
-    if (!DEBUG_AURA_BOARD) return [];
-
-    const entries = [
-      slots.top
-        ? getDebugBoardEntry({
-            item: slots.top,
-            slotType: "top",
-            compensation: getBoardImageCompensation(slots.top, "top"),
-          })
-        : null,
-      slots.outerwear
-        ? getDebugBoardEntry({
-            item: slots.outerwear,
-            slotType: "outerwear",
-            compensation: getBoardImageCompensation(slots.outerwear, "outerwear"),
-          })
-        : null,
-      slots.bottom
-        ? getDebugBoardEntry({
-            item: slots.bottom,
-            slotType: "bottom",
-            compensation: getBoardImageCompensation(slots.bottom, "bottom"),
-          })
-        : null,
-      slots.footwear
-        ? getDebugBoardEntry({
-            item: slots.footwear,
-            slotType: "footwear",
-            compensation: getBoardImageCompensation(slots.footwear, "footwear"),
-          })
-        : null,
-      ...accessoryRail.map((entry) =>
-        getDebugBoardEntry({
-          item: entry.item,
-          slotType: "accessory",
-          compensation: getBoardImageCompensation(entry.item, "accessory"),
-        }),
-      ),
-    ].filter(Boolean);
-
-    return entries;
-  }, [accessoryRail, slots.bottom, slots.footwear, slots.outerwear, slots.top]);
-
-  useEffect(() => {
-    if (!DEBUG_AURA_BOARD || !debugEntries.length) return;
-    console.log("[AuraLookCard] board rendering decisions", debugEntries);
-  }, [debugEntries]);
+  if (boardOnly) {
+    return (
+      <View style={[styles.boardOnlyCard, style]}>
+        {boardContent}
+      </View>
+    );
+  }
 
   return (
-    <View style={[styles.card, style]}>
-      {!!look.lookTitle && <Text style={styles.title}>{look.lookTitle}</Text>}
+    <View
+      style={[
+        styles.card,
+        compact ? styles.cardCompact : null,
+        swipeVariant ? styles.cardSwipe : null,
+        isStudio ? styles.cardStudio : null,
+        {
+          backgroundColor: isStudio ? colors.surfaceElevated : colors.surface,
+          borderColor: isStudio ? colors.purpleBorder : colors.border,
+        },
+        style,
+      ]}
+    >
+      <View style={styles.topRow}>
+        <View style={styles.labelRow}>
+          {!!directionLabel && (
+            <View
+              style={[
+                styles.headerChip,
+                styles.directionChip,
+                {
+                  backgroundColor: colors.purpleSurface,
+                  borderColor: colors.purpleBorder,
+                },
+              ]}
+            >
+              <View style={[styles.directionDot, { backgroundColor: colors.softPurple }]} />
+              <Text style={[styles.directionChipText, { color: colors.lightPurple }]}>
+                {directionLabel.toUpperCase()}
+              </Text>
+            </View>
+          )}
+          {!!vibeLabel && (
+            <View
+              style={[
+                styles.headerChip,
+                { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+              ]}
+            >
+              <Text style={[styles.vibeChipText, { color: colors.textSecondary }]}>{vibeLabel}</Text>
+            </View>
+          )}
+        </View>
+      </View>
 
-      {!!look.shortExplanation && (
-        <Text numberOfLines={2} style={styles.subtitle}>
-          {look.shortExplanation}
-        </Text>
-      )}
+      {boardContent}
 
-      <View style={[styles.board, { width: boardWidth, height: boardHeight }]}>
-        <BoardImage item={slots.bottom} metrics={metrics.bottom} slotKind="bottom" />
-        <BoardImage item={slots.top} metrics={metrics.top} slotKind="top" />
-
-        {slots.outerwear && metrics.outerwear ? (
-          <BoardImage
-            item={slots.outerwear}
-            metrics={metrics.outerwear}
-            slotKind="outerwear"
-          />
-        ) : null}
-
-        {slots.footwear && metrics.footwear ? (
-          <BoardImage
-            item={slots.footwear}
-            metrics={metrics.footwear}
-            slotKind="footwear"
-          />
-        ) : null}
-
-        {accessoryRail.length ? (
-          <View
-            pointerEvents="none"
+      <View style={[styles.copyBlock, swipeVariant ? styles.copyBlockSwipe : null, isStudio ? styles.copyBlockStudio : null]}>
+        {!!displayTitle && (
+          <Text
+            numberOfLines={1}
             style={[
-              styles.accessoryBand,
-              getRectStyle(metrics.accessoryBand),
+              styles.title,
+              compact ? styles.titleCompact : null,
+              swipeVariant ? styles.titleSwipe : null,
             ]}
           >
-            {accessoryRail.map((entry) => {
-              const source = getImageSourceForBoardItem(entry.item);
-              if (!source) return null;
-              const compensation = getBoardImageCompensation(
-                entry.item,
-                "accessory",
-              );
+            {displayTitle}
+          </Text>
+        )}
 
-              const isBag = entry.key === "bag";
-              const isChain = entry.key === "chain";
-
-              return (
-                <View
-                  key={entry.key}
-                  style={[
-                    styles.accessoryItem,
-                    isBag
-                      ? styles.accessoryBag
-                      : isChain
-                        ? styles.accessoryChain
-                        : styles.accessoryStandard,
-                  ]}
-                >
-                  <Image
-                    source={source}
-                    resizeMode="contain"
-                    style={[
-                      styles.image,
-                      {
-                        transform: [
-                          { translateY: compensation.translateY },
-                          { scale: compensation.scale },
-                        ],
-                      },
-                    ]}
-                  />
-                </View>
-              );
-            })}
-          </View>
-        ) : null}
+        {!!displayReason && (
+          <Text
+            numberOfLines={swipeVariant ? 1 : 2}
+            style={[
+              styles.subtitle,
+              compact ? styles.subtitleCompact : null,
+              swipeVariant ? styles.subtitleSwipe : null,
+            ]}
+          >
+            {displayReason}
+          </Text>
+        )}
       </View>
 
-      <View style={styles.metaBlock}>
-        <Text style={styles.metaLabel}>FROM YOUR CLOSET</Text>
-        <Text style={styles.metaText}>
-          {(look.fromCloset ?? []).filter(Boolean).join(" · ")}
-        </Text>
-      </View>
-
-      {!!look.stylingNote && (
+      {!!visibleClosetItems.length && (
         <View style={styles.metaBlock}>
-          <Text style={styles.metaLabel}>STYLING NOTE</Text>
-          <Text style={styles.metaText}>{look.stylingNote}</Text>
+          <Text style={[styles.metaLabel, { color: colors.softPurple }]}>FROM YOUR CLOSET</Text>
+          <View style={styles.closetChips}>
+            {visibleClosetItems.map((item) => (
+              <View
+                key={`${look.lookTitle}-${item}`}
+                style={[
+                  styles.closetChip,
+                  { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+                ]}
+              >
+                <Text numberOfLines={1} style={[styles.closetChipText, { color: colors.textPrimary }]}>
+                  {item}
+                </Text>
+              </View>
+            ))}
+            {hiddenClosetCount > 0 ? (
+              <View
+                style={[
+                  styles.closetChip,
+                  styles.moreChip,
+                  { backgroundColor: colors.purpleSurface, borderColor: colors.purpleBorder },
+                ]}
+              >
+                <Text style={[styles.closetChipText, { color: colors.lightPurple }]}>+{hiddenClosetCount} more</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
       )}
 
-      <View style={styles.actions}>
-        <Pressable
-          style={[styles.actionButton, styles.primaryButton]}
-          onPress={
-            onPressSave ?? (onAction ? () => onAction("saveLook") : undefined)
-          }
-        >
-          <Text style={styles.primaryButtonText}>Save look</Text>
-        </Pressable>
+      {!!overflowLabels.length && (
+        <View style={styles.metaBlock}>
+          <Text style={[styles.metaLabel, { color: colors.softPurple }]}>ALSO INCLUDED</Text>
+          <View style={styles.closetChips}>
+            {overflowLabels.map((item) => (
+              <View
+                key={`${look.lookTitle}-extra-${item}`}
+                style={[
+                  styles.closetChip,
+                  { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+                ]}
+              >
+                <Text numberOfLines={1} style={[styles.closetChipText, { color: colors.textPrimary }]}>
+                  {item}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
 
-        <Pressable
-          style={[styles.actionButton, styles.secondaryButton]}
-          onPress={
-            onPressPlan ??
-            (onAction ? () => onAction("planForToday") : undefined)
-          }
-        >
-          <Text style={styles.secondaryButtonText}>Plan for today</Text>
-        </Pressable>
-      </View>
+      {!hideActions ? (
+        <View style={styles.actions}>
+          <AuraPressable
+            style={[
+              styles.actionButton,
+              styles.primaryButton,
+              { backgroundColor: colors.ctaCream, borderColor: colors.ctaCream },
+            ]}
+            haptic="light"
+            hapticTrigger="press"
+            pressedScale={0.97}
+            pressedOpacity={0.92}
+            onPress={
+              onPressSave ?? (onAction ? () => onAction("saveLook", look, option ?? undefined) : undefined)
+            }
+          >
+            <Text style={[styles.primaryButtonText, { color: colors.ctaText }]}>Save look</Text>
+          </AuraPressable>
+
+          <AuraPressable
+            style={[
+              styles.actionButton,
+              styles.secondaryButton,
+              { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+            ]}
+            haptic="light"
+            hapticTrigger="press"
+            pressedScale={0.97}
+            pressedOpacity={0.92}
+            onPress={
+              onPressPlan ??
+              (onAction ? () => onAction("planForToday", look, option ?? undefined) : undefined)
+            }
+          >
+            <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>Plan for today</Text>
+          </AuraPressable>
+        </View>
+      ) : null}
+
+      {!hideActions && (canLikeLook || canNotMyVibe || canShowMoreLikeThis || canLessLikeThis) ? (
+        <View style={styles.tertiaryActions}>
+          {canLikeLook ? (
+            <AuraPressable
+              style={[
+                styles.tertiaryAction,
+                { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+              ]}
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.96}
+              pressedOpacity={0.88}
+              onPress={onAction ? () => onAction("likeLook", look, option ?? undefined) : undefined}
+            >
+              <Text style={[styles.tertiaryActionText, { color: colors.textSecondary }]}>Like</Text>
+            </AuraPressable>
+          ) : null}
+          {canNotMyVibe ? (
+            <AuraPressable
+              style={[
+                styles.tertiaryAction,
+                { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+              ]}
+              haptic="medium"
+              hapticTrigger="press"
+              pressedScale={0.96}
+              pressedOpacity={0.88}
+              onPress={onAction ? () => onAction("notMyVibe", look, option ?? undefined) : undefined}
+            >
+              <Text style={[styles.tertiaryActionText, { color: colors.textSecondary }]}>Not my vibe</Text>
+            </AuraPressable>
+          ) : null}
+          {canShowMoreLikeThis ? (
+            <AuraPressable
+              style={[
+                styles.tertiaryAction,
+                { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+              ]}
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.96}
+              pressedOpacity={0.88}
+              onPress={onAction ? () => onAction("showMoreLikeThis", look, option ?? undefined) : undefined}
+            >
+              <Text style={[styles.tertiaryActionText, { color: colors.textSecondary }]}>More like this</Text>
+            </AuraPressable>
+          ) : null}
+          {canLessLikeThis ? (
+            <AuraPressable
+              style={[
+                styles.tertiaryAction,
+                { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+              ]}
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.96}
+              pressedOpacity={0.88}
+              onPress={onAction ? () => onAction("lessLikeThis", look, option ?? undefined) : undefined}
+            >
+              <Text style={[styles.tertiaryActionText, { color: colors.textSecondary }]}>Less like this</Text>
+            </AuraPressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      {!hideActions && (canShopMissingPieces || canUseOnlyMyCloset || canMakeItDressier) ? (
+        <View style={styles.tertiaryActions}>
+          {canUseOnlyMyCloset ? (
+            <AuraPressable
+              style={[
+                styles.tertiaryAction,
+                { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+              ]}
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.96}
+              pressedOpacity={0.88}
+              onPress={onAction ? () => onAction("useOnlyMyCloset", look, option ?? undefined) : undefined}
+            >
+              <Text style={[styles.tertiaryActionText, { color: colors.textSecondary }]}>Use only my closet</Text>
+            </AuraPressable>
+          ) : null}
+          {canMakeItDressier ? (
+            <AuraPressable
+              style={[
+                styles.tertiaryAction,
+                { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+              ]}
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.96}
+              pressedOpacity={0.88}
+              onPress={onAction ? () => onAction("makeItDressier", look, option ?? undefined) : undefined}
+            >
+              <Text style={[styles.tertiaryActionText, { color: colors.textSecondary }]}>Make it dressier</Text>
+            </AuraPressable>
+          ) : null}
+          {canShopMissingPieces ? (
+            <AuraPressable
+              style={[
+                styles.tertiaryAction,
+                { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+              ]}
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.96}
+              pressedOpacity={0.88}
+              onPress={onAction ? () => onAction("shopMissingPieces", look, option ?? undefined) : undefined}
+            >
+              <Text style={[styles.tertiaryActionText, { color: colors.textSecondary }]}>What am I missing?</Text>
+            </AuraPressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      <ItemDetailSheet
+        item={selectedItem}
+        visible={Boolean(selectedItem)}
+        onDismiss={() => setSelectedItem(null)}
+        onViewInCloset={(item) => {
+          if (!item.itemId) return;
+          router.push({
+            pathname: "/(tabs)/item/[id]",
+            params: { id: item.itemId, sourceTab: "aura" },
+          });
+        }}
+      />
     </View>
   );
 });
 
 const styles = StyleSheet.create({
   card: {
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 12,
+    borderRadius: 28,
+    backgroundColor: "#11131A",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  cardCompact: {
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderRadius: 24,
+  },
+  cardSwipe: {
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderRadius: 26,
+  },
+  cardStudio: {
     gap: 14,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 16,
+    borderRadius: 30,
+    backgroundColor: "rgba(25,27,38,0.94)",
+    borderColor: "rgba(124,92,255,0.25)",
   },
-  title: {
-    color: "#F7F8FA",
-    fontSize: 28,
-    lineHeight: 32,
+  boardOnlyCard: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  topRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  labelRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  headerChip: {
+    minHeight: 34,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  directionChip: {
+    backgroundColor: "rgba(124,92,255,0.12)",
+    borderColor: "rgba(124,92,255,0.25)",
+  },
+  directionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: "#7C5CFF",
+  },
+  directionChipText: {
+    color: "#A78BFA",
+    fontSize: 11.5,
+    lineHeight: 14,
     fontWeight: "800",
-    letterSpacing: -0.8,
+    letterSpacing: 0.85,
   },
-  subtitle: {
-    color: "rgba(235,240,248,0.78)",
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: "500",
+  vibeChipText: {
+    color: "#E8EDF3",
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: "600",
   },
   board: {
     alignSelf: "center",
     position: "relative",
     overflow: "hidden",
-    borderRadius: 24,
-    backgroundColor: "#ECECEE",
+    borderRadius: 16,
+    backgroundColor: "#F5F2ED",
+    borderWidth: 0,
+  },
+  boardCompact: {
+    borderRadius: 16,
+  },
+  boardSwipe: {
+    borderRadius: 16,
+  },
+  boardStudio: {
+    borderRadius: 16,
+  },
+  animatedPiece: {
+    position: "absolute",
+    overflow: "visible",
   },
   absolutePiece: {
-    position: "absolute",
+    flex: 1,
+    width: "100%",
+    height: "100%",
     justifyContent: "center",
     alignItems: "center",
+    overflow: "visible",
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    borderColor: "transparent",
+    elevation: 3,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    zIndex: 1,
   },
-  accessoryBand: {
+  absolutePieceAndroid: {
+    elevation: 0,
+  },
+  photoShadow: {
     position: "absolute",
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "center",
-    gap: 18,
+    left: "18%",
+    right: "18%",
+    bottom: "5%",
+    borderRadius: 999,
+    backgroundColor: "rgba(18, 26, 34, 0.08)",
+    transform: [{ scaleY: 0.72 }],
   },
-  accessoryItem: {
-    justifyContent: "flex-end",
-    alignItems: "center",
+  photoShadowGarment: {
+    height: "5%",
   },
-  accessoryStandard: {
-    width: "15%",
-    height: "100%",
+  photoShadowFootwear: {
+    left: "14%",
+    right: "14%",
+    bottom: "2%",
+    height: "9%",
+    transform: [{ scaleY: 0.6 }],
   },
-  accessoryChain: {
-    width: "16%",
-    height: "86%",
-    marginBottom: 6,
-  },
-  accessoryBag: {
-    width: "18%",
-    height: "100%",
+  photoShadowAccessory: {
+    left: "24%",
+    right: "24%",
+    bottom: "8%",
+    height: "10%",
   },
   image: {
     width: "100%",
     height: "100%",
   },
-  metaBlock: {
-    gap: 8,
+  beltImage: {
+    height: "460%",
+    width: "22%",
   },
-  metaLabel: {
-    color: "#7CC4FF",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 2.1,
+  copyBlock: {
+    gap: 5,
   },
-  metaText: {
-    color: "#EAF0F6",
-    fontSize: 16,
+  copyBlockSwipe: {
+    gap: 3,
+  },
+  copyBlockStudio: {
+    gap: 6,
+    paddingHorizontal: 2,
+  },
+  title: {
+    color: "#FAFBFC",
+    fontSize: 24,
     lineHeight: 28,
+    fontWeight: "800",
+    letterSpacing: -0.8,
+  },
+  titleCompact: {
+    fontSize: 20,
+    lineHeight: 24,
+    letterSpacing: -0.6,
+  },
+  titleSwipe: {
+    fontSize: 18,
+    lineHeight: 22,
+    letterSpacing: -0.45,
+  },
+  subtitle: {
+    color: "rgba(223, 231, 241, 0.78)",
+    fontSize: 13.5,
+    lineHeight: 19,
     fontWeight: "500",
   },
-  actions: {
+  subtitleCompact: {
+    color: "rgba(223, 231, 241, 0.7)",
+    fontSize: 12.5,
+    lineHeight: 17,
+  },
+  subtitleSwipe: {
+    color: "rgba(223, 231, 241, 0.66)",
+    fontSize: 11.5,
+    lineHeight: 16,
+  },
+  metaBlock: {
+    gap: 7,
+  },
+  metaLabel: {
+    color: "#7C5CFF",
+    fontSize: 10.5,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+  },
+  closetChips: {
     flexDirection: "row",
-    gap: 14,
+    flexWrap: "wrap",
+    gap: 8,
   },
-  actionButton: {
-    flex: 1,
-    minHeight: 58,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
-  },
-  primaryButton: {
-    backgroundColor: "rgba(83, 174, 255, 0.14)",
-    borderWidth: 1,
-    borderColor: "rgba(124, 196, 255, 0.18)",
-  },
-  secondaryButton: {
-    backgroundColor: "rgba(12, 18, 30, 0.72)",
+  closetChip: {
+    maxWidth: "100%",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(245, 247, 251, 0.08)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
   },
+  moreChip: {
+    backgroundColor: "rgba(124,92,255,0.12)",
+    borderColor: "rgba(124,92,255,0.25)",
+  },
+  closetChipText: {
+    color: "#E7EDF4",
+    fontSize: 12.5,
+    lineHeight: 16,
+    fontWeight: "600",
+  },
+  actions: {
+    flexDirection: "row",
+    gap: 12,
+    paddingTop: 2,
+  },
+  actionButton: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  primaryButton: {
+    backgroundColor: "#EDE9E3",
+    borderColor: "#EDE9E3",
+  },
+  secondaryButton: {
+    backgroundColor: "rgba(255,255,255,0.03)",
+    borderColor: "rgba(255,255,255,0.08)",
+  },
   primaryButtonText: {
-    color: "#F6FAFF",
-    fontSize: 16,
-    fontWeight: "700",
+    color: "#F5F8FB",
+    fontSize: 15,
+    fontWeight: "800",
   },
   secondaryButtonText: {
-    color: "#F6FAFF",
-    fontSize: 16,
+    color: "#E7EDF5",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  tertiaryActions: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  tertiaryAction: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  tertiaryActionText: {
+    color: "rgba(235,240,248,0.86)",
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: "700",
   },
 });

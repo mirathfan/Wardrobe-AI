@@ -35,7 +35,7 @@ export function useResponsiveLayout() {
     const bottomDockPadding = Math.max(
       insets.bottom + SCREEN_BOTTOM_PADDING,
       screenBottomContentPadding(insets.bottom),
-      112
+      128
     );
     const composerOffset = composerBottomOffset(insets.bottom);
     const composerHeight = screenSize === "compact" ? 118 : 126;

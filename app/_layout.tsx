@@ -20,6 +20,8 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Colors } from "@/constants/theme";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import AuraRing, { RING_SIZE_LG } from "@/src/components/brand/AuraRing";
+import { configureGoogleSignIn } from "@/src/auth/googleAuth";
+import { logDeviceSecurityContext } from "@/src/lib/security";
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -178,7 +180,7 @@ const loadingStyles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: "center",
-    backgroundColor: "#080808",
+    backgroundColor: "#0A0A0F",
     overflow: "hidden",
   },
   loadingStack: {
@@ -215,6 +217,11 @@ export default function RootLayout() {
       text: palette.text,
     },
   };
+
+  useEffect(() => {
+    configureGoogleSignIn();
+    void logDeviceSecurityContext();
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== "ios" || !__DEV__) return;
