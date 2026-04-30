@@ -36,6 +36,28 @@ function savedLooksCollection(uid: string) {
   return collection(db, "users", uid, "savedLooks");
 }
 
+function cleanAuraLookForFirestore(look: AuraLook): AuraLook {
+  return {
+    lookTitle: cleanAuraString(look.lookTitle),
+    vibe: cleanAuraString(look.vibe),
+    shortExplanation: cleanAuraString(look.shortExplanation),
+    stylingNote: cleanAuraString(look.stylingNote),
+    personalizationLabel: cleanAuraString(look.personalizationLabel),
+    personalizationNote: cleanAuraString(look.personalizationNote),
+    pieces: (look.pieces ?? []).map((piece) => ({
+      role: piece.role,
+      itemName: cleanAuraString(piece.itemName),
+      source: piece.source,
+      itemId: cleanAuraString(piece.itemId) || null,
+      imageUrl: cleanAuraString(piece.imageUrl) || null,
+    })),
+    fromCloset: (look.fromCloset ?? []).map(cleanAuraString).filter(Boolean),
+    addToComplete: (look.addToComplete ?? []).map(cleanAuraString).filter(Boolean),
+    alternates: (look.alternates ?? []).map(cleanAuraString).filter(Boolean),
+    actions: (look.actions ?? []).filter(Boolean),
+  };
+}
+
 export function auraLookToPlannedOutfit(look: AuraLook): PlannedOutfit {
   const roleMap = look.pieces.reduce<Record<string, string>>((acc, piece) => {
     if (piece.source !== "closet" || !piece.itemId) return acc;
@@ -61,14 +83,15 @@ export async function saveAuraLook(
 ) {
   const ref = options?.id ? doc(savedLooksCollection(uid), options.id) : doc(savedLooksCollection(uid));
   const now = Date.now();
+  const savedLook = cleanAuraLookForFirestore(look);
   const payload = {
-    look,
-    title: cleanAuraString(options?.title) || cleanAuraString(look.lookTitle) || "Saved look",
+    look: savedLook,
+    title: cleanAuraString(options?.title) || cleanAuraString(savedLook.lookTitle) || "Saved look",
     createdAt: now,
     updatedAt: now,
   };
   await setDoc(ref, payload, { merge: true });
-  void logAuraLookStyleEvent(uid, "outfit_saved", look, { source: "aura" });
+  void logAuraLookStyleEvent(uid, "outfit_saved", savedLook, { source: "aura" });
   return { id: ref.id, ...payload } satisfies SavedAuraLookRecord;
 }
 
@@ -109,21 +132,22 @@ export async function saveAuraFavoriteOutfit(
 
   const ref = doc(savedLooksCollection(uid), id);
   const now = Date.now();
+  const savedLook = cleanAuraLookForFirestore(look);
   const payload = {
     id,
-    title: cleanAuraString(options?.title) || cleanAuraString(look.lookTitle) || "Saved outfit",
+    title: cleanAuraString(options?.title) || cleanAuraString(savedLook.lookTitle) || "Saved outfit",
     createdAt: now,
     updatedAt: now,
     source: options?.source ?? "aura_swipe",
     sessionId: cleanAuraString(options?.sessionId) || null,
-    itemIds: getAuraLookItemIds(look),
-    stylingNote: cleanAuraString(look.stylingNote),
-    previewImageUrls: (look.pieces ?? [])
+    itemIds: getAuraLookItemIds(savedLook),
+    stylingNote: cleanAuraString(savedLook.stylingNote),
+    previewImageUrls: (savedLook.pieces ?? [])
       .map((piece) => cleanAuraString(piece.imageUrl))
       .filter(Boolean)
       .slice(0, 4),
-    outfitSnapshot: buildAuraLookSnapshot(look),
-    look,
+    outfitSnapshot: buildAuraLookSnapshot(savedLook),
+    look: savedLook,
   };
   console.log("Saving look for uid:", uid, "look:", id, "path:", `users/${uid}/savedLooks/${id}`);
   try {
@@ -132,7 +156,7 @@ export async function saveAuraFavoriteOutfit(
     console.error("SAVE LOOK ERROR:", e);
     throw e;
   }
-  void logAuraLookStyleEvent(uid, "outfit_saved", look, {
+  void logAuraLookStyleEvent(uid, "outfit_saved", savedLook, {
     source: options?.source === "aura_swipe" ? "aura" : (options?.source ?? "aura"),
   });
   return {

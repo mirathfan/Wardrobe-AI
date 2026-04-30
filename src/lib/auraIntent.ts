@@ -4,6 +4,8 @@ export type AuraImageIntent =
   | "general_chat"
   | "style_advice"
   | "analyze_image"
+  | "outfit_analysis"
+  | "worn_outfit_photo"
   | "identify_item"
   | "add_item"
   | "add_items_batch"
@@ -22,6 +24,8 @@ const ADD_RE = /\b(add|save|store|put|upload|log)\b.*\b(closet|wardrobe|item|ite
 const BATCH_RE = /\b(these|all|each|separate|multiple|items)\b/i;
 const COMPARE_RE = /\b(compare|which one|better|pick between|versus|vs\.?)\b/i;
 const OUTFIT_RE = /\b(outfit|look|style me|wear|fit|build)\b/i;
+const WORN_OUTFIT_PHOTO_RE =
+  /\b(outfit photo|mirror|selfie|wearing|worn outfit|my outfit|this outfit|this fit|fit check|what am i wearing|improve this outfit|fix this outfit|rate this outfit)\b/i;
 const IDENTIFY_RE = /\b(what is this|identify|brand|material|what item|what are these)\b/i;
 const URL_RE = /\bhttps?:\/\/[^\s<>"')\]]+/gi;
 const TRAILING_PUNCTUATION_RE = /[.,!?;:]+$/;
@@ -77,6 +81,8 @@ export function classifyAuraImageIntent(
   }
 
   if (COMPARE_RE.test(prompt) && imageAttachments.length > 1) return "compare_items";
+  if (!prompt) return "worn_outfit_photo";
+  if (WORN_OUTFIT_PHOTO_RE.test(prompt)) return "outfit_analysis";
   if (OUTFIT_RE.test(prompt)) return "style_advice";
   if (IDENTIFY_RE.test(prompt)) return "identify_item";
   return "analyze_image";

@@ -2,7 +2,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Alert, Keyboard, KeyboardEvent, Platform, Pressable, Text, View } from "react-native";
+import { Animated, Alert, Keyboard, KeyboardEvent, Platform, Share, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import AuraHeader from "@/src/components/ai/AuraHeader";
@@ -12,6 +12,7 @@ import ChatList from "@/src/components/ai/ChatList";
 import InputBar from "@/src/components/ai/InputBar";
 import { auraTheme } from "@/src/components/ai/aiTheme";
 import AuraGlowBackground from "@/src/components/aura/AuraGlowBackground";
+import AuraTrainingCard from "@/src/components/aura/AuraTrainingCard";
 import type {
   AIMessage,
   ChatAttachment,
@@ -26,6 +27,7 @@ import { logAuraLookStyleEvent, updateAuraSessionContextFromPrompt } from "@/src
 import {
   type AuraCandidateLocalPhoto,
   createAuraItemDraftsFromCandidates,
+  createAuraItemDraftsFromDetectedOutfit,
   uploadAuraAttachment,
   uploadAuraAttachments,
 } from "@/src/lib/auraAttachments";
@@ -33,20 +35,28 @@ import { classifyAuraImageIntent } from "@/src/lib/auraIntent";
 import { auraLookToPlannedOutfit, saveAuraLook } from "@/src/lib/auraLooks";
 import { saveAuraOutfitFeedback } from "@/src/lib/auraOutfitFeedback";
 import { generateAuraSwipeBatch } from "@/src/lib/auraSwipe";
-import { listenToItems } from "@/src/lib/items";
+import { notificationSuccess } from "@/src/lib/haptics";
+import { listenToItems, updateLaundryStatus } from "@/src/lib/items";
+import { buildMinimumClosetSummary } from "@/src/lib/minimumCloset";
 import { Toast } from "@/src/lib/toast";
 import {
   appendMessageToChat,
   createChatThread,
+  deleteChatThread,
   loadChatMessages,
   loadLatestChatThread,
   loadRecentChatThreads,
+  renameChatThread,
+  setChatArchived,
+  setChatPinned,
+  summarizeChatTitle,
   type AIChatThread,
+  updateChatThread,
 } from "@/src/lib/aiChats";
 import { clearLatestChatCache, loadLatestChatCache, saveLatestChatCache } from "@/src/lib/localChatCache";
-import type { AuraCandidateAction, AuraCandidateItem, AuraLookAction, AuraLookOptionMeta, AuraResponse } from "@/src/types/aura";
+import type { AuraCandidateAction, AuraCandidateItem, AuraLaundryConfirmationAction, AuraLookAction, AuraLookOptionMeta, AuraResponse } from "@/src/types/aura";
 import type { ClothingItem } from "@/src/types/ClothingItem";
-import { savePlannedRecord } from "@/src/utils/dailyOutfits";
+import { markAnalyzedOutfitWorn, savePlannedRecord } from "@/src/utils/dailyOutfits";
 
 const DEFAULT_CHIPS = [
   "Style me today",
@@ -65,6 +75,7 @@ const DEFAULT_COMPOSER_HEIGHT = 56;
 const AURA_OFFLINE_MESSAGE = "AURA is having trouble connecting right now. Try again in a moment.";
 const AURA_DRAFT_FAILURE_MESSAGE = "I couldn't create that wardrobe draft. Please try again.";
 const AURA_ATTACHMENT_FAILURE_MESSAGE = "I couldn't upload that attachment. Please try again.";
+const RECENT_CHAT_LIMIT = 24;
 const DEBUG_AURA_CLIENT =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const MULTI_OUTFIT_REQUEST_RE =
@@ -98,6 +109,28 @@ function createUserMessageWithAttachments(text: string, attachments: ChatAttachm
     ...createUserMessage(text),
     attachments,
   };
+}
+
+function buildChatSeedText(prompt: string, attachments: ChatAttachment[]) {
+  if (prompt.trim()) return prompt.trim();
+  if (attachments.some((attachment) => attachment.type === "image")) {
+    return "Analyze this outfit photo";
+  }
+  if (attachments.some((attachment) => attachment.type === "audio")) {
+    return "Voice styling request";
+  }
+  return "New stylist chat";
+}
+
+function deriveAssistantChatTitle(prompt: string, message: AIMessage) {
+  return summarizeChatTitle({
+    userText: prompt,
+    assistantText:
+      message.aura?.title ??
+      message.aura?.reply ??
+      message.assistantIntroText ??
+      message.text,
+  });
 }
 
 function createLocalAttachmentId() {
@@ -137,6 +170,10 @@ function buildAssistantCardIntro(data: AuraResponse, userRequest?: string) {
     return "I found this item. Give it a quick review and I can take the next step.";
   }
 
+  if (data.outfitAnalysis) {
+    return "I found this outfit. Review the pieces before saving or adding them.";
+  }
+
   if (hasLooks) {
     if (/\bjacket|jackets|coat|coats|blazer|blazers|outerwear\b/.test(request)) {
       return "Got you — I kept jackets as the main layer and built the outfits around them.";
@@ -160,6 +197,10 @@ function buildAssistantCardIntro(data: AuraResponse, userRequest?: string) {
     return "I found this item. Review it before I add it to your wardrobe.";
   }
 
+  if (data.presentation === "laundry_confirmation") {
+    return reply || "Which item did you mean?";
+  }
+
   if (/\bswipe|training|taste|learn\b/.test(request)) {
     return "Here are a few quick outfit edits. Swipe through them so I can learn your taste.";
   }
@@ -178,6 +219,28 @@ function buildAuraLookFeedbackPrompt(action: AuraLookAction, promptBase: string)
     return `Pull away from ${promptBase}. Keep the same level of polish, but give me a noticeably different palette, silhouette, or vibe.`;
   }
   return "";
+}
+
+function buildShareTranscript(thread: AIChatThread, messages: AIMessage[]) {
+  const lines = messages
+    .filter((entry) => entry.type === "user" || entry.type === "assistant")
+    .slice(-12)
+    .map((entry) => {
+      const speaker = entry.type === "user" ? "You" : "AURA";
+      const body =
+        String(entry.assistantIntroText ?? entry.text ?? "").trim() ||
+        (entry.aura?.lookOptions?.length
+          ? `${entry.aura.lookOptions.length} outfit options`
+          : entry.aura?.look
+            ? entry.aura.look.lookTitle
+            : entry.outfits?.length
+              ? `${entry.outfits.length} outfit suggestions`
+              : "");
+      return body ? `${speaker}: ${body}` : null;
+    })
+    .filter(Boolean);
+
+  return [`${summarizeChatTitle({ userText: thread.title, assistantText: thread.lastMessagePreview })}`, "", ...lines].join("\n");
 }
 
 function resolveLocalPhotosForAuraCandidates(
@@ -217,6 +280,20 @@ function resolveLocalPhotosForAuraCandidates(
   return localByCandidateId;
 }
 
+function resolveOutfitSourcePhoto(messages: AIMessage[], sourceMessage: AIMessage) {
+  const previousUserMessages = messages
+    .filter(
+      (message) =>
+        message.type === "user" &&
+        message.createdAt <= sourceMessage.createdAt &&
+        message.attachments?.some((attachment) => attachment.type === "image")
+    )
+    .sort((a, b) => b.createdAt - a.createdAt);
+  return previousUserMessages
+    .flatMap((message) => message.attachments ?? [])
+    .find((attachment): attachment is ChatImageAttachment => attachment.type === "image");
+}
+
 function createAssistantMessage(
   data: AuraResponse,
   overrides?: Partial<AIMessage>,
@@ -234,6 +311,9 @@ function createAssistantMessage(
   const shouldUseCard =
     normalizedData.presentation === "card" ||
     normalizedData.presentation === "candidate_preview" ||
+    normalizedData.presentation === "laundry_confirmation" ||
+    normalizedData.presentation === "outfit_analysis" ||
+    !!normalizedData.outfitAnalysis ||
     !!normalizedData.look ||
     !!normalizedData.lookOptions?.length ||
     !!candidateItems.length ||
@@ -283,6 +363,17 @@ function requestedOutfitCount(prompt: string) {
   return 3;
 }
 
+function explicitRequestedOutfitCount(prompt: string) {
+  const normalized = String(prompt ?? "").toLowerCase();
+  if (/\b(4|four)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 4;
+  if (/\b(3|three)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 3;
+  if (/\b(2|two)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 2;
+  if (/\bmultiple\s+(?:outfits?|looks?|options?)\b/.test(normalized)) return 3;
+  if (/\bmore\s+options\b/.test(normalized)) return 3;
+  if (/\bfew\s+outfits?\b/.test(normalized)) return 3;
+  return null;
+}
+
 const OUTFIT_REFINEMENT_RE =
   /\b(with|without|more|less|make|push|safer|balanced|bold|dressier|casual|formal|streetwear|jackets?|outerwear|bags?|glasses|watch|accessor(?:y|ies)|heels?|boots?|sneakers?|loafers?)\b/i;
 
@@ -325,6 +416,23 @@ function wantsStructuredOutfitBatch(
   if (attachmentCount !== 0) return false;
   if (MULTI_OUTFIT_REQUEST_RE.test(prompt)) return true;
   return latestAuraLookCount(messages) > 0 && OUTFIT_REFINEMENT_RE.test(prompt);
+}
+
+function resolveStructuredBatchLookCount(
+  prompt: string,
+  structuredBatchPrompt: string,
+  messages: AIMessage[],
+) {
+  const explicitCurrentCount = explicitRequestedOutfitCount(prompt);
+  if (explicitCurrentCount) return explicitCurrentCount;
+
+  const explicitStructuredCount = explicitRequestedOutfitCount(structuredBatchPrompt);
+  if (explicitStructuredCount) return explicitStructuredCount;
+
+  const latestLookCount = latestAuraLookCount(messages);
+  if (latestLookCount > 0) return latestLookCount;
+
+  return requestedOutfitCount(structuredBatchPrompt || prompt);
 }
 
 function promptRequestsOuterwear(prompt: string) {
@@ -503,7 +611,7 @@ function buildAuraResponseFromSwipeBatch(
           : "Outfit Option",
     reply:
       wantsOuterwear && !hasOuterwearLooks && !hasOuterwearInCloset
-        ? "I couldn't build jacket looks because I couldn't find outerwear in your closet yet."
+        ? "A jacket or layer would open this up. I’ll keep the current looks to pieces you already own."
         : wantsOuterwear && !hasOuterwearLooks
           ? "I couldn't build reliable jacket looks from the current generator, so I repaired the closest structured options with outerwear from your closet."
           : count > 1
@@ -623,6 +731,7 @@ export default function AIScreen() {
   const auraThinking = useRef(new Animated.Value(0)).current;
   const uid = user?.uid ?? null;
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const minimumClosetSummary = useMemo(() => buildMinimumClosetSummary(items), [items]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -840,7 +949,7 @@ export default function AIScreen() {
         if (shouldLoadSpecificChat) {
           consumedChatTokens.add(`${routeChatKey}:${routeChatId}`);
           const threadMessages = await loadChatMessages(uid, routeChatId);
-          const recent = await loadRecentChatThreads(uid, 6);
+          const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
           if (!cancelled) {
             setMessages(threadMessages);
             setActiveChatId(routeChatId);
@@ -852,7 +961,7 @@ export default function AIScreen() {
         }
 
         const latestThread = await loadLatestChatThread(uid);
-        const recent = await loadRecentChatThreads(uid, 6);
+        const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
         if (!cancelled && latestThread?.chatId) {
           const threadMessages = await loadChatMessages(uid, latestThread.chatId);
           setMessages(threadMessages);
@@ -883,6 +992,91 @@ export default function AIScreen() {
     if (!uid) return;
     void saveLatestChatCache(uid, activeChatId, null, messages);
   }, [activeChatId, isBooting, messages, uid]);
+
+  const refreshRecentThreads = React.useCallback(async () => {
+    if (!uid) return [];
+    const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
+    setRecentThreads(recent);
+    return recent;
+  }, [uid]);
+
+  const handleShareChatThread = React.useCallback(
+    async (thread: AIChatThread) => {
+      if (!uid) return;
+      const threadMessages = await loadChatMessages(uid, thread.chatId);
+      const message = buildShareTranscript(thread, threadMessages);
+      await Share.share({
+        title: summarizeChatTitle({
+          userText: thread.title,
+          assistantText: thread.lastMessagePreview,
+        }),
+        message,
+      });
+    },
+    [uid],
+  );
+
+  const handleAddThreadToProject = React.useCallback(async () => {
+    Alert.alert("Projects", "Projects are coming soon.");
+  }, []);
+
+  const handleTogglePinnedThread = React.useCallback(
+    async (thread: AIChatThread) => {
+      if (!uid) return;
+      await setChatPinned(uid, thread.chatId, !thread.pinned);
+      await refreshRecentThreads();
+    },
+    [refreshRecentThreads, uid],
+  );
+
+  const handleRenameThread = React.useCallback(
+    async (thread: AIChatThread, title: string) => {
+      if (!uid) return;
+      await renameChatThread(uid, thread.chatId, title);
+      setRecentThreads((prev) =>
+        prev.map((entry) =>
+          entry.chatId === thread.chatId
+            ? { ...entry, title, titleEdited: true, updatedAt: Date.now() }
+            : entry,
+        ),
+      );
+      if (activeChatId === thread.chatId) {
+        await saveLatestChatCache(uid, thread.chatId, null, latestMessagesRef.current);
+      }
+      await refreshRecentThreads();
+    },
+    [activeChatId, refreshRecentThreads, uid],
+  );
+
+  const handleArchiveThread = React.useCallback(
+    async (thread: AIChatThread) => {
+      if (!uid) return;
+      await setChatArchived(uid, thread.chatId, true);
+      setRecentThreads((prev) => prev.filter((entry) => entry.chatId !== thread.chatId));
+      if (activeChatId === thread.chatId) {
+        setActiveChatId(null);
+        setMessages([]);
+        await clearLatestChatCache(uid);
+      }
+      await refreshRecentThreads();
+    },
+    [activeChatId, refreshRecentThreads, uid],
+  );
+
+  const handleDeleteThread = React.useCallback(
+    async (thread: AIChatThread) => {
+      if (!uid) return;
+      await deleteChatThread(uid, thread.chatId);
+      setRecentThreads((prev) => prev.filter((entry) => entry.chatId !== thread.chatId));
+      if (activeChatId === thread.chatId) {
+        setActiveChatId(null);
+        setMessages([]);
+        await clearLatestChatCache(uid);
+      }
+      await refreshRecentThreads();
+    },
+    [activeChatId, refreshRecentThreads, uid],
+  );
 
   useEffect(() => {
     const updateKeyboardHeight = (event: KeyboardEvent) => {
@@ -951,6 +1145,7 @@ export default function AIScreen() {
       }
 
       const userMessage = createUserMessageWithAttachments(prompt, uploadedAttachments);
+      const chatSeedText = buildChatSeedText(prompt, uploadedAttachments);
       const nextLocalMessages = [...latestMessagesRef.current, userMessage];
       const structuredBatchPrompt = buildStructuredOutfitBatchPrompt(prompt, latestMessagesRef.current);
       const shouldForceStructuredBatch = wantsStructuredOutfitBatch(
@@ -972,13 +1167,13 @@ export default function AIScreen() {
 
       try {
         if (!chatId) {
-          const chat = await createChatThread(uid, prompt);
+          const chat = await createChatThread(uid, chatSeedText);
           chatId = chat.chatId;
           setActiveChatId(chat.chatId);
         }
 
         void updateAuraSessionContextFromPrompt(uid, chatId, prompt);
-        await appendMessageToChat(uid, chatId, userMessage, { titleFromUserText: prompt || "Image message" });
+        await appendMessageToChat(uid, chatId, userMessage, { titleFromUserText: chatSeedText });
 
         const imageIntent = classifyAuraImageIntent(prompt, uploadedAttachments);
         if (DEBUG_AURA_CLIENT) {
@@ -1008,8 +1203,11 @@ export default function AIScreen() {
         }
 
         if (shouldForceStructuredBatch) {
-          const desiredLookCount =
-            latestAuraLookCount(latestMessagesRef.current) || requestedOutfitCount(structuredBatchPrompt);
+          const desiredLookCount = resolveStructuredBatchLookCount(
+            prompt,
+            structuredBatchPrompt,
+            latestMessagesRef.current,
+          );
           if (DEBUG_AURA_CLIENT) {
             console.log("[AURA_MULTI]", "frontend structured batch request", {
               prompt,
@@ -1022,7 +1220,7 @@ export default function AIScreen() {
             const noOuterwearResponse: AuraResponse = {
               title: "No outerwear found",
               reply:
-                "I couldn't build jacket looks because I couldn't find outerwear in your closet yet. Add a jacket, blazer, hoodie, coat, or overshirt and I can redo this.",
+                "A jacket or layer would open this up. Add one jacket, blazer, hoodie, coat, or overshirt and I can build layered looks without inventing pieces you do not own.",
               reason: "",
               outfitItems: [],
               ownedPieces: [],
@@ -1039,7 +1237,10 @@ export default function AIScreen() {
             });
             setMessages([...nextLocalMessages, assistantMessage]);
             await appendMessageToChat(uid, chatId, assistantMessage);
-            const recent = await loadRecentChatThreads(uid, 6);
+            await updateChatThread(uid, chatId, {
+              title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
+            });
+            const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
             setRecentThreads(recent);
             return;
           }
@@ -1070,7 +1271,10 @@ export default function AIScreen() {
           setMessages([...nextLocalMessages, assistantMessage]);
           setQuickChips(batchResponse.chips?.length ? batchResponse.chips : DEFAULT_CHIPS);
           await appendMessageToChat(uid, chatId, assistantMessage);
-          const recent = await loadRecentChatThreads(uid, 6);
+          await updateChatThread(uid, chatId, {
+            title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
+          });
+          const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
           setRecentThreads(recent);
           return;
         }
@@ -1089,11 +1293,14 @@ export default function AIScreen() {
 
         const result = await askAuraStream(
           {
-          message: prompt,
-          chatId,
-          attachments: uploadedAttachments,
-          history: buildAuraHistory(nextLocalMessages),
-          clientIntent: imageIntent,
+            message: prompt,
+            chatId,
+            attachments: uploadedAttachments,
+            history: buildAuraHistory(nextLocalMessages),
+            clientIntent: imageIntent,
+            clientContext: {
+              minimumCloset: minimumClosetSummary,
+            },
           },
           {
             onStatus: () => {
@@ -1162,8 +1369,11 @@ export default function AIScreen() {
           !result.look &&
           !(result.lookOptions?.length)
         ) {
-          const desiredLookCount =
-            latestAuraLookCount(nextLocalMessages) || requestedOutfitCount(structuredBatchPrompt);
+          const desiredLookCount = resolveStructuredBatchLookCount(
+            prompt,
+            structuredBatchPrompt,
+            nextLocalMessages,
+          );
           if (DEBUG_AURA_CLIENT) {
             console.log("[AURA_MULTI]", "stream returned no structured looks; using frontend batch fallback", {
               prompt,
@@ -1200,10 +1410,13 @@ export default function AIScreen() {
         );
         setQuickChips(finalResult.chips?.length ? finalResult.chips : DEFAULT_CHIPS);
         await appendMessageToChat(uid, chatId, assistantMessage);
+        await updateChatThread(uid, chatId, {
+          title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
+        });
         if (DEBUG_AURA_CLIENT) {
           console.log("[AURA_STREAM]", "stream flow complete", { uid, chatId });
         }
-        const recent = await loadRecentChatThreads(uid, 6);
+        const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
         setRecentThreads(recent);
       } catch (error) {
         console.log("[AURA_ERROR]", "ask failed", {
@@ -1219,7 +1432,7 @@ export default function AIScreen() {
         setLoading(false);
       }
     },
-    [activeChatId, items, loading, message, pendingAttachments, triggerThinkingPulse, uid]
+    [activeChatId, items, loading, message, minimumClosetSummary, pendingAttachments, triggerThinkingPulse, uid]
   );
 
   const handleAuraLookAction = React.useCallback(
@@ -1236,6 +1449,7 @@ export default function AIScreen() {
       if (action === "saveLook") {
         try {
           await saveAuraLook(uid, look, { title: sourceMessage.aura?.title });
+          void notificationSuccess();
           Toast.saved();
         } catch (error: any) {
           Toast.error("Save failed", error?.message ?? "Unable to save this look.");
@@ -1245,6 +1459,7 @@ export default function AIScreen() {
       if (action === "planForToday") {
         try {
           await savePlannedRecord(uid, new Date(), auraLookToPlannedOutfit(look));
+          void notificationSuccess();
           Toast.success("Planned", "This look is now attached to today.");
         } catch (error: any) {
           Toast.error("Plan failed", error?.message ?? "Unable to plan this look for today.");
@@ -1418,6 +1633,8 @@ export default function AIScreen() {
         setMessages((prev) => appendUniqueSystemMessage(prev, systemMessage.text ?? ""));
         if (activeChatId) {
           await appendMessageToChat(uid, activeChatId, systemMessage);
+          const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
+          setRecentThreads(recent);
         }
       } catch (error) {
         console.log("[AURA_CONFIRM_ERROR]", "candidate action failed", {
@@ -1431,6 +1648,93 @@ export default function AIScreen() {
       }
     },
     [activeChatId, uid, updateCandidateStatuses]
+  );
+
+  const handleAuraOutfitPhotoAction = React.useCallback(
+    async (action: import("@/src/types/aura").AuraOutfitPhotoAction, sourceMessage: AIMessage) => {
+      if (!uid) {
+        Alert.alert("AURA", "Please sign in to save this outfit.");
+        return;
+      }
+      const analysis = sourceMessage.aura?.outfitAnalysis;
+      if (!analysis) return;
+      const sourcePhoto = resolveOutfitSourcePhoto(latestMessagesRef.current, sourceMessage);
+      const sourceImageUrl = analysis.sourceImageUrl || sourcePhoto?.uri || null;
+
+      if (action.type === "improve_outfit") {
+        const pieces = analysis.detectedPieces
+          .map((piece) => [piece.color, piece.label].filter(Boolean).join(" "))
+          .filter(Boolean)
+          .join(", ");
+        void handleAsk(`How do I improve this outfit? Visible pieces: ${pieces || "use the uploaded outfit photo context"}.`);
+        return;
+      }
+
+      if (action.type === "add_pieces_to_closet") {
+        try {
+          const created = await createAuraItemDraftsFromDetectedOutfit({
+            uid,
+            pieces: analysis.detectedPieces,
+            sourceImageUrl,
+            prompt: sourceMessage.text ?? sourceMessage.aura?.reply ?? "Outfit photo analysis",
+          });
+          Toast.success(
+            "Drafts created",
+            created.length === 1
+              ? "Added one outfit piece draft using the original photo as reference."
+              : `Added ${created.length} outfit piece drafts using the original photo as reference.`
+          );
+        } catch (error: any) {
+          Toast.error("Drafts failed", error?.message ?? "Unable to create outfit piece drafts.");
+        }
+        return;
+      }
+
+      if (action.type === "save_worn_outfit") {
+        try {
+          await markAnalyzedOutfitWorn(uid, new Date(), {
+            detectedPieces: analysis.detectedPieces,
+            outfitVibe: analysis.outfitVibe ?? null,
+            stylingNotes: analysis.stylingNotes ?? [],
+            missingToComplete: analysis.missingToComplete ?? [],
+            sourceImageUrl,
+            wornAt: Date.now(),
+          });
+          Toast.success("Saved", "This outfit is saved as worn today.");
+        } catch (error: any) {
+          Toast.error("Save failed", error?.message ?? "Unable to save this worn outfit.");
+        }
+      }
+    },
+    [handleAsk, uid]
+  );
+
+  const handleAuraLaundryAction = React.useCallback(
+    async (action: AuraLaundryConfirmationAction) => {
+      if (!uid) {
+        Alert.alert("AURA", "Please sign in to update laundry.");
+        return;
+      }
+      try {
+        await updateLaundryStatus(uid, action.itemId, action.targetStatus);
+        const item = itemsById.get(action.itemId);
+        const label = item?.name || item?.subCategory || item?.category || "that item";
+        const statusLabel =
+          action.targetStatus === "clean"
+            ? "clean"
+            : action.targetStatus === "in_laundry"
+              ? "in laundry"
+              : "needs wash";
+        const systemMessage = createSystemMessage(`Done — marked ${label} as ${statusLabel}.`);
+        setMessages((prev) => appendUniqueSystemMessage(prev, systemMessage.text ?? ""));
+        if (activeChatId) {
+          await appendMessageToChat(uid, activeChatId, systemMessage);
+        }
+      } catch (error: any) {
+        Alert.alert("Laundry", error?.message ?? "Could not update that item.");
+      }
+    },
+    [activeChatId, itemsById, uid]
   );
 
   useEffect(() => {
@@ -1523,76 +1827,19 @@ export default function AIScreen() {
         </View>
 
         <View
-        style={{
-          paddingHorizontal: layout.horizontalPadding,
-          paddingTop: 0,
-          paddingBottom: 0,
-          marginTop: 4,
-          marginBottom: 6,
-        }}
-      >
-          <View
           style={{
-            borderRadius: 20,
-            overflow: "hidden",
-            borderWidth: 1,
-            borderColor: "rgba(243,223,195,0.18)",
+            paddingHorizontal: layout.horizontalPadding,
+            paddingTop: 2,
+            paddingBottom: 0,
+            marginTop: 2,
+            marginBottom: 6,
           }}
         >
-            <Pressable
+          <AuraTrainingCard
+            colors={colors}
+            variant="compact"
             onPress={() => router.push("/aura/swipe")}
-            style={({ pressed }) => ({
-              paddingHorizontal: 14,
-              paddingVertical: 12,
-              backgroundColor: pressed ? auraTheme.accentTintStrong : "rgba(18,21,28,0.88)",
-            })}
-          >
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <View style={{ flex: 1, gap: 2 }}>
-                  <Animated.Text
-                  style={{
-                    color: colors.auraChampagne,
-                    fontSize: 10.5,
-                    fontWeight: "800",
-                    letterSpacing: 1.4,
-                  }}
-                >
-                  AURA TRAINING
-                </Animated.Text>
-                  <Animated.Text
-                  style={{
-                    color: colors.text,
-                    fontSize: 15,
-                    fontWeight: "800",
-                    letterSpacing: -0.25,
-                  }}
-                >
-                  Swipe through outfit edits
-                </Animated.Text>
-                </View>
-                <View
-                style={{
-                  borderRadius: 999,
-                  borderWidth: 1,
-                  borderColor: "rgba(184,217,255,0.2)",
-                  backgroundColor: "rgba(255,255,255,0.04)",
-                  paddingHorizontal: 10,
-                  paddingVertical: 6,
-                }}
-              >
-                  <Animated.Text
-                  style={{
-                    color: colors.text,
-                    fontSize: 11.5,
-                    fontWeight: "800",
-                  }}
-                >
-                  Open
-                </Animated.Text>
-                </View>
-              </View>
-            </Pressable>
-          </View>
+          />
         </View>
 
         <View style={{ flex: 1, marginTop: 8, minHeight: 0 }}>
@@ -1614,6 +1861,8 @@ export default function AIScreen() {
           }}
           onAuraAction={handleAuraLookAction}
           onAuraCandidateAction={handleAuraCandidateAction}
+          onAuraOutfitPhotoAction={handleAuraOutfitPhotoAction}
+          onAuraLaundryAction={handleAuraLaundryAction}
           />
           {showKeyboardWatermark ? (
             <Text
@@ -1671,6 +1920,12 @@ export default function AIScreen() {
         activeChatId={activeChatId}
         threads={recentThreads}
         onClose={() => setChatDrawerOpen(false)}
+        onShareChat={handleShareChatThread}
+        onAddToProject={handleAddThreadToProject}
+        onTogglePin={handleTogglePinnedThread}
+        onRenameChat={handleRenameThread}
+        onArchiveChat={handleArchiveThread}
+        onDeleteChat={handleDeleteThread}
         onSelectChat={async (thread) => {
           if (!uid) return;
           const threadMessages = await loadChatMessages(uid, thread.chatId);

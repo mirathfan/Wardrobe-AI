@@ -17,8 +17,10 @@ import {
 import { classifyAuraLinkIntent, extractUrlsFromText } from "./shared/auraLinkIntent";
 import { buildAuraContext } from "./shared/buildAuraContext";
 import { loadCompactAuraMemoryContext } from "./shared/auraMemory";
+import { analyzeOutfitPhoto, isOutfitPhotoIntent } from "./shared/auraOutfitPhotoAnalysis";
 import { type WardrobeGapSuggestion } from "./shared/detectWardrobeGaps";
 import { loadAuraUserProfile } from "./shared/loadAuraUserProfile";
+import { handleLaundryIntent } from "./shared/laundryIntent";
 import { extractProductUrlMetadata } from "./shared/productUrlMetadata";
 import {
   ProductLinkError,
@@ -30,8 +32,40 @@ const AURA_BACKEND_VERSION = "candidate-preview-url-v9-zara-product-api";
 const DEBUG_AURA_SPARSE =
   process.env.FUNCTIONS_EMULATOR === "true" || process.env.NODE_ENV !== "production";
 
+function sanitizeUserInput(input: string): string {
+  return input
+    .trim()
+    .replace(/\0/g, "")
+    .slice(0, 2000)
+    .replace(/ignore previous instructions/gi, "")
+    .replace(/forget everything/gi, "")
+    .replace(/you are now/gi, "")
+    .replace(/system:/gi, "")
+    .replace(/assistant:/gi, "");
+}
+
+function styleCoreNoteFromClientContext(value: unknown) {
+  const context = (value && typeof value === "object"
+    ? (value as Record<string, unknown>).minimumCloset
+    : null) as Record<string, unknown> | null;
+  if (!context || typeof context !== "object") return "";
+
+  const progress = String(context.styleCoreProgress ?? "").trim();
+  const nextBestAdd = String(context.nextBestAdd ?? "").trim();
+  const outfitRange = Number(context.outfitRange ?? 0);
+  const nudge = String(context.nudge ?? "").trim();
+
+  return [
+    progress ? `Style core: ${progress}.` : "",
+    nextBestAdd ? `Next best add: ${nextBestAdd}.` : "",
+    Number.isFinite(outfitRange) && outfitRange > 0 ? `Outfit range signal: ${outfitRange}+ paths.` : "",
+    nudge,
+    "Use this naturally; do not say minimum closet target, estimated combinations, or missing categories.",
+  ].filter(Boolean).join(" ");
+}
+
 type AuraResponse = {
-  presentation: "chat" | "card" | "candidate_preview";
+  presentation: "chat" | "card" | "candidate_preview" | "laundry_confirmation";
   title: string;
   reply: string;
   reason: string;
@@ -90,6 +124,10 @@ type AuraResponse = {
   }[];
   candidates?: AuraCandidateItem[];
   candidateItems?: AuraCandidateItem[];
+  laundryAction?: {
+    targetStatus: "clean" | "needs_wash" | "in_laundry";
+    matches: { itemId: string; label: string; subtitle?: string }[];
+  };
 };
 
 type AuraAttachment = {
@@ -1014,13 +1052,14 @@ export const askAuraStream = onRequest(
         version: AURA_BACKEND_VERSION,
         method: req.method,
         requestKeys: Object.keys(req.body ?? {}),
-        prompt: typeof req.body?.message === "string" ? req.body.message : null,
+        promptLength: typeof req.body?.message === "string" ? req.body.message.length : 0,
         attachmentCount: Array.isArray(req.body?.attachments) ? req.body.attachments.length : 0,
         clientIntent: typeof req.body?.clientIntent === "string" ? req.body.clientIntent : null,
       });
       const decodedToken = await getAuth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
-      const userMessage = String(req.body?.message ?? "").trim();
+      const userMessage = sanitizeUserInput(String(req.body?.message ?? ""));
+      const styleCoreNote = styleCoreNoteFromClientContext(req.body?.clientContext);
       const attachments = parseAuraAttachments(req.body?.attachments);
       const clientIntent = typeof req.body?.clientIntent === "string" ? req.body.clientIntent : null;
       const linkIntent = classifyAuraLinkIntent(userMessage);
@@ -1077,7 +1116,7 @@ export const askAuraStream = onRequest(
                   : candidate.role === "user"
                     ? "user"
                     : null;
-              const text = String(candidate.text ?? "").trim();
+              const text = sanitizeUserInput(String(candidate.text ?? ""));
               if (!role || !text) return null;
               return { role, text };
             })
@@ -1097,6 +1136,21 @@ export const askAuraStream = onRequest(
         apiKey: process.env.OPENAI_API_KEY,
       });
       const imageCandidateGroups = imageGroupsForAddIntent(userMessage, attachments, effectiveClientIntent);
+
+      if (isOutfitPhotoIntent(effectiveClientIntent)) {
+        writeEvent(res, {
+          type: "status",
+          status: "analyzing_outfit",
+        });
+        logger.info("[AURA_OUTFIT_PHOTO] stream outfit analysis intent classified", {
+          uid,
+          attachmentCount: attachments.length,
+        });
+        const data = await analyzeOutfitPhoto({ client, attachments, userMessage });
+        writeEvent(res, { type: "final", data });
+        res.end();
+        return;
+      }
 
       if (firstDetectedUrl) {
         try {
@@ -1305,6 +1359,14 @@ export const askAuraStream = onRequest(
         ...doc.data(),
       })) as (Record<string, unknown> & { id: string })[];
 
+      const laundryResponse = await handleLaundryIntent({ db, uid, message: userMessage, items });
+      if (laundryResponse) {
+        writeEvent(res, { type: "delta", delta: laundryResponse.reply });
+        writeEvent(res, { type: "final", data: laundryResponse });
+        res.end();
+        return;
+      }
+
       const auraMemory = await loadCompactAuraMemoryContext(
         db,
         uid,
@@ -1351,6 +1413,7 @@ export const askAuraStream = onRequest(
         `User profile:\n${JSON.stringify(userProfile, null, 2)}\n\n` +
         `Aura context:\n${JSON.stringify(auraContext, null, 2)}\n\n` +
         `Stylist brief:\n${auraContext.stylistBrief || "Personalize lightly."}\n\n` +
+        `Style core note:\n${styleCoreNote || "None."}\n\n` +
         `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
         `Product link context:\n${linkProductContext}\n\n` +
         `Attachments:\n${attachmentContextText(attachments)}\n\n` +

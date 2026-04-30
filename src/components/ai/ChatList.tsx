@@ -3,7 +3,7 @@ import { Animated, FlatList, NativeScrollEvent, NativeSyntheticEvent, View } fro
 
 import type { AppColors } from "@/constants/theme";
 import type { ClothingItem } from "@/src/types/ClothingItem";
-import type { AuraCandidateAction, AuraLookAction, AuraLookOptionMeta } from "@/src/types/aura";
+import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLookAction, AuraLookOptionMeta, AuraOutfitPhotoAction } from "@/src/types/aura";
 
 import ChatMessage from "./ChatMessage";
 import type { AIMessage } from "./chatTypes";
@@ -69,6 +69,8 @@ export default function ChatList({
   onSwapOutfit,
   onAuraAction,
   onAuraCandidateAction,
+  onAuraOutfitPhotoAction,
+  onAuraLaundryAction,
 }: {
   colors: AppColors;
   messages: AIMessage[];
@@ -89,6 +91,8 @@ export default function ChatList({
     lookOption?: AuraLookOptionMeta,
   ) => void;
   onAuraCandidateAction?: (action: AuraCandidateAction, message: AIMessage) => void;
+  onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
+  onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
 }) {
   const listRef = useRef<FlatList<AIMessage>>(null);
   const previousCountRef = useRef(messages.length);
@@ -193,6 +197,8 @@ export default function ChatList({
               onSwapOutfit={onSwapOutfit}
               onAuraAction={onAuraAction}
               onAuraCandidateAction={onAuraCandidateAction}
+              onAuraOutfitPhotoAction={onAuraOutfitPhotoAction}
+              onAuraLaundryAction={onAuraLaundryAction}
             />
           </View>
         );

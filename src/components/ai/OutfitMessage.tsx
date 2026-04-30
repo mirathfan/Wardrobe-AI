@@ -1,4 +1,4 @@
-import FastImage from "@d11/react-native-fast-image";
+import AppImage from "@/src/components/common/AppImage";
 import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
 import { Pressable, Text, View } from "react-native";
@@ -146,13 +146,11 @@ export default function OutfitMessage({
                   }}
                 />
                 {imageUri ? (
-                  <FastImage
+                  <AppImage
                     source={{
                       uri: imageUri,
-                      priority: FastImage.priority.normal,
-                      cache: FastImage.cacheControl.immutable,
                     }}
-                    resizeMode={FastImage.resizeMode.contain}
+                    resizeMode="contain"
                     style={[
                       { width: "100%", height: "100%", borderRadius: 14 },
                       imagePresentation.imageStyle,

@@ -2,6 +2,9 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 
 import { app } from "@/src/lib/firebase";
 import { getItemImageUrl } from "@/src/lib/itemImage";
+import { getMissingMinimumClosetCategories } from "@/src/lib/minimumCloset";
+import { generateOutfits } from "@/src/lib/outfitGenerator";
+import { toCanonicalCategory } from "@/src/lib/items";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook } from "@/src/types/aura";
 
@@ -150,6 +153,80 @@ function normalizeLookOptions(
   return [];
 }
 
+function roleForItem(item: ClothingItem): "top" | "bottom" | "shoes" | "outerwear" | "accessory" {
+  const category = toCanonicalCategory(item.category);
+  if (category === "bottom") return "bottom";
+  if (category === "shoes") return "shoes";
+  if (category === "outerwear") return "outerwear";
+  if (category === "accessory") return "accessory";
+  return "top";
+}
+
+function localSwipeBatchFromCloset(
+  args: Required<GenerateAuraSwipeBatchArgs> & { items: ClothingItem[] },
+): GenerateAuraSwipeBatchResponse | null {
+  const itemsById = new Map(args.items.map((item) => [item.id, item]));
+  const suggestions = generateOutfits(args.items, {
+    vibe: args.intentText,
+    includeOuterwear: true,
+    includeAccessory: true,
+    allowRewearToday: true,
+    allowOverWearLimit: true,
+  }).slice(0, args.numOutfits);
+
+  if (!suggestions.length) return null;
+
+  const lookOptions = suggestions.map<AuraSwipeBatchLook>((suggestion, index, list) => {
+    const pieces = suggestion.itemIds.flatMap((itemId) => {
+      const item = itemsById.get(itemId);
+      if (!item) return [];
+      return [{
+        role: roleForItem(item),
+        itemName: itemLabel(item),
+        source: "closet" as const,
+        itemId,
+        imageUrl: getItemImageUrl(item, { variant: "hero" }) ?? getItemImageUrl(item, { variant: "thumb" }) ?? null,
+      }];
+    });
+    const directionLabel = buildDirectionLabel(index, list.length);
+    const firstPiece = pieces[0]?.itemName ?? "Closet";
+    const secondPiece = pieces[1]?.itemName ?? "base";
+    const addToComplete = suggestion.missingSuggestions ?? [];
+
+    return {
+      id: `local_swipe_${index + 1}`,
+      position: index,
+      score: Math.max(0, pieces.length * 10 - addToComplete.length * 2),
+      reason: suggestion.reason,
+      directionLabel,
+      itemIds: pieces.flatMap((piece) => (piece.itemId ? [piece.itemId] : [])),
+      look: {
+        lookTitle: pieces.length >= 2 ? `${firstPiece} + ${secondPiece}` : suggestion.title,
+        vibe: directionLabel ? `${directionLabel} closet direction` : "closet-first direction",
+        shortExplanation: suggestion.reason,
+        stylingNote:
+          addToComplete.length > 0
+            ? "This uses only pieces already in your closet. Missing pieces are listed separately under Add to complete."
+            : "Built from category-complete pieces in your closet.",
+        personalizationLabel: directionLabel ? directionLabel.toUpperCase() : undefined,
+        personalizationNote: "Closet-first fallback from available items.",
+        pieces,
+        fromCloset: pieces.map((piece) => piece.itemName),
+        addToComplete,
+        alternates: [],
+        actions: [],
+      },
+    };
+  });
+
+  return {
+    batchId: `local_swipe_${Date.now()}`,
+    intentText: args.intentText,
+    lookOptions,
+    primaryLook: lookOptions[0] ?? null,
+  };
+}
+
 async function callGenerateAuraSwipeBatch(args: GenerateAuraSwipeBatchArgs) {
   const functions = getFunctions(app);
   const callable = httpsCallable<GenerateAuraSwipeBatchArgs, SwipeBackendResponse>(
@@ -178,6 +255,13 @@ export async function generateAuraSwipeBatch(
     numOutfits: args?.numOutfits ?? 8,
   };
   const itemsById = new Map((args?.items ?? []).map((item) => [item.id, item]));
+  const localItems = args?.items ?? [];
+  const isSparseCloset =
+    localItems.length > 0 && getMissingMinimumClosetCategories(localItems).length > 0;
+  if (isSparseCloset) {
+    const localBatch = localSwipeBatchFromCloset({ ...request, items: localItems });
+    if (localBatch) return localBatch;
+  }
 
   try {
     const result = await callGenerateAuraSwipeBatch(request);
@@ -204,6 +288,8 @@ export async function generateAuraSwipeBatch(
       console.log("[AURA_SWIPE] generateAuraSwipeBatch failed; using fallback");
     }
     if (code && !code.includes("not-found")) {
+      const localBatch = localSwipeBatchFromCloset({ ...request, items: localItems });
+      if (localBatch) return localBatch;
       throw error instanceof Error ? error : new Error(String(error));
     }
   }
@@ -214,6 +300,8 @@ export async function generateAuraSwipeBatch(
   }
   const lookOptions = normalizeLookOptions(fallback.data ?? {}, itemsById);
   if (lookOptions.length === 0) {
+    const localBatch = localSwipeBatchFromCloset({ ...request, items: localItems });
+    if (localBatch) return localBatch;
     console.log("[AURA_SWIPE] no lookOptions after fallback");
     throw new Error("Unable to load swipe looks – empty lookOptions");
   }

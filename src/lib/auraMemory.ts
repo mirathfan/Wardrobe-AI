@@ -12,7 +12,7 @@ import {
 import { db } from "@/src/lib/firebase";
 import type { AuraLook } from "@/src/types/aura";
 import type { ClothingItem } from "@/src/types/ClothingItem";
-import type { WornOutfit } from "@/src/utils/dailyOutfits";
+import type { AnalyzedWornOutfit, WornOutfit } from "@/src/utils/dailyOutfits";
 import {
   AURA_MEMORY_VERSION,
   LEARNED_STYLE_MEMORY_DOC_ID,
@@ -377,6 +377,36 @@ export async function logWornOutfitStyleEvent(uid: string, wornOutfit: WornOutfi
         .join(" + "),
     }),
     source: "planner",
+    createdAt: wornOutfit.wornAt,
+  });
+}
+
+export async function logAnalyzedOutfitStyleEvent(uid: string, wornOutfit: AnalyzedWornOutfit) {
+  const pieces = wornOutfit.detectedPieces ?? [];
+  const firstLabelForRole = (role: string) =>
+    pieces.find((piece) => piece.role === role)?.label;
+  const accessories = pieces
+    .filter((piece) => piece.role === "accessory")
+    .map((piece) => piece.label)
+    .filter(Boolean);
+
+  return logStyleEvent(uid, {
+    type: "outfit_worn",
+    itemIds: [],
+    outfit: {
+      top: firstLabelForRole("top"),
+      outerwear: firstLabelForRole("outerwear"),
+      bottom: firstLabelForRole("bottom"),
+      footwear: firstLabelForRole("footwear"),
+      accessories: accessories.length ? accessories : undefined,
+    },
+    derivedTraits: {
+      colors: uniqueTokens(pieces.map((piece) => piece.color ?? null), 8),
+      categories: uniqueTokens(pieces.map((piece) => piece.role), 8),
+      formula: pieces.map((piece) => piece.role).filter(Boolean).join(" + "),
+      vibe: uniqueTokens(wornOutfit.outfitVibe ? [wornOutfit.outfitVibe] : [], 4),
+    },
+    source: "aura",
     createdAt: wornOutfit.wornAt,
   });
 }

@@ -6,6 +6,45 @@ export type AuraLookPiece = {
   imageUrl?: string | null;
 };
 
+export type AuraDetectedOutfitPiece = {
+  role: "top" | "bottom" | "footwear" | "outerwear" | "accessory";
+  label: string;
+  color?: string | null;
+  confidence?: number | null;
+  notes?: string | null;
+  visible?: boolean | null;
+};
+
+export type AuraOutfitPhotoAnalysis = {
+  detectedPieces: AuraDetectedOutfitPiece[];
+  outfitVibe?: string | null;
+  stylingNotes?: string[];
+  missingToComplete?: string[];
+  sourceImageUrl?: string | null;
+};
+
+export type AuraOutfitPhotoAction =
+  | { type: "save_worn_outfit" }
+  | { type: "add_pieces_to_closet" }
+  | { type: "improve_outfit" };
+
+export type AuraLaundryStatus = "clean" | "needs_wash" | "in_laundry";
+
+export type AuraLaundryAction = {
+  targetStatus: AuraLaundryStatus;
+  matches: {
+    itemId: string;
+    label: string;
+    subtitle?: string | null;
+  }[];
+};
+
+export type AuraLaundryConfirmationAction = {
+  type: "confirm_laundry_status";
+  itemId: string;
+  targetStatus: AuraLaundryStatus;
+};
+
 export type AuraLookAction =
   | "saveLook"
   | "planForToday"
@@ -68,7 +107,7 @@ export type AuraLookOptionMeta = {
 };
 
 export type AuraResponse = {
-  presentation?: "chat" | "card" | "candidate_preview";
+  presentation?: "chat" | "card" | "candidate_preview" | "outfit_analysis" | "laundry_confirmation";
   title: string;
   reply: string;
   reason: string;
@@ -84,4 +123,6 @@ export type AuraResponse = {
   lookOptions?: AuraLook[];
   candidates?: AuraCandidateItem[];
   candidateItems?: AuraCandidateItem[];
+  outfitAnalysis?: AuraOutfitPhotoAnalysis | null;
+  laundryAction?: AuraLaundryAction | null;
 };

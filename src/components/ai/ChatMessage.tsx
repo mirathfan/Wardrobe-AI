@@ -14,7 +14,7 @@ import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { formatUrlForDisplay, isUrlOnlyMessage } from "@/src/lib/formatChatText";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
-import type { AuraCandidateAction, AuraLook, AuraLookAction, AuraLookOptionMeta } from "@/src/types/aura";
+import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLook, AuraLookAction, AuraLookOptionMeta, AuraOutfitPhotoAction } from "@/src/types/aura";
 
 import AuraReplyCard from "./AuraReplyCard";
 import OutfitMessage from "./OutfitMessage";
@@ -29,6 +29,12 @@ function fallbackStructuredIntro(message: AIMessage) {
   const candidateItems = message.aura?.candidateItems ?? message.aura?.candidates ?? [];
   if (candidateItems.length) {
     return "I found this item. Review it before I add it to your wardrobe.";
+  }
+  if (message.aura?.outfitAnalysis) {
+    return "I found this outfit. Review the pieces before saving or adding them.";
+  }
+  if (message.aura?.presentation === "laundry_confirmation") {
+    return message.aura.reply || "Which item did you mean?";
   }
   if (message.aura?.look || message.aura?.lookOptions?.length) {
     if ((message.aura?.lookOptions?.length ?? 0) > 1) {
@@ -53,6 +59,8 @@ export default function ChatMessage({
   onSwapOutfit,
   onAuraAction,
   onAuraCandidateAction,
+  onAuraOutfitPhotoAction,
+  onAuraLaundryAction,
 }: {
   colors: AppColors;
   message: AIMessage;
@@ -64,6 +72,8 @@ export default function ChatMessage({
   onSwapOutfit: (outfit: import("./chatTypes").ChatOutfit) => void;
   onAuraAction?: (action: AuraLookAction, message: AIMessage, look?: AuraLook, lookOption?: AuraLookOptionMeta) => void;
   onAuraCandidateAction?: (action: AuraCandidateAction, message: AIMessage) => void;
+  onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
+  onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
 }) {
   const layout = useResponsiveLayout();
   const fade = useRef(new Animated.Value(0)).current;
@@ -230,6 +240,12 @@ export default function ChatMessage({
                 onAction={onAuraAction ? (action, look, lookOption) => onAuraAction(action, message, look, lookOption) : undefined}
                 onCandidateAction={
                   onAuraCandidateAction ? (action) => onAuraCandidateAction(action, message) : undefined
+                }
+                onOutfitPhotoAction={
+                  onAuraOutfitPhotoAction ? (action) => onAuraOutfitPhotoAction(action, message) : undefined
+                }
+                onLaundryAction={
+                  onAuraLaundryAction ? (action) => onAuraLaundryAction(action, message) : undefined
                 }
               />
             </View>

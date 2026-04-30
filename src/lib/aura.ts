@@ -27,10 +27,55 @@ type AskAuraArgs = {
     imageUrls?: string[];
     description?: string | null;
   } | null;
+  clientContext?: {
+    minimumCloset?: {
+      itemCount: number;
+      styleCoreProgress: string;
+      nextBestAdd: string | null;
+      outfitRange: number;
+      nudge: string;
+      tone: string;
+    };
+  };
 };
 
 const URL_RE = /https?:\/\/[^\s<>"']+/i;
 const LINK_PREVIEW_TIMEOUT_MS = 9000;
+
+function sanitizeUserInput(input: string): string {
+  return input
+    .trim()
+    .replace(/\0/g, "")
+    .slice(0, 2000)
+    .replace(/ignore previous instructions/gi, "")
+    .replace(/forget everything/gi, "")
+    .replace(/you are now/gi, "")
+    .replace(/system:/gi, "")
+    .replace(/assistant:/gi, "");
+}
+
+function sanitizeAuraArgs(args: AskAuraArgs): AskAuraArgs {
+  return {
+    ...args,
+    message: sanitizeUserInput(args.message),
+    history: args.history?.map((entry) => ({
+      ...entry,
+      text: sanitizeUserInput(entry.text),
+    })),
+    occasion: args.occasion ? sanitizeUserInput(args.occasion).slice(0, 120) : args.occasion,
+    clientIntent: args.clientIntent ? sanitizeUserInput(args.clientIntent).slice(0, 120) : args.clientIntent,
+    linkPreview: args.linkPreview
+      ? {
+          ...args.linkPreview,
+          title: args.linkPreview.title ? sanitizeUserInput(args.linkPreview.title).slice(0, 220) : args.linkPreview.title,
+          description: args.linkPreview.description
+            ? sanitizeUserInput(args.linkPreview.description).slice(0, 500)
+            : args.linkPreview.description,
+        }
+      : args.linkPreview,
+    clientContext: args.clientContext,
+  };
+}
 
 function normalizeAuraCandidatePayload(data: AuraResponse): AuraResponse {
   const candidateItems = data.candidateItems ?? data.candidates ?? [];
@@ -51,13 +96,14 @@ function normalizeAuraCandidatePayload(data: AuraResponse): AuraResponse {
 }
 
 export async function askAura(args: AskAuraArgs): Promise<AuraResponse> {
+  const safeArgs = sanitizeAuraArgs(args);
   const functions = getFunctions(app);
-  logAuraRequest("callable_send", args);
+  logAuraRequest("callable_send", safeArgs);
   const callable = httpsCallable<AskAuraArgs, { ok: boolean; data: AuraResponse }>(
     functions,
     "askAura"
   );
-  const result = await callable(args);
+  const result = await callable(safeArgs);
   return normalizeAuraCandidatePayload(result.data.data);
 }
 
@@ -80,7 +126,7 @@ function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
     url: url ?? null,
     projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? null,
     requestKeys: Object.keys(args),
-    prompt: args.message,
+    promptLength: args.message.length,
     attachmentCount: args.attachments?.length ?? 0,
     attachments: args.attachments?.map((attachment) => ({
       type: attachment.type,
@@ -91,6 +137,14 @@ function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
     clientIntent: args.clientIntent ?? null,
     hasLinkPreview: !!args.linkPreview,
     linkPreviewHasImage: !!args.linkPreview?.imageUrl,
+    minimumCloset: args.clientContext?.minimumCloset
+      ? {
+          itemCount: args.clientContext.minimumCloset.itemCount,
+          styleCoreProgress: args.clientContext.minimumCloset.styleCoreProgress,
+          nextBestAdd: args.clientContext.minimumCloset.nextBestAdd,
+          outfitRange: args.clientContext.minimumCloset.outfitRange,
+        }
+      : null,
   });
 }
 
@@ -444,13 +498,11 @@ function processEventLines(
       await emitDeltaSmoothly(event.delta, callbacks.onDelta);
     }
     if (event.type === "final") {
-      console.log("[AURA_STREAM_RAW_FINAL]", trimmed);
       console.log("[AURA_STREAM_RAW]", "raw final stream payload", {
         keys: Object.keys(event.data ?? {}),
         presentation: event.data?.presentation,
         candidateItemsCount: event.data?.candidateItems?.length ?? 0,
         candidatesCount: event.data?.candidates?.length ?? 0,
-        payload: event.data,
       });
       const data = normalizeAuraCandidatePayload(event.data);
       console.log("[AURA_STREAM_FINAL]", "parsed final stream payload", {
@@ -551,7 +603,6 @@ async function askAuraStreamWithXhr(
       ...args,
     });
     logAuraRequest("xhr_send", args, getAskAuraStreamUrl());
-    console.log("[AURA_STREAM_REQUEST]", "xhr raw body", body);
     xhr.send(body);
   });
 }
@@ -560,7 +611,7 @@ export async function askAuraStream(
   args: AskAuraArgs,
   callbacks: AskAuraStreamCallbacks = {}
 ): Promise<AuraResponse> {
-  const enrichedArgs = await withClientLinkPreview(args);
+  const enrichedArgs = sanitizeAuraArgs(await withClientLinkPreview(args));
   const currentUser = auth.currentUser;
   const token = await currentUser?.getIdToken();
 
@@ -585,7 +636,6 @@ export async function askAuraStream(
   const url = getAskAuraStreamUrl();
   logAuraRequest("fetch_send", enrichedArgs, url);
   const body = JSON.stringify(enrichedArgs);
-  console.log("[AURA_STREAM_REQUEST]", "fetch raw body", body);
   let response: Response;
   try {
     response = await fetch(url, {

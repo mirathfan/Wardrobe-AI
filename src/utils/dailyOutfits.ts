@@ -17,7 +17,8 @@ import {
 } from "firebase/firestore";
 
 import { db } from "../lib/firebase";
-import { logWornOutfitStyleEvent } from "../lib/auraMemory";
+import { logAnalyzedOutfitStyleEvent, logWornOutfitStyleEvent } from "../lib/auraMemory";
+import type { AuraDetectedOutfitPiece } from "../types/aura";
 import { toDayKey } from "./date";
 
 export type OutfitItemsByCategory = {
@@ -42,6 +43,15 @@ export type PlannedOutfit = {
 
 export type WornOutfit = {
   itemsByCategory: OutfitItemsByCategory;
+  wornAt: number;
+};
+
+export type AnalyzedWornOutfit = {
+  detectedPieces: AuraDetectedOutfitPiece[];
+  outfitVibe?: string | null;
+  stylingNotes?: string[];
+  missingToComplete?: string[];
+  sourceImageUrl?: string | null;
   wornAt: number;
 };
 
@@ -262,6 +272,37 @@ export async function markOutfitWorn(
     { merge: true }
   );
   void logWornOutfitStyleEvent(uid, wornOutfit);
+  return getOutfitByDate(uid, key);
+}
+
+export async function markAnalyzedOutfitWorn(
+  uid: string,
+  dateKey: string | Date,
+  wornOutfit: AnalyzedWornOutfit
+) {
+  const key = normalizeDateKey(dateKey);
+  const ref = outfitDocRef(uid, key);
+  const payload = removeUndefinedFields({
+    dateKey: key,
+    itemIds: [],
+    planned: false,
+    wornOutfit: {
+      itemsByCategory: {},
+      wornAt: wornOutfit.wornAt,
+      source: "aura_outfit_photo",
+      sourceImageUrl: wornOutfit.sourceImageUrl ?? null,
+      detectedPieces: wornOutfit.detectedPieces,
+      outfitVibe: wornOutfit.outfitVibe ?? null,
+      stylingNotes: wornOutfit.stylingNotes ?? [],
+      missingToComplete: wornOutfit.missingToComplete ?? [],
+    },
+    wornAtMs: wornOutfit.wornAt,
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
+  });
+
+  await setDoc(ref, payload, { merge: true });
+  void logAnalyzedOutfitStyleEvent(uid, wornOutfit);
   return getOutfitByDate(uid, key);
 }
 

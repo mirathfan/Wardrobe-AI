@@ -8,7 +8,7 @@ import { normalizeCutoutImage } from "@/src/lib/cutoutNormalize";
 import { db, storage } from "@/src/lib/firebase";
 import { uploadItemPhoto } from "@/src/lib/uploadImage";
 import { analyzeCutoutVisualNormalization } from "@/src/lib/visualNormalization";
-import type { AuraCandidateItem } from "@/src/types/aura";
+import type { AuraCandidateItem, AuraDetectedOutfitPiece } from "@/src/types/aura";
 
 const AURA_UPLOAD_LOG = "[AURA_UPLOAD]";
 const AURA_DRAFT_LOG = "[AURA_DRAFT]";
@@ -618,6 +618,88 @@ function normalizeCandidateCategory(candidate: AuraCandidateItem) {
   }
 
   return "top";
+}
+
+function categoryForDetectedOutfitPiece(piece: AuraDetectedOutfitPiece) {
+  if (piece.role === "footwear") return "footwear";
+  if (piece.role === "outerwear") return "outerwear";
+  if (piece.role === "accessory") return "accessory";
+  return piece.role;
+}
+
+export async function createAuraItemDraftsFromDetectedOutfit(params: {
+  uid: string;
+  pieces: AuraDetectedOutfitPiece[];
+  sourceImageUrl?: string | null;
+  prompt: string;
+}) {
+  const { uid, prompt } = params;
+  const sourceImageUrl = String(params.sourceImageUrl ?? "").trim();
+  if (!sourceImageUrl) {
+    throw new Error("Missing outfit photo reference.");
+  }
+  const visiblePieces = params.pieces
+    .filter((piece) => String(piece.label ?? "").trim())
+    .slice(0, 8);
+  const created: { itemId: string; candidateId: string; imageCount: number }[] = [];
+  const now = Date.now();
+
+  for (const piece of visiblePieces) {
+    const category = categoryForDetectedOutfitPiece(piece);
+    const candidateId = `outfit-piece-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const docRef = doc(collection(db, "users", uid, "items"));
+    await setDoc(docRef, {
+      isDraft: true,
+      draftState: "draft",
+      itemLifecycleStatus: "candidate",
+      status: "AVAILABLE",
+      category,
+      subCategory: piece.label,
+      wearCountSinceWash: 0,
+      ingestionStatus: "pending",
+      ingestion: {
+        status: "pending",
+        lastRunAt: now,
+      },
+      ingestionSource: {
+        sourceHash: `outfit-photo:${sourceImageUrl}:${piece.role}:${piece.label}`,
+        sourceType: "aura_outfit_photo",
+        candidateId,
+      },
+      source: "aura_outfit_photo",
+      auraPrompt: prompt,
+      auraDetectedOutfitPiece: piece,
+      name: piece.label,
+      colorLabel: piece.color || "",
+      displayColor: piece.color || null,
+      notes: piece.notes || "Draft from outfit photo. Original photo is a reference, not a clean garment cutout.",
+      confidenceSummary: {
+        overall: typeof piece.confidence === "number" ? piece.confidence : 0.5,
+        notes: "Detected from worn outfit photo; review before using as a closet item.",
+      },
+      images: [{ originalUrl: sourceImageUrl, isPrimary: true }],
+      imageUrls: [sourceImageUrl],
+      originalImageUrl: sourceImageUrl,
+      cleanedImageUrl: null,
+      photoUrl: sourceImageUrl,
+      cleanedSource: null,
+      photos: {
+        originalUrl: sourceImageUrl,
+        primaryUrl: sourceImageUrl,
+        urls: [sourceImageUrl],
+        images: [{ originalUrl: sourceImageUrl, isPrimary: true }],
+      },
+      primaryImageProcessingStatus: "idle",
+      primaryImageProcessingError: null,
+      primaryImageProcessedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    created.push({ itemId: docRef.id, candidateId, imageCount: 1 });
+  }
+
+  if (!created.length) throw new Error("No visible outfit pieces were detected.");
+  return created;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {

@@ -1,7 +1,8 @@
 import React from "react";
-import { Animated, Pressable, ScrollView, Text } from "react-native";
+import { Animated, ScrollView, Text } from "react-native";
 
 import { Fonts } from "@/constants/theme";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 import { auraTheme } from "./aiTheme";
@@ -55,7 +56,6 @@ function ChipCard({
   colors: ReturnType<typeof useAppTheme>["colors"];
   index: number;
 }) {
-  const scale = React.useRef(new Animated.Value(1)).current;
   const opacity = React.useRef(new Animated.Value(0)).current;
   const translateY = React.useRef(new Animated.Value(6)).current;
 
@@ -76,20 +76,14 @@ function ChipCard({
     ]).start();
   }, [index, opacity, translateY]);
 
-  function animateTo(value: number) {
-    Animated.timing(scale, {
-      toValue: value,
-      duration: 120,
-      useNativeDriver: true,
-    }).start();
-  }
-
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
-      <Pressable
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+      <AuraPressable
         onPress={() => onPress(item.prompt)}
-        onPressIn={() => animateTo(0.98)}
-        onPressOut={() => animateTo(1)}
+        haptic="selection"
+        hapticTrigger="press"
+        pressedScale={0.96}
+        pressedOpacity={0.9}
         style={{
           width: 164,
           minHeight: 46,
@@ -116,7 +110,7 @@ function ChipCard({
         >
           {item.subtitle}
         </Text>
-      </Pressable>
+      </AuraPressable>
     </Animated.View>
   );
 }
@@ -132,7 +126,6 @@ function Chip({
   colors: ReturnType<typeof useAppTheme>["colors"];
   index: number;
 }) {
-  const scale = React.useRef(new Animated.Value(1)).current;
   const opacity = React.useRef(new Animated.Value(0)).current;
   const translateY = React.useRef(new Animated.Value(6)).current;
 
@@ -153,20 +146,14 @@ function Chip({
     ]).start();
   }, [index, opacity, translateY]);
 
-  function animateTo(value: number) {
-    Animated.timing(scale, {
-      toValue: value,
-      duration: 120,
-      useNativeDriver: true,
-    }).start();
-  }
-
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
-      <Pressable
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+      <AuraPressable
         onPress={() => onPress(label)}
-        onPressIn={() => animateTo(0.97)}
-        onPressOut={() => animateTo(1)}
+        haptic="selection"
+        hapticTrigger="press"
+        pressedScale={0.96}
+        pressedOpacity={0.9}
         style={{
           maxWidth: 210,
           paddingHorizontal: 10,
@@ -184,7 +171,7 @@ function Chip({
         >
           {label}
         </Text>
-      </Pressable>
+      </AuraPressable>
     </Animated.View>
   );
 }

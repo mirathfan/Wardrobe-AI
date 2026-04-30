@@ -16,6 +16,7 @@ import {
 } from "react-native";
 
 import { Fonts, type AppColors } from "@/constants/theme";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { getAttachmentGroupingLabel } from "@/src/lib/auraIntent";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
@@ -286,9 +287,13 @@ const sendScale = sendVisibilityAnim.interpolate({
             <View style={styles.attachmentHeader}>
               <Text style={styles.attachmentLabel}>ATTACHMENTS</Text>
               {(["same_item", "separate_items", "reference"] as const).map((role) => (
-                <Pressable
+                <AuraPressable
                   key={role}
                   onPress={() => onAttachmentRoleChange(role)}
+                  haptic="selection"
+                  hapticTrigger="press"
+                  pressedScale={0.96}
+                  pressedOpacity={0.88}
                   style={[
                     styles.attachmentRoleChip,
                     attachmentRole === role ? styles.attachmentRoleChipActive : null,
@@ -302,7 +307,7 @@ const sendScale = sendVisibilityAnim.interpolate({
                   >
                     {getAttachmentGroupingLabel(role)}
                   </Text>
-                </Pressable>
+                </AuraPressable>
               ))}
             </View>
             <View style={styles.attachmentItems}>
@@ -315,9 +320,14 @@ const sendScale = sendVisibilityAnim.interpolate({
                       <Ionicons name="mic" size={16} color={colors.text} />
                     </View>
                   )}
-                  <Pressable onPress={() => onRemoveAttachment(attachment.id)} style={styles.removeAttachmentButton}>
+                  <AuraPressable
+                    onPress={() => onRemoveAttachment(attachment.id)}
+                    pressedScale={0.92}
+                    pressedOpacity={0.86}
+                    style={styles.removeAttachmentButton}
+                  >
                     <Ionicons name="close" size={12} color="#fff" />
-                  </Pressable>
+                  </AuraPressable>
                 </View>
               ))}
             </View>
@@ -347,16 +357,19 @@ const sendScale = sendVisibilityAnim.interpolate({
 
         <Animated.View style={[styles.row, { minHeight: BASE_COMPOSER_HEIGHT - 8 }]}>
           <View style={styles.iconLane}>
-            <Pressable
+            <AuraPressable
               onPress={() => setMenuOpen((prev) => !prev)}
-              style={({ pressed }) => [
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.94}
+              pressedOpacity={0.9}
+              style={[
                 styles.sideButton,
                 menuOpen ? styles.sideButtonActive : null,
-                pressed ? styles.sideButtonPressed : null,
               ]}
             >
               <Ionicons name={menuOpen ? "close" : "add"} size={16} color={colors.text} />
-            </Pressable>
+            </AuraPressable>
           </View>
 
           <Animated.View style={[styles.inputSlot, { minHeight: inputHeightAnim }]}>
@@ -399,15 +412,18 @@ const sendScale = sendVisibilityAnim.interpolate({
           </Animated.View>
 
           <View style={styles.iconLane}>
-            <Pressable
+            <AuraPressable
               onPress={canSend ? handleSendPress : onMicPress}
               disabled={loading}
-              style={({ pressed }) => [
+              haptic={canSend ? "light" : "selection"}
+              hapticTrigger="press"
+              pressedScale={0.94}
+              pressedOpacity={0.9}
+              style={[
                 styles.sideButton,
                 styles.trailingButton,
                 canSend ? styles.trailingButtonSend : null,
                 recording && !canSend ? styles.trailingButtonRecording : null,
-                pressed ? styles.sideButtonPressed : null,
                 loading ? styles.sideButtonDisabled : null,
               ]}
             >
@@ -432,7 +448,7 @@ const sendScale = sendVisibilityAnim.interpolate({
               >
                 <Ionicons name="arrow-up" size={16} color="#EAF6FF" />
               </Animated.View>
-            </Pressable>
+            </AuraPressable>
           </View>
         </Animated.View>
       </Pressable>
@@ -452,10 +468,17 @@ function AttachmentOption({
   colors: AppColors;
 }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.attachmentOption, pressed ? styles.sideButtonPressed : null]}>
+    <AuraPressable
+      onPress={onPress}
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.96}
+      pressedOpacity={0.88}
+      style={styles.attachmentOption}
+    >
       <Ionicons name={icon} size={16} color={colors.text} />
       <Text style={styles.attachmentOptionText}>{label}</Text>
-    </Pressable>
+    </AuraPressable>
   );
 }
 
