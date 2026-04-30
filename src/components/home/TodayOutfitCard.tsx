@@ -1,4 +1,4 @@
-import FastImage from "@d11/react-native-fast-image";
+import AppImage from "@/src/components/common/AppImage";
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -91,14 +91,12 @@ export default function TodayOutfitCard({
                   }}
                 >
                   {imageUri ? (
-                    <FastImage
+                    <AppImage
                       source={{
                         uri: imageUri,
-                        priority: FastImage.priority.normal,
-                        cache: FastImage.cacheControl.immutable,
                       }}
                       style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
-                      resizeMode={FastImage.resizeMode.contain}
+                      resizeMode="contain"
                     />
                   ) : null}
                 </View>

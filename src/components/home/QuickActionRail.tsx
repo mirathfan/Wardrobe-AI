@@ -1,8 +1,10 @@
+import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 export type QuickActionItem = {
@@ -10,6 +12,16 @@ export type QuickActionItem = {
   label: string;
   prompt: string;
 };
+
+function iconForAction(key: string, label: string): keyof typeof Ionicons.glyphMap {
+  const value = `${key} ${label}`.toLowerCase();
+  if (value.includes("today")) return "sunny-outline";
+  if (value.includes("direction")) return "albums-outline";
+  if (value.includes("fix")) return "sparkles-outline";
+  if (value.includes("missing")) return "add-circle-outline";
+  if (value.includes("unworn")) return "refresh-circle-outline";
+  return "arrow-forward-circle-outline";
+}
 
 export default function QuickActionRail({
   colors,
@@ -26,63 +38,69 @@ export default function QuickActionRail({
   if (!primaryAction) return null;
 
   return (
-    <View style={{ gap: 10 }}>
-      <Pressable
+    <View style={{ gap: 12 }}>
+      <AuraPressable
         onPress={() => onPressAction(primaryAction)}
-        style={({ pressed }) => ({
+        haptic="light"
+        hapticTrigger="press"
+        pressedScale={0.97}
+        pressedOpacity={0.9}
+        style={{
           borderRadius: layout.mediumRadius,
           overflow: "hidden",
-          backgroundColor: colors.surface2,
+          backgroundColor: colors.surface,
           borderWidth: 1,
-          borderColor: colors.iridescentMid,
-          opacity: pressed ? 0.84 : 1,
-        })}
+          borderColor: colors.border,
+        }}
       >
         <LinearGradient
-          colors={[colors.iridescentStart, colors.iridescentEnd]}
+          colors={[colors.primaryPurple, colors.softPurple]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={{ paddingHorizontal: 16, paddingVertical: 14, gap: 4 }}
+          style={{ paddingHorizontal: 18, paddingVertical: 15, gap: 6 }}
         >
-          <Text style={{ color: colors.background, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 }}>
+          <Text style={{ color: colors.textPrimary, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 }}>
             START HERE
           </Text>
-          <Text style={{ color: colors.background, fontWeight: "900", fontSize: 16 }}>
-            {primaryAction.label}
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9 }}>
+            <Ionicons name={iconForAction(primaryAction.key, primaryAction.label)} size={15} color={colors.textPrimary} />
+            <Text style={{ color: colors.textPrimary, fontWeight: "900", fontSize: 16, textAlign: "center" }}>
+              {primaryAction.label}
+            </Text>
+          </View>
         </LinearGradient>
-      </Pressable>
+      </AuraPressable>
 
       {secondaryActions.length ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 8 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 8 }}>
           {secondaryActions.map((action) => (
-            <Pressable
+            <AuraPressable
               key={action.key}
               onPress={() => onPressAction(action)}
-              style={({ pressed }) => ({
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.96}
+              pressedOpacity={0.88}
+              style={{
                 borderRadius: layout.pillRadius,
                 paddingHorizontal: 14,
                 paddingVertical: 10,
-                backgroundColor: colors.surface2,
+                backgroundColor: colors.chipBackground,
                 borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.07)",
-                opacity: pressed ? 0.82 : 1,
-              })}
+                borderColor: "rgba(255,255,255,0.055)",
+              }}
             >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <View
-                  style={{
-                    width: 5,
-                    height: 5,
-                    borderRadius: 999,
-                    backgroundColor: colors.iridescentStart,
-                  }}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 9 }}>
+                <Ionicons
+                  name={iconForAction(action.key, action.label)}
+                  size={14}
+                  color={colors.textSecondary}
                 />
                 <Text style={{ color: colors.text, fontWeight: "800", fontSize: 13 }}>
                   {action.label}
                 </Text>
               </View>
-            </Pressable>
+            </AuraPressable>
           ))}
         </ScrollView>
       ) : null}

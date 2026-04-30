@@ -25,19 +25,30 @@ export default function InsightCard({
       style={{
         borderRadius: layout.mediumRadius,
         padding: layout.cardPadding,
-        backgroundColor: colors.surface1,
+        backgroundColor: colors.surfaceElevated,
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.08)",
-        gap: 10,
+        borderColor: colors.border,
+        gap: 12,
       }}
     >
-      <Text style={{ color: colors.iridescentStart, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }} numberOfLines={1} ellipsizeMode="tail">
+      <Text style={{ color: colors.softPurple, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }} numberOfLines={1} ellipsizeMode="tail">
         {eyebrow}
       </Text>
       <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900", letterSpacing: -0.3 }} numberOfLines={2} ellipsizeMode="tail">{title}</Text>
-      <Text style={{ color: colors.textSecondary, opacity: 0.65, fontSize: 13, lineHeight: 22 }} numberOfLines={3} ellipsizeMode="tail">{body}</Text>
+      <Text style={{ color: colors.textSecondary, opacity: 0.86, fontSize: 13, lineHeight: 21 }} numberOfLines={2} ellipsizeMode="tail">{body}</Text>
       {ctaLabel ? (
-        <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800", marginTop: 2 }} numberOfLines={1} ellipsizeMode="tail">{ctaLabel} →</Text>
+        <View
+          style={{
+            alignSelf: "flex-start",
+            marginTop: 2,
+            borderRadius: layout.pillRadius,
+            backgroundColor: colors.ctaCream,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+          }}
+        >
+          <Text style={{ color: colors.ctaText, fontSize: 13, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">{ctaLabel} →</Text>
+        </View>
       ) : null}
     </View>
   );

@@ -54,9 +54,9 @@ export default function SmartToolsGrid({
                 minHeight: layout.smartToolHeight + (layout.screenSize === "large" ? 10 : 0),
                 borderRadius: layout.mediumRadius,
                 padding: layout.cardPadding,
-                backgroundColor: isSoon ? colors.surface1 : colors.surface2,
+                backgroundColor: isSoon ? colors.surfaceSoft : colors.surface,
                 borderWidth: 1,
-                borderColor: isSoon ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.06)",
+                borderColor: colors.border,
                 opacity: pressed ? (isSoon ? 0.92 : 0.84) : isSoon ? 0.9 : 1,
                 gap: 12,
               })}
@@ -69,7 +69,7 @@ export default function SmartToolsGrid({
                     borderRadius: 19,
                     alignItems: "center",
                     justifyContent: "center",
-                    backgroundColor: colors.surface3,
+                    backgroundColor: colors.surfaceSoft,
                   }}
                 >
                   <MaterialCommunityIcons name={tool.icon} size={22} color={isSoon ? colors.textSecondary : colors.text} />
@@ -80,10 +80,10 @@ export default function SmartToolsGrid({
                       paddingHorizontal: 8,
                       paddingVertical: 4,
                       borderRadius: 999,
-                      backgroundColor: isSoon ? "rgba(255,255,255,0.04)" : "rgba(214,197,161,0.12)",
+                      backgroundColor: isSoon ? colors.chipBackground : colors.purpleSurface,
                     }}
                   >
-                    <Text style={{ color: isSoon ? colors.textSecondary : "#E6D7B8", fontSize: 11, fontWeight: "800" }} numberOfLines={1} ellipsizeMode="tail">
+                    <Text style={{ color: isSoon ? colors.textSecondary : colors.lightPurple, fontSize: 11, fontWeight: "800" }} numberOfLines={1} ellipsizeMode="tail">
                       {tool.badge}
                     </Text>
                   </View>

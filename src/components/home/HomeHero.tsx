@@ -1,7 +1,8 @@
 import { LinearGradient } from "expo-linear-gradient";
-import FastImage from "@d11/react-native-fast-image";
+import AppImage from "@/src/components/common/AppImage";
 import React, { useEffect } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { Text, View } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -14,6 +15,7 @@ import type { AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -99,7 +101,6 @@ export default function HomeHero({
   itemsById,
   onPrimaryAction,
   onSecondaryAction,
-  onOpenDay,
 }: {
   colors: AppColors;
   greeting: string;
@@ -111,15 +112,14 @@ export default function HomeHero({
   itemsById: Map<string, ClothingItem>;
   onPrimaryAction: () => void;
   onSecondaryAction: () => void;
-  onOpenDay: () => void;
 }) {
   const layout = useResponsiveLayout();
   const hasPlan = !!record?.plannedOutfit;
   const hasWorn = !!record?.wornOutfit;
   const reasons = record?.plannedOutfit?.reasons?.slice(0, 2) ?? [];
   const slots: SlotKey[] = ["outerwear", "top", "bottom", "shoes"];
-  const primaryLabel = hasPlan || hasWorn ? "Wear this" : "Style me now";
-  const secondaryLabel = hasPlan || hasWorn ? "Fix it" : "3 directions";
+  const primaryLabel = "Style me now";
+  const secondaryLabel = "3 directions";
   const statusEyebrow = hasWorn ? "ON YOU TODAY" : hasPlan ? "PLANNED FOR TODAY" : "AURA READY";
   const title = hasWorn ? "Today's look is locked." : hasPlan ? "Today's look is ready." : "Your next look starts here.";
   const subtitle = hasWorn
@@ -135,7 +135,7 @@ export default function HomeHero({
   const secondaryPreview = previewSlots.slice(1, 4);
 
   return (
-    <View style={{ gap: 12 }}>
+      <View style={{ gap: 8 }}>
       <View style={{ gap: 6 }}>
         <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: "700" }} numberOfLines={1} ellipsizeMode="tail">
           {greeting}
@@ -148,44 +148,38 @@ export default function HomeHero({
         </Text>
       </View>
 
-      <AuraGlassCard
-        iridescentBorder
-        warmHero
-        intensity={22}
-        style={{
-          borderRadius: layout.largeRadius,
-        }}
-      >
+        <AuraGlassCard
+          warmHero
+          intensity={18}
+          style={{
+            borderRadius: layout.largeRadius,
+          }}
+        >
         <IridecentHeroLine colors={colors} />
         <LinearGradient
           pointerEvents="none"
-          colors={[colors.warmGlow, "transparent", colors.accentSoft]}
+          colors={[colors.warmGlow, "transparent", "rgba(255,255,255,0.015)"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ position: "absolute", inset: 0 }}
         />
-        <View style={{ minHeight: layout.heroHeight + 28, padding: layout.cardPadding, gap: 18, justifyContent: "space-between" }}>
-          <View style={{ gap: 16 }}>
+        <View style={{ minHeight: layout.heroHeight + 32, padding: layout.cardPadding + 2, gap: 20, justifyContent: "space-between" }}>
+          <View style={{ gap: 18 }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <View
                 style={{
                   paddingHorizontal: 12,
                   paddingVertical: 6,
                   borderRadius: layout.pillRadius,
-                  backgroundColor: "rgba(255,255,255,0.08)",
+                  backgroundColor: colors.chipBackground,
                   borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.09)",
+                  borderColor: colors.border,
                 }}
               >
-                <Text style={{ color: "#F2E8D1", fontSize: 11, fontWeight: "900", letterSpacing: 0.9 }}>
+                <Text style={{ color: colors.lightPurple, fontSize: 11, fontWeight: "900", letterSpacing: 0.9 }}>
                   {statusEyebrow}
                 </Text>
               </View>
-              <Pressable onPress={onOpenDay}>
-                <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "800" }} numberOfLines={1} ellipsizeMode="tail">
-                  Open day
-                </Text>
-              </Pressable>
             </View>
 
             <View style={{ gap: 8 }}>
@@ -196,7 +190,7 @@ export default function HomeHero({
                 {subtitle}
               </Text>
               {stylistNote ? (
-                <Text style={{ color: "#E6D7B8", fontSize: 12.5, fontWeight: "800" }} numberOfLines={2} ellipsizeMode="tail">
+                <Text style={{ color: colors.lightPurple, fontSize: 12.5, fontWeight: "800" }} numberOfLines={2} ellipsizeMode="tail">
                   {stylistNote}
                 </Text>
               ) : null}
@@ -216,9 +210,9 @@ export default function HomeHero({
                       flex: layout.screenSize === "compact" ? undefined : 1.2,
                       minHeight: layout.screenSize === "compact" ? 180 : 208,
                       borderRadius: layout.largeRadius - 4,
-                      backgroundColor: "rgba(255,255,255,0.045)",
+                      backgroundColor: colors.surface,
                       borderWidth: 1,
-                      borderColor: "rgba(255,255,255,0.08)",
+                      borderColor: colors.border,
                       overflow: "hidden",
                     }}
                   >
@@ -232,7 +226,7 @@ export default function HomeHero({
                         <>
                           <LinearGradient
                             pointerEvents="none"
-                            colors={["rgba(255,255,255,0.04)", "rgba(255,255,255,0.00)", "rgba(10,10,12,0.30)"]}
+                            colors={["rgba(255,255,255,0.04)", "rgba(255,255,255,0.00)", colors.overlay]}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 0, y: 1 }}
                             style={{ position: "absolute", inset: 0, zIndex: 1 }}
@@ -246,25 +240,23 @@ export default function HomeHero({
                               paddingHorizontal: 10,
                               paddingVertical: 6,
                               borderRadius: 999,
-                              backgroundColor: "rgba(13,13,16,0.58)",
+                              backgroundColor: colors.dockBackground,
                               borderWidth: 1,
-                              borderColor: "rgba(255,255,255,0.09)",
+                              borderColor: colors.border,
                             }}
                           >
-                            <Text style={{ color: "#F2E8D1", fontSize: 11, fontWeight: "900", letterSpacing: 0.8 }}>
+                            <Text style={{ color: colors.lightPurple, fontSize: 11, fontWeight: "900", letterSpacing: 0.8 }}>
                               {slotVerb(leadPreview.slot)}
                             </Text>
                           </View>
                           <View style={{ flex: 1, paddingHorizontal: 14, paddingVertical: 12, alignItems: "center", justifyContent: "center" }}>
                             {imageUri ? (
-                              <FastImage
+                              <AppImage
                                 source={{
                                   uri: imageUri,
-                                  priority: FastImage.priority.normal,
-                                  cache: FastImage.cacheControl.immutable,
                                 }}
                                 style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
-                                resizeMode={FastImage.resizeMode.contain}
+                                resizeMode="contain"
                               />
                             ) : null}
                           </View>
@@ -277,7 +269,7 @@ export default function HomeHero({
                               zIndex: 2,
                             }}
                           >
-                            <Text style={{ color: "#fff", fontSize: 16, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">
+                            <Text style={{ color: colors.textPrimary, fontSize: 16, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">
                               {slotLabel(leadPreview.slot)}
                             </Text>
                           </View>
@@ -300,9 +292,9 @@ export default function HomeHero({
                             flex: 1,
                             minHeight: 88,
                             borderRadius: layout.mediumRadius,
-                            backgroundColor: "rgba(255,255,255,0.04)",
+                            backgroundColor: colors.surfaceSoft,
                             borderWidth: 1,
-                            borderColor: "rgba(255,255,255,0.07)",
+                            borderColor: colors.border,
                             overflow: "hidden",
                             flexDirection: "row",
                             alignItems: "center",
@@ -310,19 +302,17 @@ export default function HomeHero({
                         >
                           <View style={{ flex: 0.9, paddingHorizontal: 10, paddingVertical: 10, alignItems: "center", justifyContent: "center" }}>
                             {imageUri ? (
-                              <FastImage
+                              <AppImage
                                 source={{
                                   uri: imageUri,
-                                  priority: FastImage.priority.normal,
-                                  cache: FastImage.cacheControl.immutable,
                                 }}
                                 style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
-                                resizeMode={FastImage.resizeMode.contain}
+                                resizeMode="contain"
                               />
                             ) : null}
                           </View>
                           <View style={{ flex: 1.1, paddingRight: 12, gap: 4 }}>
-                            <Text style={{ color: "#F2E8D1", fontSize: 11, fontWeight: "900", letterSpacing: 0.7 }}>
+                            <Text style={{ color: colors.lightPurple, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 }}>
                               {slotVerb(slot)}
                             </Text>
                             <Text style={{ color: colors.text, fontSize: 14, fontWeight: "900" }} numberOfLines={1}>
@@ -345,9 +335,9 @@ export default function HomeHero({
                         paddingHorizontal: 12,
                         paddingVertical: 8,
                         borderRadius: 999,
-                        backgroundColor: "rgba(255,255,255,0.055)",
+                        backgroundColor: colors.chipBackground,
                         borderWidth: 1,
-                        borderColor: "rgba(255,255,255,0.08)",
+                        borderColor: colors.border,
                       }}
                     >
                       <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "800" }}>
@@ -371,9 +361,9 @@ export default function HomeHero({
                       paddingHorizontal: 11,
                       paddingVertical: 8,
                       borderRadius: 999,
-                      backgroundColor: "rgba(255,255,255,0.05)",
+                      backgroundColor: colors.chipBackground,
                       borderWidth: 1,
-                      borderColor: "rgba(255,255,255,0.07)",
+                      borderColor: colors.border,
                     }}
                   >
                     <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "700" }} numberOfLines={2} ellipsizeMode="tail">
@@ -391,9 +381,9 @@ export default function HomeHero({
                   paddingHorizontal: 11,
                   paddingVertical: 7,
                   borderRadius: layout.pillRadius,
-                  backgroundColor: "rgba(255,255,255,0.045)",
+                  backgroundColor: colors.surfaceSoft,
                   borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.06)",
+                  borderColor: colors.border,
                 }}
               >
                 <Text style={{ color: colors.textSecondary, fontSize: 12.5 }} numberOfLines={2} ellipsizeMode="tail">
@@ -407,26 +397,35 @@ export default function HomeHero({
             <AuraGradientButton
               label={primaryLabel}
               onPress={onPrimaryAction}
-              gradientColors={[colors.iridescentStart, colors.iridescentEnd]}
-              labelColor={colors.background}
-              style={{ flex: 1, minHeight: 50, borderRadius: layout.mediumRadius }}
+              gradientColors={[colors.ctaCream, colors.ctaCream]}
+              labelColor={colors.ctaText}
+              innerBackgroundColor={colors.ctaCream}
+              innerOverlayColors={["rgba(255,255,255,0.14)", "rgba(255,255,255,0.04)"]}
+              style={{ flex: 1, minHeight: 52, borderRadius: layout.mediumRadius }}
             />
-            <Pressable
+            <AuraPressable
               onPress={onSecondaryAction}
-              style={({ pressed }) => ({
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.97}
+              pressedOpacity={0.9}
+              style={{
                 flex: 1,
                 borderRadius: layout.mediumRadius,
-                paddingVertical: 15,
+                minHeight: 52,
+                paddingHorizontal: 16,
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor: "rgba(255,255,255,0.05)",
+                backgroundColor: colors.surfaceSoft,
                 borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.08)",
-                opacity: pressed ? 0.82 : 1,
-              })}
+                borderColor: colors.border,
+              }}
             >
-              <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900" }}>{secondaryLabel}</Text>
-            </Pressable>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <Ionicons name="git-branch-outline" size={16} color={colors.text} />
+                <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900", textAlign: "center" }}>{secondaryLabel}</Text>
+              </View>
+            </AuraPressable>
           </View>
         </View>
       </AuraGlassCard>

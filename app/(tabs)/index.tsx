@@ -12,12 +12,14 @@ import {
 
 import ContinueSection from "@/src/components/home/ContinueSection";
 import ContinueChatCard from "@/src/components/home/ContinueChatCard";
+import MinimumClosetProgressCard from "@/src/components/closet/MinimumClosetProgressCard";
 import AuraLookModule from "@/src/components/home/AuraLookModule";
 import HomeHero from "@/src/components/home/HomeHero";
 import InsightCard from "@/src/components/home/InsightCard";
 import QuickActionRail, { type QuickActionItem } from "@/src/components/home/QuickActionRail";
 import SmartToolsGrid, { type SmartTool } from "@/src/components/home/SmartToolsGrid";
-import TodayOutfitCard from "@/src/components/home/TodayOutfitCard";
+import { HOME_DEFERRED_FEATURES } from "@/src/components/home/homeDeferredFeatures";
+import AuraTrainingCard from "@/src/components/aura/AuraTrainingCard";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useLocalWeather } from "@/src/hooks/useLocalWeather";
@@ -25,9 +27,12 @@ import { useNow } from "@/src/hooks/useNow";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { buildVisiblePreferenceHint, loadAssistantProfile } from "@/src/lib/assistantMemory";
 import { loadChatMessages, loadLatestChatThread, type AIChatThread } from "@/src/lib/aiChats";
+import { logAuraLookStyleEvent } from "@/src/lib/auraMemory";
 import { auraLookToPlannedOutfit, loadLatestSavedAuraLook, saveAuraLook } from "@/src/lib/auraLooks";
-import { listenToItems } from "@/src/lib/items";
+import { listenToItems, normalizeLaundryStatus } from "@/src/lib/items";
+import { getMinimumClosetProgress, getSuggestedAddItemCategory } from "@/src/lib/minimumCloset";
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
+import { Toast } from "@/src/lib/toast";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLookAction, AuraResponse } from "@/src/types/aura";
@@ -76,6 +81,19 @@ function RevealSection({
       {children}
     </Animated.View>
   );
+}
+
+function buildAuraLookFeedbackPrompt(action: AuraLookAction, promptBase: string) {
+  if (action === "notMyVibe") {
+    return `Take this in a different direction from ${promptBase}. Keep it polished, but shift the palette, silhouette, or overall attitude so it feels more like me.`;
+  }
+  if (action === "showMoreLikeThis") {
+    return `Show me 3 more looks in the same lane as ${promptBase}, but vary the styling so they do not feel repetitive.`;
+  }
+  if (action === "lessLikeThis") {
+    return `Pull away from ${promptBase}. Keep the same level of polish, but give me a noticeably different palette, silhouette, or vibe.`;
+  }
+  return "";
 }
 
 export default function HomeScreen() {
@@ -209,11 +227,15 @@ export default function HomeScreen() {
   }, [timeLabel, weather.city, weather.label, weather.permission, weather.state, weather.tempC]);
 
   const availableCount = useMemo(
-    () => items.filter((item) => item.status === "AVAILABLE").length,
+    () => items.filter((item) => normalizeLaundryStatus(item) === "clean").length,
     [items]
   );
   const laundryCount = useMemo(
-    () => items.filter((item) => item.status === "IN_LAUNDRY").length,
+    () => items.filter((item) => normalizeLaundryStatus(item) === "in_laundry").length,
+    [items]
+  );
+  const needsWashCount = useMemo(
+    () => items.filter((item) => normalizeLaundryStatus(item) === "needs_wash").length,
     [items]
   );
   const unwornCount = useMemo(
@@ -246,7 +268,62 @@ export default function HomeScreen() {
     [items]
   );
 
+  const heroStylistNote = useMemo(() => {
+    if (todayRecord?.plannedOutfit || todayRecord?.wornOutfit) {
+      return "Your quickest win is already on deck.";
+    }
+    if (unwornCount > 0) {
+      return "Ready to pull ignored pieces back in.";
+    }
+    if (laundryCount > 0) {
+      return "Built around what is already wearable now.";
+    }
+    if (weather.permission === "granted" && weather.state === "ready") {
+      if (weather.tempC != null && weather.tempC < 12) return "Cleaner layers will carry this best.";
+      if (weather.tempC != null && weather.tempC > 24) return "Keep it light without flattening the look.";
+    }
+    if (styleProfile.recommendationEmphasis.includes("smart_casual")) {
+      return "This stays in your lane without feeling too safe.";
+    }
+    return "A strong look can start from what you already own.";
+  }, [
+    laundryCount,
+    styleProfile.recommendationEmphasis,
+    todayRecord?.plannedOutfit,
+    todayRecord?.wornOutfit,
+    unwornCount,
+    weather.permission,
+    weather.state,
+    weather.tempC,
+  ]);
+
+  const heroGuidancePhrases = useMemo(() => {
+    const phrases: string[] = [];
+    if (availableCount > 0) phrases.push("Start with what is ready");
+    if (unwornCount > 0) phrases.push("Pull one ignored piece back in");
+    if (weather.permission === "granted" && weather.state === "ready") {
+      if (weather.tempC != null && weather.tempC < 12) {
+        phrases.push("Layer it clean");
+      } else if (weather.tempC != null && weather.tempC > 24) {
+        phrases.push("Keep it lighter");
+      } else {
+        phrases.push("Keep the balance sharp");
+      }
+    }
+    if (!phrases.length) phrases.push("Start with what is ready");
+    return phrases.slice(0, 3);
+  }, [availableCount, unwornCount, weather.permission, weather.state, weather.tempC]);
+
   const hasMinimalWardrobe = availableCount < 4;
+  const minimumClosetProgress = useMemo(() => getMinimumClosetProgress(items), [items]);
+  const showMinimumClosetCard = !minimumClosetProgress.isUnlocked;
+  const openAddMissingItem = React.useCallback(() => {
+    const suggestedCategory = getSuggestedAddItemCategory(items);
+    router.push({
+      pathname: "/(tabs)/add",
+      params: suggestedCategory ? { suggestedCategory } : {},
+    });
+  }, [items]);
   const latestLook = latestAuraLookResponse?.look ?? latestSavedLook?.look ?? null;
   const proactiveLookMeta = useMemo(() => {
     const leansDressy = styleProfile.recommendationEmphasis.some((value) =>
@@ -404,6 +481,26 @@ export default function HomeScreen() {
         label: "Build confidence",
         prompt: "Give me an easy, confidence-boosting outfit from my wardrobe.",
       },
+      daily: {
+        key: "daily",
+        label: "Today's outfit",
+        prompt: "Build my outfit for today from what I already own.",
+      },
+      options: {
+        key: "options",
+        label: "3 directions",
+        prompt: "Show me three outfit directions: one safe, one balanced, and one bold.",
+      },
+      fix: {
+        key: "fix",
+        label: "Fix this outfit",
+        prompt: "Fix this outfit. Give me a sharper version, a more wearable version, and a closet-first version.",
+      },
+      missing: {
+        key: "missing",
+        label: "What am I missing?",
+        prompt: "What am I missing from my wardrobe based on what I own and the way I like to dress?",
+      },
       accessories: {
         key: "accessories",
         label: "Push accessories",
@@ -459,17 +556,21 @@ export default function HomeScreen() {
 
     const orderedKeys = Array.from(
       new Set([
+        "today",
+        "options",
+        "fix",
+        "missing",
+        "unworn",
         ...styleProfile.starterPromptPresets,
         ...goalOrder,
         ...aestheticOrder,
-        "today",
+        "daily",
         "weather",
         "closet",
         "elevate",
         styleProfile.emphasizedAccessories.length ? "accessories" : "",
         "packing",
         "shopping",
-        "unworn",
       ].filter(Boolean))
     ).slice(0, 5);
 
@@ -505,45 +606,47 @@ export default function HomeScreen() {
     });
   }, []);
 
-  const openSoonTool = React.useCallback((title: string, prompt: string) => {
-    Alert.alert(
-      `${title} is coming soon`,
-      "We haven’t built the dedicated tool yet, but the stylist can still help right now.",
-      [
-        { text: "Not now", style: "cancel" },
-        {
-          text: "Ask Stylist",
-          onPress: () => openAIWithPrompt(prompt),
-        },
-      ]
-    );
-  }, [openAIWithPrompt]);
-
-  async function handleAuraLookAction(action: AuraLookAction) {
-    const look = latestLook;
+  async function handleAuraLookAction(action: AuraLookAction, selectedLook?: import("@/src/types/aura").AuraLook) {
+    const look = selectedLook ?? latestLook;
     if (!look || !uid) return;
     const promptBase = look.lookTitle;
     if (action === "saveLook") {
       try {
         const saved = await saveAuraLook(uid, look, { title: promptBase });
         setLatestSavedLook(saved);
-        Alert.alert("Saved", "Look saved to your profile.");
+        Toast.saved();
       } catch (error: any) {
-        Alert.alert("Save failed", error?.message ?? "Unable to save this look.");
+        Toast.error("Save failed", error?.message ?? "Unable to save this look.");
       }
       return;
     }
     if (action === "planForToday") {
       try {
         await savePlannedRecord(uid, new Date(), auraLookToPlannedOutfit(look));
-        Alert.alert("Planned", "This look is now attached to today.");
+        Toast.success("Planned", "This look is now attached to today.");
       } catch (error: any) {
-        Alert.alert("Plan failed", error?.message ?? "Unable to plan this look for today.");
+        Toast.error("Plan failed", error?.message ?? "Unable to plan this look for today.");
       }
       return;
     }
+    if (action === "likeLook") {
+      await logAuraLookStyleEvent(uid, "outfit_liked", look, { source: "aura" });
+      Alert.alert("Noted", "AURA will keep more of this energy in rotation.");
+      return;
+    }
+    if (action === "notMyVibe") {
+      await logAuraLookStyleEvent(uid, "outfit_disliked", look, { source: "aura" });
+      openAIWithPrompt(buildAuraLookFeedbackPrompt(action, promptBase));
+      return;
+    }
     if (action === "showMoreLikeThis") {
-      openAIWithPrompt(`Show me 3 more looks like ${promptBase}.`);
+      void logAuraLookStyleEvent(uid, "more_like_this", look, { source: "aura" });
+      openAIWithPrompt(buildAuraLookFeedbackPrompt(action, promptBase));
+      return;
+    }
+    if (action === "lessLikeThis") {
+      await logAuraLookStyleEvent(uid, "less_like_this", look, { source: "aura" });
+      openAIWithPrompt(buildAuraLookFeedbackPrompt(action, promptBase));
       return;
     }
     if (action === "shopMissingPieces") {
@@ -558,7 +661,10 @@ export default function HomeScreen() {
               { text: "Close", style: "cancel" },
               {
                 text: "Create shopping brief",
-                onPress: () => openAIWithPrompt(`Turn ${promptBase} into a concise shopping brief for the missing pieces.`),
+                onPress: () =>
+                  openAIWithPrompt(
+                    `Turn ${promptBase} into a concise shopping brief. Tell me what is actually missing from my wardrobe, what matters most to buy first, and what can wait.`
+                  ),
               },
             ]
           : [{ text: "Close", style: "cancel" }]
@@ -566,68 +672,44 @@ export default function HomeScreen() {
       return;
     }
     if (action === "useOnlyMyCloset") {
-      openAIWithPrompt(`Rebuild ${promptBase} using only my closet.`);
+      openAIWithPrompt(`Fix ${promptBase} using only my closet. Keep the same overall intent, but make it feel more resolved with pieces I already own.`);
       return;
     }
     if (action === "makeItDressier") {
-      openAIWithPrompt(`Make ${promptBase} dressier.`);
+      openAIWithPrompt(`Fix ${promptBase} and make it dressier. Keep it polished, tasteful, and still like me.`);
     }
   }
 
   const smartTools = useMemo<SmartTool[]>(
     () => [
       {
+        key: "studio",
+        title: "Studio",
+        subtitle: "Build an outfit by hand from your closet",
+        icon: "view-dashboard-edit-outline",
+        onPress: () => router.push("/studio"),
+      },
+      {
         key: "laundry",
         title: "Laundry",
-        subtitle: laundryCount > 0 ? `${laundryCount} items need attention` : "Check care flow and refresh pieces",
+        subtitle: `${availableCount} clean · ${laundryCount} in laundry`,
         icon: "washing-machine",
-        badge: laundryCount > 0 ? String(laundryCount) : undefined,
-        onPress: () => router.push("/(tabs)/laundry"),
-      },
-      {
-        key: "shopping",
-        title: "Shopping",
-        subtitle: "Turn wardrobe gaps into a cleaner wish list",
-        icon: "shopping-outline",
-        badge: "Soon",
-        onPress: () =>
-          openSoonTool(
-            "Shopping",
-            "Review my wardrobe and suggest a short shopping list of meaningful gaps."
-          ),
-      },
-      {
-        key: "favorites",
-        title: "Favorites",
-        subtitle: "Surface the pieces worth building around",
-        icon: "heart-outline",
-        badge: "Soon",
-        onPress: () =>
-          openSoonTool(
-            "Favorites",
-            "Show me the standout pieces in my wardrobe and what to build around them."
-          ),
+        badge: laundryCount + needsWashCount > 0 ? String(laundryCount + needsWashCount) : undefined,
+        onPress: () => router.push("/laundry"),
       },
       {
         key: "insights",
         title: "Insights",
-        subtitle: "See what you wear most, least, and should rotate next",
+        subtitle: "Read the closet before you make the next move",
         icon: "chart-line",
-        onPress: () => openAIWithPrompt("Give me a concise wardrobe insight summary from what I own."),
+        onPress: () => router.push("/insights"),
       },
       {
         key: "packing",
         title: "Packing",
-        subtitle: "Build short trip capsules without overpacking",
+        subtitle: "Build a tight trip capsule without losing style",
         icon: "bag-suitcase-outline",
-        onPress: () => openAIWithPrompt("Help me pack for a weekend trip using only my wardrobe."),
-      },
-      {
-        key: "recent",
-        title: "Recently worn",
-        subtitle: "Review what has been in rotation lately",
-        icon: "history",
-        onPress: () => router.push("/(tabs)/calendar"),
+        onPress: () => router.push("/packing"),
       },
       {
         key: "unworn",
@@ -635,18 +717,59 @@ export default function HomeScreen() {
         subtitle: unwornCount > 0 ? `${unwornCount} items deserve airtime` : "Everything is getting some rotation",
         icon: "hanger",
         badge: unwornCount > 0 ? String(unwornCount) : undefined,
-        onPress: () => openAIWithPrompt("Build an outfit around my least-worn items."),
+        onPress: () => router.push("/insights/unworn"),
       },
       {
         key: "gaps",
         title: "Wardrobe gaps",
         subtitle: "Find what is missing before you buy the wrong thing",
         icon: "vector-square-plus",
-        onPress: () => openAIWithPrompt("What wardrobe gaps should I actually fill next based on what I own?"),
+        onPress: () => router.push("/insights/gaps"),
       },
     ],
-    [laundryCount, openAIWithPrompt, openSoonTool, unwornCount]
+    [availableCount, laundryCount, needsWashCount, unwornCount]
   );
+
+  const priorityInsight = useMemo(() => {
+    if (hasMinimalWardrobe) {
+      return {
+        eyebrow: "BUILD THE FOUNDATION",
+        title: "A few key pieces will unlock better daily looks",
+        body: "Your closet is still taking shape. Add a few versatile pieces and Home will start giving you much sharper styling, rotation, and gap signals.",
+        ctaLabel: "Add a piece",
+        onPress: () => router.push("/(tabs)/add"),
+      };
+    }
+    if (unwornCount > 0) {
+      return {
+        eyebrow: "SMART ROTATION",
+        title: `${unwornCount} pieces are ready to come back in`,
+        body: "Bring neglected pieces back into a stronger outfit today.",
+        ctaLabel: "Use unworn pieces",
+        onPress: () => openAIWithPrompt("Build a look around pieces I have not worn enough."),
+      };
+    }
+    if (laundryCount > 0) {
+      return {
+        eyebrow: "KEEP TODAY OPEN",
+        title: `${laundryCount} pieces are stuck in laundry`,
+        body: "A few blocked items can narrow the best outfit paths. Clear them out so today’s suggestions stay sharper and easier to execute.",
+        ctaLabel: "Open laundry",
+        onPress: () => router.push("/(tabs)/laundry"),
+      };
+    }
+    return {
+      eyebrow: "IN GOOD SHAPE",
+      title: "Your wardrobe is ready for a stronger look",
+      body: `You have ${availableCount} ready-to-wear pieces available right now. This is a good day to push for a sharper outfit instead of repeating the safe default.`,
+      ctaLabel: "Style what is ready",
+      onPress: () => openAIWithPrompt("Build me an outfit from the pieces that are ready to wear right now."),
+    };
+  }, [availableCount, hasMinimalWardrobe, laundryCount, openAIWithPrompt, unwornCount]);
+
+  // Keep the deferred Home feature inventory close to the screen entry point so it is
+  // discoverable during future product passes without reintroducing clutter now.
+  void HOME_DEFERRED_FEATURES;
 
   if (loading) {
     return (
@@ -672,8 +795,8 @@ export default function HomeScreen() {
         contentContainerStyle={{
           paddingTop: layout.topContentInset,
           paddingHorizontal: layout.horizontalPadding,
-          paddingBottom: layout.bottomDockPadding,
-          gap: layout.sectionGap,
+          paddingBottom: layout.bottomDockPadding + 160,
+          gap: layout.sectionGap + 6,
         }}
       >
         <RevealSection delay={0}>
@@ -682,32 +805,40 @@ export default function HomeScreen() {
             greeting={headerGreeting}
             weatherLabel={weatherLabel}
             personalHint={assistantHint}
-            onAskStylist={() => openAIWithPrompt("Build me a strong outfit from my wardrobe for today.")}
-            onPlanToday={() => router.push("/(tabs)/calendar")}
+            stylistNote={heroStylistNote}
+            guidancePhrases={heroGuidancePhrases}
+            record={todayRecord}
+            itemsById={itemsById}
+            onPrimaryAction={() => openAIWithPrompt("Build me a strong outfit from my wardrobe for today.")}
+            onSecondaryAction={() => openAIWithPrompt("Show me three outfit directions for today: one safe, one balanced, and one bold.")}
           />
         </RevealSection>
 
         <RevealSection delay={40}>
-          <TodayOutfitCard
-            colors={colors}
-            record={todayRecord}
-            itemsById={itemsById}
-            onPlanToday={() => openAIWithPrompt("Plan my outfit for today using what I already own.")}
-            onOpenCalendar={() => router.push("/(tabs)/calendar")}
-            onAskStylist={() => openAIWithPrompt("Refine or improve my outfit plan for today.")}
-          />
+          <View style={{ gap: 10 }}>
+            <View style={{ gap: 2 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }}>QUICK OUTCOMES</Text>
+              <Text style={{ color: colors.textSecondary, opacity: 0.65, fontSize: 13, lineHeight: 20 }}>
+                Start from the result you want, not a blank prompt box.
+              </Text>
+            </View>
+            <QuickActionRail
+              colors={colors}
+              actions={starterPrompts}
+              onPressAction={(action) => openAIWithPrompt(action.prompt)}
+            />
+          </View>
         </RevealSection>
 
         <RevealSection delay={80}>
-          {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (
-            <ContinueChatCard
-              colors={colors}
-              title={latestChatThread.title}
-              preview={latestChatThread.lastMessagePreview}
-              updatedAt={latestChatThread.updatedAt}
-              onPress={() => openAIChat(latestChatThread.chatId)}
-            />
-          ) : null}
+          <InsightCard
+            colors={colors}
+            eyebrow={priorityInsight.eyebrow}
+            title={priorityInsight.title}
+            body={priorityInsight.body}
+            ctaLabel={priorityInsight.ctaLabel}
+            onPress={priorityInsight.onPress}
+          />
         </RevealSection>
 
         <RevealSection delay={120}>
@@ -728,98 +859,40 @@ export default function HomeScreen() {
         </RevealSection>
 
         <RevealSection delay={160}>
-          <View style={{ gap: 10 }}>
-            <View style={{ gap: 2 }}>
-              <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900" }}>Ask faster</Text>
-              <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                Start the stylist with a focused prompt instead of a blank thread.
-              </Text>
-            </View>
-            <QuickActionRail
-              colors={colors}
-              actions={starterPrompts}
-              onPressAction={(action) => openAIWithPrompt(action.prompt)}
-            />
-          </View>
-        </RevealSection>
-
-        <RevealSection delay={200}>
           <SmartToolsGrid colors={colors} tools={smartTools} columns={layout.smartGridColumns} />
         </RevealSection>
 
-        <RevealSection delay={240}>
-          <View style={{ gap: 12 }}>
-            <InsightCard
-              colors={colors}
-              eyebrow="ROTATION"
-              title={
-                hasMinimalWardrobe
-                  ? "Start with a few strong core pieces"
-                  : unwornCount > 0
-                    ? `${unwornCount} pieces are ready for a comeback`
-                    : "Your wardrobe is staying in motion"
-              }
-              body={
-                hasMinimalWardrobe
-                  ? "Once you add a few more available items, the stylist can build stronger rotations, gap analysis, and smarter daily suggestions."
-                  : unwornCount > 0
-                  ? "Use the stylist to pull neglected items back into rotation before they disappear into the background."
-                  : "You do not have obvious dead stock right now. A few targeted outfit prompts can keep that momentum going."
-              }
-              ctaLabel={hasMinimalWardrobe ? "Add another item" : "Use unworn pieces"}
-              onPress={() =>
-                hasMinimalWardrobe
-                  ? router.push("/(tabs)/add")
-                  : openAIWithPrompt("Build a look around pieces I have not worn enough.")
-              }
-            />
+        <RevealSection delay={200}>
+          <AuraTrainingCard
+            colors={colors}
+            variant="home"
+            onPress={() => router.push("/aura/swipe")}
+          />
+        </RevealSection>
 
-            <InsightCard
+        <RevealSection delay={240}>
+          {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (
+            <ContinueChatCard
               colors={colors}
-              eyebrow="CARE"
-              title={
-                availableCount === 0
-                  ? "Your wardrobe is still taking shape"
-                  : laundryCount > 0
-                    ? `${laundryCount} items are sitting in laundry`
-                    : "Care flow is under control"
-              }
-              body={
-                availableCount === 0
-                  ? "Add a few pieces first, then Home will start surfacing stronger outfit planning and rotation insights."
-                  : laundryCount > 0
-                  ? "Push those pieces back to available once they are clean so your daily outfit options stay full."
-                  : `You have ${availableCount} available pieces ready to wear, so planning can stay focused on choice instead of recovery.`
-              }
-              ctaLabel={
-                availableCount === 0
-                  ? "Add first item"
-                  : laundryCount > 0
-                    ? "Open Laundry"
-                    : "Plan around what is ready"
-              }
-              onPress={() =>
-                availableCount === 0
-                  ? router.push("/(tabs)/add")
-                  : laundryCount > 0
-                  ? router.push("/(tabs)/laundry")
-                  : openAIWithPrompt("Build me an outfit from the pieces that are ready to wear right now.")
-              }
+              title={latestChatThread.title}
+              preview={latestChatThread.lastMessagePreview}
+              updatedAt={latestChatThread.updatedAt}
+              onPress={() => openAIChat(latestChatThread.chatId)}
             />
-          </View>
+          ) : null}
         </RevealSection>
 
         <RevealSection delay={280}>
           {recentItems.length ? (
             <ContinueSection
               colors={colors}
-              title="Continue where you left off"
-              subtitle="Recently added and recently updated pieces worth acting on next."
+              title="Keep the momentum going"
+              subtitle="Fresh pieces worth styling next before they get lost in the closet."
               items={recentItems}
               onPressItem={(item) =>
                 router.push({
                   pathname: "/(tabs)/item/[id]",
-                  params: { id: item.id },
+                  params: { id: item.id, sourceTab: "index" },
                 })
               }
             />
@@ -827,13 +900,23 @@ export default function HomeScreen() {
             <InsightCard
               colors={colors}
               eyebrow="NEXT STEP"
-              title="Add a few pieces to unlock the dashboard"
-              body="Once your closet has a bit more depth, Home will start feeling much more personal with stronger recents, smarter prompts, and better planning cues."
+              title="Add a few pieces to unlock better daily styling"
+              body="Once your closet has a bit more depth, Home can give you stronger outfit recommendations, smarter recents, and better rotation cues."
               ctaLabel="Add item"
               onPress={() => router.push("/(tabs)/add")}
             />
           )}
         </RevealSection>
+
+        {showMinimumClosetCard ? (
+          <RevealSection delay={300}>
+            <MinimumClosetProgressCard
+              colors={colors}
+              items={items}
+              onAddMissingItem={openAddMissingItem}
+            />
+          </RevealSection>
+        ) : null}
 
         <RevealSection delay={320}>
           <Pressable
@@ -849,9 +932,9 @@ export default function HomeScreen() {
               gap: 4,
             })}
           >
-            <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>Add something new</Text>
+            <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>Bring in something new</Text>
             <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
-              Bring in a new piece, clean its image, and let the assistant classify it in the background.
+              Add a fresh piece, clean the image, and give AURA more to work with tomorrow.
             </Text>
           </Pressable>
         </RevealSection>

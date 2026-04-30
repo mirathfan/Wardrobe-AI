@@ -103,7 +103,13 @@ export default function AuraLookModule({
           </Text>
         ) : null}
       </View>
-      <AuraLookCard colors={colors} look={look} itemsById={itemsById} onAction={onAction} />
+      <AuraLookCard
+        colors={colors}
+        look={look}
+        itemsById={itemsById}
+        onAction={onAction}
+        viewportWidth={layout.width - layout.horizontalPadding * 2}
+      />
     </View>
   );
 }

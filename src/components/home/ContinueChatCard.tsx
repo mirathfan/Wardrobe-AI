@@ -37,15 +37,15 @@ export default function ContinueChatCard({
       style={({ pressed }) => ({
         borderRadius: layout.largeRadius,
         padding: layout.cardPadding,
-        backgroundColor: colors.surface1,
+        backgroundColor: colors.surface,
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.08)",
+        borderColor: colors.border,
         opacity: pressed ? 0.86 : 1,
         gap: 12,
       })}
     >
       <View style={{ gap: 4 }}>
-        <Text style={{ color: colors.iridescentStart, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }}>
+        <Text style={{ color: colors.softPurple, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }}>
           PICK UP THE THREAD
         </Text>
         <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900", letterSpacing: -0.5 }} numberOfLines={1} ellipsizeMode="tail">
@@ -66,9 +66,9 @@ export default function ContinueChatCard({
             paddingHorizontal: 10,
             paddingVertical: 6,
             borderRadius: 999,
-            backgroundColor: "rgba(255,255,255,0.06)",
+            backgroundColor: colors.purpleSurface,
             borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.08)",
+            borderColor: colors.purpleBorder,
           }}
         >
           <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "800" }}>Continue in AURA</Text>
