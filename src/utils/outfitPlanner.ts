@@ -1,4 +1,4 @@
-import { toCanonicalCategory } from "../../src/lib/items";
+import { normalizeLaundryStatus, toCanonicalCategory } from "../../src/lib/items";
 import { ClothingItem } from "../../src/types/ClothingItem";
 
 export type EventLike = { id: string; title: string; timeLabel?: string };
@@ -130,7 +130,7 @@ export function suggestedVibeForEvent(event?: EventLike) {
 }
 
 export function buildPlannedOutfit(items: ClothingItem[], opts: PlannerOptions): PlannedOutfit {
-  const available = items.filter((item) => item?.id && item.status !== "IN_LAUNDRY");
+  const available = items.filter((item) => item?.id && normalizeLaundryStatus(item) !== "in_laundry");
   const tops = available.filter((item) => toCanonicalCategory(item.category) === "top");
   const bottoms = available.filter((item) => toCanonicalCategory(item.category) === "bottom");
   const shoes = available.filter((item) => toCanonicalCategory(item.category) === "shoes");

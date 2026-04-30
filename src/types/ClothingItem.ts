@@ -9,6 +9,7 @@ import {
 } from "../shared/wardrobeTaxonomy";
 
 export type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
+export type LaundryStatus = "clean" | "needs_wash" | "in_laundry";
 export type ClothingPattern =
   | "solid"
   | "striped"
@@ -33,6 +34,7 @@ export type ClothingItem = {
   }[] | null;
   originalImageUrl?: string | null;
   cleanedImageUrl?: string | null;
+  backgroundRemovalMethod?: "client" | "server" | "none";
 
   // core
   brand: string;
@@ -131,13 +133,25 @@ export type ClothingItem = {
   warmthPreference?: number | null;
   photoUrl?: string | null;
   photoUri?: string | null;
+  isFavorite?: boolean | null;
   visualNormalization?: VisualNormalization | null;
   isDraft?: boolean;
-  draftState?: "draft" | "photo_uploaded" | "ingesting" | "ready" | "failed" | null;
+  draftState?:
+    | "draft"
+    | "awaiting_confirmation"
+    | "photo_uploaded"
+    | "ingesting"
+    | "ready"
+    | "failed"
+    | "cancelled"
+    | null;
 
   // lifecycle
   status: ClothingStatus;
+  laundryStatus?: LaundryStatus | null;
   wearCountSinceWash: number;
+  laundryUpdatedAt?: number | Timestamp | null;
+  lastWornAt?: number | Timestamp | null;
 
   createdAt: number;
   lastWornDate?: number | null;

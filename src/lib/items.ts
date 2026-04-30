@@ -15,7 +15,7 @@ import {
 import { db } from "./firebase";
 import { logItemStyleEvent } from "./auraMemory";
 import { buildSignalFromItem, updateAssistantMemoryFromAction } from "./assistantMemory";
-import { ClothingItem, ClothingStatus } from "../types/ClothingItem";
+import { ClothingItem, ClothingStatus, LaundryStatus } from "../types/ClothingItem";
 import { Category } from "../shared/wardrobeTaxonomy";
 
 export type ClosetItem = ClothingItem;
@@ -37,6 +37,11 @@ export type CategoryFilter =
   | "OUTERWEAR"
   | "ACCESSORY";
 export const MAX_WEARS_BEFORE_WASH = 2;
+export const LAUNDRY_STATUS_LABELS: Record<LaundryStatus, string> = {
+  clean: "Clean",
+  needs_wash: "Needs wash",
+  in_laundry: "In laundry",
+};
 export type IngestionStatus = "pending" | "processing" | "done" | "failed";
 export type DraftState = "draft" | "awaiting_confirmation" | "photo_uploaded" | "ingesting" | "ready" | "failed" | "cancelled";
 export type ItemLifecycleStatus =
@@ -59,6 +64,31 @@ const CATEGORY_MAP: Record<Exclude<CategoryFilter, "ALL">, string[]> = {
 
 function norm(v?: string | null) {
   return (v ?? "").trim().toLowerCase();
+}
+
+export function normalizeLaundryStatus(item: Partial<ClosetItem> | null | undefined): LaundryStatus {
+  const raw = String((item as any)?.laundryStatus ?? "").trim().toLowerCase();
+  if (raw === "clean" || raw === "needs_wash" || raw === "in_laundry") return raw;
+  const legacy = String((item as any)?.status ?? "").trim().toUpperCase();
+  if (legacy === "IN_LAUNDRY") return "in_laundry";
+  if (legacy === "WORN") return "needs_wash";
+  const wears = Number((item as any)?.wearCountSinceWash ?? 0);
+  if (Number.isFinite(wears) && wears >= 3) return "needs_wash";
+  return "clean";
+}
+
+export function legacyStatusForLaundryStatus(status: LaundryStatus): ClothingStatus {
+  if (status === "in_laundry") return "IN_LAUNDRY";
+  if (status === "needs_wash") return "WORN";
+  return "AVAILABLE";
+}
+
+export function isItemClean(item: Partial<ClosetItem> | null | undefined) {
+  return normalizeLaundryStatus(item) === "clean";
+}
+
+export function isItemInLaundry(item: Partial<ClosetItem> | null | undefined) {
+  return normalizeLaundryStatus(item) === "in_laundry";
 }
 
 export function getIngestionStatus(
@@ -344,7 +374,7 @@ export async function safeMarkWorn(uid: string, itemId: string) {
   }
 
   const data = snap.data() as Partial<ClosetItem>;
-  if (data.status === "IN_LAUNDRY") {
+  if (normalizeLaundryStatus(data) === "in_laundry") {
     throw new Error("Item is in laundry");
   }
 
@@ -360,8 +390,11 @@ export async function safeMarkWorn(uid: string, itemId: string) {
 
   await updateDoc(ref, {
     status: "WORN",
+    laundryStatus: "needs_wash",
     wearCountSinceWash: increment(1),
     lastWornDate: serverTimestamp(),
+    lastWornAt: serverTimestamp(),
+    laundryUpdatedAt: serverTimestamp(),
   });
   void logItemStyleEvent(uid, "item_worn", {
     ...(data as ClothingItem),
@@ -379,14 +412,46 @@ export async function markWorn(uid: string, itemId: string) {
 
 export async function sendToLaundry(uid: string, itemId: string) {
   const ref = doc(db, "users", uid, "items", itemId);
-  await updateDoc(ref, { status: "IN_LAUNDRY" });
+  await updateDoc(ref, {
+    status: "IN_LAUNDRY",
+    laundryStatus: "in_laundry",
+    laundryUpdatedAt: serverTimestamp(),
+  });
 }
 
 export async function markWashed(uid: string, itemId: string) {
   const ref = doc(db, "users", uid, "items", itemId);
   await updateDoc(ref, {
     status: "AVAILABLE",
+    laundryStatus: "clean",
     wearCountSinceWash: 0,
     lastWashedDate: serverTimestamp(),
+    lastWashedAt: serverTimestamp(),
+    laundryUpdatedAt: serverTimestamp(),
+  });
+}
+
+export async function markNeedsWash(uid: string, itemId: string) {
+  const ref = doc(db, "users", uid, "items", itemId);
+  await updateDoc(ref, {
+    status: "WORN",
+    laundryStatus: "needs_wash",
+    laundryUpdatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateLaundryStatus(uid: string, itemId: string, laundryStatus: LaundryStatus) {
+  const ref = doc(db, "users", uid, "items", itemId);
+  await updateDoc(ref, {
+    status: legacyStatusForLaundryStatus(laundryStatus),
+    laundryStatus,
+    ...(laundryStatus === "clean"
+      ? {
+          wearCountSinceWash: 0,
+          lastWashedDate: serverTimestamp(),
+          lastWashedAt: serverTimestamp(),
+        }
+      : {}),
+    laundryUpdatedAt: serverTimestamp(),
   });
 }
