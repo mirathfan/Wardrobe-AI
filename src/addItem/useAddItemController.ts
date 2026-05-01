@@ -25,6 +25,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useAppTheme } from "../hooks/useAppTheme";
 import { db } from "../lib/firebase";
 import { getDefaultSizeForSelection, loadUserProfilePreferences } from "../lib/userProfile";
+import { getCachedProfilePreferences } from "../lib/localCache";
 import { SUB_CATEGORIES, type Category } from "../shared/wardrobeTaxonomy";
 import type { UserProfilePreferences } from "../types/UserProfilePreferences";
 
@@ -90,9 +91,17 @@ export function useAddItemController({
       setProfilePreferences(null);
       return;
     }
-    void loadUserProfilePreferences(uid).then((profile) => {
-      if (!cancelled) setProfilePreferences(profile);
+    setProfilePreferences(null);
+    void getCachedProfilePreferences(uid).then((cached) => {
+      if (!cancelled && cached?.data) setProfilePreferences(cached.data);
     });
+    void loadUserProfilePreferences(uid)
+      .then((profile) => {
+        if (!cancelled) setProfilePreferences(profile);
+      })
+      .catch(() => {
+        if (!cancelled) setProfilePreferences(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -261,27 +270,32 @@ export function useAddItemController({
     if (existingDraftId && uid) {
       createSessionRef.current.draftId = existingDraftId;
       const sessionId = createSessionRef.current.sessionId;
-      void getDoc(doc(db, "users", uid, "items", existingDraftId)).then((snap) => {
-        if (createSessionRef.current.sessionId !== sessionId) return;
-        if (!snap.exists()) {
+      void getDoc(doc(db, "users", uid, "items", existingDraftId))
+        .then((snap) => {
+          if (createSessionRef.current.sessionId !== sessionId) return;
+          if (!snap.exists()) {
+            createSessionRef.current.draftId = null;
+            extraction.actions.resetDraftTracking?.();
+            return;
+          }
+          const data = snap.data() as any;
+          if (data?.isDraft !== true) {
+            // Prevent finalized items from being re-hydrated into add-item as an active draft.
+            createSessionRef.current.draftId = null;
+            extraction.actions.resetDraftTracking?.();
+            return;
+          }
+          extraction.actions.maybeApplyAutofillFromDraft(data);
+          extraction.actions.attachDraftSubscription(
+            existingDraftId,
+            sessionId,
+            extraction.refs.aiRunIdRef.current
+          );
+        })
+        .catch(() => {
+          if (createSessionRef.current.sessionId !== sessionId) return;
           createSessionRef.current.draftId = null;
-          extraction.actions.resetDraftTracking?.();
-          return;
-        }
-        const data = snap.data() as any;
-        if (data?.isDraft !== true) {
-          // Prevent finalized items from being re-hydrated into add-item as an active draft.
-          createSessionRef.current.draftId = null;
-          extraction.actions.resetDraftTracking?.();
-          return;
-        }
-        extraction.actions.maybeApplyAutofillFromDraft(data);
-        extraction.actions.attachDraftSubscription(
-          existingDraftId,
-          sessionId,
-          extraction.refs.aiRunIdRef.current
-        );
-      });
+        });
     }
   }, [
     draft.actions,

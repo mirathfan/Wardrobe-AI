@@ -9,6 +9,7 @@ import { MemoTextInputField } from "../ui/MemoTextInputField";
 import { Pill } from "../ui/Pill";
 import { SectionCard } from "../ui/SectionCard";
 import { makeDevThrottleLogger } from "../devPerf";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 const logAdvancedRender = makeDevThrottleLogger("AdvancedSections");
 
@@ -185,6 +186,7 @@ export const SeasonHeaderRow = React.memo(function SeasonHeaderRow({ controller 
 
 export const SeasonContentRow = React.memo(function SeasonContentRow({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  const { colors } = useAppTheme();
   logAdvancedRender({ row: "season-content", count: state.seasonTags.length });
   return (
     <SectionCard>
@@ -205,7 +207,7 @@ export const SeasonContentRow = React.memo(function SeasonContentRow({ controlle
             />
           ))}
         </ChipRow>
-        <Field label="Warmth" right={<Text style={{ color: "#666", fontWeight: "700" }}>{derived.warmthLabel}</Text>}>
+        <Field label="Warmth" right={<Text style={{ color: colors.textSecondary, fontWeight: "800" }}>{derived.warmthLabel}</Text>}>
           <View style={{ gap: 6 }}>
             <Slider
               value={state.warmthPreference ?? 0.5}
@@ -216,13 +218,13 @@ export const SeasonContentRow = React.memo(function SeasonContentRow({ controlle
                 actions.markUserEdited("warmthPreference");
                 actions.setWarmthPreference(value);
               }}
-              minimumTrackTintColor="#111"
-              maximumTrackTintColor="#e5e5e5"
-              thumbTintColor="#111"
+              minimumTrackTintColor={colors.ctaCream}
+              maximumTrackTintColor={colors.borderStrong}
+              thumbTintColor={colors.ctaCream}
             />
             <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-              <Text style={{ color: "#666", fontSize: 12 }}>Light</Text>
-              <Text style={{ color: "#666", fontSize: 12 }}>Warm</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Light</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Warm</Text>
             </View>
           </View>
         </Field>
@@ -339,22 +341,28 @@ const PickerRow = React.memo(function PickerRow({
   value: string;
   onPress: () => void;
 }) {
+  const { colors } = useAppTheme();
+
   return (
     <Pressable
       onPress={onPress}
       style={{
         borderWidth: 1,
-        borderColor: "#ddd",
-        borderRadius: 12,
+        borderColor: colors.border,
+        borderRadius: 14,
         paddingHorizontal: 12,
         paddingVertical: 12,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
+        gap: 12,
+        backgroundColor: colors.inputBackground,
       }}
     >
-      <Text style={{ fontSize: 16, fontWeight: "700", color: "#111" }}>{label}</Text>
-      <Text style={{ color: "#666", fontSize: 14 }}>{value || "Auto (AI)"}  ›</Text>
+      <Text style={{ fontSize: 15, fontWeight: "800", color: colors.text }}>{label}</Text>
+      <Text style={{ color: colors.textSecondary, fontSize: 14 }} numberOfLines={1}>
+        {value || "Auto (AI)"}  ›
+      </Text>
     </Pressable>
   );
 });

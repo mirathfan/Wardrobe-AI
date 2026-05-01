@@ -80,6 +80,10 @@ type ResolvedPhotoFields = {
 };
 
 const MIN_USABLE_CUTOUT_TRANSPARENCY = 0.05;
+const CUTOUT_ERROR_MESSAGE =
+  "We couldn't remove the background. Please try again.";
+const PHOTO_PROCESSING_ERROR_MESSAGE =
+  "We couldn't prepare this photo. Please try again.";
 
 function makeSelectedPhotoId() {
   return randomId();
@@ -101,6 +105,21 @@ function sanitizePhotoImageRecord(input: {
 
 function randomId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function userFacingPhotoProcessingError(error: unknown) {
+  const rawMessage = error instanceof Error ? error.message : String(error ?? "");
+  const message = rawMessage.trim();
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("renderasync") ||
+    lower.includes("not readable") ||
+    lower.includes("background removal") ||
+    lower.includes("couldn't prepare this photo")
+  ) {
+    return CUTOUT_ERROR_MESSAGE;
+  }
+  return message || PHOTO_PROCESSING_ERROR_MESSAGE;
 }
 
 export function usePhotoStep({
@@ -435,7 +454,7 @@ export function usePhotoStep({
       void durationMs;
       await estimateFileSizeBytes(outputUri);
       if (!outputUri || outputUri === inputUri) {
-        throw new Error("BG removal failed");
+        throw new Error(CUTOUT_ERROR_MESSAGE);
       }
       return output;
     },
@@ -489,14 +508,14 @@ export function usePhotoStep({
       setPendingVisualNormalization(visualNormalization);
       setCleanedPhotoUrl(null);
       if (!usableCutout) {
-        setBgRemovalError("BG removal failed");
+        setBgRemovalError(CUTOUT_ERROR_MESSAGE);
       }
       lastCompletedRefineKeyRef.current = getRefineRequestKey(
         originalPickedPhotoUri,
         refineValue
       );
     } catch {
-      setBgRemovalError("BG removal failed");
+      setBgRemovalError(CUTOUT_ERROR_MESSAGE);
     } finally {
       if (requestId === latestRefineRequestIdRef.current) {
         setRefiningCutout(false);
@@ -582,11 +601,11 @@ export function usePhotoStep({
           setPendingVisualNormalization(visualNormalization);
           setCleanedPhotoUrl(null);
           if (!usableCutout) {
-            setBgRemovalError("BG removal failed");
+            setBgRemovalError(CUTOUT_ERROR_MESSAGE);
           }
         } catch {
           if (requestId === latestRefineRequestIdRef.current) {
-            setBgRemovalError("BG removal failed");
+            setBgRemovalError(CUTOUT_ERROR_MESSAGE);
           }
         } finally {
           if (requestId === latestRefineRequestIdRef.current) {
@@ -1011,10 +1030,11 @@ export function usePhotoStep({
         void deleteDoc(doc(db, "users", uid, "items", previousDraftId)).catch(() => {});
       }
     } catch (e: any) {
-      setUploadError(e?.message ?? "Failed to process selected photo.");
-      setBgRemovalError(e?.message ?? "BG removal failed.");
+      const message = userFacingPhotoProcessingError(e);
+      setUploadError(message);
+      setBgRemovalError(message);
       setUploadingPhoto(false);
-      Alert.alert("Error", e?.message ?? "Failed to pick image");
+      Alert.alert("Error", message);
     }
   }, [
     clearPendingCutoutState,

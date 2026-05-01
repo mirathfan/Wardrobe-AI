@@ -1,19 +1,25 @@
 import React from "react";
 import { Text, View } from "react-native";
 
+import { useAppTheme } from "@/src/hooks/useAppTheme";
+
 export const RequiredBadge = React.memo(function RequiredBadge() {
+  const { colors } = useAppTheme();
+
   return (
     <View
       style={{
         paddingVertical: 4,
         paddingHorizontal: 8,
         borderRadius: 999,
-        backgroundColor: "#f4f4f5",
+        backgroundColor: colors.purpleSurface,
         borderWidth: 1,
-        borderColor: "#e4e4e7",
+        borderColor: colors.purpleBorder,
       }}
     >
-      <Text style={{ color: "#444", fontSize: 11, fontWeight: "800" }}>Required</Text>
+      <Text style={{ color: colors.lightPurple, fontSize: 11, fontWeight: "900" }}>
+        Required
+      </Text>
     </View>
   );
 });

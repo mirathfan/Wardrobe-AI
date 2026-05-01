@@ -2,6 +2,7 @@ import {
   isNativeBackgroundRemovalSupported,
   removeBackground as removeBackgroundCrossPlatform,
 } from "@six33/react-native-bg-removal";
+import * as FileSystem from "expo-file-system/legacy";
 import {
   // Legacy iOS-only — replaced by @six33/react-native-bg-removal
   isAvailable as isVisionBgNativeAvailable,
@@ -27,6 +28,9 @@ type BackgroundRemovalResult = {
   transparentPixelCount: number;
   method: "client" | "none";
 };
+
+const LOCAL_IMAGE_PREP_ERROR =
+  "We couldn't prepare this photo for background removal. Please try again.";
 
 export function isVisionBackgroundRemovalAvailable(): boolean {
   return Platform.OS === "ios" && isVisionBgNativeAvailable();
@@ -57,6 +61,66 @@ function normalizeFileUri(uri: string) {
   // many RN image components expect file://
   if (u.startsWith("/")) return `file://${u}`;
   return u;
+}
+
+function isRemoteUri(uri: string) {
+  return /^https?:\/\//i.test(uri);
+}
+
+function extensionForImageUri(uri: string) {
+  try {
+    const path = new URL(uri).pathname;
+    const match = path.match(/\.([a-z0-9]+)$/i);
+    const extension = String(match?.[1] ?? "").toLowerCase();
+    if (["jpg", "jpeg", "png", "heic", "heif", "webp"].includes(extension)) {
+      return extension === "jpeg" ? "jpg" : extension;
+    }
+  } catch {
+    const path = uri.split("?")[0] ?? "";
+    const match = path.match(/\.([a-z0-9]+)$/i);
+    const extension = String(match?.[1] ?? "").toLowerCase();
+    if (["jpg", "jpeg", "png", "heic", "heif", "webp"].includes(extension)) {
+      return extension === "jpeg" ? "jpg" : extension;
+    }
+  }
+  return "jpg";
+}
+
+export async function ensureLocalImageUri(uri: string): Promise<string> {
+  const normalized = normalizeFileUri(uri);
+  if (!normalized) {
+    throw new Error(LOCAL_IMAGE_PREP_ERROR);
+  }
+
+  if (!isRemoteUri(normalized)) {
+    return normalized;
+  }
+
+  const cacheDirectory = FileSystem.cacheDirectory;
+  if (!cacheDirectory) {
+    throw new Error(LOCAL_IMAGE_PREP_ERROR);
+  }
+
+  const extension = extensionForImageUri(normalized);
+  const destination = `${cacheDirectory}bg-removal-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}.${extension}`;
+
+  try {
+    const result = await FileSystem.downloadAsync(normalized, destination);
+    const localUri = normalizeFileUri(result.uri);
+    const info = await FileSystem.getInfoAsync(localUri);
+    if (!info.exists) {
+      throw new Error("Downloaded file does not exist.");
+    }
+    return localUri;
+  } catch (error) {
+    console.warn("[BgRemoval] failed to cache remote image", {
+      uri: normalized,
+      message: getErrorMessage(error),
+    });
+    throw new Error(LOCAL_IMAGE_PREP_ERROR);
+  }
 }
 
 function normalizeOptions(
@@ -203,10 +267,11 @@ export async function removeBackground(
   options?: RemoveBackgroundOptions
 ): Promise<BackgroundRemovalResult> {
   console.log("[BgRemoval] Platform:", Platform.OS);
+  const inputUri = await ensureLocalImageUri(localUri);
 
   if (Platform.OS === "android") {
     try {
-      return await removeBackgroundAndroid(localUri);
+      return await removeBackgroundAndroid(inputUri);
     } catch (e) {
       console.warn("[BgRemoval] Android native failed:", e);
       throw e instanceof Error ? e : new Error("Android background removal failed.");
@@ -219,24 +284,25 @@ export async function removeBackground(
 
   if (Platform.OS !== "ios") {
     console.log("[BgRemoval] Falling back to server-side");
-    return originalResult(localUri);
+    return originalResult(inputUri);
   }
 
   const available = isVisionBgNativeAvailable();
   const normalizedOptions = normalizeOptions(options);
   console.log("[VisionBG] removeBackground called", {
     available,
-    input: localUri,
+    input: inputUri,
+    originalInput: localUri,
     options: normalizedOptions,
   });
 
   if (!available) {
     console.log("[BgRemoval] Falling back to server-side");
-    return originalResult(localUri);
+    return originalResult(inputUri);
   }
 
   try {
-    const result = await removeBackgroundNative(localUri, normalizedOptions);
+    const result = await removeBackgroundNative(inputUri, normalizedOptions);
     console.log("[VisionBG] native result raw:", result);
 
     const rawOut = String((result as any)?.uri ?? "").trim();
@@ -277,7 +343,7 @@ export async function removeBackground(
       hasTransparency,
       transparentPixelRatio,
       transparentPixelCount,
-      changed: outputUri && outputUri !== normalizeFileUri(localUri),
+      changed: outputUri && outputUri !== normalizeFileUri(inputUri),
     });
 
     if (!outputUri) {
@@ -286,7 +352,7 @@ export async function removeBackground(
       );
     }
 
-    if (outputUri !== normalizeFileUri(localUri)) {
+    if (outputUri !== normalizeFileUri(inputUri)) {
       return {
         uri: outputUri,
         width,
@@ -301,18 +367,18 @@ export async function removeBackground(
       };
     }
 
-    if (outputUri === normalizeFileUri(localUri)) {
+    if (outputUri === normalizeFileUri(inputUri)) {
       console.warn("[VisionBG] native returned original URI; treating as no-op", {
-        input: normalizeFileUri(localUri),
+        input: normalizeFileUri(inputUri),
         output: outputUri,
       });
     }
 
     console.log("[BgRemoval] Falling back to server-side");
-    return originalResult(localUri);
+    return originalResult(inputUri);
   } catch (error) {
     console.warn("[VisionBG] FAILED; returning original uri", error);
     console.log("[BgRemoval] Falling back to server-side");
-    return originalResult(localUri);
+    return originalResult(inputUri);
   }
 }

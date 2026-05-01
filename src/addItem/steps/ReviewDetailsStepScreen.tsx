@@ -3,6 +3,7 @@ import { Text, View } from "react-native";
 
 import { BasicsStep } from "../sections/BasicsStep";
 import { DetailsStep } from "../sections/DetailsStep";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 export const ReviewDetailsStepScreen = React.memo(function ReviewDetailsStepScreen({
   controller,
@@ -10,6 +11,25 @@ export const ReviewDetailsStepScreen = React.memo(function ReviewDetailsStepScre
   controller: any;
 }) {
   const { derived } = controller;
+  const { colors } = useAppTheme();
+  const aiCardTone =
+    controller.state.aiStatus === "error"
+      ? {
+          borderColor: "rgba(255,77,79,0.32)",
+          backgroundColor: "rgba(255,77,79,0.09)",
+          titleColor: colors.danger,
+        }
+      : controller.state.aiStatus === "running"
+        ? {
+            borderColor: colors.purpleBorder,
+            backgroundColor: colors.purpleSurface,
+            titleColor: colors.lightPurple,
+          }
+        : {
+            borderColor: colors.border,
+            backgroundColor: colors.chipBackground,
+            titleColor: colors.text,
+          };
 
   return (
     <View style={{ gap: 14 }}>
@@ -17,24 +37,14 @@ export const ReviewDetailsStepScreen = React.memo(function ReviewDetailsStepScre
         <View
           style={{
             borderWidth: 1,
-            borderColor:
-              controller.state.aiStatus === "error"
-                ? "#fca5a5"
-                : controller.state.aiStatus === "running"
-                  ? "#cbd5e1"
-                  : "#e5e7eb",
-            backgroundColor:
-              controller.state.aiStatus === "error"
-                ? "#fef2f2"
-                : controller.state.aiStatus === "running"
-                  ? "#f8fafc"
-                  : "#fff",
+            borderColor: aiCardTone.borderColor,
+            backgroundColor: aiCardTone.backgroundColor,
             borderRadius: 16,
             padding: 12,
             gap: 4,
           }}
         >
-          <Text style={{ fontSize: 13, fontWeight: "800", color: "#111" }}>
+          <Text style={{ fontSize: 13, fontWeight: "900", color: aiCardTone.titleColor }}>
             {controller.state.aiStatus === "running"
               ? controller.state.aiStage
                 ? `Analyzing photo: ${controller.state.aiStage}…`
@@ -43,7 +53,7 @@ export const ReviewDetailsStepScreen = React.memo(function ReviewDetailsStepScre
                 ? "AI couldn’t finish autofill"
                 : "Review AI details"}
           </Text>
-          <Text style={{ color: "#666", fontSize: 13 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19 }}>
             {controller.state.aiStatus === "running"
               ? "You can keep editing while the AI fills in category, color, and details."
               : controller.state.autofillError

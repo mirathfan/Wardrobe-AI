@@ -1,14 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 
-const input = {
-  borderWidth: 1,
-  borderColor: "#ddd",
-  borderRadius: 12,
-  paddingHorizontal: 12,
-  paddingVertical: 10,
-  fontSize: 16,
-} as const;
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 export const MemoTextInputField = React.memo(function MemoTextInputField({
   value,
@@ -27,6 +20,7 @@ export const MemoTextInputField = React.memo(function MemoTextInputField({
   containerStyle?: any;
   inputStyle?: any;
 }) {
+  const { colors } = useAppTheme();
   const [localValue, setLocalValue] = useState(value);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -65,9 +59,27 @@ export const MemoTextInputField = React.memo(function MemoTextInputField({
         }}
         onBlur={() => commitNow(localValue)}
         placeholder={placeholder}
+        placeholderTextColor={colors.textMuted}
         multiline={multiline}
         keyboardType={keyboardType}
-        style={[input, inputStyle]}
+        cursorColor={colors.lightPurple}
+        selectionColor={colors.lightPurple}
+        style={[
+          {
+            minHeight: 46,
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 14,
+            paddingHorizontal: 13,
+            paddingVertical: 11,
+            color: colors.text,
+            backgroundColor: colors.inputBackground,
+            fontSize: 15,
+            lineHeight: 20,
+            fontWeight: "600",
+          },
+          inputStyle,
+        ]}
       />
     </View>
   );

@@ -89,7 +89,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                   <Text style={styles.btnSecondaryText}>Back</Text>
                 </Pressable>
 
-                <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, letterSpacing: -0.5 }}>
+                <Text style={{ fontSize: 22, fontWeight: "900", color: colors.text }}>
                   {state.isEdit ? "Edit Item" : "Add Item"}
                 </Text>
 
@@ -144,15 +144,15 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                           paddingHorizontal: 10,
                           borderRadius: 999,
                           borderWidth: 1,
-                          borderColor: active || complete ? colors.accent : colors.border,
-                          backgroundColor: active ? colors.accent : colors.surface,
+                          borderColor: active || complete ? colors.ctaCream : colors.border,
+                          backgroundColor: active ? colors.ctaCream : colors.chipBackground,
                         }}
                       >
                         <Text
                           style={{
-                            color: active ? "#fff" : complete ? colors.accent : colors.textSecondary,
+                            color: active ? colors.ctaText : complete ? colors.ctaCream : colors.textSecondary,
                             fontSize: 12,
-                            fontWeight: "700",
+                            fontWeight: "800",
                           }}
                         >
                           {step.label}
@@ -198,7 +198,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                 ]}
                 disabled={!wizard.canContinue}
               >
-                <Text style={{ color: colors.background, fontSize: 16, fontWeight: "900" }}>
+                <Text style={{ color: colors.ctaText, fontSize: 16, fontWeight: "900" }}>
                   {wizard.stepButtonText}
                 </Text>
               </Pressable>
@@ -226,7 +226,9 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                   width: "100%",
                   maxWidth: 320,
                   borderRadius: 16,
-                  backgroundColor: colors.surface,
+                  backgroundColor: colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: colors.border,
                   padding: 14,
                   gap: 8,
                 }}
@@ -246,14 +248,14 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                       paddingHorizontal: 12,
                       borderRadius: 12,
                       borderWidth: 1,
-                      borderColor: state.priceCurrency === currency ? colors.accent : colors.border,
-                      backgroundColor: state.priceCurrency === currency ? colors.accent : colors.surface,
+                      borderColor: state.priceCurrency === currency ? colors.ctaCream : colors.border,
+                      backgroundColor: state.priceCurrency === currency ? colors.ctaCream : colors.chipBackground,
                     }}
                   >
                     <Text
                       style={{
-                        color: state.priceCurrency === currency ? "#fff" : colors.text,
-                        fontWeight: "700",
+                        color: state.priceCurrency === currency ? colors.ctaText : colors.text,
+                        fontWeight: "800",
                       }}
                     >
                       {currency}
@@ -280,7 +282,9 @@ export const AddItemWizard = React.memo(function AddItemWizard({
               />
               <View
                 style={{
-                  backgroundColor: colors.surface,
+                  backgroundColor: colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: colors.border,
                   borderTopLeftRadius: 20,
                   borderTopRightRadius: 20,
                   paddingHorizontal: 16,

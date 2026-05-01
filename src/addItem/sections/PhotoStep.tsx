@@ -5,21 +5,13 @@ import { makeDevThrottleLogger } from "../devPerf";
 import { SectionCard } from "../ui/SectionCard";
 import { SectionTitle } from "../ui/SectionTitle";
 import { RequiredBadge } from "../ui/RequiredBadge";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 export const PhotoStep = React.memo(function PhotoStep({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  const { colors } = useAppTheme();
   const logRender = React.useMemo(() => makeDevThrottleLogger("PhotoStep"), []);
   const displayAutofillSummary = derived.previewPhotoUri ? state.lastAutofillSummary : "";
-  const rawAiCategory = state.aiPrediction?.category || "none";
-  const rawAiColors =
-    Array.isArray(state.aiPrediction?.colors) && state.aiPrediction.colors.length
-      ? state.aiPrediction.colors.join(" / ")
-      : "none";
-  const appliedCategory = state.finalPrediction?.category || "none";
-  const appliedColors =
-    Array.isArray(state.finalPrediction?.colors) && state.finalPrediction.colors.length
-      ? state.finalPrediction.colors.join(" / ")
-      : "none";
   logRender({
     uploading: state.uploadingPhoto,
     aiStatus: state.aiStatus,
@@ -34,48 +26,22 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
         right={<RequiredBadge />}
         subtitle="Start with a clean photo. AI autofill runs in the background while you keep going."
       />
-      {state.uploadingPhoto ? <Text>Uploading photo...</Text> : null}
+      {state.uploadingPhoto ? <Text style={{ color: colors.textSecondary }}>Uploading photo...</Text> : null}
       {!state.isEdit && (state.autofillStatus || displayAutofillSummary || state.autofillError) ? (
         <View style={controller.styles.inlineInfo}>
-          <Text style={{ fontSize: 14, fontWeight: "800" }}>
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: "900" }}>
             {state.autofillStatus || "AI idle"}
           </Text>
           {state.aiStatus === "running" ? (
-            <Text style={{ color: "#666" }}>
+            <Text style={{ color: colors.textSecondary }}>
               {state.aiStage ? `${state.aiStage}…` : "Running…"}
             </Text>
           ) : null}
           {displayAutofillSummary ? (
-            <Text style={{ color: "#666" }}>{displayAutofillSummary}</Text>
+            <Text style={{ color: colors.textSecondary }}>{displayAutofillSummary}</Text>
           ) : null}
           {state.autofillError ? (
-            <Text style={{ color: "#b91c1c", fontWeight: "700" }}>{state.autofillError}</Text>
-          ) : null}
-          <Text style={{ color: "#666", fontSize: 12 }}>
-            Raw AI: {rawAiCategory} | {rawAiColors}
-          </Text>
-          <Text style={{ color: "#666", fontSize: 12 }}>
-            Applied: {appliedCategory} | {appliedColors}
-          </Text>
-          {state.aiDebugRawPayload ? (
-            <View
-              style={{
-                marginTop: 6,
-                padding: 10,
-                borderRadius: 10,
-                backgroundColor: "rgba(255,255,255,0.04)",
-              }}
-            >
-              <Text style={{ color: "#9ca3af", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>
-                Full AI payload
-              </Text>
-              <Text
-                selectable
-                style={{ color: "#9ca3af", fontSize: 11, lineHeight: 16, fontFamily: "Courier" }}
-              >
-                {state.aiDebugRawPayload}
-              </Text>
-            </View>
+            <Text style={{ color: colors.danger, fontWeight: "800" }}>{state.autofillError}</Text>
           ) : null}
           {state.aiStatus === "error" ? (
             <Pressable
@@ -89,13 +55,13 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
       ) : null}
       {state.uploadError ? (
         <View style={{ gap: 8 }}>
-          <Text style={{ color: "#b91c1c", fontWeight: "700" }}>{state.uploadError}</Text>
+          <Text style={{ color: colors.danger, fontWeight: "800" }}>{state.uploadError}</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             <Pressable
               onPress={() => void actions.retryPhotoUpload()}
-              style={[controller.styles.btnSecondary, { borderColor: "#b91c1c" }]}
+              style={[controller.styles.btnSecondary, { borderColor: colors.danger }]}
             >
-              <Text style={[controller.styles.btnSecondaryText, { color: "#b91c1c" }]}>
+              <Text style={[controller.styles.btnSecondaryText, { color: colors.danger }]}>
                 Retry upload
               </Text>
             </Pressable>
@@ -104,13 +70,13 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
       ) : null}
       {state.bgRemovalError ? (
         <View style={{ gap: 8 }}>
-          <Text style={{ color: "#b91c1c", fontWeight: "700" }}>{state.bgRemovalError}</Text>
+          <Text style={{ color: colors.danger, fontWeight: "800" }}>{state.bgRemovalError}</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             <Pressable
               onPress={() => void actions.retryBackgroundRemoval()}
-              style={[controller.styles.btnSecondary, { borderColor: "#b91c1c" }]}
+              style={[controller.styles.btnSecondary, { borderColor: colors.danger }]}
             >
-              <Text style={[controller.styles.btnSecondaryText, { color: "#b91c1c" }]}>
+              <Text style={[controller.styles.btnSecondaryText, { color: colors.danger }]}>
                 Retry cutout
               </Text>
             </Pressable>
@@ -176,10 +142,10 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
               justifyContent: "space-between",
             }}
           >
-            <Text style={{ color: "#111", fontSize: 14, fontWeight: "800" }}>
+            <Text style={{ color: colors.text, fontSize: 14, fontWeight: "900" }}>
               Item photos
             </Text>
-            <Text style={{ color: "#666", fontSize: 12 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
               Mark a primary image and reorder before save
             </Text>
           </View>
@@ -205,9 +171,9 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
                       style={{
                         borderRadius: 16,
                         borderWidth: 2,
-                        borderColor: isPrimary ? "#111" : "rgba(17,17,17,0.12)",
+                        borderColor: isPrimary ? colors.ctaCream : colors.border,
                         overflow: "hidden",
-                        backgroundColor: "#f3f4f6",
+                        backgroundColor: colors.outfitBoardBackground,
                       }}
                     >
                       {previewUri ? (
@@ -217,7 +183,7 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
                           resizeMode="contain"
                         />
                       ) : (
-                        <View style={{ width: "100%", height: 132, backgroundColor: "#f3f4f6" }} />
+                        <View style={{ width: "100%", height: 132, backgroundColor: colors.outfitBoardBackground }} />
                       )}
                     </Pressable>
                     <View style={{ gap: 6 }}>
@@ -227,15 +193,15 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
                           controller.styles.btnSecondary,
                           {
                             paddingVertical: 8,
-                            backgroundColor: isPrimary ? "#111" : "#fff",
-                            borderColor: isPrimary ? "#111" : "rgba(17,17,17,0.12)",
+                            backgroundColor: isPrimary ? colors.ctaCream : colors.chipBackground,
+                            borderColor: isPrimary ? colors.ctaCream : colors.border,
                           },
                         ]}
                       >
                         <Text
                           style={[
                             controller.styles.btnSecondaryText,
-                            { color: isPrimary ? "#fff" : "#111", fontSize: 12 },
+                            { color: isPrimary ? colors.ctaText : colors.text, fontSize: 12 },
                           ]}
                         >
                           {isPrimary ? "Primary" : "Make primary"}
@@ -265,9 +231,9 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
                       </View>
                       <Pressable
                         onPress={() => actions.removeSelectedPhoto(entry.id)}
-                        style={[controller.styles.btnSecondary, { borderColor: "#b91c1c" }]}
+                        style={[controller.styles.btnSecondary, { borderColor: colors.danger }]}
                       >
-                        <Text style={[controller.styles.btnSecondaryText, { color: "#b91c1c", fontSize: 12 }]}>
+                        <Text style={[controller.styles.btnSecondaryText, { color: colors.danger, fontSize: 12 }]}>
                           Remove
                         </Text>
                       </Pressable>
@@ -295,7 +261,7 @@ export const PhotoStep = React.memo(function PhotoStep({ controller }: { control
       ) : null}
       {!state.isEdit && state.ingestionStatus === "done" && state.lastAutofillSummary ? (
         <View style={controller.styles.inlineInfo}>
-          <Text style={{ fontSize: 13, color: "#666" }}>
+          <Text style={{ fontSize: 13, color: colors.textSecondary }}>
             Review AI details in the next step. You can edit anything manually.
           </Text>
         </View>

@@ -1,4 +1,4 @@
-import { Alert, type PressableProps } from "react-native";
+import { Alert } from "react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 export const WIZARD_STEPS = [

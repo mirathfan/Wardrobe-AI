@@ -1,4 +1,4 @@
-import { InteractionManager, unstable_batchedUpdates } from "react-native";
+import { InteractionManager } from "react-native";
 import {
   collection,
   deleteDoc,
@@ -819,9 +819,7 @@ export function useItemExtraction({
             snap.data()?.ingestion?.status ?? snap.data()?.ingestionStatus
           ),
         });
-        unstable_batchedUpdates(() => {
-          maybeApplyAutofillFromDraft(snap.data() as any, activeRunId);
-        });
+        maybeApplyAutofillFromDraft(snap.data() as any, activeRunId);
       });
       createSessionRef.current.unsub = draftSubscriptionRef.current;
       isSubscribedRef.current = true;

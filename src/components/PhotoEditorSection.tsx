@@ -14,6 +14,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeScreen } from "./SafeScreen";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 type PhotoEditorSectionProps = {
   previewUri: string | null;
@@ -404,7 +405,6 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     normalizedPreviewUri = null,
     cleanedPreviewUri = null,
     fallbackPreviewUri = null,
-    hasCutoutPreview = false,
     maskDebugUri = null,
     refineValue,
     edgePolish = 0.5,
@@ -433,6 +433,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     onAdjust,
     onRefineOpen,
   } = props;
+  const { colors } = useAppTheme();
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [sliderErrored, setSliderErrored] = useState(false);
   const [activeModalPreview, setActiveModalPreview] = useState<"cutout" | "mask">("cutout");
@@ -468,6 +469,25 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   ]);
 
   const useNativeSlider = Platform.OS === "ios" && !sliderErrored;
+  const themedEditorButton = {
+    ...editorButton,
+    borderColor: colors.border,
+    backgroundColor: colors.chipBackground,
+  };
+  const themedPrimaryEditorButton = {
+    ...editorButton,
+    borderColor: colors.ctaCream,
+    backgroundColor: colors.ctaCream,
+  };
+  const themedEditorButtonText = {
+    ...editorButtonText,
+    color: colors.text,
+  };
+  const themedPrimaryEditorButtonText = {
+    ...editorButtonText,
+    color: colors.ctaText,
+  };
+  const emptyPreviewHeight = Math.min(260, Math.max(210, screenHeight * 0.28));
 
   function handleNativeSliderError() {
     setSliderErrored(true);
@@ -481,8 +501,8 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
           padding: 12,
           borderRadius: 20,
           borderWidth: 1,
-          borderColor: "#ebebeb",
-          backgroundColor: "#fff",
+          borderColor: colors.border,
+          backgroundColor: colors.inputBackground,
         }}
       >
         {displayedPreviewUri ? (
@@ -499,17 +519,17 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
           <View
             style={{
               width: "100%",
-              aspectRatio: 1,
+              height: emptyPreviewHeight,
               borderRadius: 18,
               borderWidth: 1,
-              borderColor: "#e7e7e7",
-              backgroundColor: "#f3f3f3",
+              borderColor: colors.border,
+              backgroundColor: colors.surfaceSoft,
               alignItems: "center",
               justifyContent: "center",
               paddingHorizontal: 24,
             }}
           >
-            <Text style={{ color: "#666", fontWeight: "700", textAlign: "center" }}>
+            <Text style={{ color: colors.textSecondary, fontWeight: "800", textAlign: "center" }}>
               Pick a photo to start.
             </Text>
           </View>
@@ -524,43 +544,43 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
                   setActiveModalPreview("cutout");
                   setIsModalVisible(true);
                 }}
-                style={[editorButton, { minWidth: 120 }]}
+                style={[themedPrimaryEditorButton, { minWidth: 120 }]}
               >
-                <Text style={editorButtonText}>Refine cutout</Text>
+                <Text style={themedPrimaryEditorButtonText}>Refine cutout</Text>
               </Pressable>
             ) : null}
             <Pressable
               onPress={onReplace ?? onPickLibrary}
-              style={[editorButton, { minWidth: 120 }]}
+              style={[themedEditorButton, { minWidth: 120 }]}
             >
-              <Text style={editorButtonText}>Change photo</Text>
+              <Text style={themedEditorButtonText}>Change photo</Text>
             </Pressable>
-            <Pressable onPress={onUseCamera} style={[editorButton, { minWidth: 110 }]}>
-              <Text style={editorButtonText}>Use camera</Text>
+            <Pressable onPress={onUseCamera} style={[themedEditorButton, { minWidth: 110 }]}>
+              <Text style={themedEditorButtonText}>Use camera</Text>
             </Pressable>
-            <Pressable onPress={onRemove} style={editorButton}>
-              <Text style={editorButtonText}>Remove</Text>
+            <Pressable onPress={onRemove} style={themedEditorButton}>
+              <Text style={themedEditorButtonText}>Remove</Text>
             </Pressable>
           </View>
         ) : (
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <Pressable onPress={onPickLibrary} style={[editorButton, { flex: 1 }]}>
-              <Text style={editorButtonText}>Pick from gallery</Text>
+            <Pressable onPress={onPickLibrary} style={[themedPrimaryEditorButton, { flex: 1 }]}>
+              <Text style={themedPrimaryEditorButtonText}>Pick from gallery</Text>
             </Pressable>
-            <Pressable onPress={onUseCamera} style={[editorButton, { flex: 1 }]}>
-              <Text style={editorButtonText}>Use camera</Text>
+            <Pressable onPress={onUseCamera} style={[themedEditorButton, { flex: 1 }]}>
+              <Text style={themedEditorButtonText}>Use camera</Text>
             </Pressable>
           </View>
         )}
 
         {statusText ? (
-          <Text style={{ color: isAiRunning ? "#4b5563" : "#666", fontSize: 13 }}>
+          <Text style={{ color: isAiRunning ? colors.lightPurple : colors.textSecondary, fontSize: 13 }}>
             {statusText}
           </Text>
         ) : null}
 
         {showPendingNote ? (
-          <Text style={{ color: "#666", fontSize: 13 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
             New photo selected. It will upload to Firebase Storage when you save.
           </Text>
         ) : null}

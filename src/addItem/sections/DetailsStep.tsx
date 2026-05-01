@@ -9,20 +9,12 @@ import { Pill } from "../ui/Pill";
 import { RequiredBadge } from "../ui/RequiredBadge";
 import { SectionCard } from "../ui/SectionCard";
 import { SectionTitle } from "../ui/SectionTitle";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 export const DetailsStep = React.memo(function DetailsStep({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  const { colors } = useAppTheme();
   const logRender = React.useMemo(() => makeDevThrottleLogger("DetailsStep"), []);
-  const rawAiCategory = state.aiPrediction?.category || "none";
-  const rawAiColors =
-    Array.isArray(state.aiPrediction?.colors) && state.aiPrediction.colors.length
-      ? state.aiPrediction.colors.join(" / ")
-      : "none";
-  const appliedCategory = state.finalPrediction?.category || "none";
-  const appliedColors =
-    Array.isArray(state.finalPrediction?.colors) && state.finalPrediction.colors.length
-      ? state.finalPrediction.colors.join(" / ")
-      : "none";
   logRender({
     aiStatus: state.aiStatus,
     category: state.category,
@@ -30,12 +22,12 @@ export const DetailsStep = React.memo(function DetailsStep({ controller }: { con
   });
   const statusPillStyles =
     derived.aiStatusPill.tone === "error"
-      ? { borderColor: "#fca5a5", backgroundColor: "#fef2f2", color: "#b91c1c" }
+      ? { borderColor: "rgba(255,77,79,0.32)", backgroundColor: "rgba(255,77,79,0.09)", color: colors.danger }
       : derived.aiStatusPill.tone === "ready"
-        ? { borderColor: "#86efac", backgroundColor: "#f0fdf4", color: "#166534" }
+        ? { borderColor: "rgba(34,197,94,0.26)", backgroundColor: "rgba(34,197,94,0.09)", color: colors.success }
         : derived.aiStatusPill.tone === "running"
-          ? { borderColor: "#cbd5e1", backgroundColor: "#f8fafc", color: "#334155" }
-          : { borderColor: "#e5e7eb", backgroundColor: "#fff", color: "#4b5563" };
+          ? { borderColor: colors.purpleBorder, backgroundColor: colors.purpleSurface, color: colors.lightPurple }
+          : { borderColor: colors.border, backgroundColor: colors.chipBackground, color: colors.textSecondary };
 
   return (
     <SectionCard>
@@ -62,41 +54,15 @@ export const DetailsStep = React.memo(function DetailsStep({ controller }: { con
       {derived.aiStatusRows.length ? (
         <View style={controller.styles.inlineInfo}>
           {derived.aiStatusRows.map((line: string, index: number) => (
-            <Text key={`${line}-${index}`} style={{ color: "#666" }}>
+            <Text key={`${line}-${index}`} style={{ color: colors.textSecondary }}>
               {line}
             </Text>
           ))}
-          <Text style={{ color: "#666", fontSize: 12 }}>
-            Raw AI: {rawAiCategory} | {rawAiColors}
-          </Text>
-          <Text style={{ color: "#666", fontSize: 12 }}>
-            Applied: {appliedCategory} | {appliedColors}
-          </Text>
-          {state.aiDebugRawPayload ? (
-            <View
-              style={{
-                marginTop: 6,
-                padding: 10,
-                borderRadius: 10,
-                backgroundColor: "#11182708",
-              }}
-            >
-              <Text style={{ color: "#666", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>
-                Full AI payload
-              </Text>
-              <Text
-                selectable
-                style={{ color: "#666", fontSize: 11, lineHeight: 16, fontFamily: "Courier" }}
-              >
-                {state.aiDebugRawPayload}
-              </Text>
-            </View>
-          ) : null}
         </View>
       ) : null}
       {derived.aiSuggestions.length ? (
         <View style={{ gap: 8 }}>
-          <Text style={{ fontSize: 13, color: "#666", fontWeight: "700" }}>Suggested</Text>
+          <Text style={{ fontSize: 13, color: colors.textSecondary, fontWeight: "800" }}>Suggested</Text>
           <ChipRow>
             {derived.aiSuggestions.map((suggestion: any) => (
               <Pill key={suggestion.key} label={suggestion.label} active={false} onPress={suggestion.onPress} />
@@ -107,7 +73,7 @@ export const DetailsStep = React.memo(function DetailsStep({ controller }: { con
 
       <View style={{ gap: 8 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={{ fontSize: 16, fontWeight: "700" }}>Category</Text>
+          <Text style={{ color: colors.text, fontSize: 15, fontWeight: "800" }}>Category</Text>
           <RequiredBadge />
         </View>
         <ChipRow>
@@ -136,7 +102,7 @@ export const DetailsStep = React.memo(function DetailsStep({ controller }: { con
       </View>
 
       <View style={{ gap: 8 }}>
-        <Text style={{ fontSize: 16, fontWeight: "700" }}>Sub-category (optional)</Text>
+        <Text style={{ color: colors.text, fontSize: 15, fontWeight: "800" }}>Sub-category (optional)</Text>
         <ChipRow>
           <Pill
             label="Auto (AI)"
@@ -185,7 +151,7 @@ export const DetailsStep = React.memo(function DetailsStep({ controller }: { con
             />
           ))}
         </ChipRow>
-        <Text style={{ color: "#666" }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
           Selected: {state.selectedColors.length ? state.selectedColors.join(" / ") : "Auto (AI)"}
         </Text>
       </Field>
@@ -200,7 +166,7 @@ export const DetailsStep = React.memo(function DetailsStep({ controller }: { con
           placeholder="e.g., light blue"
         />
         {state.displayColors.length ? (
-          <Text style={{ color: "#666" }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
             Visible colors: {state.displayColors.join(" / ")}
           </Text>
         ) : null}
