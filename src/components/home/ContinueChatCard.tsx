@@ -1,7 +1,9 @@
 import React from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import AuraPressable from "@/src/components/aura/AuraPressable";
+import { homeTypography } from "@/src/components/home/homeTypography";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { sanitizeDisplayText } from "@/src/lib/text";
 
@@ -32,33 +34,36 @@ export default function ContinueChatCard({
   const cleanPreview = sanitizeDisplayText(preview);
 
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
-      style={({ pressed }) => ({
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.985}
+      pressedOpacity={0.88}
+      style={{
         borderRadius: layout.largeRadius,
         padding: layout.cardPadding,
         backgroundColor: colors.surface,
         borderWidth: 1,
         borderColor: colors.border,
-        opacity: pressed ? 0.86 : 1,
         gap: 12,
-      })}
+      }}
     >
       <View style={{ gap: 4 }}>
-        <Text style={{ color: colors.softPurple, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }}>
+        <Text style={[homeTypography.label, { color: colors.lightPurple }]}>
           PICK UP THE THREAD
         </Text>
-        <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900", letterSpacing: -0.5 }} numberOfLines={1} ellipsizeMode="tail">
+        <Text style={[homeTypography.titleMedium, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">
           {title?.trim() || "Resume your last fitting"}
         </Text>
       </View>
 
-      <Text style={{ color: colors.textSecondary, opacity: 0.65, fontSize: 14, lineHeight: 23 }} numberOfLines={2} ellipsizeMode="tail">
+      <Text style={[homeTypography.body, { color: colors.textSecondary, opacity: 0.8 }]} numberOfLines={2} ellipsizeMode="tail">
         {cleanPreview}
       </Text>
 
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+        <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>
           {formatRelativeTime(updatedAt)}
         </Text>
         <View
@@ -71,9 +76,9 @@ export default function ContinueChatCard({
             borderColor: colors.purpleBorder,
           }}
         >
-          <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "800" }}>Continue in AURA</Text>
+          <Text style={[homeTypography.caption, { color: colors.text, fontWeight: "600" }]}>Continue in AURA</Text>
         </View>
       </View>
-    </Pressable>
+    </AuraPressable>
   );
 }

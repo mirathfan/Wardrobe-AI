@@ -1,10 +1,12 @@
 import React from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
+import { homeTypography } from "@/src/components/home/homeTypography";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook, AuraLookAction } from "@/src/types/aura";
@@ -49,13 +51,13 @@ export default function AuraLookModule({
       >
         <View style={{ padding: layout.cardPadding, gap: 12 }}>
         <View style={{ gap: 4 }}>
-          <Text style={{ color: colors.iridescentStart, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }}>
+          <Text style={[homeTypography.label, { color: colors.lightPurple }]}>
             {eyebrow}
           </Text>
-          <Text style={{ color: colors.text, fontSize: 22, fontWeight: "900", letterSpacing: -0.5 }}>
+          <Text style={[homeTypography.titleMedium, { color: colors.text }]}>
             {fallbackTitle}
           </Text>
-          <Text style={{ color: colors.textSecondary, opacity: 0.65, fontSize: 14, lineHeight: 23 }}>
+          <Text style={[homeTypography.body, { color: colors.textSecondary, opacity: 0.8 }]}>
             {fallbackBody ?? "Ask AURA for a date look, a casual look, or a sharper outfit and Home will surface the visual recommendation here."}
           </Text>
         </View>
@@ -67,9 +69,13 @@ export default function AuraLookModule({
               onPress={() => onAskAura(primaryPrompt ?? "Build a casual look with a visual outfit recommendation.")}
             />
           </View>
-          <Pressable
+          <AuraPressable
             onPress={() => onAskAura(secondaryPrompt ?? "Find gaps in my wardrobe and show a hybrid visual look.")}
-            style={({ pressed }) => ({
+            haptic="selection"
+            hapticTrigger="press"
+            pressedScale={0.97}
+            pressedOpacity={0.88}
+            style={{
               flex: 1,
               borderRadius: layout.mediumRadius,
               paddingVertical: 13,
@@ -77,11 +83,10 @@ export default function AuraLookModule({
               backgroundColor: "rgba(255,255,255,0.04)",
               borderWidth: 1,
               borderColor: "rgba(243,223,195,0.14)",
-              opacity: pressed ? 0.82 : 1,
-            })}
+            }}
           >
-            <Text style={{ color: colors.text, fontWeight: "900" }}>Find gaps</Text>
-          </Pressable>
+            <Text style={[homeTypography.buttonText, { color: colors.text }]}>Find gaps</Text>
+          </AuraPressable>
         </View>
         </View>
       </AuraGlassCard>
@@ -91,14 +96,14 @@ export default function AuraLookModule({
   return (
     <View style={{ gap: 10 }}>
       <View style={{ gap: 3 }}>
-        <Text style={{ color: colors.iridescentStart, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }}>
+        <Text style={[homeTypography.label, { color: colors.lightPurple }]}>
           {eyebrow}
         </Text>
-        <Text style={{ color: colors.text, fontSize: 22, fontWeight: "900", letterSpacing: -0.5 }}>
+        <Text style={[homeTypography.titleMedium, { color: colors.text }]}>
           {title}
         </Text>
         {subtitle ? (
-          <Text style={{ color: colors.textSecondary, fontSize: 13.5, lineHeight: 20 }}>
+          <Text style={[homeTypography.bodySmall, { color: colors.textSecondary }]}>
             {subtitle}
           </Text>
         ) : null}
@@ -108,6 +113,7 @@ export default function AuraLookModule({
         look={look}
         itemsById={itemsById}
         onAction={onAction}
+        boardVariant="home"
         viewportWidth={layout.width - layout.horizontalPadding * 2}
       />
     </View>

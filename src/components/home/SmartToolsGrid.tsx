@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import AuraPressable from "@/src/components/aura/AuraPressable";
+import { homeTypography } from "@/src/components/home/homeTypography";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 export type SmartTool = {
@@ -35,10 +37,10 @@ export default function SmartToolsGrid({
     <View style={{ gap: 12 }}>
       <View style={{ gap: 3 }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>Support tools</Text>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700" }}>Secondary</Text>
+          <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Support tools</Text>
+          <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Secondary</Text>
         </View>
-        <Text style={{ color: colors.textSecondary, fontSize: 12.5 }}>
+        <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>
           Care, gaps, and planning support when you want to tighten the system around the look.
         </Text>
       </View>
@@ -46,10 +48,14 @@ export default function SmartToolsGrid({
         {tools.map((tool) => {
           const isSoon = tool.badge === "Soon";
           return (
-            <Pressable
+            <AuraPressable
               key={tool.key}
               onPress={tool.onPress}
-              style={({ pressed }) => ({
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.975}
+              pressedOpacity={isSoon ? 0.92 : 0.86}
+              style={{
                 width: tileWidth,
                 minHeight: layout.smartToolHeight + (layout.screenSize === "large" ? 10 : 0),
                 borderRadius: layout.mediumRadius,
@@ -57,9 +63,9 @@ export default function SmartToolsGrid({
                 backgroundColor: isSoon ? colors.surfaceSoft : colors.surface,
                 borderWidth: 1,
                 borderColor: colors.border,
-                opacity: pressed ? (isSoon ? 0.92 : 0.84) : isSoon ? 0.9 : 1,
+                opacity: isSoon ? 0.9 : 1,
                 gap: 12,
-              })}
+              }}
             >
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                 <View
@@ -83,24 +89,24 @@ export default function SmartToolsGrid({
                       backgroundColor: isSoon ? colors.chipBackground : colors.purpleSurface,
                     }}
                   >
-                    <Text style={{ color: isSoon ? colors.textSecondary : colors.lightPurple, fontSize: 11, fontWeight: "800" }} numberOfLines={1} ellipsizeMode="tail">
+                    <Text style={[homeTypography.label, { color: isSoon ? colors.textSecondary : colors.lightPurple }]} numberOfLines={1} ellipsizeMode="tail">
                       {tool.badge}
                     </Text>
                   </View>
                 ) : null}
               </View>
               <View style={{ gap: 4 }}>
-                <Text style={{ color: isSoon ? colors.textSecondary : colors.text, fontSize: 16, fontWeight: "600" }} numberOfLines={1} ellipsizeMode="tail">
+                <Text style={[homeTypography.titleSmall, { color: isSoon ? colors.textSecondary : colors.text, fontSize: 16, lineHeight: 21 }]} numberOfLines={1} ellipsizeMode="tail">
                   {tool.title}
                 </Text>
-                <Text style={{ color: colors.textSecondary, opacity: 0.55, fontSize: 12, lineHeight: 20 }} numberOfLines={3} ellipsizeMode="tail">
+                <Text style={[homeTypography.caption, { color: colors.textSecondary, opacity: 0.68 }]} numberOfLines={3} ellipsizeMode="tail">
                   {tool.subtitle}
                 </Text>
-                <Text style={{ color: isSoon ? colors.textSecondary : colors.text, fontSize: 11.5, fontWeight: "800", marginTop: 2 }} numberOfLines={1}>
+                <Text style={[homeTypography.caption, { color: isSoon ? colors.textSecondary : colors.text, fontWeight: "600", marginTop: 2 }]} numberOfLines={1}>
                   Open →
                 </Text>
               </View>
-            </Pressable>
+            </AuraPressable>
           );
         })}
       </View>

@@ -16,6 +16,7 @@ import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import { homeTypography } from "@/src/components/home/homeTypography";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -38,6 +39,12 @@ function slotVerb(slot: SlotKey) {
   if (slot === "top") return "Anchor";
   if (slot === "bottom") return "Ground";
   return "Finish";
+}
+
+function previewImageFrame(slot: SlotKey) {
+  if (slot === "outerwear") return { width: "108%" as const, height: "104%" as const };
+  if (slot === "shoes") return { width: "84%" as const, height: "76%" as const };
+  return { width: "106%" as const, height: "102%" as const };
 }
 
 function IridecentHeroLine({ colors }: { colors: AppColors }) {
@@ -116,8 +123,10 @@ export default function HomeHero({
   const layout = useResponsiveLayout();
   const hasPlan = !!record?.plannedOutfit;
   const hasWorn = !!record?.wornOutfit;
-  const reasons = record?.plannedOutfit?.reasons?.slice(0, 2) ?? [];
   const slots: SlotKey[] = ["outerwear", "top", "bottom", "shoes"];
+  const previewTileHeight = layout.screenSize === "compact" ? 104 : layout.screenSize === "large" ? 120 : 112;
+  const cardPadding = layout.screenSize === "compact" ? 16 : 18;
+  const visibleGuidancePhrases = guidancePhrases.slice(0, 2);
   const primaryLabel = "Style me now";
   const secondaryLabel = "3 directions";
   const statusEyebrow = hasWorn ? "ON YOU TODAY" : hasPlan ? "PLANNED FOR TODAY" : "AURA READY";
@@ -131,40 +140,77 @@ export default function HomeHero({
   const previewSlots = slots
     .map((slot) => ({ slot, item: itemForSlot(record, itemsById, slot) }))
     .filter((entry) => !!entry.item);
-  const leadPreview = previewSlots[0] ?? null;
-  const secondaryPreview = previewSlots.slice(1, 4);
+  const previewEntries = previewSlots.slice(0, 4);
 
   return (
-      <View style={{ gap: 8 }}>
-      <View style={{ gap: 6 }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: "700" }} numberOfLines={1} ellipsizeMode="tail">
+      <View style={{ gap: 12 }}>
+      <View style={{ gap: 7 }}>
+        <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, fontWeight: "700" }]} numberOfLines={1} ellipsizeMode="tail">
           {greeting}
         </Text>
-        <Text style={{ color: colors.text, fontSize: 34 * layout.titleScale, fontWeight: "900", letterSpacing: -1 }} numberOfLines={1} ellipsizeMode="tail">
+        <Text
+          style={[
+            homeTypography.titleLarge,
+            {
+              color: colors.text,
+              fontSize: 34 * layout.titleScale,
+              lineHeight: 40 * layout.titleScale,
+            },
+          ]}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
           Today&apos;s Look
         </Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 14 }} numberOfLines={1} ellipsizeMode="tail">
+        <Text style={[homeTypography.bodySmall, { color: colors.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">
           {weatherLabel}
         </Text>
       </View>
 
         <AuraGlassCard
           warmHero
-          intensity={18}
+          intensity={34}
           style={{
             borderRadius: layout.largeRadius,
+            shadowColor: colors.lightPurple,
+            shadowOpacity: 0.16,
+            shadowRadius: 34,
+            shadowOffset: { width: 0, height: 18 },
+          }}
+          contentStyle={{
+            backgroundColor: "rgba(18,18,28,0.74)",
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.10)",
           }}
         >
         <IridecentHeroLine colors={colors} />
         <LinearGradient
           pointerEvents="none"
-          colors={[colors.warmGlow, "transparent", "rgba(255,255,255,0.015)"]}
+          colors={["rgba(124,92,255,0.12)", "rgba(255,255,255,0.025)", "rgba(18,18,28,0.02)"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ position: "absolute", inset: 0 }}
         />
-        <View style={{ minHeight: layout.heroHeight + 32, padding: layout.cardPadding + 2, gap: 20, justifyContent: "space-between" }}>
-          <View style={{ gap: 18 }}>
+        <LinearGradient
+          pointerEvents="none"
+          colors={["rgba(255,255,255,0.12)", "rgba(255,255,255,0.02)", "transparent"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={{ position: "absolute", top: 0, left: 0, right: 0, height: 72, opacity: 0.48 }}
+        />
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 1,
+            left: 18,
+            right: 18,
+            height: 1,
+            backgroundColor: "rgba(255,255,255,0.12)",
+          }}
+        />
+        <View style={{ minHeight: layout.heroHeight + 18, padding: cardPadding, gap: 18, justifyContent: "space-between" }}>
+          <View style={{ gap: 14 }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <View
                 style={{
@@ -176,243 +222,182 @@ export default function HomeHero({
                   borderColor: colors.border,
                 }}
               >
-                <Text style={{ color: colors.lightPurple, fontSize: 11, fontWeight: "900", letterSpacing: 0.9 }}>
+                <Text style={[homeTypography.label, { color: colors.lightPurple, opacity: 0.7 }]}>
                   {statusEyebrow}
                 </Text>
               </View>
             </View>
 
             <View style={{ gap: 8 }}>
-              <Text style={{ color: colors.text, fontSize: 30 * layout.titleScale, fontWeight: "900", letterSpacing: -1 }} numberOfLines={2} ellipsizeMode="tail">
+              <Text
+                style={[
+                  homeTypography.titleMedium,
+                  {
+                    color: colors.text,
+                    fontSize: 30 * layout.titleScale,
+                    lineHeight: 36 * layout.titleScale,
+                  },
+                ]}
+                numberOfLines={2}
+                ellipsizeMode="tail"
+              >
                 {title}
               </Text>
-              <Text style={{ color: colors.textSecondary, opacity: 0.65, fontSize: 14.5, lineHeight: 23 }} numberOfLines={3} ellipsizeMode="tail">
+              <Text style={[homeTypography.body, { color: colors.textSecondary, opacity: 0.76 }]} numberOfLines={2} ellipsizeMode="tail">
                 {subtitle}
               </Text>
               {stylistNote ? (
-                <Text style={{ color: colors.lightPurple, fontSize: 12.5, fontWeight: "800" }} numberOfLines={2} ellipsizeMode="tail">
+                <Text style={[homeTypography.accentNote, { color: colors.lightPurple, opacity: 0.74 }]} numberOfLines={1} ellipsizeMode="tail">
                   {stylistNote}
                 </Text>
               ) : null}
             </View>
 
             {hasPlan || hasWorn ? (
-              leadPreview ? (
+              previewEntries.length ? (
                 <View
                   style={{
-                    flexDirection: layout.screenSize === "compact" ? "column" : "row",
+                    flexDirection: "row",
+                    flexWrap: "wrap",
                     gap: 10,
-                    alignItems: "stretch",
                   }}
                 >
-                  <View
-                    style={{
-                      flex: layout.screenSize === "compact" ? undefined : 1.2,
-                      minHeight: layout.screenSize === "compact" ? 180 : 208,
-                      borderRadius: layout.largeRadius - 4,
-                      backgroundColor: colors.surface,
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      overflow: "hidden",
-                    }}
-                  >
-                    {(() => {
-                      const imageUri = getItemImageUrl(leadPreview.item, { variant: "thumb" });
-                      const imagePresentation = getItemImagePresentation(leadPreview.item, {
+                  {previewEntries.map(({ slot, item }) => {
+                      const imageUri = getItemImageUrl(item, { variant: "thumb" });
+                      const imagePresentation = getItemImagePresentation(item, {
                         surface: "home_today",
                       });
+                      const featured = slot === "outerwear";
 
                       return (
-                        <>
+                        <View
+                          key={slot}
+                          style={{
+                            flexBasis: "47.5%",
+                            flexGrow: 1,
+                            minHeight: previewTileHeight,
+                            borderRadius: layout.mediumRadius,
+                            backgroundColor: featured ? colors.surface : colors.surfaceSoft,
+                            borderWidth: 1,
+                            borderColor: featured ? colors.borderStrong : colors.border,
+                            overflow: "hidden",
+                          }}
+                        >
                           <LinearGradient
                             pointerEvents="none"
-                            colors={["rgba(255,255,255,0.04)", "rgba(255,255,255,0.00)", colors.overlay]}
+                            colors={["rgba(255,255,255,0.04)", "rgba(255,255,255,0.00)", "rgba(0,0,0,0.10)"]}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 0, y: 1 }}
-                            style={{ position: "absolute", inset: 0, zIndex: 1 }}
+                            style={{ position: "absolute", inset: 0 }}
                           />
                           <View
                             style={{
                               position: "absolute",
-                              left: 12,
-                              top: 12,
+                              left: 10,
+                              top: 9,
                               zIndex: 2,
-                              paddingHorizontal: 10,
-                              paddingVertical: 6,
+                              paddingHorizontal: 9,
+                              paddingVertical: 4,
                               borderRadius: 999,
                               backgroundColor: colors.dockBackground,
                               borderWidth: 1,
                               borderColor: colors.border,
                             }}
                           >
-                            <Text style={{ color: colors.lightPurple, fontSize: 11, fontWeight: "900", letterSpacing: 0.8 }}>
-                              {slotVerb(leadPreview.slot)}
-                            </Text>
-                          </View>
-                          <View style={{ flex: 1, paddingHorizontal: 14, paddingVertical: 12, alignItems: "center", justifyContent: "center" }}>
-                            {imageUri ? (
-                              <AppImage
-                                source={{
-                                  uri: imageUri,
-                                }}
-                                style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
-                                resizeMode="contain"
-                              />
-                            ) : null}
-                          </View>
-                          <View
-                            style={{
-                              position: "absolute",
-                              left: 14,
-                              right: 14,
-                              bottom: 12,
-                              zIndex: 2,
-                            }}
-                          >
-                            <Text style={{ color: colors.textPrimary, fontSize: 16, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">
-                              {slotLabel(leadPreview.slot)}
-                            </Text>
-                          </View>
-                        </>
-                      );
-                    })()}
-                  </View>
-
-                  <View style={{ flex: 1, gap: 10 }}>
-                    {secondaryPreview.map(({ slot, item }) => {
-                      const imageUri = getItemImageUrl(item, { variant: "thumb" });
-                      const imagePresentation = getItemImagePresentation(item, {
-                        surface: "home_today",
-                      });
-
-                      return (
-                        <View
-                          key={slot}
-                          style={{
-                            flex: 1,
-                            minHeight: 88,
-                            borderRadius: layout.mediumRadius,
-                            backgroundColor: colors.surfaceSoft,
-                            borderWidth: 1,
-                            borderColor: colors.border,
-                            overflow: "hidden",
-                            flexDirection: "row",
-                            alignItems: "center",
-                          }}
-                        >
-                          <View style={{ flex: 0.9, paddingHorizontal: 10, paddingVertical: 10, alignItems: "center", justifyContent: "center" }}>
-                            {imageUri ? (
-                              <AppImage
-                                source={{
-                                  uri: imageUri,
-                                }}
-                                style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
-                                resizeMode="contain"
-                              />
-                            ) : null}
-                          </View>
-                          <View style={{ flex: 1.1, paddingRight: 12, gap: 4 }}>
-                            <Text style={{ color: colors.lightPurple, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 }}>
+                            <Text style={[homeTypography.label, { color: featured ? colors.lightPurple : colors.textSecondary, opacity: featured ? 0.78 : 0.72 }]}>
                               {slotVerb(slot)}
                             </Text>
-                            <Text style={{ color: colors.text, fontSize: 14, fontWeight: "900" }} numberOfLines={1}>
+                          </View>
+                          <View style={{ flex: 1, paddingHorizontal: 0, paddingTop: 20, paddingBottom: 14, alignItems: "center", justifyContent: "center" }}>
+                            {imageUri ? (
+                              <AppImage
+                                source={{
+                                  uri: imageUri,
+                                }}
+                                style={[previewImageFrame(slot), imagePresentation.imageStyle]}
+                                resizeMode="contain"
+                              />
+                            ) : null}
+                          </View>
+                          <View style={{ position: "absolute", left: 12, right: 12, bottom: 10 }}>
+                            <Text style={[homeTypography.slotTitle, { color: colors.text }]} numberOfLines={1}>
                               {slotLabel(slot)}
                             </Text>
                           </View>
                         </View>
                       );
                     })}
-                  </View>
                 </View>
               ) : null
             ) : (
-              <View style={{ gap: 10, paddingTop: 2 }}>
+              <View style={{ gap: 8, paddingTop: 1 }}>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                  {guidancePhrases.map((phrase) => (
+                  {visibleGuidancePhrases.map((phrase) => (
                     <View
                       key={phrase}
                       style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
                         borderRadius: 999,
                         backgroundColor: colors.chipBackground,
                         borderWidth: 1,
                         borderColor: colors.border,
                       }}
                     >
-                      <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "800" }}>
+                      <Text style={[homeTypography.chipText, { color: colors.text }]}>
                         {phrase}
                       </Text>
                     </View>
                   ))}
                 </View>
-                <Text style={{ color: colors.textSecondary, opacity: 0.65, fontSize: 13, lineHeight: 21 }}>
-                  AURA can start from what is ready now and push it in a cleaner direction from there.
+                <Text style={[homeTypography.caption, { color: colors.textSecondary, opacity: 0.82 }]} numberOfLines={1}>
+                  AURA starts with what is wearable now.
                 </Text>
               </View>
             )}
-
-            {reasons.length ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {reasons.map((reason) => (
-                  <View
-                    key={reason}
-                    style={{
-                      paddingHorizontal: 11,
-                      paddingVertical: 8,
-                      borderRadius: 999,
-                      backgroundColor: colors.chipBackground,
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                    }}
-                  >
-                    <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "700" }} numberOfLines={2} ellipsizeMode="tail">
-                      {reason}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
 
             {personalHint ? (
               <View
                 style={{
                   alignSelf: "flex-start",
                   paddingHorizontal: 11,
-                  paddingVertical: 7,
+                  paddingVertical: 6,
                   borderRadius: layout.pillRadius,
                   backgroundColor: colors.surfaceSoft,
                   borderWidth: 1,
                   borderColor: colors.border,
                 }}
               >
-                <Text style={{ color: colors.textSecondary, fontSize: 12.5 }} numberOfLines={2} ellipsizeMode="tail">
+                <Text style={[homeTypography.caption, { color: colors.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">
                   {personalHint}
                 </Text>
               </View>
             ) : null}
           </View>
 
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <AuraGradientButton
-              label={primaryLabel}
-              onPress={onPrimaryAction}
-              gradientColors={[colors.ctaCream, colors.ctaCream]}
-              labelColor={colors.ctaText}
-              innerBackgroundColor={colors.ctaCream}
-              innerOverlayColors={["rgba(255,255,255,0.14)", "rgba(255,255,255,0.04)"]}
-              style={{ flex: 1, minHeight: 52, borderRadius: layout.mediumRadius }}
-            />
+          <View style={{ flexDirection: "row", gap: 12, alignItems: "stretch" }}>
+            <View style={{ flex: 1.08 }}>
+              <AuraGradientButton
+                label={primaryLabel}
+                onPress={onPrimaryAction}
+                gradientColors={[colors.ctaCream, colors.ctaCream]}
+                labelColor={colors.ctaText}
+                innerBackgroundColor={colors.ctaCream}
+                innerOverlayColors={["rgba(255,255,255,0.14)", "rgba(255,255,255,0.04)"]}
+                labelStyle={{ fontSize: 16.5, lineHeight: 21, fontWeight: "900" }}
+                style={{ minHeight: 54, borderRadius: layout.mediumRadius }}
+              />
+            </View>
             <AuraPressable
               onPress={onSecondaryAction}
               haptic="selection"
               hapticTrigger="press"
               pressedScale={0.97}
               pressedOpacity={0.9}
+              containerStyle={{ flex: 1 }}
               style={{
-                flex: 1,
                 borderRadius: layout.mediumRadius,
-                minHeight: 52,
+                minHeight: 54,
                 paddingHorizontal: 16,
                 alignItems: "center",
                 justifyContent: "center",
@@ -422,8 +407,10 @@ export default function HomeHero({
               }}
             >
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                <Ionicons name="git-branch-outline" size={16} color={colors.text} />
-                <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900", textAlign: "center" }}>{secondaryLabel}</Text>
+                <Ionicons name="git-branch-outline" size={15} color={colors.text} />
+                <Text style={[homeTypography.buttonText, { color: colors.text, textAlign: "center" }]} numberOfLines={1}>
+                  {secondaryLabel}
+                </Text>
               </View>
             </AuraPressable>
           </View>

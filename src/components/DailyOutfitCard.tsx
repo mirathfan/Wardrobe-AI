@@ -1,13 +1,15 @@
 import React from "react";
+import { LinearGradient } from "expo-linear-gradient";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { ClothingItem } from "../../src/types/ClothingItem";
 import { DailyOutfitRecord, PlannedOutfit } from "../utils/dailyOutfits";
 import { lookToItems, PlannedLook } from "../utils/outfitPlanning";
 import FlatLayCanvas from "@/src/components/outfit/FlatLayCanvas";
+import { homeTypography } from "@/src/components/home/homeTypography";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 
 type SlotKey = "outerwear" | "top" | "bottom" | "shoes";
 
@@ -41,6 +43,28 @@ function plannedToLook(planned: PlannedOutfit): PlannedLook {
     score: planned.score,
     reasons: planned.reasons,
   };
+}
+
+function PrimaryActionButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <AuraPressable
+      accessibilityRole="button"
+      haptic="light"
+      pressedScale={0.97}
+      pressedOpacity={0.9}
+      style={styles.primaryBtn}
+      onPress={onPress}
+    >
+      <LinearGradient
+        pointerEvents="none"
+        colors={["#7C5CFF", "#5B3BFF"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <Text style={styles.primaryBtnText}>{label}</Text>
+    </AuraPressable>
+  );
 }
 
 export default function DailyOutfitCard({
@@ -84,7 +108,7 @@ export default function DailyOutfitCard({
         },
       ]}
     >
-      {hasWorn ? <Text style={[styles.title, { color: colors.text }]}>Worn on {dateLabel}</Text> : hasPlanned ? <Text style={[styles.title, { color: colors.text }]}>Planned</Text> : <Text style={[styles.title, { color: colors.text }]}>Plan outfit for this day</Text>}
+      {hasWorn ? <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Worn on {dateLabel}</Text> : hasPlanned ? <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Planned</Text> : <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Plan outfit for this day</Text>}
 
       {!hasWorn && !hasPlanned ? (
         <View style={styles.segRow}>
@@ -95,57 +119,48 @@ export default function DailyOutfitCard({
                 key={look.id}
                 style={[
                   styles.segChip,
-                  { borderColor: active ? colors.accent : colors.border, backgroundColor: active ? colors.accent : colors.surface },
+                  {
+                    borderColor: active ? colors.ctaCream : colors.border,
+                    backgroundColor: active ? colors.ctaCream : colors.chipBackground,
+                  },
                 ]}
                 onPress={() => onSelectLook(look.id)}
               >
-                <Text style={[styles.segText, { color: active ? "#fff" : colors.text }]}>{look.label}</Text>
+                <Text style={[homeTypography.caption, { color: active ? colors.ctaText : colors.text }]}>{look.label}</Text>
               </Pressable>
             );
           })}
         </View>
       ) : null}
 
-      {thinking ? <Text style={[styles.thinking, { color: colors.textSecondary }]}>✨ Thinking…</Text> : null}
+      {thinking ? <Text style={[homeTypography.caption, styles.thinking, { color: colors.textSecondary }]}>✨ Thinking…</Text> : null}
       <View style={{ height: 10 }} />
       <FlatLayCanvas items={gridItems} />
 
       {activeLook ? (
         <View style={styles.scoreWrap}>
-          <Text style={[styles.score, { color: colors.text }]}>Outfit score: {activeLook.score}%</Text>
+          <Text style={[homeTypography.bodySmall, styles.score, { color: colors.text }]}>Outfit score: {activeLook.score}%</Text>
           {(activeLook.reasons ?? []).slice(0, 2).map((reason) => (
-            <Text key={reason} style={[styles.reason, { color: colors.textSecondary }]}>• {reason}</Text>
+            <Text key={reason} style={[homeTypography.caption, styles.reason, { color: colors.textSecondary }]}>• {reason}</Text>
           ))}
         </View>
       ) : null}
 
       <View style={styles.actionsRow}>
         {hasWorn ? (
-          <Text style={[styles.muted, { color: colors.textSecondary }]}>Outfit already marked worn.</Text>
+          <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Outfit already marked worn.</Text>
         ) : hasPlanned ? (
           <>
-            <AuraGradientButton
-              label="Mark Worn"
-              onPress={onMarkWorn}
-              gradientColors={[colors.iridescentStart, colors.iridescentMid, colors.iridescentEnd]}
-              labelColor={colors.background}
-              style={styles.primaryBtn}
-            />
-            <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={() => Alert.alert("Edit", "Tap a slot to swap an item.") }>
-              <Text style={[styles.secondaryBtnText, { color: colors.text }]}>Edit/Swap</Text>
+            <PrimaryActionButton label="Mark Worn" onPress={onMarkWorn} />
+            <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.chipBackground }]} onPress={() => Alert.alert("Edit", "Tap a slot to swap an item.") }>
+              <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Edit/Swap</Text>
             </Pressable>
           </>
         ) : (
           <>
-            <AuraGradientButton
-              label="Use this outfit"
-              onPress={onUseOutfit}
-              gradientColors={[colors.iridescentStart, colors.iridescentMid, colors.iridescentEnd]}
-              labelColor={colors.background}
-              style={styles.primaryBtn}
-            />
-            <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={onWhy}>
-              <Text style={[styles.secondaryBtnText, { color: colors.text }]}>Why?</Text>
+            <PrimaryActionButton label="Use this outfit" onPress={onUseOutfit} />
+            <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.chipBackground }]} onPress={onWhy}>
+              <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Why?</Text>
             </Pressable>
           </>
         )}
@@ -153,17 +168,17 @@ export default function DailyOutfitCard({
 
       {hasPlanned && !hasWorn ? (
         <View style={styles.textActions}>
-          <Pressable onPress={onClearPlan}><Text style={[styles.textAction, { color: colors.textSecondary }]}>Clear plan</Text></Pressable>
-          <Pressable onPress={onCopyPlan}><Text style={[styles.textAction, { color: colors.textSecondary }]}>Copy this plan to…</Text></Pressable>
+          <Pressable onPress={onClearPlan}><Text style={[homeTypography.caption, styles.textAction, { color: colors.textSecondary }]}>Clear plan</Text></Pressable>
+          <Pressable onPress={onCopyPlan}><Text style={[homeTypography.caption, styles.textAction, { color: colors.textSecondary }]}>Copy this plan to…</Text></Pressable>
         </View>
       ) : null}
 
       {!hasPlanned && !hasWorn && looks.length === 0 ? (
         <Pressable
           onPress={() => Alert.alert("No plan", "Add more items (top/bottom/shoes) to generate suggestions.")}
-          style={styles.linkBtn}
+          style={[styles.linkBtn, { backgroundColor: colors.chipBackground, borderColor: colors.border }]}
         >
-          <Text style={styles.linkText}>No outfit suggestions yet</Text>
+          <Text style={[homeTypography.caption, styles.linkText, { color: colors.textSecondary }]}>No outfit suggestions yet</Text>
         </Pressable>
       ) : null}
     </View>
@@ -177,7 +192,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: "700",
-    letterSpacing: -0.3,
+    letterSpacing: 0,
   },
   segRow: {
     marginTop: 10,
@@ -204,8 +219,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   score: {
-    fontWeight: "800",
-    fontSize: 13,
+    fontWeight: "700",
   },
   reason: {
     fontSize: 12,
@@ -213,26 +227,45 @@ const styles = StyleSheet.create({
     opacity: 0.65,
   },
   actionsRow: {
-    marginTop: 12,
+    marginTop: 16,
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
     alignItems: "center",
+    flexWrap: "wrap",
   },
   primaryBtn: {
-    flex: 1,
-    borderRadius: 12,
+    height: 56,
+    minWidth: 190,
+    alignSelf: "flex-start",
+    borderRadius: 18,
     alignItems: "center",
-    paddingVertical: 11,
+    justifyContent: "center",
+    paddingHorizontal: 22,
+    overflow: "hidden",
+    shadowColor: "#7C5CFF",
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 4,
+  },
+  primaryBtnText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: "700",
+    letterSpacing: 0,
   },
   secondaryBtn: {
+    height: 40,
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
+    borderRadius: 14,
+    paddingHorizontal: 16,
     justifyContent: "center",
     alignItems: "center",
   },
   secondaryBtnText: {
-    fontWeight: "800",
+    fontSize: 13,
+    fontWeight: "700",
   },
   textActions: {
     marginTop: 10,
@@ -240,8 +273,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   textAction: {
-    fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   muted: {
     color: "#666",
@@ -253,10 +285,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 10,
-    backgroundColor: "#f3f4f6",
+    borderWidth: 1,
   },
   linkText: {
-    color: "#111",
-    fontWeight: "700",
+    fontWeight: "600",
   },
 });

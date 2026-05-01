@@ -1,8 +1,10 @@
 import AppImage from "@/src/components/common/AppImage";
 import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import AuraPressable from "@/src/components/aura/AuraPressable";
+import { homeTypography } from "@/src/components/home/homeTypography";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -81,18 +83,22 @@ export default function ContinueSection({
   return (
     <View style={{ gap: 12 }}>
       <View style={{ gap: 3 }}>
-        <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900" }}>{title}</Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{subtitle}</Text>
+        <Text style={[homeTypography.titleMedium, { color: colors.text }]}>{title}</Text>
+        <Text style={[homeTypography.bodySmall, { color: colors.textSecondary }]}>{subtitle}</Text>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 8 }}>
         {items.map((item) => {
           const imageUri = getItemImageUrl(item, { variant: "thumb" });
           const momentumImageStyle = getMomentumImageStyle(item);
           return (
-            <Pressable
+            <AuraPressable
               key={item.id}
               onPress={() => onPressItem(item)}
-              style={({ pressed }) => ({
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.975}
+              pressedOpacity={0.88}
+              style={{
                 width: cardWidth,
                 height: cardHeight,
                 borderRadius: layout.mediumRadius,
@@ -100,18 +106,20 @@ export default function ContinueSection({
                 borderWidth: 1,
                 borderColor: colors.border,
                 backgroundColor: colors.surface,
-                opacity: pressed ? 0.84 : 1,
-              })}
+              }}
             >
               <View
                 style={{
                   height: imageFrameHeight,
-                  backgroundColor: colors.surfaceSoft,
+                  margin: 8,
+                  marginBottom: 0,
+                  borderRadius: layout.mediumRadius - 4,
+                  borderWidth: 1,
+                  borderColor: "rgba(10,10,15,0.06)",
+                  backgroundColor: colors.outfitBoardBackground,
                   alignItems: "center",
                   justifyContent: "center",
                   overflow: "hidden",
-                  borderTopLeftRadius: layout.mediumRadius,
-                  borderTopRightRadius: layout.mediumRadius,
                 }}
               >
                 {imageUri ? (
@@ -123,26 +131,26 @@ export default function ContinueSection({
                     resizeMode="contain"
                   />
                 ) : (
-                  <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>No image</Text>
+                  <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>No image</Text>
                 )}
               </View>
               <View style={{ flex: 1, padding: 12, gap: 4, justifyContent: "space-between" }}>
-                <Text style={{ color: colors.text, fontSize: 14, fontWeight: "900", lineHeight: 18 }} numberOfLines={2}>
+                <Text style={[homeTypography.slotTitle, { color: colors.text }]} numberOfLines={2}>
                   {itemTitle(item)}
                 </Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 12 }} numberOfLines={1}>
+                <Text style={[homeTypography.caption, { color: colors.textSecondary }]} numberOfLines={1}>
                   {[item.brand || null, item.status].filter(Boolean).join(" • ")}
                 </Text>
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
-                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: "800" }} numberOfLines={1}>
+                  <Text style={[homeTypography.caption, { color: colors.text, fontWeight: "600" }]} numberOfLines={1}>
                     Build around this
                   </Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }}>
+                  <Text style={[homeTypography.caption, { color: colors.textSecondary, fontWeight: "600" }]}>
                     →
                   </Text>
                 </View>
               </View>
-            </Pressable>
+            </AuraPressable>
           );
         })}
       </ScrollView>

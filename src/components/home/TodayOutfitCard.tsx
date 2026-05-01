@@ -5,6 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import type { AppColors } from "@/constants/theme";
 import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
+import { homeTypography } from "@/src/components/home/homeTypography";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -54,15 +55,15 @@ export default function TodayOutfitCard({
       <View style={{ padding: layout.cardPadding, gap: 16 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <View style={{ gap: 4 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800", letterSpacing: 0.8 }}>
+          <Text style={[homeTypography.label, { color: colors.textSecondary }]}>
             TODAY’S OUTFIT
           </Text>
-          <Text style={{ color: colors.text, fontSize: 22, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">
+          <Text style={[homeTypography.titleMedium, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">
             {hasWorn ? "Already worn" : hasPlan ? "Ready to go" : "Not planned yet"}
           </Text>
         </View>
         <Pressable onPress={onOpenCalendar}>
-          <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "800" }} numberOfLines={1} ellipsizeMode="tail">
+          <Text style={[homeTypography.caption, { color: colors.textSecondary, fontWeight: "600" }]} numberOfLines={1} ellipsizeMode="tail">
             Open day
           </Text>
         </Pressable>
@@ -100,7 +101,7 @@ export default function TodayOutfitCard({
                     />
                   ) : null}
                 </View>
-                <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "700", textAlign: "center" }}>
+                <Text style={[homeTypography.caption, { color: colors.textSecondary, textAlign: "center" }]}>
                   {slotLabel(slot)}
                 </Text>
               </View>
@@ -108,7 +109,7 @@ export default function TodayOutfitCard({
           })}
         </View>
       ) : (
-        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }} numberOfLines={3} ellipsizeMode="tail">
+        <Text style={[homeTypography.body, { color: colors.textSecondary }]} numberOfLines={3} ellipsizeMode="tail">
           Build a look from your wardrobe, save it to today, and come back here when you need it fast.
         </Text>
       )}
@@ -116,7 +117,7 @@ export default function TodayOutfitCard({
       {reasons.length ? (
         <View style={{ gap: 4 }}>
           {reasons.map((reason) => (
-            <Text key={reason} style={{ color: colors.textSecondary, fontSize: 13 }} numberOfLines={2} ellipsizeMode="tail">
+            <Text key={reason} style={[homeTypography.bodySmall, { color: colors.textSecondary }]} numberOfLines={2} ellipsizeMode="tail">
               • {reason}
             </Text>
           ))}
@@ -144,7 +145,7 @@ export default function TodayOutfitCard({
             opacity: pressed ? 0.82 : 1,
           })}
         >
-          <Text style={{ color: colors.text, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">Ask Stylist</Text>
+          <Text style={[homeTypography.buttonText, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">Ask Stylist</Text>
         </Pressable>
       </View>
       </View>

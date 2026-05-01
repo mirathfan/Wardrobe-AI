@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  InteractionManager,
   Pressable,
   ScrollView,
   Text,
@@ -19,6 +20,7 @@ import InsightCard from "@/src/components/home/InsightCard";
 import QuickActionRail, { type QuickActionItem } from "@/src/components/home/QuickActionRail";
 import SmartToolsGrid, { type SmartTool } from "@/src/components/home/SmartToolsGrid";
 import { HOME_DEFERRED_FEATURES } from "@/src/components/home/homeDeferredFeatures";
+import { homeTypography } from "@/src/components/home/homeTypography";
 import AuraTrainingCard from "@/src/components/aura/AuraTrainingCard";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -34,6 +36,12 @@ import { getMinimumClosetProgress, getSuggestedAddItemCategory } from "@/src/lib
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
 import { Toast } from "@/src/lib/toast";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
+import {
+  getCachedChatList,
+  getCachedHomeSnapshot,
+  getCachedProfilePreferences,
+  setCachedHomeSnapshot,
+} from "@/src/lib/localCache";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLookAction, AuraResponse } from "@/src/types/aura";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
@@ -112,13 +120,19 @@ export default function HomeScreen() {
   const [latestAuraLookResponse, setLatestAuraLookResponse] = useState<AuraResponse | null>(null);
   const [latestSavedLook, setLatestSavedLook] = useState<import("@/src/lib/auraLooks").SavedAuraLookRecord | null>(null);
   const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
+  const [renderDeferredHomeSections, setRenderDeferredHomeSections] = useState(false);
+  const homeCacheRefreshingRef = useRef(false);
 
   useEffect(() => {
     if (!uid) {
+      setItems([]);
+      setLoading(false);
       router.replace("/(auth)/welcome");
       return;
     }
 
+    setItems([]);
+    setLoading(true);
     const unsub = listenToItems(
       uid,
       (next) => {
@@ -139,6 +153,34 @@ export default function HomeScreen() {
   }, [uid]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (!uid) {
+      setLatestChatThread(null);
+      setLatestSavedLook(null);
+      setTodayRecord(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setLatestChatThread(null);
+    setLatestSavedLook(null);
+    setTodayRecord(null);
+
+    void getCachedHomeSnapshot(uid).then((cached) => {
+      if (cancelled || !cached?.data) return;
+      homeCacheRefreshingRef.current = cached.stale;
+      setLatestChatThread(cached.data.latestChatPreview);
+      setLatestSavedLook(cached.data.latestSavedLookPreview);
+      setTodayRecord(cached.data.todayOutfitPreview);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
+
+  useEffect(() => {
     if (!uid) return;
     const unsub = subscribeOutfitByDate(
       uid,
@@ -155,6 +197,19 @@ export default function HomeScreen() {
     }
   }, [weather.actions, weather.permission, weather.state]);
 
+  useEffect(() => {
+    if (loading) return;
+    setRenderDeferredHomeSections(false);
+    const task = InteractionManager.runAfterInteractions(() => {
+      setRenderDeferredHomeSections(true);
+    });
+    const fallback = setTimeout(() => setRenderDeferredHomeSections(true), 900);
+    return () => {
+      task.cancel?.();
+      clearTimeout(fallback);
+    };
+  }, [loading]);
+
   useFocusEffect(
     React.useCallback(() => {
       let active = true;
@@ -165,6 +220,14 @@ export default function HomeScreen() {
           return;
         }
         try {
+          const cachedProfilePreferences = await getCachedProfilePreferences(uid);
+          if (active && cachedProfilePreferences?.data) {
+            setProfilePreferences(cachedProfilePreferences.data);
+          }
+          const cachedChats = await getCachedChatList(uid);
+          if (active && cachedChats?.data?.[0]) {
+            setLatestChatThread(cachedChats.data[0]);
+          }
           const [assistantProfile, latestChat, savedLook, userProfilePreferences] = await Promise.all([
             loadAssistantProfile(uid),
             loadLatestChatThread(uid),
@@ -189,10 +252,6 @@ export default function HomeScreen() {
         } catch {
           if (!active) return;
           setAssistantHint(null);
-          setLatestChatThread(null);
-          setLatestAuraLookResponse(null);
-          setLatestSavedLook(null);
-          setProfilePreferences(null);
         }
       })();
       return () => {
@@ -325,6 +384,32 @@ export default function HomeScreen() {
     });
   }, [items]);
   const latestLook = latestAuraLookResponse?.look ?? latestSavedLook?.look ?? null;
+
+  useEffect(() => {
+    if (!uid || loading) return;
+    homeCacheRefreshingRef.current = false;
+    void setCachedHomeSnapshot(uid, {
+      closetItemCount: items.length,
+      cleanCount: availableCount,
+      laundryCount,
+      needsWashCount,
+      minimumClosetProgress,
+      latestSavedLookPreview: latestSavedLook,
+      latestChatPreview: latestChatThread,
+      todayOutfitPreview: todayRecord,
+    });
+  }, [
+    availableCount,
+    items.length,
+    latestChatThread,
+    latestSavedLook,
+    laundryCount,
+    loading,
+    minimumClosetProgress,
+    needsWashCount,
+    todayRecord,
+    uid,
+  ]);
   const proactiveLookMeta = useMemo(() => {
     const leansDressy = styleProfile.recommendationEmphasis.some((value) =>
       ["date_night", "going_out", "dress_styling"].includes(value)
@@ -471,11 +556,6 @@ export default function HomeScreen() {
         label: "Find key gaps",
         prompt: "Review my wardrobe and suggest the smartest missing pieces to buy next.",
       },
-      packing: {
-        key: "packing",
-        label: "Pack a trip",
-        prompt: "Help me plan a compact travel wardrobe from my closet.",
-      },
       confidence: {
         key: "confidence",
         label: "Build confidence",
@@ -540,7 +620,7 @@ export default function HomeScreen() {
 
     const goalOrder = styleProfile.prioritizedGoals.flatMap((goal) => {
       if (goal === "shopping_suggestions") return ["shopping", "today"];
-      if (goal === "packing_help") return ["packing", "weather"];
+      if (goal === "packing_help") return ["weather", "closet"];
       if (goal === "laundry_reminders") return ["closet", "unworn"];
       if (goal === "styling_confidence") return ["confidence", "today"];
       return ["today", "elevate"];
@@ -569,7 +649,6 @@ export default function HomeScreen() {
         "closet",
         "elevate",
         styleProfile.emphasizedAccessories.length ? "accessories" : "",
-        "packing",
         "shopping",
       ].filter(Boolean))
     ).slice(0, 5);
@@ -683,11 +762,39 @@ export default function HomeScreen() {
   const smartTools = useMemo<SmartTool[]>(
     () => [
       {
+        key: "aura",
+        title: "AURA",
+        subtitle: "Ask for a closet-first outfit",
+        icon: "assistant",
+        onPress: () => router.push("/(tabs)/ai"),
+      },
+      {
+        key: "closet",
+        title: "Closet",
+        subtitle: `${availableCount} clean pieces ready`,
+        icon: "wardrobe-outline",
+        onPress: () => router.push("/(tabs)/closet"),
+      },
+      {
+        key: "add",
+        title: "Add Item",
+        subtitle: "Bring a new piece into rotation",
+        icon: "plus-circle-outline",
+        onPress: () => router.push("/(tabs)/add"),
+      },
+      {
         key: "studio",
         title: "Studio",
         subtitle: "Build an outfit by hand from your closet",
         icon: "view-dashboard-edit-outline",
-        onPress: () => router.push("/studio"),
+        onPress: () => router.push("/(tabs)/studio"),
+      },
+      {
+        key: "calendar",
+        title: "Calendar",
+        subtitle: "Plan the day around real context",
+        icon: "calendar-month-outline",
+        onPress: () => router.push("/(tabs)/calendar"),
       },
       {
         key: "laundry",
@@ -695,39 +802,10 @@ export default function HomeScreen() {
         subtitle: `${availableCount} clean · ${laundryCount} in laundry`,
         icon: "washing-machine",
         badge: laundryCount + needsWashCount > 0 ? String(laundryCount + needsWashCount) : undefined,
-        onPress: () => router.push("/laundry"),
-      },
-      {
-        key: "insights",
-        title: "Insights",
-        subtitle: "Read the closet before you make the next move",
-        icon: "chart-line",
-        onPress: () => router.push("/insights"),
-      },
-      {
-        key: "packing",
-        title: "Packing",
-        subtitle: "Build a tight trip capsule without losing style",
-        icon: "bag-suitcase-outline",
-        onPress: () => router.push("/packing"),
-      },
-      {
-        key: "unworn",
-        title: "Unworn items",
-        subtitle: unwornCount > 0 ? `${unwornCount} items deserve airtime` : "Everything is getting some rotation",
-        icon: "hanger",
-        badge: unwornCount > 0 ? String(unwornCount) : undefined,
-        onPress: () => router.push("/insights/unworn"),
-      },
-      {
-        key: "gaps",
-        title: "Wardrobe gaps",
-        subtitle: "Find what is missing before you buy the wrong thing",
-        icon: "vector-square-plus",
-        onPress: () => router.push("/insights/gaps"),
+        onPress: () => router.push("/(tabs)/laundry"),
       },
     ],
-    [availableCount, laundryCount, needsWashCount, unwornCount]
+    [availableCount, laundryCount, needsWashCount]
   );
 
   const priorityInsight = useMemo(() => {
@@ -783,7 +861,7 @@ export default function HomeScreen() {
         }}
       >
         <ActivityIndicator color={colors.text} />
-        <Text style={{ color: colors.textSecondary, fontSize: 14 }}>Building your dashboard…</Text>
+        <Text style={[homeTypography.bodySmall, { color: colors.textSecondary }]}>Building your dashboard…</Text>
       </View>
     );
   }
@@ -795,7 +873,7 @@ export default function HomeScreen() {
         contentContainerStyle={{
           paddingTop: layout.topContentInset,
           paddingHorizontal: layout.horizontalPadding,
-          paddingBottom: layout.bottomDockPadding + 160,
+          paddingBottom: layout.bottomDockPadding + 140,
           gap: layout.sectionGap + 6,
         }}
       >
@@ -817,8 +895,8 @@ export default function HomeScreen() {
         <RevealSection delay={40}>
           <View style={{ gap: 10 }}>
             <View style={{ gap: 2 }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 }}>QUICK OUTCOMES</Text>
-              <Text style={{ color: colors.textSecondary, opacity: 0.65, fontSize: 13, lineHeight: 20 }}>
+              <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Quick outcomes</Text>
+              <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, opacity: 0.78 }]}>
                 Start from the result you want, not a blank prompt box.
               </Text>
             </View>
@@ -841,103 +919,107 @@ export default function HomeScreen() {
           />
         </RevealSection>
 
-        <RevealSection delay={120}>
-          <AuraLookModule
-            colors={colors}
-            look={latestLook}
-            itemsById={itemsById}
-            onAskAura={openAIWithPrompt}
-            onAction={handleAuraLookAction}
-            eyebrow={proactiveLookMeta.eyebrow}
-            title={"title" in proactiveLookMeta ? proactiveLookMeta.title : undefined}
-            subtitle={"subtitle" in proactiveLookMeta ? proactiveLookMeta.subtitle : undefined}
-            fallbackTitle={"fallbackTitle" in proactiveLookMeta ? proactiveLookMeta.fallbackTitle : undefined}
-            fallbackBody={"fallbackBody" in proactiveLookMeta ? proactiveLookMeta.fallbackBody : undefined}
-            primaryPrompt={"primaryPrompt" in proactiveLookMeta ? proactiveLookMeta.primaryPrompt : undefined}
-            secondaryPrompt={"secondaryPrompt" in proactiveLookMeta ? proactiveLookMeta.secondaryPrompt : undefined}
-          />
-        </RevealSection>
+        {renderDeferredHomeSections ? (
+          <>
+            <RevealSection delay={120}>
+              <AuraLookModule
+                colors={colors}
+                look={latestLook}
+                itemsById={itemsById}
+                onAskAura={openAIWithPrompt}
+                onAction={handleAuraLookAction}
+                eyebrow={proactiveLookMeta.eyebrow}
+                title={"title" in proactiveLookMeta ? proactiveLookMeta.title : undefined}
+                subtitle={"subtitle" in proactiveLookMeta ? proactiveLookMeta.subtitle : undefined}
+                fallbackTitle={"fallbackTitle" in proactiveLookMeta ? proactiveLookMeta.fallbackTitle : undefined}
+                fallbackBody={"fallbackBody" in proactiveLookMeta ? proactiveLookMeta.fallbackBody : undefined}
+                primaryPrompt={"primaryPrompt" in proactiveLookMeta ? proactiveLookMeta.primaryPrompt : undefined}
+                secondaryPrompt={"secondaryPrompt" in proactiveLookMeta ? proactiveLookMeta.secondaryPrompt : undefined}
+              />
+            </RevealSection>
 
-        <RevealSection delay={160}>
-          <SmartToolsGrid colors={colors} tools={smartTools} columns={layout.smartGridColumns} />
-        </RevealSection>
+            <RevealSection delay={160}>
+              <SmartToolsGrid colors={colors} tools={smartTools} columns={layout.smartGridColumns} />
+            </RevealSection>
 
-        <RevealSection delay={200}>
-          <AuraTrainingCard
-            colors={colors}
-            variant="home"
-            onPress={() => router.push("/aura/swipe")}
-          />
-        </RevealSection>
+            <RevealSection delay={200}>
+              <AuraTrainingCard
+                colors={colors}
+                variant="home"
+                onPress={() => router.push("/aura/swipe")}
+              />
+            </RevealSection>
 
-        <RevealSection delay={240}>
-          {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (
-            <ContinueChatCard
-              colors={colors}
-              title={latestChatThread.title}
-              preview={latestChatThread.lastMessagePreview}
-              updatedAt={latestChatThread.updatedAt}
-              onPress={() => openAIChat(latestChatThread.chatId)}
-            />
-          ) : null}
-        </RevealSection>
+            <RevealSection delay={240}>
+              {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (
+                <ContinueChatCard
+                  colors={colors}
+                  title={latestChatThread.title}
+                  preview={latestChatThread.lastMessagePreview}
+                  updatedAt={latestChatThread.updatedAt}
+                  onPress={() => openAIChat(latestChatThread.chatId)}
+                />
+              ) : null}
+            </RevealSection>
 
-        <RevealSection delay={280}>
-          {recentItems.length ? (
-            <ContinueSection
-              colors={colors}
-              title="Keep the momentum going"
-              subtitle="Fresh pieces worth styling next before they get lost in the closet."
-              items={recentItems}
-              onPressItem={(item) =>
-                router.push({
-                  pathname: "/(tabs)/item/[id]",
-                  params: { id: item.id, sourceTab: "index" },
-                })
-              }
-            />
-          ) : (
-            <InsightCard
-              colors={colors}
-              eyebrow="NEXT STEP"
-              title="Add a few pieces to unlock better daily styling"
-              body="Once your closet has a bit more depth, Home can give you stronger outfit recommendations, smarter recents, and better rotation cues."
-              ctaLabel="Add item"
-              onPress={() => router.push("/(tabs)/add")}
-            />
-          )}
-        </RevealSection>
+            <RevealSection delay={280}>
+              {recentItems.length ? (
+                <ContinueSection
+                  colors={colors}
+                  title="Keep the momentum going"
+                  subtitle="Fresh pieces worth styling next before they get lost in the closet."
+                  items={recentItems}
+                  onPressItem={(item) =>
+                    router.push({
+                      pathname: "/(tabs)/item/[id]",
+                      params: { id: item.id, sourceTab: "index" },
+                    })
+                  }
+                />
+              ) : (
+                <InsightCard
+                  colors={colors}
+                  eyebrow="NEXT STEP"
+                  title="Add a few pieces to unlock better daily styling"
+                  body="Once your closet has a bit more depth, Home can give you stronger outfit recommendations, smarter recents, and better rotation cues."
+                  ctaLabel="Add item"
+                  onPress={() => router.push("/(tabs)/add")}
+                />
+              )}
+            </RevealSection>
 
-        {showMinimumClosetCard ? (
-          <RevealSection delay={300}>
-            <MinimumClosetProgressCard
-              colors={colors}
-              items={items}
-              onAddMissingItem={openAddMissingItem}
-            />
-          </RevealSection>
+            {showMinimumClosetCard ? (
+              <RevealSection delay={300}>
+                <MinimumClosetProgressCard
+                  colors={colors}
+                  items={items}
+                  onAddMissingItem={openAddMissingItem}
+                />
+              </RevealSection>
+            ) : null}
+
+            <RevealSection delay={320}>
+              <Pressable
+                onPress={() => router.push("/(tabs)/add")}
+                style={({ pressed }) => ({
+                  borderRadius: layout.largeRadius,
+                  paddingVertical: layout.cardPadding + 2,
+                  paddingHorizontal: layout.cardPadding,
+                  backgroundColor: "rgba(255,255,255,0.045)",
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.08)",
+                  opacity: pressed ? 0.86 : 1,
+                  gap: 4,
+                })}
+              >
+                <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Bring in something new</Text>
+                <Text style={[homeTypography.bodySmall, { color: colors.textSecondary }]}>
+                  Add a fresh piece, clean the image, and give AURA more to work with tomorrow.
+                </Text>
+              </Pressable>
+            </RevealSection>
+          </>
         ) : null}
-
-        <RevealSection delay={320}>
-          <Pressable
-            onPress={() => router.push("/(tabs)/add")}
-            style={({ pressed }) => ({
-              borderRadius: layout.largeRadius,
-              paddingVertical: layout.cardPadding + 2,
-              paddingHorizontal: layout.cardPadding,
-              backgroundColor: "rgba(255,255,255,0.045)",
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.08)",
-              opacity: pressed ? 0.86 : 1,
-              gap: 4,
-            })}
-          >
-            <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>Bring in something new</Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
-              Add a fresh piece, clean the image, and give AURA more to work with tomorrow.
-            </Text>
-          </Pressable>
-        </RevealSection>
       </ScrollView>
     </View>
   );

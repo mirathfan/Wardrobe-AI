@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import { homeTypography } from "@/src/components/home/homeTypography";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 export type QuickActionItem = {
@@ -46,25 +47,29 @@ export default function QuickActionRail({
         pressedScale={0.97}
         pressedOpacity={0.9}
         style={{
-          borderRadius: layout.mediumRadius,
+          borderRadius: layout.largeRadius,
           overflow: "hidden",
-          backgroundColor: colors.surface,
+          backgroundColor: "rgba(18,18,28,0.76)",
           borderWidth: 1,
-          borderColor: colors.border,
+          borderColor: "rgba(255,255,255,0.10)",
+          shadowColor: colors.lightPurple,
+          shadowOpacity: 0.1,
+          shadowRadius: 24,
+          shadowOffset: { width: 0, height: 12 },
         }}
       >
         <LinearGradient
-          colors={[colors.primaryPurple, colors.softPurple]}
+          colors={["rgba(255,255,255,0.08)", "rgba(124,92,255,0.06)", "rgba(237,233,227,0.024)"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={{ paddingHorizontal: 18, paddingVertical: 15, gap: 6 }}
+          style={{ paddingHorizontal: 18, paddingVertical: 15, gap: 8 }}
         >
-          <Text style={{ color: colors.textPrimary, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 }}>
+          <Text style={[homeTypography.label, { color: colors.ctaCream, letterSpacing: 0.95, opacity: 0.78 }]}>
             START HERE
           </Text>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9 }}>
-            <Ionicons name={iconForAction(primaryAction.key, primaryAction.label)} size={15} color={colors.textPrimary} />
-            <Text style={{ color: colors.textPrimary, fontWeight: "900", fontSize: 16, textAlign: "center" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 11 }}>
+            <Ionicons name={iconForAction(primaryAction.key, primaryAction.label)} size={17} color={colors.textPrimary} />
+            <Text style={[homeTypography.titleSmall, { color: colors.textPrimary }]}>
               {primaryAction.label}
             </Text>
           </View>
@@ -72,7 +77,7 @@ export default function QuickActionRail({
       </AuraPressable>
 
       {secondaryActions.length ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 8 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
           {secondaryActions.map((action) => (
             <AuraPressable
               key={action.key}
@@ -83,7 +88,9 @@ export default function QuickActionRail({
               pressedOpacity={0.88}
               style={{
                 borderRadius: layout.pillRadius,
-                paddingHorizontal: 14,
+                minHeight: 42,
+                justifyContent: "center",
+                paddingHorizontal: 15,
                 paddingVertical: 10,
                 backgroundColor: colors.chipBackground,
                 borderWidth: 1,
@@ -96,13 +103,13 @@ export default function QuickActionRail({
                   size={14}
                   color={colors.textSecondary}
                 />
-                <Text style={{ color: colors.text, fontWeight: "800", fontSize: 13 }}>
+                <Text style={[homeTypography.bodySmall, { color: colors.text, fontSize: 13, fontWeight: "800" }]}>
                   {action.label}
                 </Text>
               </View>
             </AuraPressable>
           ))}
-        </ScrollView>
+        </View>
       ) : null}
     </View>
   );

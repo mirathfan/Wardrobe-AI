@@ -1,6 +1,6 @@
 import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 
 import { Fonts, ThemeTokens } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
@@ -14,12 +14,14 @@ export default function AuraGradientButton({
   disabled = false,
   gradientColors,
   labelColor,
+  labelStyle,
   innerBackgroundColor,
   innerOverlayColors,
 }: {
   label: string;
   onPress: () => void;
   style?: StyleProp<ViewStyle>;
+  labelStyle?: StyleProp<TextStyle>;
   disabled?: boolean;
   gradientColors?: readonly [string, string, ...string[]];
   labelColor?: string;
@@ -59,7 +61,7 @@ export default function AuraGradientButton({
             style={StyleSheet.absoluteFill}
           />
         )}
-        <Text style={[styles.label, labelColor ? { color: labelColor } : null]}>{label}</Text>
+        <Text style={[styles.label, labelColor ? { color: labelColor } : null, labelStyle]}>{label}</Text>
       </View>
     </AuraPressable>
   );
