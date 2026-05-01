@@ -19,7 +19,7 @@ export function ClosetHeader({
   return (
     <View style={{ gap: 8 }}>
       <View style={{ gap: 7 }}>
-        <Text style={{ color: colors.text, fontSize: 28 * layout.titleScale, fontWeight: "900", letterSpacing: -0.5 }}>
+        <Text style={{ color: colors.text, fontSize: 28 * layout.titleScale, fontWeight: "900", letterSpacing: 0 }}>
           Closet
         </Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>

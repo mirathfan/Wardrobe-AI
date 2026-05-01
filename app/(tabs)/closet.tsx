@@ -6,6 +6,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   LayoutAnimation,
   Modal,
   Platform,
@@ -20,13 +21,14 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { deleteDoc, doc, getDoc, updateDoc, writeBatch } from "firebase/firestore";
 
-import { ClosetCategorySection } from "@/src/components/closet/ClosetCategorySection";
 import { ClosetControlsRow } from "@/src/components/closet/ClosetControlsRow";
 import { ClosetFilterSheet } from "@/src/components/closet/ClosetFilterSheet";
 import { ClosetHeader } from "@/src/components/closet/ClosetHeader";
+import { ClosetItemCard } from "@/src/components/closet/ClosetItemCard";
 import MinimumClosetProgressCard from "@/src/components/closet/MinimumClosetProgressCard";
 import { ClosetProcessingSection } from "@/src/components/closet/ClosetProcessingSection";
 import { ClosetSearchBar } from "@/src/components/closet/ClosetSearchBar";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import type { ChatImageAttachment } from "@/src/components/ai/chatTypes";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -53,12 +55,39 @@ import { getMinimumClosetProgress, getSuggestedAddItemCategory } from "@/src/lib
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
 import { Toast } from "@/src/lib/toast";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
+import { getCachedProfilePreferences } from "@/src/lib/localCache";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingStatus } from "@/src/types/ClothingItem";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 
 type SortMode = "RECENTLY_ADDED" | "RECENTLY_WORN" | "BRAND" | "MOST_WORN";
 type CategoryKey = CanonicalCategory;
+type ClosetSection = {
+  key: CategoryKey;
+  title: string;
+  itemCount: number;
+  subcategories: { label: string; items: ClosetItem[] }[];
+};
+
+type ClosetListRow =
+  | {
+      type: "section";
+      key: string;
+      section: ClosetSection;
+      expanded: boolean;
+    }
+  | {
+      type: "subcategory";
+      key: string;
+      label: string;
+      count: number;
+    }
+  | {
+      type: "items";
+      key: string;
+      items: ClosetItem[];
+      animateOffset: number;
+    };
 
 const CATEGORY_LABELS: Record<CategoryKey, string> = {
   top: "Tops",
@@ -132,6 +161,13 @@ const STATUS_OPTIONS: { key: "ALL" | ClothingStatus; label: string }[] = [
 ];
 
 const PROCESSING_STALE_TIMEOUT_MS = 15 * 60 * 1000;
+const DEBUG_CLOSET_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
+
+function debugClosetLog(...args: Parameters<typeof console.log>) {
+  if (DEBUG_CLOSET_CLIENT) {
+    console.log(...args);
+  }
+}
 
 function validHttpUrl(value: string) {
   const trimmed = String(value ?? "").trim();
@@ -246,6 +282,296 @@ function buildSections(
   }).filter((section) => section.itemCount > 0);
 }
 
+function itemRows(items: ClosetItem[], keyPrefix: string, animateOffset = 0): ClosetListRow[] {
+  const rows: ClosetListRow[] = [];
+  for (let index = 0; index < items.length; index += 2) {
+    rows.push({
+      type: "items",
+      key: `${keyPrefix}:row:${index}`,
+      items: items.slice(index, index + 2),
+      animateOffset: animateOffset + index,
+    });
+  }
+  return rows;
+}
+
+function buildClosetListRows(
+  sections: ClosetSection[],
+  expandedSections: Record<string, boolean>,
+) {
+  return sections.flatMap<ClosetListRow>((section) => {
+    const expanded = expandedSections[section.key] !== false;
+    const rows: ClosetListRow[] = [
+      {
+        type: "section",
+        key: `section:${section.key}`,
+        section,
+        expanded,
+      },
+    ];
+
+    if (!expanded) {
+      return rows.concat(itemRows(section.subcategories.flatMap((group) => group.items), `section:${section.key}`));
+    }
+
+    let animateOffset = 0;
+    section.subcategories.forEach((group) => {
+      rows.push({
+        type: "subcategory",
+        key: `section:${section.key}:subcategory:${group.label}`,
+        label: group.label,
+        count: group.items.length,
+      });
+      rows.push(...itemRows(group.items, `section:${section.key}:subcategory:${group.label}`, animateOffset));
+      animateOffset += group.items.length;
+    });
+    return rows;
+  });
+}
+
+const closetRowKeyExtractor = (row: ClosetListRow) => row.key;
+
+const ClosetListSeparator = React.memo(function ClosetListSeparator() {
+  return <View style={{ height: 14 }} />;
+});
+
+const ClosetEmptyState = React.memo(function ClosetEmptyState({
+  filtered,
+  onAddItem,
+  onAskAura,
+  onClearFilters,
+}: {
+  filtered: boolean;
+  onAddItem: () => void;
+  onAskAura: () => void;
+  onClearFilters: () => void;
+}) {
+  const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
+  return (
+    <View
+      style={{
+        borderRadius: layout.largeRadius,
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.1)",
+        backgroundColor: "rgba(255,255,255,0.045)",
+        padding: layout.cardPadding + 2,
+        gap: 16,
+        overflow: "hidden",
+      }}
+    >
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          top: -42,
+          right: -36,
+          width: 128,
+          height: 128,
+          borderRadius: 999,
+          backgroundColor: "rgba(167,139,250,0.12)",
+        }}
+      />
+      <View
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 999,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "rgba(237,233,227,0.1)",
+          borderWidth: 1,
+          borderColor: "rgba(237,233,227,0.16)",
+        }}
+      >
+        <Ionicons name={filtered ? "search-outline" : "shirt-outline"} size={21} color={colors.ctaCream} />
+      </View>
+      <View style={{ gap: 7 }}>
+        <Text style={{ color: colors.text, fontSize: 20, lineHeight: 25, fontWeight: "900" }}>
+          {filtered ? "No pieces match these filters" : "Your closet is ready for its first pieces"}
+        </Text>
+        <Text style={{ color: colors.textSecondary, lineHeight: 21 }}>
+          {filtered
+            ? "Broaden the view and Closet will get back to the category-first browser."
+            : "Add a few clean photos so AURA can start building outfits from what you actually own."}
+        </Text>
+      </View>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+        <AuraPressable
+          onPress={filtered ? onClearFilters : onAddItem}
+          haptic="selection"
+          hapticTrigger="press"
+          pressedScale={0.97}
+          style={{
+            borderRadius: 999,
+            backgroundColor: colors.ctaCream,
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+          }}
+        >
+          <Text style={{ color: colors.ctaText, fontSize: 13, fontWeight: "900" }}>
+            {filtered ? "Clear filters" : "Add item"}
+          </Text>
+        </AuraPressable>
+        <AuraPressable
+          onPress={onAskAura}
+          haptic="selection"
+          hapticTrigger="press"
+          pressedScale={0.97}
+          style={{
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.12)",
+            backgroundColor: "rgba(255,255,255,0.05)",
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+          }}
+        >
+          <Text style={{ color: colors.text, fontSize: 13, fontWeight: "900" }}>Ask AURA</Text>
+        </AuraPressable>
+      </View>
+    </View>
+  );
+});
+
+const ClosetSectionHeader = React.memo(function ClosetSectionHeader({
+  section,
+  expanded,
+  onToggle,
+}: {
+  section: ClosetSection;
+  expanded: boolean;
+  onToggle: (sectionKey: string) => void;
+}) {
+  const { colors } = useAppTheme();
+  return (
+    <View style={{ gap: 14 }}>
+      <View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.055)" }} />
+      <AuraPressable
+        onPress={() => onToggle(section.key)}
+        haptic="selection"
+        hapticTrigger="press"
+        pressedScale={0.99}
+        pressedOpacity={0.9}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          paddingVertical: 4,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 9, flex: 1 }}>
+          <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900", letterSpacing: 0 }}>
+            {section.title}
+          </Text>
+          <View
+            style={{
+              paddingHorizontal: 8,
+              paddingVertical: 3,
+              borderRadius: 999,
+              backgroundColor: colors.overlay,
+            }}
+          >
+            <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "800" }}>
+              {section.itemCount}
+            </Text>
+          </View>
+        </View>
+        <View
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 999,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: colors.overlay,
+          }}
+        >
+          <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={16} color={colors.textSecondary} />
+        </View>
+      </AuraPressable>
+    </View>
+  );
+});
+
+const ClosetSubcategoryHeader = React.memo(function ClosetSubcategoryHeader({
+  label,
+  count,
+}: {
+  label: string;
+  count: number;
+}) {
+  const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
+  return (
+    <View style={{ gap: 9, paddingTop: 2 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "800", letterSpacing: 0.2 }}>
+          {label}
+        </Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "700", opacity: 0.75 }}>
+          {count}
+        </Text>
+      </View>
+      <View
+        style={{
+          height: 1,
+          backgroundColor: colors.border,
+          opacity: 0.5,
+          marginRight: layout.horizontalPadding * 0.35,
+        }}
+      />
+    </View>
+  );
+});
+
+type ClosetGridRowProps = {
+  items: ClosetItem[];
+  cardWidth: number;
+  gridGap: number;
+  animateOffset: number;
+  selectedItemIds: Set<string>;
+  onPressItem: (item: ClosetItem) => void;
+  onLongPressItem: (item: ClosetItem) => void;
+};
+
+const ClosetGridRow = React.memo(
+  function ClosetGridRow({
+    items,
+    cardWidth,
+    gridGap,
+    animateOffset,
+    selectedItemIds,
+    onPressItem,
+    onLongPressItem,
+  }: ClosetGridRowProps) {
+    return (
+      <View style={{ flexDirection: "row", gap: gridGap }}>
+        {items.map((item, index) => (
+          <ClosetItemCard
+            key={item.id}
+            item={item}
+            onPressItem={onPressItem}
+            onLongPressItem={onLongPressItem}
+            selected={selectedItemIds.has(item.id)}
+            width={cardWidth}
+            animateIndex={animateOffset + index}
+          />
+        ))}
+      </View>
+    );
+  },
+  (prev, next) =>
+    prev.items === next.items &&
+    prev.cardWidth === next.cardWidth &&
+    prev.gridGap === next.gridGap &&
+    prev.animateOffset === next.animateOffset &&
+    prev.onPressItem === next.onPressItem &&
+    prev.onLongPressItem === next.onLongPressItem &&
+    prev.items.every((item) => prev.selectedItemIds.has(item.id) === next.selectedItemIds.has(item.id)),
+);
+
 export default function ClosetScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
@@ -271,6 +597,7 @@ export default function ClosetScreen() {
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
   const [locallyRemovedItemIds, setLocallyRemovedItemIds] = useState<Set<string>>(() => new Set());
   const staleFailoverIdsRef = React.useRef(new Set<string>());
+  const closetCacheRefreshingRef = React.useRef(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     top: true,
     one_piece: true,
@@ -288,21 +615,32 @@ export default function ClosetScreen() {
 
   useEffect(() => {
     if (!uid) {
+      setItems([]);
       setLoading(false);
       router.replace("/(auth)/welcome");
       return;
     }
+    setItems([]);
     setLoading(true);
-    const unsub = listenToItems(uid, (next) => {
-      setItems(next);
-      setLoading(false);
-    }, {
-      includeDrafts: true,
-      onError: (message) => {
+    const unsub = listenToItems(
+      uid,
+      (next, meta) => {
+        if (meta?.source === "cache") {
+          closetCacheRefreshingRef.current = !!meta.stale;
+        } else {
+          closetCacheRefreshingRef.current = false;
+        }
+        setItems(next);
         setLoading(false);
-        Alert.alert("Closet", message || "Unable to load wardrobe.");
       },
-    });
+      {
+        includeDrafts: true,
+        onError: (message) => {
+          setLoading(false);
+          Alert.alert("Closet", message || "Unable to load wardrobe.");
+        },
+      }
+    );
     return () => unsub();
   }, [uid]);
 
@@ -314,6 +652,10 @@ export default function ClosetScreen() {
         cancelled = true;
       };
     }
+    setProfilePreferences(null);
+    void getCachedProfilePreferences(uid).then((cached) => {
+      if (!cancelled && cached?.data) setProfilePreferences(cached.data);
+    });
     void loadUserProfilePreferences(uid)
       .then((profile) => {
         if (!cancelled) setProfilePreferences(profile);
@@ -378,7 +720,7 @@ export default function ClosetScreen() {
       if (!lastRunAt || now - lastRunAt < PROCESSING_STALE_TIMEOUT_MS) return;
       if (staleFailoverIdsRef.current.has(item.id)) return;
       staleFailoverIdsRef.current.add(item.id);
-      console.log("[ITEM_PROCESSING_STALE]", {
+      debugClosetLog("[ITEM_PROCESSING_STALE]", {
         uid,
         itemId: item.id,
         lastRunAt,
@@ -396,7 +738,7 @@ export default function ClosetScreen() {
         updatedAt: Date.now(),
       })
         .then(() => {
-          console.log("[ITEM_PROCESSING_FAILOVER]", {
+          debugClosetLog("[ITEM_PROCESSING_FAILOVER]", {
             uid,
             itemId: item.id,
             to: "failed",
@@ -404,7 +746,7 @@ export default function ClosetScreen() {
         })
         .catch((error) => {
           staleFailoverIdsRef.current.delete(item.id);
-          console.log("[ITEM_PROCESSING_FAILOVER]", {
+          debugClosetLog("[ITEM_PROCESSING_FAILOVER]", {
             uid,
             itemId: item.id,
             error,
@@ -462,6 +804,10 @@ export default function ClosetScreen() {
     () => buildSections(filteredItems, categoryOrder, styleProfile.emphasizedSubcategories),
     [categoryOrder, filteredItems, styleProfile.emphasizedSubcategories]
   );
+  const closetRows = useMemo(
+    () => (loading || sections.length === 0 ? [] : buildClosetListRows(sections, expandedSections)),
+    [expandedSections, loading, sections],
+  );
   const visibleCount = filteredItems.length;
   const isSelectionMode = selectedItemIds.size > 0;
   const selectedItems = useMemo(
@@ -480,6 +826,9 @@ export default function ClosetScreen() {
     FLOATING_TAB_BAR_HEIGHT +
     FLOATING_CONTROL_GAP +
     Math.max(6, Math.round(layout.horizontalPadding * 0.2));
+  const closetGridGap = 16;
+  const closetGridCardWidth =
+    (layout.width - layout.horizontalPadding * 2 - closetGridGap) / 2;
 
   useEffect(() => {
     setSelectedItemIds((prev) => {
@@ -532,6 +881,14 @@ export default function ClosetScreen() {
     },
     []
   );
+
+  const handleToggleSection = React.useCallback((sectionKey: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpandedSections((prev) => ({
+      ...prev,
+      [sectionKey]: !(prev[sectionKey] !== false),
+    }));
+  }, []);
 
   const handleSelectAllVisible = React.useCallback(() => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -687,6 +1044,7 @@ export default function ClosetScreen() {
         }
       }
       clearSelection();
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
       if (failures.length) {
         Alert.alert(
           "Some items were skipped",
@@ -781,14 +1139,14 @@ export default function ClosetScreen() {
 
   const startProductLinkReview = React.useCallback(async (rawUrl: string, source: "clipboard" | "manual") => {
     const url = validHttpUrl(rawUrl);
-    console.log("[PASTE_LINK_UI]", "search submitted", {
+    debugClosetLog("[PASTE_LINK_UI]", "search submitted", {
       uid,
       source,
       hasUrl: !!url,
       rawLength: rawUrl.length,
     });
     if (!url || !uid) {
-      console.log("[PASTE_LINK_UI]", "invalid url", {
+      debugClosetLog("[PASTE_LINK_UI]", "invalid url", {
         uid,
         source,
         rawUrl,
@@ -820,7 +1178,7 @@ export default function ClosetScreen() {
   }, [uid]);
 
   const handlePasteProductLinkAction = React.useCallback(() => {
-    console.log("[PASTE_LINK_UI]", "opened", { uid });
+    debugClosetLog("[PASTE_LINK_UI]", "opened", { uid });
     setProductLink("");
     setProductLinkTouched(false);
     setQuickAddOpen(false);
@@ -830,7 +1188,7 @@ export default function ClosetScreen() {
   const handlePasteFromClipboard = React.useCallback(async () => {
     try {
       const clipboard = await Clipboard.getStringAsync();
-      console.log("[PASTE_LINK_UI]", "pasted from clipboard", {
+      debugClosetLog("[PASTE_LINK_UI]", "pasted from clipboard", {
         uid,
         hasClipboardText: !!clipboard?.trim(),
         hasValidUrl: !!validHttpUrl(clipboard),
@@ -838,7 +1196,7 @@ export default function ClosetScreen() {
       setProductLink(clipboard ?? "");
       setProductLinkTouched(true);
     } catch (error) {
-      console.log("[PASTE_LINK_UI]", "pasted from clipboard", {
+      debugClosetLog("[PASTE_LINK_UI]", "pasted from clipboard", {
         uid,
         hasClipboardText: false,
         hasValidUrl: false,
@@ -849,7 +1207,7 @@ export default function ClosetScreen() {
 
   const handleImportProductLink = React.useCallback(async () => {
     if (!normalizedProductLink) {
-      console.log("[PASTE_LINK_UI]", "invalid url", {
+      debugClosetLog("[PASTE_LINK_UI]", "invalid url", {
         uid,
         rawUrl: productLink,
       });
@@ -876,11 +1234,11 @@ export default function ClosetScreen() {
   const handleReviewProcessingItem = React.useCallback(
     (item: ClosetItem) => {
       if (!item?.id) {
-        console.log("[CLOSET_REVIEW_ERROR]", "missing item id", { item });
+        debugClosetLog("[CLOSET_REVIEW_ERROR]", "missing item id", { item });
         Alert.alert("Review unavailable", "This item is no longer available.");
         return;
       }
-      console.log("[CLOSET_REVIEW]", "opening draft review", {
+      debugClosetLog("[CLOSET_REVIEW]", "opening draft review", {
         uid,
         itemId: item.id,
         draftState: (item as any).draftState ?? null,
@@ -904,7 +1262,7 @@ export default function ClosetScreen() {
         next.add(item.id);
         return next;
       });
-      console.log("[ITEM_REMOVE]", "removing unfinished item", {
+      debugClosetLog("[ITEM_REMOVE]", "removing unfinished item", {
         uid,
         itemId: item.id,
         path: `users/${uid}/items/${item.id}`,
@@ -921,7 +1279,7 @@ export default function ClosetScreen() {
         });
         await deleteDoc(itemRef);
         const afterDelete = await getDoc(itemRef);
-        console.log("[ITEM_REMOVE_SUCCESS]", {
+        debugClosetLog("[ITEM_REMOVE_SUCCESS]", {
           uid,
           itemId: item.id,
           existsAfterDelete: afterDelete.exists(),
@@ -932,7 +1290,7 @@ export default function ClosetScreen() {
           next.delete(item.id);
           return next;
         });
-        console.log("[ITEM_REMOVE_ERROR]", {
+        debugClosetLog("[ITEM_REMOVE_ERROR]", {
           uid,
           itemId: item.id,
           error,
@@ -942,6 +1300,101 @@ export default function ClosetScreen() {
     },
     [uid]
   );
+
+  const renderClosetRow = React.useCallback(
+    ({ item }: { item: ClosetListRow }) => {
+      if (item.type === "section") {
+        return (
+          <ClosetSectionHeader
+            section={item.section}
+            expanded={item.expanded}
+            onToggle={handleToggleSection}
+          />
+        );
+      }
+      if (item.type === "subcategory") {
+        return <ClosetSubcategoryHeader label={item.label} count={item.count} />;
+      }
+      return (
+        <ClosetGridRow
+          items={item.items}
+          cardWidth={closetGridCardWidth}
+          gridGap={closetGridGap}
+          animateOffset={item.animateOffset}
+          selectedItemIds={selectedItemIds}
+          onPressItem={handleItemPress}
+          onLongPressItem={handleItemLongPress}
+        />
+      );
+    },
+    [
+      closetGridCardWidth,
+      closetGridGap,
+      handleItemLongPress,
+      handleItemPress,
+      handleToggleSection,
+      selectedItemIds,
+    ],
+  );
+
+  const closetListHeader = useMemo(() => {
+    if (!processingItems.length && !showMinimumClosetCard) return null;
+    return (
+      <View style={{ gap: 18, marginBottom: 18 }}>
+        <ClosetProcessingSection
+          items={processingItems}
+          onPressItem={handleReviewProcessingItem}
+          onRetry={(item) => void handleRetryProcessingItem(item)}
+          onRemove={(item) => void handleRemoveProcessingItem(item)}
+        />
+
+        {showMinimumClosetCard ? (
+          <MinimumClosetProgressCard
+            colors={colors}
+            items={visibleItems}
+            onAddMissingItem={openAddMissingItem}
+          />
+        ) : null}
+      </View>
+    );
+  }, [
+    colors,
+    handleRemoveProcessingItem,
+    handleRetryProcessingItem,
+    handleReviewProcessingItem,
+    openAddMissingItem,
+    processingItems,
+    showMinimumClosetCard,
+    visibleItems,
+  ]);
+
+  const clearFilters = React.useCallback(() => {
+    setSearch("");
+    setSortMode("RECENTLY_ADDED");
+    setStatusFilter("ALL");
+    setCategoryFilter("ALL");
+    setBrandFilter("ALL");
+    setColorFilter("ALL");
+  }, []);
+
+  const closetListEmpty = useMemo(() => {
+    if (loading) {
+      return (
+        <View style={{ paddingVertical: 48, alignItems: "center" }}>
+          <ActivityIndicator color={colors.accent} />
+        </View>
+      );
+    }
+
+    return (
+      <ClosetEmptyState
+        filtered={visibleItems.length > 0}
+        onAddItem={() => router.push("/(tabs)/add")}
+        onAskAura={() => router.push("/(tabs)/ai")}
+        onClearFilters={clearFilters}
+      />
+    );
+  }, [clearFilters, colors.accent, loading, visibleItems.length]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -1082,78 +1535,27 @@ export default function ClosetScreen() {
         </View>
       </View>
 
-      <ScrollView
+      <FlatList
+        data={closetRows}
+        keyExtractor={closetRowKeyExtractor}
+        renderItem={renderClosetRow}
+        ListHeaderComponent={closetListHeader}
+        ListEmptyComponent={closetListEmpty}
+        ItemSeparatorComponent={ClosetListSeparator}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        removeClippedSubviews={Platform.OS !== "web"}
+        initialNumToRender={10}
+        maxToRenderPerBatch={8}
+        updateCellsBatchingPeriod={40}
+        windowSize={7}
+        extraData={selectedItemIds}
         contentContainerStyle={{
           paddingHorizontal: layout.horizontalPadding,
           paddingTop: 18,
           paddingBottom: layout.bottomDockPadding + 112,
-          gap: 18,
         }}
-      >
-        <ClosetProcessingSection
-          items={processingItems}
-          onPressItem={handleReviewProcessingItem}
-          onRetry={(item) => void handleRetryProcessingItem(item)}
-          onRemove={(item) => void handleRemoveProcessingItem(item)}
-        />
-
-        {showMinimumClosetCard ? (
-          <MinimumClosetProgressCard
-            colors={colors}
-            items={visibleItems}
-            onAddMissingItem={openAddMissingItem}
-          />
-        ) : null}
-
-        {loading ? (
-          <View style={{ paddingVertical: 48, alignItems: "center" }}>
-            <ActivityIndicator color={colors.accent} />
-          </View>
-        ) : sections.length === 0 ? (
-          <View
-            style={{
-              borderRadius: layout.mediumRadius,
-              borderWidth: 1,
-              borderColor: colors.border,
-              backgroundColor: colors.surface,
-              padding: layout.cardPadding,
-              gap: 10,
-            }}
-          >
-            <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900" }}>
-              {visibleItems.length === 0 ? "Your closet is still empty" : "No pieces match these filters"}
-            </Text>
-            <Text style={{ color: colors.textSecondary, lineHeight: 20 }}>
-              {visibleItems.length === 0
-                ? "Add a few pieces and Closet becomes your clean, category-first browser."
-                : "Try a broader search or clear one of the active filters."}
-            </Text>
-          </View>
-        ) : (
-          sections.map((section) => (
-            <ClosetCategorySection
-              key={section.key}
-              title={section.title}
-              count={section.itemCount}
-              expanded={expandedSections[section.key] !== false}
-              subcategories={section.subcategories}
-              onToggle={() =>
-                {
-                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                  setExpandedSections((prev) => ({
-                    ...prev,
-                    [section.key]: !(prev[section.key] !== false),
-                  }));
-                }
-              }
-              onPressItem={handleItemPress}
-              onLongPressItem={handleItemLongPress}
-              selectedItemIds={selectedItemIds}
-            />
-          ))
-        )}
-      </ScrollView>
+      />
 
       <ClosetFilterSheet
         visible={filtersOpen}
@@ -1173,13 +1575,7 @@ export default function ClosetScreen() {
         onChangeCategory={setCategoryFilter}
         onChangeBrand={setBrandFilter}
         onChangeColor={setColorFilter}
-        onClear={() => {
-          setSortMode("RECENTLY_ADDED");
-          setStatusFilter("ALL");
-          setCategoryFilter("ALL");
-          setBrandFilter("ALL");
-          setColorFilter("ALL");
-        }}
+        onClear={clearFilters}
       />
 
       <Pressable

@@ -5,6 +5,7 @@ import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Pressable,
   ScrollView,
   Text,
@@ -23,6 +24,7 @@ import {
   type BoardPiece,
 } from "@/src/lib/auraLookLayouts";
 import { auraLookToPlannedOutfit, saveAuraLook } from "@/src/lib/auraLooks";
+import { getItemImageUrl } from "@/src/lib/itemImage";
 import { listenToItems, toCanonicalCategory } from "@/src/lib/items";
 import { Toast } from "@/src/lib/toast";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -105,15 +107,7 @@ function categoryLabel(category: StudioCategory) {
 }
 
 function imageUrlForItem(item: ClothingItem) {
-  return (
-    item.photos?.normalizedUrl ??
-    item.cleanedImageUrl ??
-    item.photos?.cleanedUrl ??
-    item.photos?.cleanedPhotoUrl ??
-    item.originalImageUrl ??
-    item.photoUrl ??
-    null
-  );
+  return getItemImageUrl(item, { variant: "thumb" });
 }
 
 function buildManualLook(selection: ClothingItem[]): AuraLook {
@@ -207,6 +201,65 @@ function buildStudioBoardPieces(selection: ClothingItem[]): BoardPiece[] {
   });
 }
 
+const StudioPickerItem = React.memo(function StudioPickerItem({
+  item,
+  selected,
+  cardWidth,
+  gridGap,
+  index,
+  onToggleItem,
+}: {
+  item: ClothingItem;
+  selected: boolean;
+  cardWidth: number;
+  gridGap: number;
+  index: number;
+  onToggleItem: (item: ClothingItem) => void;
+}) {
+  return (
+    <View style={{ width: cardWidth, marginBottom: gridGap }}>
+      <ClosetItemCard
+        item={item}
+        width={cardWidth}
+        selected={false}
+        animateIndex={index}
+        onPressItem={onToggleItem}
+      />
+      {selected ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            borderRadius: 20,
+            borderWidth: 1.5,
+            borderColor: IRIDESCENT_PURPLE,
+          }}
+        >
+          <View
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              width: 22,
+              height: 22,
+              borderRadius: 11,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: IRIDESCENT_PURPLE,
+            }}
+          >
+            <Ionicons name="checkmark" size={15} color="#FFFFFF" />
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+});
+
 export default function StudioScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
@@ -221,9 +274,13 @@ export default function StudioScreen() {
 
   React.useEffect(() => {
     if (!uid) {
+      setItems([]);
+      setLoading(false);
       router.replace("/(auth)/welcome");
       return;
     }
+    setItems([]);
+    setLoading(true);
     const unsub = listenToItems(
       uid,
       (next) => {
@@ -289,10 +346,10 @@ export default function StudioScreen() {
   const availableWidth = layout.width - layout.horizontalPadding * 2;
   const columns = layout.screenSize === "large" ? 4 : 2;
   const cardWidth = Math.floor((availableWidth - gridGap * (columns - 1)) / columns);
-  const todayKey = toDayKey(new Date());
+  const todayKey = useMemo(() => toDayKey(new Date()), []);
   void resolvedStudioLayout;
 
-  function toggleItem(item: ClothingItem) {
+  const toggleItem = React.useCallback((item: ClothingItem) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const category = categoryForItem(item);
     const isSelected = selectedIds.has(item.id);
@@ -326,9 +383,9 @@ export default function StudioScreen() {
     }
 
     setSelection((prev) => [...prev, item]);
-  }
+  }, [hasOnePieceSelected, selectedCounts, selectedIds, selection.length]);
 
-  async function handleSaveLook() {
+  const handleSaveLook = React.useCallback(async () => {
     if (!uid || !hasSelection || saving) return;
     setSaving(true);
     try {
@@ -339,9 +396,9 @@ export default function StudioScreen() {
     } finally {
       setSaving(false);
     }
-  }
+  }, [hasSelection, look, saving, uid]);
 
-  async function handlePlanLook() {
+  const handlePlanLook = React.useCallback(async () => {
     if (!uid || !hasSelection || saving) return;
     setSaving(true);
     try {
@@ -352,9 +409,9 @@ export default function StudioScreen() {
     } finally {
       setSaving(false);
     }
-  }
+  }, [hasSelection, look, saving, todayKey, uid]);
 
-  function handleAskAura() {
+  const handleAskAura = React.useCallback(() => {
     if (!hasSelection) return;
     router.push({
       pathname: "/(tabs)/ai",
@@ -363,13 +420,27 @@ export default function StudioScreen() {
         promptKey: `studio-${Date.now()}`,
       },
     });
-  }
+  }, [hasSelection, selection]);
 
-  function clearSelection() {
+  const clearSelection = React.useCallback(() => {
     if (!selection.length) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelection([]);
-  }
+  }, [selection.length]);
+
+  const renderStudioItem = React.useCallback(
+    ({ item, index }: { item: ClothingItem; index: number }) => (
+      <StudioPickerItem
+        item={item}
+        selected={selectedIds.has(item.id)}
+        cardWidth={cardWidth}
+        gridGap={gridGap}
+        index={index}
+        onToggleItem={toggleItem}
+      />
+    ),
+    [cardWidth, gridGap, selectedIds, toggleItem],
+  );
 
   if (loading) {
     return (
@@ -382,258 +453,224 @@ export default function StudioScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScrollView
+      <FlatList
+        data={filteredItems}
+        key={`studio-grid-${columns}`}
+        keyExtractor={(item) => item.id}
+        renderItem={renderStudioItem}
+        numColumns={columns}
+        columnWrapperStyle={columns > 1 ? { gap: gridGap } : undefined}
+        ListHeaderComponent={
+          <View style={{ gap: 18, marginBottom: 12 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <View style={{ flex: 1, gap: 4 }}>
+                <Text style={{ color: colors.iridescentStart, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 }}>
+                  AURA STUDIO
+                </Text>
+                <Text style={{ color: colors.text, fontSize: 28, lineHeight: 34, fontWeight: "900" }}>
+                  Build Outfit
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => router.back()}
+                style={({ pressed }) => ({
+                  width: 42,
+                  height: 42,
+                  borderRadius: 21,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: colors.surface2,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.08)",
+                  opacity: pressed ? 0.78 : 1,
+                })}
+              >
+                <Ionicons name="close" size={20} color={colors.text} />
+              </Pressable>
+            </View>
+
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <View
+                style={{
+                  borderRadius: layout.pillRadius,
+                  paddingHorizontal: 12,
+                  paddingVertical: 7,
+                  backgroundColor: "rgba(192,132,252,0.15)",
+                  borderWidth: 0.5,
+                  borderColor: IRIDESCENT_PURPLE,
+                }}
+              >
+                <Text style={{ color: IRIDESCENT_PURPLE, fontSize: 12, fontWeight: "900" }}>
+                  {selection.length} item{selection.length === 1 ? "" : "s"} selected
+                </Text>
+              </View>
+              {hasSelection ? (
+                <Pressable
+                  onPress={clearSelection}
+                  hitSlop={10}
+                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+                >
+                  <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, fontWeight: "800" }}>
+                    Clear all
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <AuraLookCard
+              look={look}
+              itemsById={itemsById}
+              viewportWidth={layout.width - layout.horizontalPadding * 2}
+              boardVariant="studio"
+              onPressSave={handleSaveLook}
+              onPressPlan={handlePlanLook}
+              hideActions={!hasSelection}
+            />
+
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <Pressable
+                disabled={!hasSelection || saving}
+                onPress={handleAskAura}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  borderRadius: layout.mediumRadius,
+                  paddingVertical: 13,
+                  paddingHorizontal: 12,
+                  alignItems: "center",
+                  backgroundColor: hasSelection ? colors.iridescentStart : colors.surface2,
+                  opacity: !hasSelection || saving ? 0.48 : pressed ? 0.84 : 1,
+                })}
+              >
+                <Text
+                  numberOfLines={2}
+                  style={{
+                    color: hasSelection ? colors.background : colors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: "900",
+                    textAlign: "center",
+                  }}
+                >
+                  Ask AURA to improve this
+                </Text>
+              </Pressable>
+              <Pressable
+                disabled={!hasSelection || saving}
+                onPress={handlePlanLook}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  borderRadius: layout.mediumRadius,
+                  paddingVertical: 13,
+                  paddingHorizontal: 12,
+                  alignItems: "center",
+                  backgroundColor: colors.surface2,
+                  borderWidth: 1,
+                  borderColor: hasSelection ? colors.iridescentStart : "rgba(255,255,255,0.06)",
+                  opacity: !hasSelection || saving ? 0.48 : pressed ? 0.82 : 1,
+                })}
+              >
+                <Text numberOfLines={2} style={{ color: colors.text, fontSize: 13, fontWeight: "900", textAlign: "center" }}>
+                  Plan this outfit
+                </Text>
+              </Pressable>
+            </View>
+
+            <View style={{ gap: 12 }}>
+              <View style={{ gap: 10 }}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 8, paddingRight: 8 }}
+                >
+                  {FILTERS.map((filter) => {
+                    const active = activeFilter === filter.key;
+                    return (
+                      <Pressable
+                        key={filter.key}
+                        onPress={() => setActiveFilter(filter.key)}
+                        style={({ pressed }) => ({
+                          borderRadius: layout.pillRadius,
+                          paddingHorizontal: 13,
+                          paddingVertical: 9,
+                          backgroundColor: active ? IRIDESCENT_PURPLE : "rgba(255,255,255,0.06)",
+                          opacity: pressed ? 0.82 : 1,
+                        })}
+                      >
+                        <Text
+                          style={{
+                            color: active ? "#000000" : "rgba(255,255,255,0.5)",
+                            fontSize: 12.5,
+                            fontWeight: "900",
+                          }}
+                        >
+                          {filter.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>
+                    Choose wardrobe items
+                  </Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12.5 }}>
+                    {filteredItems.length ? `${filteredItems.length} closet items` : "No matching items yet"}
+                  </Text>
+                </View>
+                {hasSelection ? (
+                  <Pressable
+                    onPress={handleSaveLook}
+                    disabled={saving}
+                    style={({ pressed }) => ({
+                      borderRadius: layout.pillRadius,
+                      paddingHorizontal: 12,
+                      paddingVertical: 9,
+                      backgroundColor: colors.surface2,
+                      borderWidth: 1,
+                      borderColor: "rgba(255,255,255,0.08)",
+                      opacity: saving ? 0.5 : pressed ? 0.82 : 1,
+                    })}
+                  >
+                    <Text style={{ color: colors.text, fontSize: 12, fontWeight: "900" }}>Save as look</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          </View>
+        }
+        ListEmptyComponent={
+          <View
+            style={{
+              borderRadius: layout.mediumRadius,
+              padding: layout.cardPadding,
+              backgroundColor: colors.surface2,
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.07)",
+              gap: 6,
+            }}
+          >
+            <Text style={{ color: colors.text, fontSize: 16, fontWeight: "900" }}>Nothing here yet</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
+              Add or recategorize closet items to make them available for this role.
+            </Text>
+          </View>
+        }
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        removeClippedSubviews
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        updateCellsBatchingPeriod={40}
+        windowSize={7}
+        extraData={selectedIds}
         contentContainerStyle={{
           paddingTop: Math.max(insets.top + 10, layout.topContentInset),
           paddingHorizontal: layout.horizontalPadding,
           paddingBottom: layout.bottomDockPadding + 112,
-          gap: 18,
         }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <View style={{ flex: 1, gap: 4 }}>
-            <Text style={{ color: colors.iridescentStart, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 }}>
-              AURA STUDIO
-            </Text>
-            <Text style={{ color: colors.text, fontSize: 28, lineHeight: 34, fontWeight: "900" }}>
-              Build Outfit
-            </Text>
-          </View>
-          <Pressable
-            onPress={() => router.back()}
-            style={({ pressed }) => ({
-              width: 42,
-              height: 42,
-              borderRadius: 21,
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor: colors.surface2,
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.08)",
-              opacity: pressed ? 0.78 : 1,
-            })}
-          >
-            <Ionicons name="close" size={20} color={colors.text} />
-          </Pressable>
-        </View>
-
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <View
-            style={{
-              borderRadius: layout.pillRadius,
-              paddingHorizontal: 12,
-              paddingVertical: 7,
-              backgroundColor: "rgba(192,132,252,0.15)",
-              borderWidth: 0.5,
-              borderColor: IRIDESCENT_PURPLE,
-            }}
-          >
-            <Text style={{ color: IRIDESCENT_PURPLE, fontSize: 12, fontWeight: "900" }}>
-              {selection.length} item{selection.length === 1 ? "" : "s"} selected
-            </Text>
-          </View>
-          {hasSelection ? (
-            <Pressable
-              onPress={clearSelection}
-              hitSlop={10}
-              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-            >
-              <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, fontWeight: "800" }}>
-                Clear all
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-
-        <AuraLookCard
-          look={look}
-          itemsById={itemsById}
-          viewportWidth={layout.width - layout.horizontalPadding * 2}
-          boardVariant="studio"
-          onPressSave={handleSaveLook}
-          onPressPlan={handlePlanLook}
-          hideActions={!hasSelection}
-        />
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <Pressable
-            disabled={!hasSelection || saving}
-            onPress={handleAskAura}
-            style={({ pressed }) => ({
-              flex: 1,
-              borderRadius: layout.mediumRadius,
-              paddingVertical: 13,
-              paddingHorizontal: 12,
-              alignItems: "center",
-              backgroundColor: hasSelection ? colors.iridescentStart : colors.surface2,
-              opacity: !hasSelection || saving ? 0.48 : pressed ? 0.84 : 1,
-            })}
-          >
-            <Text
-              numberOfLines={2}
-              style={{
-                color: hasSelection ? colors.background : colors.textSecondary,
-                fontSize: 13,
-                fontWeight: "900",
-                textAlign: "center",
-              }}
-            >
-              Ask AURA to improve this
-            </Text>
-          </Pressable>
-          <Pressable
-            disabled={!hasSelection || saving}
-            onPress={handlePlanLook}
-            style={({ pressed }) => ({
-              flex: 1,
-              borderRadius: layout.mediumRadius,
-              paddingVertical: 13,
-              paddingHorizontal: 12,
-              alignItems: "center",
-              backgroundColor: colors.surface2,
-              borderWidth: 1,
-              borderColor: hasSelection ? colors.iridescentStart : "rgba(255,255,255,0.06)",
-              opacity: !hasSelection || saving ? 0.48 : pressed ? 0.82 : 1,
-            })}
-          >
-            <Text numberOfLines={2} style={{ color: colors.text, fontSize: 13, fontWeight: "900", textAlign: "center" }}>
-              Plan this outfit
-            </Text>
-          </Pressable>
-        </View>
-
-        <View style={{ gap: 12 }}>
-          <View style={{ gap: 10 }}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 8, paddingRight: 8 }}
-            >
-              {FILTERS.map((filter) => {
-                const active = activeFilter === filter.key;
-                return (
-                  <Pressable
-                    key={filter.key}
-                    onPress={() => setActiveFilter(filter.key)}
-                    style={({ pressed }) => ({
-                      borderRadius: layout.pillRadius,
-                      paddingHorizontal: 13,
-                      paddingVertical: 9,
-                      backgroundColor: active ? IRIDESCENT_PURPLE : "rgba(255,255,255,0.06)",
-                      opacity: pressed ? 0.82 : 1,
-                    })}
-                  >
-                    <Text
-                      style={{
-                        color: active ? "#000000" : "rgba(255,255,255,0.5)",
-                        fontSize: 12.5,
-                        fontWeight: "900",
-                      }}
-                    >
-                      {filter.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
-            <View style={{ flex: 1, gap: 3 }}>
-              <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>
-                Choose wardrobe items
-              </Text>
-              <Text style={{ color: colors.textSecondary, fontSize: 12.5 }}>
-                {filteredItems.length ? `${filteredItems.length} closet items` : "No matching items yet"}
-              </Text>
-            </View>
-            {hasSelection ? (
-              <Pressable
-                onPress={handleSaveLook}
-                disabled={saving}
-                style={({ pressed }) => ({
-                  borderRadius: layout.pillRadius,
-                  paddingHorizontal: 12,
-                  paddingVertical: 9,
-                  backgroundColor: colors.surface2,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.08)",
-                  opacity: saving ? 0.5 : pressed ? 0.82 : 1,
-                })}
-              >
-                <Text style={{ color: colors.text, fontSize: 12, fontWeight: "900" }}>Save as look</Text>
-              </Pressable>
-            ) : null}
-          </View>
-
-          {filteredItems.length ? (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: gridGap }}>
-              {filteredItems.map((item, index) => {
-                const selected = selectedIds.has(item.id);
-                return (
-                  <View key={item.id} style={{ width: cardWidth }}>
-                    <ClosetItemCard
-                      item={item}
-                      width={cardWidth}
-                      selected={false}
-                      animateIndex={index}
-                      onPress={() => toggleItem(item)}
-                    />
-                    {selected ? (
-                      <View
-                        pointerEvents="none"
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          borderRadius: 20,
-                          borderWidth: 1.5,
-                          borderColor: IRIDESCENT_PURPLE,
-                        }}
-                      >
-                        <View
-                          style={{
-                            position: "absolute",
-                            top: 6,
-                            right: 6,
-                            width: 22,
-                            height: 22,
-                            borderRadius: 11,
-                            alignItems: "center",
-                            justifyContent: "center",
-                            backgroundColor: IRIDESCENT_PURPLE,
-                          }}
-                        >
-                          <Ionicons name="checkmark" size={15} color="#FFFFFF" />
-                        </View>
-                      </View>
-                    ) : null}
-                  </View>
-                );
-              })}
-            </View>
-          ) : (
-            <View
-              style={{
-                borderRadius: layout.mediumRadius,
-                padding: layout.cardPadding,
-                backgroundColor: colors.surface2,
-                borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.07)",
-                gap: 6,
-              }}
-            >
-              <Text style={{ color: colors.text, fontSize: 16, fontWeight: "900" }}>Nothing here yet</Text>
-              <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
-                Add or recategorize closet items to make them available for this role.
-              </Text>
-            </View>
-          )}
-        </View>
-      </ScrollView>
+      />
     </View>
   );
 }

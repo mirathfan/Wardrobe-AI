@@ -46,7 +46,7 @@ export function ClosetCategorySection({
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 9, flex: 1 }}>
-          <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900", letterSpacing: -0.2 }}>
+          <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900", letterSpacing: 0 }}>
             {title}
           </Text>
           <View

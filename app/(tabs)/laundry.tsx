@@ -1,23 +1,26 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { router } from "expo-router";
-import { collection, doc, onSnapshot, orderBy, query, serverTimestamp, writeBatch } from "firebase/firestore";
-import React, { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, Pressable, Text, View } from "react-native";
+import { doc, serverTimestamp, writeBatch } from "firebase/firestore";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import AppImage from "@/src/components/common/AppImage";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { db } from "@/src/lib/firebase";
-import { getItemImageUrl } from "@/src/lib/itemImage";
+import { runHaptic } from "@/src/lib/haptics";
+import { getBestThumbnailImageSource } from "@/src/lib/itemImage";
 import {
-  isVisibleWardrobeItem,
   legacyStatusForLaundryStatus,
+  listenToItems,
   normalizeLaundryStatus,
   updateLaundryStatus,
 } from "@/src/lib/items";
 import { sanitizeDisplayText } from "@/src/lib/text";
+import { Toast } from "@/src/lib/toast";
 import type { ClothingItem, LaundryStatus } from "@/src/types/ClothingItem";
 
 type LaundryTab = "needs_wash" | "in_laundry" | "clean";
@@ -48,23 +51,25 @@ export default function LaundryScreen() {
 
   useEffect(() => {
     if (!uid) {
+      setAllItems([]);
       setLoading(false);
       router.replace("/(auth)/login");
       return;
     }
 
-    const itemsRef = collection(db, "users", uid, "items");
-    const q = query(itemsRef, orderBy("createdAt", "desc"));
-    return onSnapshot(
-      q,
-      (snap) => {
-        const next = snap.docs
-          .map((entry) => ({ id: entry.id, ...(entry.data() as any) }) as ClothingItem)
-          .filter((item) => isVisibleWardrobeItem(item));
-        setAllItems(next);
+    setAllItems([]);
+    setLoading(true);
+    return listenToItems(
+      uid,
+      (next) => {
+        setAllItems(next as ClothingItem[]);
         setLoading(false);
       },
-      () => setLoading(false)
+      {
+        status: "ALL",
+        sort: "NEWEST",
+        onError: () => setLoading(false),
+      }
     );
   }, [uid]);
 
@@ -84,19 +89,27 @@ export default function LaundryScreen() {
   const canMoveNeedsWash = buckets.needs_wash.length > 0;
   const canMarkLaundryClean = buckets.in_laundry.length > 0;
 
-  async function setItemLaundryStatus(itemId: string, status: LaundryStatus) {
+  const setItemLaundryStatus = useCallback(async (itemId: string, status: LaundryStatus) => {
     if (!uid) return router.replace("/(auth)/login");
     try {
       setSavingStatus(`${itemId}:${status}`);
       await updateLaundryStatus(uid, itemId, status);
+      void runHaptic("light");
+      Toast.laundryUpdated(
+        status === "clean"
+          ? "Piece is clean and ready."
+          : status === "in_laundry"
+            ? "Piece moved to laundry."
+            : "Piece marked needs wash.",
+      );
     } catch (error: any) {
-      Alert.alert("Laundry", error?.message ?? "Could not update that item.");
+      Toast.error("Laundry update failed", error?.message ?? "Could not update that item.");
     } finally {
       setSavingStatus(null);
     }
-  }
+  }, [uid]);
 
-  async function bulkUpdate(from: LaundryTab, to: LaundryStatus) {
+  const bulkUpdate = useCallback(async (from: LaundryTab, to: LaundryStatus) => {
     if (!uid) return router.replace("/(auth)/login");
     const source = buckets[from];
     if (!source.length) return;
@@ -120,14 +133,30 @@ export default function LaundryScreen() {
       await batch.commit();
       if (to === "in_laundry") setTab("in_laundry");
       if (to === "clean") setTab("clean");
+      void runHaptic("light");
+      Toast.laundryUpdated(
+        to === "clean" ? "Batch marked clean." : "Batch moved to laundry.",
+      );
     } catch (error: any) {
-      Alert.alert("Laundry", error?.message ?? "Could not update laundry.");
+      Toast.error("Laundry update failed", error?.message ?? "Could not update laundry.");
     } finally {
       setSavingStatus(null);
     }
-  }
+  }, [buckets, uid]);
 
-  const Header = (
+  const renderLaundryItem = useCallback(
+    ({ item }: { item: ClothingItem }) => (
+      <LaundryRow
+        item={item}
+        disabled={!!savingStatus}
+        activeStatus={normalizeLaundryStatus(item)}
+        onStatus={setItemLaundryStatus}
+      />
+    ),
+    [savingStatus, setItemLaundryStatus],
+  );
+
+  const Header = useMemo(() => (
     <View style={{ gap: 16, paddingBottom: 12 }}>
       <View style={{ minHeight: 44, justifyContent: "center" }}>
         <GlassBackButton onPress={() => router.replace("/(tabs)")} />
@@ -185,7 +214,18 @@ export default function LaundryScreen() {
         </Text>
       </View>
     </View>
-  );
+  ), [
+    buckets,
+    canMarkLaundryClean,
+    canMoveNeedsWash,
+    colors.text,
+    colors.textSecondary,
+    layout.titleScale,
+    listItems.length,
+    savingStatus,
+    tab,
+    bulkUpdate,
+  ]);
 
   if (loading) {
     return (
@@ -209,14 +249,13 @@ export default function LaundryScreen() {
         }}
         ListHeaderComponent={Header}
         ListEmptyComponent={<PremiumEmptyState />}
-        renderItem={({ item }) => (
-          <LaundryRow
-            item={item}
-            disabled={!!savingStatus}
-            activeStatus={normalizeLaundryStatus(item)}
-            onStatus={(status) => setItemLaundryStatus(item.id, status)}
-          />
-        )}
+        renderItem={renderLaundryItem}
+        removeClippedSubviews
+        initialNumToRender={10}
+        maxToRenderPerBatch={8}
+        updateCellsBatchingPeriod={40}
+        windowSize={7}
+        extraData={savingStatus}
       />
     </View>
   );
@@ -266,9 +305,13 @@ function StatusCard(props: {
 }) {
   const { colors } = useAppTheme();
   return (
-    <Pressable
+    <AuraPressable
       onPress={props.onPress}
-      style={({ pressed }) => ({
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.97}
+      pressedOpacity={0.86}
+      style={{
         flex: 1,
         minHeight: 118,
         borderRadius: 18,
@@ -277,8 +320,7 @@ function StatusCard(props: {
         backgroundColor: props.active ? "rgba(237,233,227,0.12)" : "rgba(255,255,255,0.045)",
         borderWidth: 1,
         borderColor: props.active ? "rgba(237,233,227,0.34)" : "rgba(255,255,255,0.08)",
-        opacity: pressed ? 0.84 : 1,
-      })}
+      }}
     >
       <View style={{ width: 30, height: 30, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(237,233,227,0.1)" }}>
         <Ionicons name={props.icon} size={17} color={colors.ctaCream} />
@@ -292,7 +334,7 @@ function StatusCard(props: {
           {props.helper}
         </Text>
       </View>
-    </Pressable>
+    </AuraPressable>
   );
 }
 
@@ -305,10 +347,15 @@ function ActionButton(props: {
 }) {
   const { colors } = useAppTheme();
   return (
-    <Pressable
+    <AuraPressable
       onPress={props.onPress}
       disabled={props.disabled}
-      style={({ pressed }) => ({
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.97}
+      pressedOpacity={0.82}
+      disabledOpacity={0.42}
+      style={{
         flex: 1,
         minHeight: 46,
         borderRadius: 14,
@@ -319,14 +366,13 @@ function ActionButton(props: {
         backgroundColor: props.primary ? colors.ctaCream : "rgba(255,255,255,0.055)",
         borderWidth: props.primary ? 0 : 1,
         borderColor: "rgba(255,255,255,0.1)",
-        opacity: props.disabled ? 0.42 : pressed ? 0.82 : 1,
-      })}
+      }}
     >
       <Ionicons name={props.icon} size={16} color={props.primary ? colors.ctaText : colors.text} />
       <Text style={{ color: props.primary ? colors.ctaText : colors.text, fontSize: 13, fontWeight: "900" }} numberOfLines={1}>
         {props.label}
       </Text>
-    </Pressable>
+    </AuraPressable>
   );
 }
 
@@ -358,7 +404,7 @@ function PremiumEmptyState() {
   );
 }
 
-function LaundryRow({
+const LaundryRow = React.memo(function LaundryRow({
   item,
   activeStatus,
   disabled,
@@ -367,10 +413,10 @@ function LaundryRow({
   item: ClothingItem;
   activeStatus: LaundryStatus;
   disabled?: boolean;
-  onStatus: (status: LaundryStatus) => void;
+  onStatus: (itemId: string, status: LaundryStatus) => void;
 }) {
   const { colors } = useAppTheme();
-  const imageUrl = getItemImageUrl(item, { variant: "thumb" });
+  const imageSource = getBestThumbnailImageSource(item);
   const statusLabel = TABS.find((entry) => entry.key === activeStatus)?.label ?? "Clean";
   return (
     <View
@@ -395,8 +441,8 @@ function LaundryRow({
             justifyContent: "center",
           }}
         >
-          {imageUrl ? (
-            <AppImage source={{ uri: imageUrl }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
+          {imageSource ? (
+            <AppImage source={imageSource} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
           ) : (
             <Ionicons name="shirt-outline" size={24} color={colors.textSecondary} />
           )}
@@ -415,33 +461,37 @@ function LaundryRow({
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        <RowAction label="Needs wash" disabled={disabled || activeStatus === "needs_wash"} onPress={() => onStatus("needs_wash")} />
-        <RowAction label="Move to laundry" disabled={disabled || activeStatus === "in_laundry"} onPress={() => onStatus("in_laundry")} />
-        <RowAction label="Mark clean" disabled={disabled || activeStatus === "clean"} primary onPress={() => onStatus("clean")} />
+        <RowAction label="Needs wash" disabled={disabled || activeStatus === "needs_wash"} onPress={() => onStatus(item.id, "needs_wash")} />
+        <RowAction label="Move to laundry" disabled={disabled || activeStatus === "in_laundry"} onPress={() => onStatus(item.id, "in_laundry")} />
+        <RowAction label="Mark clean" disabled={disabled || activeStatus === "clean"} primary onPress={() => onStatus(item.id, "clean")} />
       </View>
     </View>
   );
-}
+});
 
 function RowAction({ label, disabled, primary, onPress }: { label: string; disabled?: boolean; primary?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme();
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => ({
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.96}
+      pressedOpacity={0.76}
+      disabledOpacity={0.42}
+      style={{
         borderRadius: 999,
         paddingHorizontal: 11,
         paddingVertical: 8,
         backgroundColor: primary ? colors.ctaCream : "rgba(255,255,255,0.055)",
         borderWidth: primary ? 0 : 1,
         borderColor: "rgba(255,255,255,0.1)",
-        opacity: disabled ? 0.42 : pressed ? 0.76 : 1,
-      })}
+      }}
     >
       <Text style={{ color: primary ? colors.ctaText : colors.text, fontSize: 12, fontWeight: "900" }}>
         {label}
       </Text>
-    </Pressable>
+    </AuraPressable>
   );
 }

@@ -58,9 +58,9 @@ export function ClosetFilterSheet({
   categoryFilter: string;
   brandFilter: string;
   colorFilter: string;
-  sortOptions: Array<{ key: string; label: string }>;
-  statusOptions: Array<{ key: string; label: string }>;
-  categoryOptions: Array<{ key: string; label: string }>;
+  sortOptions: { key: string; label: string }[];
+  statusOptions: { key: string; label: string }[];
+  categoryOptions: { key: string; label: string }[];
   brandOptions: string[];
   colorOptions: string[];
   onChangeSort: (value: any) => void;

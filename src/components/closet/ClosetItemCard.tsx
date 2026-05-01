@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import AppImage from "@/src/components/common/AppImage";
-import React, { useEffect } from "react";
+import React, { memo, useCallback, useEffect, useMemo } from "react";
 import { Text, View } from "react-native";
 import Animated, {
   Easing,
@@ -14,7 +14,7 @@ import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
+import { getBestThumbnailImageSource, getItemImagePresentation } from "@/src/lib/itemImage";
 import { LAUNDRY_STATUS_LABELS, normalizeLaundryStatus } from "@/src/lib/items";
 import type { ClosetItem } from "@/src/lib/items";
 import { sanitizeDisplayText } from "@/src/lib/text";
@@ -28,32 +28,54 @@ function titleFor(item: ClosetItem) {
   );
 }
 
-export function ClosetItemCard({
-  item,
-  onPress,
-  onLongPress,
-  selected = false,
-  width,
-  animateIndex = 0,
-}: {
+type ClosetItemCardProps = {
   item: ClosetItem;
-  onPress: () => void;
+  onPress?: () => void;
+  onPressItem?: (item: ClosetItem) => void;
   onLongPress?: () => void;
+  onLongPressItem?: (item: ClosetItem) => void;
   selected?: boolean;
   width?: number;
   animateIndex?: number;
-}) {
+};
+
+function ClosetItemCardComponent({
+  item,
+  onPress,
+  onPressItem,
+  onLongPress,
+  onLongPressItem,
+  selected = false,
+  width,
+  animateIndex = 0,
+}: ClosetItemCardProps) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const reduceMotion = useReduceMotion();
-  const imageUrl = getItemImageUrl(item, { variant: "thumb" });
-  const imagePresentation = getItemImagePresentation(item, { surface: "closet_card" });
-  const laundryStatus = normalizeLaundryStatus(item);
+  const imageSource = useMemo(() => getBestThumbnailImageSource(item), [item]);
+  const imagePresentation = useMemo(() => getItemImagePresentation(item, { surface: "closet_card" }), [item]);
+  const laundryStatus = useMemo(() => normalizeLaundryStatus(item), [item]);
+  const title = useMemo(() => titleFor(item), [item]);
   const cardWidth = width ?? (layout.screenSize === "compact" ? 132 : 144);
   const imageHeight = width ? cardWidth * 1.2 : layout.screenSize === "compact" ? 150 : 160;
-  const textBlockHeight = 70;
+  const textBlockHeight = 74;
+  const imageSurfaceColor = selected ? "#F8F5EE" : colors.outfitBoardBackground;
   const opacity = useSharedValue(reduceMotion ? 1 : 0);
   const translateY = useSharedValue(reduceMotion ? 0 : 6);
+  const handlePress = useCallback(() => {
+    if (onPressItem) {
+      onPressItem(item);
+      return;
+    }
+    onPress?.();
+  }, [item, onPress, onPressItem]);
+  const handleLongPress = useCallback(() => {
+    if (onLongPressItem) {
+      onLongPressItem(item);
+      return;
+    }
+    onLongPress?.();
+  }, [item, onLongPress, onLongPressItem]);
 
   useEffect(() => {
     if (reduceMotion) {
@@ -80,41 +102,46 @@ export function ClosetItemCard({
   return (
     <Animated.View style={entryStyle}>
       <AuraPressable
-        onPress={onPress}
-        onLongPress={onLongPress}
-        haptic={onLongPress ? "selection" : undefined}
-        hapticTrigger="longPress"
+        onPress={handlePress}
+        onLongPress={onLongPress || onLongPressItem ? handleLongPress : undefined}
+        haptic="light"
+        hapticTrigger="press"
         pressedScale={0.985}
         pressedOpacity={0.94}
         delayLongPress={180}
         style={{
           width: cardWidth,
-          borderRadius: 20,
-          backgroundColor: colors.surface2,
+          borderRadius: 22,
+          backgroundColor: colors.surface,
           borderWidth: selected ? 1.5 : 1,
-          borderColor: selected ? colors.iridescentStart : "rgba(243,223,195,0.1)",
+          borderColor: selected ? colors.lightPurple : colors.border,
           overflow: "hidden",
           shadowColor: colors.shadow,
-          shadowOpacity: 0.18,
-          shadowRadius: 18,
-          shadowOffset: { width: 0, height: 10 },
-          elevation: 6,
+          shadowOpacity: selected ? 0.2 : 0.12,
+          shadowRadius: selected ? 18 : 12,
+          shadowOffset: { width: 0, height: selected ? 10 : 6 },
+          elevation: selected ? 5 : 2,
         }}
       >
       <View
         style={{
           aspectRatio: width ? 1 / 1.2 : imagePresentation.containerAspectRatio,
           minHeight: imageHeight,
-          backgroundColor: "transparent",
+          backgroundColor: imageSurfaceColor,
           alignItems: "center",
           justifyContent: "center",
           overflow: "hidden",
-          paddingHorizontal: 12,
-          paddingTop: 12,
-          paddingBottom: 10,
+          paddingHorizontal: 14,
+          paddingTop: 14,
+          paddingBottom: 12,
+          margin: 8,
+          marginBottom: 0,
+          borderRadius: 18,
+          borderWidth: 1,
+          borderColor: selected ? "rgba(124,92,255,0.16)" : "rgba(10,10,15,0.06)",
         }}
       >
-        {imageUrl ? (
+        {imageSource ? (
           <View
             style={{
               width: "100%",
@@ -125,9 +152,7 @@ export function ClosetItemCard({
             }}
           >
             <AppImage
-              source={{
-                uri: imageUrl,
-              }}
+              source={imageSource}
               style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
               resizeMode="contain"
             />
@@ -138,18 +163,18 @@ export function ClosetItemCard({
               width: "82%",
               height: "82%",
               borderRadius: 16,
-              backgroundColor: "rgba(255,255,255,0.03)",
+              backgroundColor: "rgba(10,10,15,0.04)",
               alignItems: "center",
               justifyContent: "center",
               gap: 6,
               paddingHorizontal: 12,
             }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }}>
+            <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: "800" }}>
               No image yet
             </Text>
             <Text
-              style={{ color: colors.textSecondary, fontSize: 11, textAlign: "center" }}
+              style={{ color: colors.textMuted, fontSize: 11, textAlign: "center" }}
               numberOfLines={2}
               ellipsizeMode="tail"
             >
@@ -163,9 +188,9 @@ export function ClosetItemCard({
         style={{
           gap: 3,
           minHeight: textBlockHeight,
-          paddingHorizontal: 9,
-          paddingTop: 7,
-          paddingBottom: 10,
+          paddingHorizontal: 12,
+          paddingTop: 9,
+          paddingBottom: 12,
         }}
       >
         <Text
@@ -173,7 +198,7 @@ export function ClosetItemCard({
           numberOfLines={width ? 2 : 1}
           ellipsizeMode="tail"
         >
-          {titleFor(item)}
+          {title}
         </Text>
         <Text
           style={{ color: colors.textSecondary, opacity: 0.6, fontSize: 10.5, lineHeight: 16, fontWeight: "700", letterSpacing: 0.2 }}
@@ -204,7 +229,7 @@ export function ClosetItemCard({
             borderRadius: 999,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: "rgba(243,223,195,0.18)",
+            backgroundColor: colors.ctaCream,
             shadowColor: "#000",
             shadowOpacity: 0.18,
             shadowRadius: 8,
@@ -212,10 +237,23 @@ export function ClosetItemCard({
             elevation: 5,
           }}
         >
-          <Ionicons name="checkmark" size={14} color={colors.text} />
+          <Ionicons name="checkmark" size={14} color={colors.ctaText} />
         </View>
       ) : null}
       </AuraPressable>
     </Animated.View>
   );
 }
+
+export const ClosetItemCard = memo(
+  ClosetItemCardComponent,
+  (prev, next) =>
+    prev.item === next.item &&
+    prev.selected === next.selected &&
+    prev.width === next.width &&
+    prev.animateIndex === next.animateIndex &&
+    prev.onPress === next.onPress &&
+    prev.onPressItem === next.onPressItem &&
+    prev.onLongPress === next.onLongPress &&
+    prev.onLongPressItem === next.onLongPressItem,
+);

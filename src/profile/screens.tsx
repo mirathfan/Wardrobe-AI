@@ -21,6 +21,7 @@ import {
 
 import { Pill } from "@/src/addItem/ui/Pill";
 import { SafeScreen } from "@/src/components/SafeScreen";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { auth, db, storage } from "@/src/lib/firebase";
@@ -28,6 +29,7 @@ import { signOutGoogle } from "@/src/auth/googleAuth";
 import { Storage } from "@/src/lib/storage";
 import { clearAssistantMemory, buildCompactMemorySummary, loadAssistantProfile, loadBehaviorProfile } from "@/src/lib/assistantMemory";
 import { loadStyleProfile, loadLearnedStyleMemory, saveLearnedStyleMemory, saveStyleProfile } from "@/src/lib/auraMemory";
+import { getCachedProfilePreferences, setCachedProfilePreferences } from "@/src/lib/localCache";
 import {
   EMPTY_USER_ACCOUNT_PROFILE,
   EMPTY_USER_PROFILE_PREFERENCES,
@@ -135,7 +137,14 @@ export function useProfilePreferencesState() {
       setLoading(false);
       return;
     }
+    setProfile(EMPTY_USER_PROFILE_PREFERENCES);
     setLoading(true);
+    void getCachedProfilePreferences(user.uid).then((cached) => {
+      if (!cancelled && cached?.data) {
+        setProfile(cached.data);
+        setLoading(false);
+      }
+    });
     void loadUserProfilePreferences(user.uid)
       .then((nextProfile) => {
         if (!cancelled) setProfile(nextProfile);
@@ -162,6 +171,7 @@ export function useProfilePreferencesState() {
     try {
       setSaving(true);
       await saveUserProfilePreferences(user.uid, profile);
+      void setCachedProfilePreferences(user.uid, profile);
       Alert.alert("Saved", "Profile updated.");
     } catch (error: any) {
       Alert.alert("Save failed", error?.message ?? "Unable to save profile.");
@@ -295,8 +305,12 @@ export function ProfileHubRow({
 }) {
   const { colors } = useAppTheme();
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.985}
+      pressedOpacity={0.88}
       style={{
         backgroundColor: colors.surface,
         borderRadius: 18,
@@ -314,7 +328,7 @@ export function ProfileHubRow({
         <Text style={{ color: colors.textSecondary }}>{summary}</Text>
       </View>
       <Text style={{ color: colors.textSecondary, fontSize: 18 }}>›</Text>
-    </Pressable>
+    </AuraPressable>
   );
 }
 
@@ -1758,18 +1772,22 @@ function PrimaryButton({
 }) {
   const { colors } = useAppTheme();
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
       disabled={disabled}
+      haptic="light"
+      hapticTrigger="press"
+      pressedScale={0.98}
+      pressedOpacity={0.88}
+      disabledOpacity={0.6}
       style={{
         paddingVertical: 14,
         borderRadius: 12,
         alignItems: "center",
         backgroundColor: colors.accent,
-        opacity: disabled ? 0.6 : 1,
       }}
     >
       <Text style={{ color: colors.background, fontWeight: "900", fontSize: 16 }}>{label}</Text>
-    </Pressable>
+    </AuraPressable>
   );
 }

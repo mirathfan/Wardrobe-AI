@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
@@ -19,8 +20,12 @@ export function ClosetControlsRow({
 
   return (
     <View style={{ flexDirection: "row", gap: 11 }}>
-      <Pressable
+      <AuraPressable
         onPress={onOpenFilters}
+        haptic="selection"
+        hapticTrigger="press"
+        pressedScale={0.97}
+        pressedOpacity={0.88}
         style={{
           flexDirection: "row",
           alignItems: "center",
@@ -35,7 +40,7 @@ export function ClosetControlsRow({
       >
         <Ionicons name="options-outline" size={16} color={colors.text} />
         <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800" }}>Filters</Text>
-      </Pressable>
+      </AuraPressable>
 
       <View
         style={{

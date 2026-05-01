@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from "react-native";
 
 import { SafeScreen } from "@/src/components/SafeScreen";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { LookDetailModal } from "@/src/components/profile/LookDetailModal";
 import { MyLookSkeleton, MyLookThumbnail } from "@/src/components/profile/MyLookThumbnail";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -180,8 +181,12 @@ function isUnworn(item: ClosetItem) {
 function StatCard({ label, value, onPress }: StatCardProps) {
   const { colors } = useAppTheme();
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.97}
+      pressedOpacity={0.88}
       style={{
         flex: 1,
         minWidth: 72,
@@ -196,15 +201,19 @@ function StatCard({ label, value, onPress }: StatCardProps) {
     >
       <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900" }}>{value}</Text>
       <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "700", lineHeight: 15 }}>{label}</Text>
-    </Pressable>
+    </AuraPressable>
   );
 }
 
 function QuickAction({ icon, label, onPress }: QuickActionProps) {
   const { colors } = useAppTheme();
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.97}
+      pressedOpacity={0.88}
       style={{
         minHeight: 46,
         borderRadius: 999,
@@ -220,7 +229,7 @@ function QuickAction({ icon, label, onPress }: QuickActionProps) {
     >
       <Ionicons name={icon} size={18} color={colors.iridescentStart} />
       <Text style={{ color: colors.text, fontSize: 14, fontWeight: "800" }}>{label}</Text>
-    </Pressable>
+    </AuraPressable>
   );
 }
 
@@ -257,7 +266,7 @@ export default function ProfileScreen() {
     return [
       { label: "Closet items", value: itemsLoading ? "—" : String(items.length), onPress: () => router.push("/(tabs)/closet") },
       { label: "Saved looks", value: looksLoading || likedLooksLoading ? "—" : String(savedLookCount), onPress: () => router.push("/profile/my-looks") },
-      { label: "Unworn", value: itemsLoading ? "—" : String(items.filter(isUnworn).length), onPress: () => router.push("/insights/unworn") },
+      { label: "Unworn", value: itemsLoading ? "—" : String(items.filter(isUnworn).length), onPress: () => router.push("/(tabs)/closet") },
       {
         label: "Favourites",
         value: looksLoading ? "—" : String(favouriteLooks.length),
@@ -326,6 +335,7 @@ export default function ProfileScreen() {
       setItemsLoading(false);
       return;
     }
+    setItems([]);
     setItemsLoading(true);
     return listenToItems(user.uid, (nextItems) => {
       setItems(nextItems);
@@ -458,7 +468,7 @@ export default function ProfileScreen() {
                 contentContainerStyle={{ gap: 10, paddingRight: 2 }}
               >
                 <QuickAction icon="add" label="Add item" onPress={() => router.push("/(tabs)/add")} />
-                <QuickAction icon="sparkles-outline" label="Build outfit" onPress={() => router.push("/studio")} />
+                <QuickAction icon="sparkles-outline" label="Build outfit" onPress={() => router.push("/(tabs)/studio")} />
                 <QuickAction icon="chatbubble-ellipses-outline" label="Ask AURA" onPress={() => router.push("/(tabs)/ai")} />
                 <QuickAction icon="calendar-outline" label="Plan week" onPress={() => router.push("/(tabs)/calendar")} />
               </ScrollView>

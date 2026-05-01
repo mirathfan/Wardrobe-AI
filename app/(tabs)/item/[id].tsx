@@ -17,13 +17,16 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { SafeScreen } from "../../../src/components/SafeScreen";
 import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
 import { useAuth } from "../../../src/hooks/useAuth";
 import { useAppTheme } from "../../../src/hooks/useAppTheme";
 import { useResponsiveLayout } from "../../../src/hooks/useResponsiveLayout";
 import { db } from "../../../src/lib/firebase";
+import { runHaptic } from "../../../src/lib/haptics";
 import { getItemImageDecoration, getItemImagePresentation, getItemImageUrl } from "../../../src/lib/itemImage";
+import { Toast } from "../../../src/lib/toast";
 import {
   getIngestionStatus,
   LAUNDRY_STATUS_LABELS,
@@ -135,7 +138,7 @@ function QuickFact(props: { label: string; value: string; tone?: "default" | "su
   const { label, value, tone = "default" } = props;
   const { colors } = useAppTheme();
   const valueColor =
-    tone === "success" ? colors.accent : tone === "danger" ? "#ff6b6b" : colors.text;
+    tone === "success" ? colors.success : tone === "danger" ? colors.danger : colors.text;
   return (
     <View
       style={{
@@ -350,9 +353,11 @@ export default function ItemDetailsScreen() {
     try {
       setActionLoading(true);
       await safeMarkWorn(uid, itemId);
+      void runHaptic("light");
+      Toast.success("Marked worn", "Wear count updated.");
     } catch (e: any) {
       console.log(e);
-      Alert.alert("Error", e?.message ?? "Failed to mark item as worn");
+      Toast.error("Update failed", e?.message ?? "Failed to mark item as worn");
     } finally {
       setActionLoading(false);
     }
@@ -364,9 +369,11 @@ export default function ItemDetailsScreen() {
     try {
       setActionLoading(true);
       await sendToLaundry(uid, itemId);
+      void runHaptic("light");
+      Toast.laundryUpdated("Piece moved to laundry.");
     } catch (e: any) {
       console.log(e);
-      Alert.alert("Error", e?.message ?? "Failed to send item to laundry");
+      Toast.error("Laundry update failed", e?.message ?? "Failed to send item to laundry");
     } finally {
       setActionLoading(false);
     }
@@ -377,9 +384,11 @@ export default function ItemDetailsScreen() {
     try {
       setActionLoading(true);
       await markNeedsWash(uid, itemId);
+      void runHaptic("light");
+      Toast.laundryUpdated("Piece marked needs wash.");
     } catch (e: any) {
       console.log(e);
-      Alert.alert("Error", e?.message ?? "Failed to mark item as needs wash");
+      Toast.error("Laundry update failed", e?.message ?? "Failed to mark item as needs wash");
     } finally {
       setActionLoading(false);
     }
@@ -406,9 +415,11 @@ export default function ItemDetailsScreen() {
           try {
             setActionLoading(true);
             await markWashedItem(uid, itemId);
+            void runHaptic("light");
+            Toast.laundryUpdated("Piece is clean and ready.");
           } catch (e: any) {
             console.log(e);
-            Alert.alert("Error", e?.message ?? "Failed to mark item as washed");
+            Toast.error("Laundry update failed", e?.message ?? "Failed to mark item as washed");
           } finally {
             setActionLoading(false);
           }
@@ -543,7 +554,7 @@ export default function ItemDetailsScreen() {
             onPress={navigateBackToSource}
             style={[pill, { backgroundColor: colors.surface, borderColor: colors.border }]}
           >
-            <Text style={pillText}>Back</Text>
+            <Text style={[pillText, { color: colors.text }]}>Back</Text>
           </Pressable>
           <Text style={{ fontSize: 20, fontWeight: "900", color: colors.text }}>Item</Text>
           <Pressable
@@ -655,10 +666,15 @@ export default function ItemDetailsScreen() {
                 {(["needs_wash", "in_laundry", "clean"] as LaundryStatus[]).map((status) => {
                   const selected = normalizeLaundryStatus(item) === status;
                   return (
-                    <Pressable
+                    <AuraPressable
                       key={status}
                       onPress={() => onLaundryStatusPress(status)}
                       disabled={actionLoading || selected}
+                      haptic="selection"
+                      hapticTrigger="press"
+                      pressedScale={0.96}
+                      pressedOpacity={0.84}
+                      disabledOpacity={0.72}
                       style={{
                         borderRadius: 999,
                         paddingHorizontal: 12,
@@ -666,13 +682,12 @@ export default function ItemDetailsScreen() {
                         backgroundColor: selected ? colors.ctaCream : "rgba(255,255,255,0.045)",
                         borderWidth: selected ? 0 : 1,
                         borderColor: "rgba(255,255,255,0.1)",
-                        opacity: actionLoading || selected ? 0.72 : 1,
                       }}
                     >
                       <Text style={{ color: selected ? colors.ctaText : colors.text, fontWeight: "900" }}>
                         {LAUNDRY_STATUS_LABELS[status]}
                       </Text>
-                    </Pressable>
+                    </AuraPressable>
                   );
                 })}
               </View>
@@ -693,7 +708,7 @@ export default function ItemDetailsScreen() {
                 ))}
               </View>
               {ingestionStatusLabel(item) === "failed" ? (
-                <Text style={{ color: "#d11", fontWeight: "700", marginTop: 12 }}>
+                <Text style={{ color: colors.danger, fontWeight: "700", marginTop: 12 }}>
                   Couldn&apos;t analyze, you can edit manually.
                 </Text>
               ) : null}
@@ -708,7 +723,7 @@ export default function ItemDetailsScreen() {
                     padding: 12,
                   }}
                 >
-                  <Text style={{ color: "#7a5a18", fontWeight: "700", lineHeight: 20 }}>
+                  <Text style={{ color: colors.warning, fontWeight: "700", lineHeight: 20 }}>
                     Color check: AI said {item.aiColorLabel || "—"}, pixels suggest{" "}
                     {toTitleCase(item.pixelColors?.[0] || "—")}. Confirm a color below if needed.
                   </Text>
@@ -724,42 +739,50 @@ export default function ItemDetailsScreen() {
                 <View style={{ gap: 8 }}>
                   <Text style={{ color: colors.text, fontWeight: "800" }}>Pattern</Text>
                   <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                    <Pressable
+                    <AuraPressable
                       onPress={() => {
                         setPatternDraft("");
                         void saveField("pattern", null);
                       }}
-                      style={pill}
+                      haptic="selection"
+                      hapticTrigger="press"
+                      pressedScale={0.97}
+                      style={[pill, { borderColor: colors.border, backgroundColor: "rgba(255,255,255,0.04)" }]}
                     >
-                      <Text style={pillText}>Auto (AI)</Text>
-                    </Pressable>
+                      <Text style={[pillText, { color: colors.text }]}>Auto (AI)</Text>
+                    </AuraPressable>
                     <TextInput
                       value={patternDraft}
                       onChangeText={setPatternDraft}
                       onEndEditing={() => void saveField("pattern", patternDraft.trim() || null)}
                       placeholder={item.pattern || "Auto (AI)"}
-                      style={[textInput, { flex: 1 }]}
+                      placeholderTextColor={colors.textSecondary}
+                      style={[textInput, { flex: 1, color: colors.text, borderColor: colors.border, backgroundColor: "rgba(255,255,255,0.04)" }]}
                     />
                   </View>
                 </View>
                 <View style={{ gap: 8 }}>
                   <Text style={{ color: colors.text, fontWeight: "800" }}>Material</Text>
                   <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                    <Pressable
+                    <AuraPressable
                       onPress={() => {
                         setMaterialDraft("");
                         void saveField("material", null);
                       }}
-                      style={pill}
+                      haptic="selection"
+                      hapticTrigger="press"
+                      pressedScale={0.97}
+                      style={[pill, { borderColor: colors.border, backgroundColor: "rgba(255,255,255,0.04)" }]}
                     >
-                      <Text style={pillText}>Auto (AI)</Text>
-                    </Pressable>
+                      <Text style={[pillText, { color: colors.text }]}>Auto (AI)</Text>
+                    </AuraPressable>
                     <TextInput
                       value={materialDraft}
                       onChangeText={setMaterialDraft}
                       onEndEditing={() => void saveField("material", materialDraft.trim() || null)}
                       placeholder={item.material || "Auto (AI)"}
-                      style={[textInput, { flex: 1 }]}
+                      placeholderTextColor={colors.textSecondary}
+                      style={[textInput, { flex: 1, color: colors.text, borderColor: colors.border, backgroundColor: "rgba(255,255,255,0.04)" }]}
                     />
                   </View>
                 </View>
@@ -797,9 +820,13 @@ export default function ItemDetailsScreen() {
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                     {item.colorSource === "user" ? (
-                      <Pressable
+                      <AuraPressable
                         onPress={onResetToAI}
                         disabled={colorSaving}
+                        haptic="selection"
+                        hapticTrigger="press"
+                        pressedScale={0.97}
+                        disabledOpacity={0.65}
                         style={{
                           alignSelf: "flex-start",
                           paddingVertical: 6,
@@ -808,14 +835,13 @@ export default function ItemDetailsScreen() {
                           borderWidth: 1,
                           borderColor: "rgba(255,255,255,0.18)",
                           backgroundColor: "rgba(255,255,255,0.03)",
-                          opacity: colorSaving ? 0.65 : 1,
                         }}
                       >
                         <Text style={{ color: colors.text, fontWeight: "700" }}>Reset to AI</Text>
-                      </Pressable>
+                      </AuraPressable>
                     ) : null}
                     {colorSavedAt ? (
-                      <Text style={{ color: "#0a7", fontSize: 12, fontWeight: "700" }}>Saved</Text>
+                      <Text style={{ color: colors.success, fontSize: 12, fontWeight: "700" }}>Saved</Text>
                     ) : null}
                   </View>
                 </View>
@@ -847,35 +873,48 @@ export default function ItemDetailsScreen() {
           }}
         >
           {normalizeLaundryStatus(item) === "in_laundry" ? (
-            <Pressable
+            <AuraPressable
               onPress={onConfirmWashed}
               disabled={actionLoading}
+              haptic="light"
+              hapticTrigger="press"
+              pressedScale={0.98}
+              pressedOpacity={0.86}
+              disabledOpacity={0.6}
               style={[
                 btn,
-                { backgroundColor: "#fff" },
-                actionLoading ? { opacity: 0.6 } : null,
+                { backgroundColor: colors.ctaCream },
               ]}
             >
-              <Text style={[btnText, { color: "#111" }]}>Mark as Washed</Text>
-            </Pressable>
+              <Text style={[btnText, { color: colors.ctaText }]}>Mark as Washed</Text>
+            </AuraPressable>
           ) : (
             <>
-              <Pressable
+              <AuraPressable
                 onPress={onMarkWorn}
                 disabled={actionLoading}
+                haptic="light"
+                hapticTrigger="press"
+                pressedScale={0.98}
+                pressedOpacity={0.86}
+                disabledOpacity={0.5}
                 style={[
                   btn,
-                  { backgroundColor: "#fff" },
-                  actionLoading ? { opacity: 0.5 } : null,
+                  { backgroundColor: colors.ctaCream },
                 ]}
               >
-                <Text style={[btnText, { color: "#111" }]}>Mark as Worn</Text>
-              </Pressable>
+                <Text style={[btnText, { color: colors.ctaText }]}>Mark as Worn</Text>
+              </AuraPressable>
 
               <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable
+                <AuraPressable
                   onPress={onSendToLaundry}
                   disabled={actionLoading}
+                  haptic="light"
+                  hapticTrigger="press"
+                  pressedScale={0.98}
+                  pressedOpacity={0.86}
+                  disabledOpacity={0.6}
                   style={[
                     btn,
                     {
@@ -883,14 +922,18 @@ export default function ItemDetailsScreen() {
                       borderWidth: 1,
                       backgroundColor: "rgba(255,255,255,0.04)",
                     },
-                    actionLoading ? { opacity: 0.6 } : null,
                   ]}
                 >
-                  <Text style={[btnText, { color: "#fff" }]}>Send to Laundry</Text>
-                </Pressable>
-                <Pressable
+                  <Text style={[btnText, { color: colors.text }]}>Send to Laundry</Text>
+                </AuraPressable>
+                <AuraPressable
                   onPress={onConfirmWashed}
                   disabled={actionLoading}
+                  haptic="selection"
+                  hapticTrigger="press"
+                  pressedScale={0.98}
+                  pressedOpacity={0.86}
+                  disabledOpacity={0.6}
                   style={[
                     btn,
                     {
@@ -898,11 +941,10 @@ export default function ItemDetailsScreen() {
                       borderWidth: 1,
                       backgroundColor: "transparent",
                     },
-                    actionLoading ? { opacity: 0.6 } : null,
                   ]}
                 >
                   <Text style={[btnText, { color: "rgba(255,255,255,0.88)" }]}>Mark as Washed</Text>
-                </Pressable>
+                </AuraPressable>
               </View>
             </>
           )}
@@ -914,10 +956,10 @@ export default function ItemDetailsScreen() {
 
 const card = {
   borderWidth: 1,
-  borderColor: "#eee",
+  borderColor: "rgba(255,255,255,0.08)",
   borderRadius: 16,
   padding: 12,
-  backgroundColor: "#fff",
+  backgroundColor: "rgba(255,255,255,0.035)",
 } as const;
 
 const btn = {
@@ -938,7 +980,7 @@ const pill = {
   paddingHorizontal: 12,
   borderRadius: 999,
   borderWidth: 1,
-  borderColor: "#ddd",
+  borderColor: "rgba(255,255,255,0.12)",
 } as const;
 
 const pillText = {
@@ -947,7 +989,7 @@ const pillText = {
 
 const textInput = {
   borderWidth: 1,
-  borderColor: "#ddd",
+  borderColor: "rgba(255,255,255,0.12)",
   borderRadius: 12,
   paddingHorizontal: 12,
   paddingVertical: 10,
