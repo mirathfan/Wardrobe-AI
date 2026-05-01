@@ -17,31 +17,48 @@ const DEBUG_AURA_CLIENT =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<AuraLook>);
 
-export default function AuraReplyCard({
-  data,
-  itemsById,
-  onAction,
-  onCandidateAction,
-  onOutfitPhotoAction,
-  onLaundryAction,
-}: {
+function getAuraLookStableKey(look: AuraLook) {
+  const pieceKey = (look.pieces ?? [])
+    .map((piece) => [piece.role, piece.itemId, piece.itemName].filter(Boolean).join(":"))
+    .join("|");
+  return [look.lookTitle, look.vibe, pieceKey].filter(Boolean).join("::") || "aura-look";
+}
+
+type AuraReplyCardProps = {
   data: AuraResponse;
   itemsById: Map<string, ClothingItem>;
   onAction?: (action: import("@/src/types/aura").AuraLookAction, look: AuraLook, option?: AuraLookOptionMeta) => void;
   onCandidateAction?: (action: AuraCandidateAction) => void;
   onOutfitPhotoAction?: (action: AuraOutfitPhotoAction) => void;
   onLaundryAction?: (action: AuraLaundryConfirmationAction) => void;
-}) {
+};
+
+function AuraReplyCard({
+  data,
+  itemsById,
+  onAction,
+  onCandidateAction,
+  onOutfitPhotoAction,
+  onLaundryAction,
+}: AuraReplyCardProps) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const { width: windowWidth } = useWindowDimensions();
-  const ownedPieces = data.ownedPieces?.filter(Boolean) ?? [];
-  const recommendedAdditions = data.recommendedAdditions?.filter(Boolean) ?? [];
-  const levelUpSuggestions = buildLevelUpSuggestions(data);
-  const fallbackItems =
-    !ownedPieces.length && !recommendedAdditions.length ? data.outfitItems?.filter(Boolean).slice(0, 5) ?? [] : [];
-  const candidateItems = data.candidateItems ?? data.candidates ?? [];
-  const lookOptions = data.lookOptions?.filter(Boolean) ?? [];
+  const ownedPieces = React.useMemo(() => data.ownedPieces?.filter(Boolean) ?? [], [data.ownedPieces]);
+  const recommendedAdditions = React.useMemo(
+    () => data.recommendedAdditions?.filter(Boolean) ?? [],
+    [data.recommendedAdditions],
+  );
+  const levelUpSuggestions = React.useMemo(() => buildLevelUpSuggestions(data), [data]);
+  const fallbackItems = React.useMemo(
+    () =>
+      !ownedPieces.length && !recommendedAdditions.length
+        ? data.outfitItems?.filter(Boolean).slice(0, 5) ?? []
+        : [],
+    [data.outfitItems, ownedPieces.length, recommendedAdditions.length],
+  );
+  const candidateItems = React.useMemo(() => data.candidateItems ?? data.candidates ?? [], [data.candidateItems, data.candidates]);
+  const lookOptions = React.useMemo(() => data.lookOptions?.filter(Boolean) ?? [], [data.lookOptions]);
   const outfitAnalysis = data.outfitAnalysis ?? null;
   const laundryAction = data.laundryAction ?? null;
   const [selectedLookIndex, setSelectedLookIndex] = React.useState(0);
@@ -242,7 +259,7 @@ export default function AuraReplyCard({
             ) : null}
             <AnimatedFlatList
               data={looks}
-              keyExtractor={(look, index) => `${look.lookTitle}-${index}`}
+              keyExtractor={getAuraLookStableKey}
               horizontal
               showsHorizontalScrollIndicator={false}
               decelerationRate="fast"
@@ -303,7 +320,7 @@ export default function AuraReplyCard({
                 const active = index === selectedLookIndex;
                 return (
                   <View
-                    key={`look-dot-${index}`}
+                    key={`look-dot-${getAuraLookStableKey(look)}`}
                     style={{
                       width: active ? 18 : 6,
                       height: 6,
@@ -419,7 +436,7 @@ export default function AuraReplyCard({
             fontSize: 16,
             lineHeight: 20,
             fontWeight: "700",
-            letterSpacing: -0.35,
+            letterSpacing: 0,
             fontFamily: Fonts.sans,
           }}
         >
@@ -993,6 +1010,7 @@ function CandidateCard({
   ].filter((entry): entry is [string, string] => !!entry[1]);
   const categoryLabel = displayCategory(candidate.category, candidate.subCategory);
   const needsReview = candidate.status === "needs_review";
+  const previewImageUrl = candidate.primaryImageUrl ?? candidate.imageUrls[0] ?? "";
 
   return (
     <View
@@ -1009,7 +1027,7 @@ function CandidateCard({
     >
       <View style={{ flexDirection: "row", gap: 10 }}>
         <Image
-          source={{ uri: candidate.imageUrls[0] }}
+          source={{ uri: previewImageUrl }}
             style={{
               width: 76,
               height: 94,
@@ -1210,3 +1228,14 @@ function Tag({
     </View>
   );
 }
+
+export default React.memo(
+  AuraReplyCard,
+  (prev, next) =>
+    prev.data === next.data &&
+    prev.itemsById === next.itemsById &&
+    prev.onAction === next.onAction &&
+    prev.onCandidateAction === next.onCandidateAction &&
+    prev.onOutfitPhotoAction === next.onOutfitPhotoAction &&
+    prev.onLaundryAction === next.onLaundryAction,
+);

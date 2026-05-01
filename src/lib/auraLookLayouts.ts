@@ -1,5 +1,6 @@
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook, AuraLookPiece } from "@/src/types/aura";
+import { getItemImageUrl } from "@/src/lib/itemImage";
 
 export type AuraLayoutVariant = "chat" | "swipe" | "home" | "studio";
 
@@ -684,14 +685,7 @@ function toLayoutItem(
   const role = inferLayoutRole(piece, tokens);
   const accessoryType =
     role === "accessory" ? classifyAccessoryType(tokens) : null;
-  const normalizedImage =
-    item?.photos?.normalizedUrl ??
-    item?.cleanedImageUrl ??
-    item?.photos?.cleanedUrl ??
-    item?.photos?.cleanedPhotoUrl ??
-    piece.imageUrl ??
-    item?.originalImageUrl ??
-    null;
+  const normalizedImage = item ? getItemImageUrl(item, { variant: "thumb" }) ?? piece.imageUrl ?? null : piece.imageUrl ?? null;
 
   return {
     key: `${piece.itemId ?? piece.itemName}-${piece.role}-${index}`,
@@ -700,8 +694,7 @@ function toLayoutItem(
     accessoryType,
     itemName: piece.itemName || item?.name || "Wardrobe item",
     source: piece.source,
-    imageUrl:
-      piece.imageUrl ?? item?.originalImageUrl ?? item?.photoUrl ?? null,
+    imageUrl: piece.imageUrl ?? normalizedImage ?? null,
     cleanedImageUrl:
       item?.cleanedImageUrl ??
       item?.photos?.cleanedUrl ??
@@ -870,8 +863,71 @@ function withZone(zone: ZoneSpec, overrides: Partial<ZoneSpec>): ZoneSpec {
   return { ...zone, ...overrides };
 }
 
-function variantZone(zone: ZoneSpec, _variant: string): ZoneSpec {
-  return zone;
+function variantZone(zone: ZoneSpec, variant: string): ZoneSpec {
+  if (variant !== "home") return zone;
+
+  switch (zone.slotName) {
+    case "layered-shirt":
+      return withZone(zone, {
+        centerX: 28,
+        centerY: 31,
+        width: 34,
+        height: 40,
+        rotation: 4,
+      });
+    case "layered-jacket":
+      return withZone(zone, {
+        centerX: 70,
+        centerY: 31,
+        width: 32,
+        height: 41,
+        rotation: -4,
+      });
+    case "right-outerwear":
+      return withZone(zone, {
+        centerX: 68,
+        centerY: 33,
+        width: 32,
+        height: 42,
+      });
+    case "left-top":
+    case "left-top-alone":
+      return withZone(zone, {
+        centerX: zone.slotName === "left-top-alone" ? 30 : zone.centerX,
+        centerY: 32,
+        width: 36,
+        height: 42,
+      });
+    case "bottom-center":
+    case "bottom-no-jacket":
+      return withZone(zone, {
+        centerX: zone.slotName === "bottom-no-jacket" ? 68 : 50,
+        centerY: 66,
+        width: 30,
+        height: 48,
+      });
+    case "bottom-center-short":
+      return withZone(zone, {
+        centerY: 59,
+        width: 30,
+        height: 32,
+      });
+    case "bottom-left-shoes":
+      return withZone(zone, {
+        centerX: 18,
+        centerY: 88,
+        width: 24,
+        height: 14,
+      });
+    case "bag-zone":
+      return withZone(zone, {
+        centerY: 72,
+        width: 23,
+        height: 24,
+      });
+    default:
+      return zone;
+  }
 }
 
 function addPlaced(

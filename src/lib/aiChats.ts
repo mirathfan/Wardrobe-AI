@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
+import { setCachedChatList, setCachedRecentMessages } from "@/src/lib/localCache";
 import type { AIMessage, ChatAttachment } from "@/src/components/ai/chatTypes";
 import type {
   AuraLook,
@@ -551,12 +552,14 @@ export async function loadLatestChatThread(uid: string) {
 export async function loadRecentChatThreads(uid: string, max = 24) {
   const fetchCount = Math.max(max * 3, 36);
   const snap = await getDocs(query(chatCollectionRef(uid), orderBy("updatedAt", "desc"), limit(fetchCount)));
-  return sortChatThreads(
+  const threads = sortChatThreads(
     snap.docs
       .map((entry) => toChatThread(entry))
       .filter((thread) => !thread.archived)
       .slice(0, max)
   );
+  void setCachedChatList(uid, threads);
+  return threads;
 }
 
 export async function loadChatThread(uid: string, chatId: string) {
@@ -566,7 +569,9 @@ export async function loadChatThread(uid: string, chatId: string) {
 
 export async function loadChatMessages(uid: string, chatId: string) {
   const snap = await getDocs(query(messageCollectionRef(uid, chatId), orderBy("createdAt", "asc")));
-  return snap.docs.map((entry) => toChatMessage(entry)).filter((entry): entry is AIMessage => !!entry);
+  const messages = snap.docs.map((entry) => toChatMessage(entry)).filter((entry): entry is AIMessage => !!entry);
+  void setCachedRecentMessages(uid, chatId, messages);
+  return messages;
 }
 
 export async function appendMessageToChat(

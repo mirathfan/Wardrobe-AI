@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Animated, FlatList, NativeScrollEvent, NativeSyntheticEvent, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
@@ -8,6 +8,10 @@ import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLookAction
 import ChatMessage from "./ChatMessage";
 import type { AIMessage } from "./chatTypes";
 import { auraTheme } from "./aiTheme";
+
+const ChatItemSeparator = React.memo(function ChatItemSeparator() {
+  return <View style={{ height: 12 }} />;
+});
 
 function TypingBubble({ colors }: { colors: AppColors }) {
   const pulse = useRef(new Animated.Value(0.4)).current;
@@ -96,124 +100,191 @@ export default function ChatList({
 }) {
   const listRef = useRef<FlatList<AIMessage>>(null);
   const previousCountRef = useRef(messages.length);
-  const hasStreamingMessage = messages.some((message) => message.streaming);
+  const hasStreamingMessage = useMemo(() => messages.some((message) => message.streaming), [messages]);
   const shouldPinToBottomRef = useRef(true);
   const previousBottomPaddingRef = useRef(contentBottomPadding);
+  const streamingScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messageCount = messages.length;
   const lastMessage = messages[messages.length - 1];
+  const lastMessageId = lastMessage?.id ?? null;
   const showTypingBubble = loading && !hasStreamingMessage && !!lastMessage && lastMessage.type === "user";
 
-  function scrollToLatest(animated: boolean) {
+  const scrollToLatest = useCallback((animated: boolean) => {
     requestAnimationFrame(() => {
       listRef.current?.scrollToEnd({ animated });
     });
-  }
+  }, []);
 
-  function handleScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height);
     shouldPinToBottomRef.current = distanceFromBottom < 72;
-  }
+  }, []);
 
   useEffect(() => {
-    const shouldAnimate = messages.length >= previousCountRef.current;
-    previousCountRef.current = messages.length;
+    return () => {
+      if (streamingScrollTimerRef.current) {
+        clearTimeout(streamingScrollTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const shouldAnimate = messageCount >= previousCountRef.current;
+    previousCountRef.current = messageCount;
     const timer = setTimeout(() => {
       if (shouldPinToBottomRef.current || hasStreamingMessage) {
         scrollToLatest(shouldAnimate && !hasStreamingMessage);
       }
     }, 30);
     return () => clearTimeout(timer);
-  }, [hasStreamingMessage, loading, messages]);
+  }, [hasStreamingMessage, lastMessageId, loading, messageCount, scrollToLatest]);
 
   useEffect(() => {
     const paddingDelta = Math.abs(contentBottomPadding - previousBottomPaddingRef.current);
     previousBottomPaddingRef.current = contentBottomPadding;
-    if (!messages.length || paddingDelta < 8) return;
+    if (!messageCount || paddingDelta < 8) return;
 
     shouldPinToBottomRef.current = true;
     const timer = setTimeout(() => scrollToLatest(false), 90);
     return () => clearTimeout(timer);
-  }, [contentBottomPadding, messages.length]);
+  }, [contentBottomPadding, messageCount, scrollToLatest]);
 
   useEffect(() => {
-    if (!messages.length) return;
+    if (!messageCount) return;
     shouldPinToBottomRef.current = true;
     const timers = [
       setTimeout(() => scrollToLatest(false), 140),
       setTimeout(() => scrollToLatest(false), 420),
     ];
     return () => timers.forEach(clearTimeout);
-  }, [autoScrollSignal, messages.length]);
+  }, [autoScrollSignal, messageCount, scrollToLatest]);
+
+  const contentContainerStyle = useMemo(
+    () => ({
+      flexGrow: 1,
+      justifyContent: messageCount ? ("flex-start" as const) : ("flex-end" as const),
+      paddingTop: 0,
+      paddingHorizontal: 4,
+      paddingBottom: Math.max(12, contentBottomPadding),
+    }),
+    [contentBottomPadding, messageCount],
+  );
+
+  const contentInset = useMemo(
+    () => ({ bottom: Math.max(4, contentBottomPadding * 0.18) }),
+    [contentBottomPadding],
+  );
+
+  const scrollIndicatorInsets = useMemo(
+    () => ({ bottom: contentBottomPadding + 6 }),
+    [contentBottomPadding],
+  );
+
+  const handleContentSizeChange = useCallback(() => {
+    if (shouldPinToBottomRef.current || hasStreamingMessage) {
+      if (hasStreamingMessage) {
+        if (streamingScrollTimerRef.current) return;
+        streamingScrollTimerRef.current = setTimeout(() => {
+          streamingScrollTimerRef.current = null;
+          scrollToLatest(false);
+        }, 80);
+        return;
+      }
+      scrollToLatest(false);
+    }
+  }, [hasStreamingMessage, scrollToLatest]);
+
+  const handleLayout = useCallback(() => {
+    if (messageCount && (shouldPinToBottomRef.current || hasStreamingMessage)) {
+      scrollToLatest(false);
+    }
+  }, [hasStreamingMessage, messageCount, scrollToLatest]);
+
+  const keyExtractor = useCallback((item: AIMessage) => item.id, []);
+
+  const renderItem = useCallback(
+    ({ item, index }: { item: AIMessage; index: number }) => {
+      const isLastMessage = index === messageCount - 1;
+      const hasOutfitActions =
+        (item.kind === "aura_card" && !!(item.aura?.look || item.aura?.lookOptions?.length)) ||
+        (item.type === "outfit" && !!item.outfits?.length);
+      const finalOutfitSpacer =
+        isLastMessage && hasOutfitActions ? Math.max(148, contentBottomPadding * 0.5) : 0;
+
+      return (
+        <View style={{ paddingBottom: finalOutfitSpacer }}>
+          <ChatMessage
+            colors={colors}
+            message={item}
+            itemsById={itemsById}
+            savingId={savingId}
+            memoryHint={memoryHint}
+            onSaveOutfit={onSaveOutfit}
+            onMoreLikeThis={onMoreLikeThis}
+            onSwapOutfit={onSwapOutfit}
+            onAuraAction={onAuraAction}
+            onAuraCandidateAction={onAuraCandidateAction}
+            onAuraOutfitPhotoAction={onAuraOutfitPhotoAction}
+            onAuraLaundryAction={onAuraLaundryAction}
+          />
+        </View>
+      );
+    },
+    [
+      colors,
+      contentBottomPadding,
+      itemsById,
+      memoryHint,
+      messageCount,
+      onAuraAction,
+      onAuraCandidateAction,
+      onAuraLaundryAction,
+      onAuraOutfitPhotoAction,
+      onMoreLikeThis,
+      onSaveOutfit,
+      onSwapOutfit,
+      savingId,
+    ],
+  );
+
+  const listFooter = useMemo(
+    () =>
+      showTypingBubble ? (
+        <View style={{ marginTop: 10, marginLeft: 10, gap: 8 }}>
+          <TypingBubble colors={colors} />
+          <View style={{ height: Math.max(96, contentBottomPadding * 0.58) }} />
+        </View>
+      ) : (
+        <View style={{ height: Math.max(112, contentBottomPadding * 0.5) }} />
+      ),
+    [colors, contentBottomPadding, showTypingBubble],
+  );
 
   return (
     <FlatList
       ref={listRef}
       style={{ flex: 1 }}
       data={messages}
-      keyExtractor={(item) => item.id}
+      keyExtractor={keyExtractor}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
       onScroll={handleScroll}
       scrollEventThrottle={16}
-      onContentSizeChange={() => {
-        if (shouldPinToBottomRef.current || hasStreamingMessage) {
-          scrollToLatest(false);
-        }
-      }}
-      onLayout={() => {
-        if (messages.length && (shouldPinToBottomRef.current || hasStreamingMessage)) {
-          scrollToLatest(false);
-        }
-      }}
-      contentContainerStyle={{
-        flexGrow: 1,
-        justifyContent: messages.length ? "flex-start" : "flex-end",
-        paddingTop: 0,
-        paddingHorizontal: 4,
-        paddingBottom: Math.max(12, contentBottomPadding),
-        gap: 12,
-      }}
-      contentInset={{ bottom: Math.max(4, contentBottomPadding * 0.18) }}
-      scrollIndicatorInsets={{ bottom: contentBottomPadding + 6 }}
+      onContentSizeChange={handleContentSizeChange}
+      onLayout={handleLayout}
+      contentContainerStyle={contentContainerStyle}
+      contentInset={contentInset}
+      scrollIndicatorInsets={scrollIndicatorInsets}
       ListEmptyComponent={emptyState ?? null}
-      renderItem={({ item, index }) => {
-        const isLastMessage = index === messages.length - 1;
-        const hasOutfitActions =
-          (item.kind === "aura_card" && !!(item.aura?.look || item.aura?.lookOptions?.length)) ||
-          (item.type === "outfit" && !!item.outfits?.length);
-        const finalOutfitSpacer =
-          isLastMessage && hasOutfitActions ? Math.max(148, contentBottomPadding * 0.5) : 0;
-
-        return (
-          <View style={{ paddingBottom: finalOutfitSpacer }}>
-            <ChatMessage
-              colors={colors}
-              message={item}
-              itemsById={itemsById}
-              savingId={savingId}
-              memoryHint={memoryHint}
-              onSaveOutfit={onSaveOutfit}
-              onMoreLikeThis={onMoreLikeThis}
-              onSwapOutfit={onSwapOutfit}
-              onAuraAction={onAuraAction}
-              onAuraCandidateAction={onAuraCandidateAction}
-              onAuraOutfitPhotoAction={onAuraOutfitPhotoAction}
-              onAuraLaundryAction={onAuraLaundryAction}
-            />
-          </View>
-        );
-      }}
-      ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-      ListFooterComponent={
-        showTypingBubble ? (
-          <View style={{ marginTop: 10, marginLeft: 10, gap: 8 }}>
-            <TypingBubble colors={colors} />
-            <View style={{ height: Math.max(96, contentBottomPadding * 0.58) }} />
-          </View>
-        ) : (
-          <View style={{ height: Math.max(112, contentBottomPadding * 0.5) }} />
-        )
-      }
+      renderItem={renderItem}
+      ItemSeparatorComponent={ChatItemSeparator}
+      ListFooterComponent={listFooter}
+      removeClippedSubviews
+      initialNumToRender={12}
+      maxToRenderPerBatch={8}
+      updateCellsBatchingPeriod={40}
+      windowSize={7}
       showsVerticalScrollIndicator={false}
     />
   );

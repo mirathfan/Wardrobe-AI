@@ -20,17 +20,7 @@ function slotLabel(slot: string) {
   return slot.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-export default function OutfitMessage({
-  colors,
-  outfit,
-  itemsById,
-  saving,
-  index,
-  memoryHint,
-  onSave,
-  onMoreLikeThis,
-  onSwap,
-}: {
+type OutfitMessageProps = {
   colors: AppColors;
   outfit: ChatOutfit;
   itemsById: Map<string, ClothingItem>;
@@ -40,7 +30,19 @@ export default function OutfitMessage({
   onSave: () => void;
   onMoreLikeThis: (outfit: ChatOutfit) => void;
   onSwap: (outfit: ChatOutfit) => void;
-}) {
+};
+
+function OutfitMessage({
+  colors,
+  outfit,
+  itemsById,
+  saving,
+  index,
+  memoryHint,
+  onSave,
+  onMoreLikeThis,
+  onSwap,
+}: OutfitMessageProps) {
   const pickedItems = outfit.picks
     .map((pick) => ({
       slot: pick.slot,
@@ -227,3 +229,5 @@ export default function OutfitMessage({
     </LinearGradient>
   );
 }
+
+export default React.memo(OutfitMessage);

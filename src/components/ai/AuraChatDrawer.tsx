@@ -256,7 +256,7 @@ export default function AuraChatDrawer({
           <View style={styles.drawerOverlay} />
 
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text, letterSpacing: -0.5 }]}>Chats</Text>
+            <Text style={[styles.title, { color: colors.text, letterSpacing: 0 }]}>Chats</Text>
           </View>
 
           <View style={styles.searchShell}>
@@ -291,7 +291,7 @@ export default function AuraChatDrawer({
                       <AuraPressable
                         onLongPress={() => openContextMenuForThread(thread)}
                         delayLongPress={220}
-                        haptic="medium"
+                        haptic="selection"
                         hapticTrigger="longPress"
                         pressedScale={0.985}
                         pressedOpacity={0.9}
@@ -636,7 +636,7 @@ const styles = StyleSheet.create({
     fontSize: 27,
     lineHeight: 30,
     fontWeight: "700",
-    letterSpacing: -0.8,
+    letterSpacing: 0,
   },
   searchShell: {
     marginHorizontal: 18,

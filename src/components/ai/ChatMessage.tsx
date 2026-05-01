@@ -1,6 +1,5 @@
 import React, { useEffect, useRef } from "react";
 import { Animated, Easing, Image, Text, View } from "react-native";
-import * as Haptics from "expo-haptics";
 import Reanimated, {
   Easing as ReanimatedEasing,
   useAnimatedStyle,
@@ -12,6 +11,7 @@ import { Fonts, type AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { formatUrlForDisplay, isUrlOnlyMessage } from "@/src/lib/formatChatText";
+import { runHaptic } from "@/src/lib/haptics";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLook, AuraLookAction, AuraLookOptionMeta, AuraOutfitPhotoAction } from "@/src/types/aura";
@@ -48,20 +48,7 @@ function fallbackStructuredIntro(message: AIMessage) {
   return "Got you — here’s what I’d do.";
 }
 
-export default function ChatMessage({
-  colors,
-  message,
-  itemsById,
-  savingId,
-  memoryHint,
-  onSaveOutfit,
-  onMoreLikeThis,
-  onSwapOutfit,
-  onAuraAction,
-  onAuraCandidateAction,
-  onAuraOutfitPhotoAction,
-  onAuraLaundryAction,
-}: {
+type ChatMessageProps = {
   colors: AppColors;
   message: AIMessage;
   itemsById: Map<string, ClothingItem>;
@@ -74,7 +61,22 @@ export default function ChatMessage({
   onAuraCandidateAction?: (action: AuraCandidateAction, message: AIMessage) => void;
   onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
   onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
-}) {
+};
+
+function ChatMessage({
+  colors,
+  message,
+  itemsById,
+  savingId,
+  memoryHint,
+  onSaveOutfit,
+  onMoreLikeThis,
+  onSwapOutfit,
+  onAuraAction,
+  onAuraCandidateAction,
+  onAuraOutfitPhotoAction,
+  onAuraLaundryAction,
+}: ChatMessageProps) {
   const layout = useResponsiveLayout();
   const fade = useRef(new Animated.Value(0)).current;
   const rise = useRef(new Animated.Value(8)).current;
@@ -199,7 +201,7 @@ export default function ChatMessage({
           <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }], gap: 10 }}>
             {message.outfits.map((outfit, index) => (
               <OutfitMessage
-                key={`${message.id}-${outfit.id}-${index}`}
+                key={`${message.id}-${outfit.id}`}
                 colors={colors}
                 outfit={outfit}
                 itemsById={itemsById}
@@ -260,6 +262,7 @@ export default function ChatMessage({
     const isSuggestion =
       (displayText ?? "").startsWith("Try this today:") ||
       (displayText ?? "").startsWith("Stylist note:");
+    const isError = /\b(trouble|couldn'?t|could not|failed|unavailable|unable|try again)\b/i.test(displayText ?? "");
     return (
       <Animated.View
         style={{
@@ -270,20 +273,24 @@ export default function ChatMessage({
       >
         <View
           style={{
-            borderRadius: isSuggestion ? 20 : 999,
-            paddingHorizontal: isSuggestion ? 16 : 14,
-            paddingVertical: isSuggestion ? 14 : 8,
-            backgroundColor: isSuggestion ? auraTheme.surface : auraTheme.surfaceSoft,
-            borderWidth: isSuggestion ? 1 : 0,
-            borderColor: isSuggestion ? auraTheme.borderSoft : "transparent",
-            marginLeft: isSuggestion ? 0 : 10,
-            maxWidth: isSuggestion ? "100%" : "74%",
+            borderRadius: isSuggestion || isError ? 20 : 999,
+            paddingHorizontal: isSuggestion || isError ? 16 : 14,
+            paddingVertical: isSuggestion || isError ? 14 : 8,
+            backgroundColor: isError
+              ? "rgba(241,153,153,0.08)"
+              : isSuggestion
+                ? auraTheme.surface
+                : auraTheme.surfaceSoft,
+            borderWidth: isSuggestion || isError ? 1 : 0,
+            borderColor: isError ? "rgba(241,153,153,0.22)" : isSuggestion ? auraTheme.borderSoft : "transparent",
+            marginLeft: isSuggestion || isError ? 0 : 10,
+            maxWidth: isSuggestion || isError ? "100%" : "74%",
           }}
         >
-          {isSuggestion ? (
+          {isSuggestion || isError ? (
             <View style={{ gap: 6 }}>
-              <Text style={{ color: auraTheme.textFaint, fontSize: 11, fontWeight: "800", letterSpacing: 0.8 }}>
-                AURA NOTE
+              <Text style={{ color: isError ? "#F1A4A4" : auraTheme.textFaint, fontSize: 11, fontWeight: "800", letterSpacing: 0.8 }}>
+                {isError ? "AURA PAUSED" : "AURA NOTE"}
               </Text>
               <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: "600" }}>
                 {displayText}
@@ -505,6 +512,23 @@ export default function ChatMessage({
   );
 }
 
+export default React.memo(
+  ChatMessage,
+  (prev, next) =>
+    prev.message === next.message &&
+    prev.colors === next.colors &&
+    prev.itemsById === next.itemsById &&
+    prev.savingId === next.savingId &&
+    prev.memoryHint === next.memoryHint &&
+    prev.onSaveOutfit === next.onSaveOutfit &&
+    prev.onMoreLikeThis === next.onMoreLikeThis &&
+    prev.onSwapOutfit === next.onSwapOutfit &&
+    prev.onAuraAction === next.onAuraAction &&
+    prev.onAuraCandidateAction === next.onAuraCandidateAction &&
+    prev.onAuraOutfitPhotoAction === next.onAuraOutfitPhotoAction &&
+    prev.onAuraLaundryAction === next.onAuraLaundryAction,
+);
+
 function OutfitCardEntry({
   children,
 }: {
@@ -515,7 +539,7 @@ function OutfitCardEntry({
   const translateY = useSharedValue(reduceMotion ? 0 : 16);
 
   useEffect(() => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    void runHaptic("light");
     if (reduceMotion) {
       opacity.value = 1;
       translateY.value = 0;

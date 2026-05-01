@@ -156,10 +156,12 @@ function Chip({
         pressedOpacity={0.9}
         style={{
           maxWidth: 210,
-          paddingHorizontal: 10,
-          paddingVertical: 5,
+          minHeight: 34,
+          justifyContent: "center",
+          paddingHorizontal: 12,
+          paddingVertical: 7,
           borderRadius: 999,
-          backgroundColor: "rgba(255,255,255,0.018)",
+          backgroundColor: "rgba(255,255,255,0.035)",
           borderWidth: 1,
           borderColor: auraTheme.borderSoft,
         }}
@@ -167,7 +169,7 @@ function Chip({
         <Text
           numberOfLines={1}
           ellipsizeMode="tail"
-          style={{ color: auraTheme.textMuted, fontSize: 10.5, fontWeight: "600", fontFamily: Fonts.sans }}
+          style={{ color: auraTheme.textMuted, fontSize: 12, fontWeight: "700", fontFamily: Fonts.sans }}
         >
           {label}
         </Text>

@@ -41,6 +41,7 @@ type AskAuraArgs = {
 
 const URL_RE = /https?:\/\/[^\s<>"']+/i;
 const LINK_PREVIEW_TIMEOUT_MS = 9000;
+const DEBUG_AURA_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 
 function sanitizeUserInput(input: string): string {
   return input
@@ -86,12 +87,14 @@ function normalizeAuraCandidatePayload(data: AuraResponse): AuraResponse {
     candidateItems,
     candidates: candidateItems,
   };
-  console.log("[AURA_PARSE]", "normalized candidate preview payload", {
-    candidateCount: candidateItems.length,
-    candidateIds: candidateItems.map((candidate) => candidate.candidateId),
-    presentation: normalized.presentation,
-    rawKeys: Object.keys(data),
-  });
+  if (DEBUG_AURA_CLIENT) {
+    console.log("[AURA_PARSE]", "normalized candidate preview payload", {
+      candidateCount: candidateItems.length,
+      candidateIds: candidateItems.map((candidate) => candidate.candidateId),
+      presentation: normalized.presentation,
+      rawKeys: Object.keys(data),
+    });
+  }
   return normalized;
 }
 
@@ -122,6 +125,7 @@ function getAskAuraStreamUrl() {
 }
 
 function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
+  if (!DEBUG_AURA_CLIENT) return;
   console.log("[AURA_STREAM_REQUEST]", label, {
     url: url ?? null,
     projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? null,
@@ -296,20 +300,22 @@ function scopedHmPreviewImages(sourceUrl: string, html: string) {
     seen.add(key);
     return true;
   }).slice(0, 8);
-  console.log("[LINK_PRODUCT_SCOPE]", "client H&M preview scope", {
-    sourceUrl,
-    articleId,
-    productNodeCount: products.length,
-    matchedSku: product?.sku ?? null,
-    matchedTitle: product?.name ?? null,
-    scopedImageCount: scoped.length,
-  });
-  console.log("[LINK_IMAGE_CANDIDATES_SCOPED]", "client H&M preview images", {
-    sourceUrl,
-    articleId,
-    candidateCount: scoped.length,
-    urls: scoped,
-  });
+  if (DEBUG_AURA_CLIENT) {
+    console.log("[LINK_PRODUCT_SCOPE]", "client H&M preview scope", {
+      sourceUrl,
+      articleId,
+      productNodeCount: products.length,
+      matchedSku: product?.sku ?? null,
+      matchedTitle: product?.name ?? null,
+      scopedImageCount: scoped.length,
+    });
+    console.log("[LINK_IMAGE_CANDIDATES_SCOPED]", "client H&M preview images", {
+      sourceUrl,
+      articleId,
+      candidateCount: scoped.length,
+      urls: scoped,
+    });
+  }
   return scoped.length ? scoped : null;
 }
 
@@ -371,14 +377,16 @@ async function bestClientPreviewHtml(sourceUrl: string, signal: AbortSignal) {
       const { response, html } = await fetchPreviewHtml(attemptUrl, signal);
       const scopedHmImages = scopedHmPreviewImages(sourceUrl, html);
       const imageCount = (scopedHmImages ?? stablePreviewImages(sourceUrl, html)).length;
-      console.log("[AURA_LINK_PREVIEW]", "client preview html attempt", {
-        sourceHost: new URL(sourceUrl).host,
-        attemptPath: new URL(attemptUrl).pathname,
-        status: response.status,
-        htmlLength: html.length,
-        imageCount,
-        scopedHmImageCount: scopedHmImages?.length ?? 0,
-      });
+      if (DEBUG_AURA_CLIENT) {
+        console.log("[AURA_LINK_PREVIEW]", "client preview html attempt", {
+          sourceHost: new URL(sourceUrl).host,
+          attemptPath: new URL(attemptUrl).pathname,
+          status: response.status,
+          htmlLength: html.length,
+          imageCount,
+          scopedHmImageCount: scopedHmImages?.length ?? 0,
+        });
+      }
       if (isHm && scopedHmImages?.length) {
         best = { url: attemptUrl, status: response.status, html, imageCount };
         break;
@@ -388,11 +396,13 @@ async function bestClientPreviewHtml(sourceUrl: string, signal: AbortSignal) {
       }
       if (!isHm && imageCount > 1) break;
     } catch (error) {
-      console.log("[AURA_LINK_PREVIEW]", "client preview html attempt failed", {
-        sourceHost: new URL(sourceUrl).host,
-        attemptPath: new URL(attemptUrl).pathname,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (DEBUG_AURA_CLIENT) {
+        console.log("[AURA_LINK_PREVIEW]", "client preview html attempt failed", {
+          sourceHost: new URL(sourceUrl).host,
+          attemptPath: new URL(attemptUrl).pathname,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
   return best;
@@ -402,9 +412,11 @@ async function buildClientLinkPreview(sourceUrl: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LINK_PREVIEW_TIMEOUT_MS);
   try {
-    console.log("[AURA_LINK_PREVIEW]", "client preview fetch start", {
-      host: new URL(sourceUrl).host,
-    });
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_LINK_PREVIEW]", "client preview fetch start", {
+        host: new URL(sourceUrl).host,
+      });
+    }
     const best = await bestClientPreviewHtml(sourceUrl, controller.signal);
     if (!best) return null;
     const html = best.html;
@@ -420,22 +432,26 @@ async function buildClientLinkPreview(sourceUrl: string) {
       imageUrls,
       description: metaContent(html, "og:description") ?? metaContent(html, "description"),
     };
-    console.log("[AURA_LINK_PREVIEW]", "client preview fetch complete", {
-      host: new URL(sourceUrl).host,
-      status: best.status,
-      htmlSourcePath: new URL(best.url).pathname,
-      htmlLength: html.length,
-      hasTitle: !!preview.title,
-      hasImageUrl: !!preview.imageUrl,
-      imageCount: preview.imageUrls.length,
-      hasDescription: !!preview.description,
-    });
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_LINK_PREVIEW]", "client preview fetch complete", {
+        host: new URL(sourceUrl).host,
+        status: best.status,
+        htmlSourcePath: new URL(best.url).pathname,
+        htmlLength: html.length,
+        hasTitle: !!preview.title,
+        hasImageUrl: !!preview.imageUrl,
+        imageCount: preview.imageUrls.length,
+        hasDescription: !!preview.description,
+      });
+    }
     return preview.imageUrl || preview.title || preview.description ? preview : null;
   } catch (error) {
-    console.log("[AURA_LINK_PREVIEW]", "client preview fetch failed", {
-      host: new URL(sourceUrl).host,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_LINK_PREVIEW]", "client preview fetch failed", {
+        host: new URL(sourceUrl).host,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     return null;
   } finally {
     clearTimeout(timeout);
@@ -498,18 +514,22 @@ function processEventLines(
       await emitDeltaSmoothly(event.delta, callbacks.onDelta);
     }
     if (event.type === "final") {
-      console.log("[AURA_STREAM_RAW]", "raw final stream payload", {
-        keys: Object.keys(event.data ?? {}),
-        presentation: event.data?.presentation,
-        candidateItemsCount: event.data?.candidateItems?.length ?? 0,
-        candidatesCount: event.data?.candidates?.length ?? 0,
-      });
+      if (DEBUG_AURA_CLIENT) {
+        console.log("[AURA_STREAM_RAW]", "raw final stream payload", {
+          keys: Object.keys(event.data ?? {}),
+          presentation: event.data?.presentation,
+          candidateItemsCount: event.data?.candidateItems?.length ?? 0,
+          candidatesCount: event.data?.candidates?.length ?? 0,
+        });
+      }
       const data = normalizeAuraCandidatePayload(event.data);
-      console.log("[AURA_STREAM_FINAL]", "parsed final stream payload", {
-        presentation: data.presentation,
-        hasLook: !!data.look,
-        candidateCount: data.candidateItems?.length ?? data.candidates?.length ?? 0,
-      });
+      if (DEBUG_AURA_CLIENT) {
+        console.log("[AURA_STREAM_FINAL]", "parsed final stream payload", {
+          presentation: data.presentation,
+          hasLook: !!data.look,
+          candidateCount: data.candidateItems?.length ?? data.candidates?.length ?? 0,
+        });
+      }
       setFinalData(data);
       callbacks.onFinal?.(data);
     }
@@ -624,9 +644,11 @@ export async function askAuraStream(
     try {
       return await askAuraStreamWithXhr(enrichedArgs, token, callbacks);
     } catch (error) {
-      console.log("[AURA_STREAM_FALLBACK]", "xhr stream failed, using callable fallback", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (DEBUG_AURA_CLIENT) {
+        console.log("[AURA_STREAM_FALLBACK]", "xhr stream failed, using callable fallback", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       const fallback = await askAura(enrichedArgs);
       callbacks.onFinal?.(fallback);
       return fallback;
@@ -647,9 +669,11 @@ export async function askAuraStream(
       body,
     });
   } catch (error) {
-    console.log("[AURA_STREAM_FALLBACK]", "fetch stream failed before response, using callable fallback", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_STREAM_FALLBACK]", "fetch stream failed before response, using callable fallback", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     const fallback = await askAura(enrichedArgs);
     callbacks.onFinal?.(fallback);
     return fallback;
@@ -657,10 +681,12 @@ export async function askAuraStream(
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.log("[AURA_STREAM_FALLBACK]", "fetch stream returned non-200, using callable fallback", {
-      status: response.status,
-      errorText,
-    });
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_STREAM_FALLBACK]", "fetch stream returned non-200, using callable fallback", {
+        status: response.status,
+        errorText,
+      });
+    }
     const fallback = await askAura(enrichedArgs);
     callbacks.onFinal?.(fallback);
     return fallback;

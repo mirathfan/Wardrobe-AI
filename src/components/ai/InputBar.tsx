@@ -23,8 +23,8 @@ import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import type { ChatAttachment, ChatAttachmentGroupRole } from "./chatTypes";
 import { auraTheme } from "./aiTheme";
 
-const BASE_COMPOSER_HEIGHT = 44;
-const BASE_INPUT_HEIGHT = 26;
+const BASE_COMPOSER_HEIGHT = 50;
+const BASE_INPUT_HEIGHT = 30;
 const MAX_INPUT_LINES = 4;
 const INPUT_LINE_HEIGHT = 20;
 const MAX_INPUT_HEIGHT = INPUT_LINE_HEIGHT * MAX_INPUT_LINES;
@@ -150,7 +150,7 @@ export default function InputBar({
     }),
     borderColor: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: ["rgba(255,245,234,0.08)", "rgba(122,182,255,0.26)"],
+      outputRange: ["rgba(255,245,234,0.09)", "rgba(167,139,250,0.34)"],
     }),
     backgroundColor: focusAnim.interpolate({
       inputRange: [0, 1],
@@ -273,7 +273,7 @@ const sendScale = sendVisibilityAnim.interpolate({
           {
             borderRadius: 22,
             borderWidth: 1,
-            borderColor: "rgba(122,182,255,0.36)",
+            borderColor: "rgba(167,139,250,0.42)",
             opacity: focusAnim.interpolate({
               inputRange: [0, 1],
               outputRange: [0, 1],
@@ -493,9 +493,9 @@ const styles = StyleSheet.create({
     elevation: 16,
   },
   chrome: {
-    paddingHorizontal: 10,
-    paddingTop: 3,
-    paddingBottom: 3,
+    paddingHorizontal: 11,
+    paddingTop: 5,
+    paddingBottom: 5,
   },
   attachmentRail: {
     gap: 4,
@@ -584,17 +584,17 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 2,
+    gap: 4,
   },
   iconLane: {
-    width: 34,
+    width: 38,
     alignItems: "center",
     justifyContent: "center",
   },
   sideButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 11,
+    width: 34,
+    height: 34,
+    borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.025)",
@@ -640,7 +640,7 @@ const styles = StyleSheet.create({
   },
   placeholderText: {
     fontFamily: Fonts.sans,
-    fontSize: 13.5,
+    fontSize: 14,
     lineHeight: INPUT_LINE_HEIGHT,
     includeFontPadding: false,
   },
@@ -651,7 +651,7 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === "ios" ? 2 : 1,
     marginTop: 0,
     fontFamily: Fonts.sans,
-    fontSize: 13.5,
+    fontSize: 14,
     lineHeight: INPUT_LINE_HEIGHT,
     letterSpacing: 0.1,
     backgroundColor: "transparent",
