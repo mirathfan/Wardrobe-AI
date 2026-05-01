@@ -178,7 +178,7 @@ function toSwipeLook(
     const item = itemsById.get(pick.itemId);
     if (!item) return [];
     return [{
-      role: (pick.slot === "footwear" ? "shoes" : pick.slot) as "top" | "bottom" | "shoes" | "outerwear",
+      role: (pick.slot === "footwear" ? "shoes" : pick.slot) as "top" | "bottom" | "shoes" | "outerwear" | "accessory",
       itemName: itemLabel(item),
       source: "closet" as const,
       itemId: pick.itemId,

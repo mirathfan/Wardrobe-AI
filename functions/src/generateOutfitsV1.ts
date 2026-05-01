@@ -42,7 +42,7 @@ function isOuterwearItem(item: { category?: string | null; subCategory?: string 
 
 function enforceOuterwearOnOutfits(params: {
   outfits: Array<{
-    picks: Array<{ slot: "top" | "bottom" | "footwear" | "outerwear"; itemId: string }>;
+    picks: Array<{ slot: "top" | "bottom" | "footwear" | "outerwear" | "accessory"; itemId: string }>;
     score: number;
     reason: string;
     itemIds: string[];

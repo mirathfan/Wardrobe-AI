@@ -248,34 +248,95 @@ function normalizeUrl(baseUrl: URL, value: string): string | null {
   }
 }
 
+function imageDimensionHints(url: string) {
+  const lower = url.toLowerCase();
+  const values: number[] = [];
+  try {
+    const parsed = new URL(url);
+    for (const key of ["imwidth", "width", "w", "sw", "height", "h", "sh"]) {
+      const value = Number(parsed.searchParams.get(key) ?? 0);
+      if (Number.isFinite(value) && value > 0) values.push(value);
+    }
+  } catch {
+    // Fall back to path parsing below.
+  }
+  for (const dim of lower.matchAll(/(?:_|-|\/)(\d{2,4})(?:x|_|-)(\d{2,4})(?:[._/?-]|$)/g)) {
+    values.push(Number(dim[1]), Number(dim[2]));
+  }
+  return values.filter((value) => Number.isFinite(value) && value > 0);
+}
+
 function scoreImageUrl(url: string): number {
   const lower = url.toLowerCase();
   let score = 0;
-  if (/\.(jpe?g|png|webp)(\?|$)/i.test(lower)) score += 3;
-  if (/(product|pdp|gallery|image|photo|model|main)/i.test(lower)) score += 4;
-  if (/(clean|cutout|transparent|isolated|packshot)/i.test(lower)) score += 6;
-  if (/(screenshot|screen[-_ ]?shot|share|social|swatch|color|variant|thumb|thumbnail|detail|icon|sprite|logo|banner|header|footer|ui|nav)/i.test(lower)) {
-    score -= 10;
+  if (/\.(jpe?g|png|webp)(\?|$)/i.test(lower)) score += 8;
+  if (/(product|pdp|gallery|image|photo|model|main|packshot|studio)/i.test(lower)) score += 12;
+  if (/(clean|cutout|transparent|isolated|packshot|studio)/i.test(lower)) score += 18;
+  if (/^image\.hm\.com$/i.test(safeHost(url))) score += 10;
+  const dims = imageDimensionHints(url);
+  const largestDim = dims.length ? Math.max(...dims) : 0;
+  if (largestDim >= 1000) score += 18;
+  else if (largestDim >= 700) score += 12;
+  else if (largestDim > 0 && largestDim < 220) score -= 35;
+  else if (largestDim > 0 && largestDim < 420) score -= 12;
+  if (/(detail|close[-_ ]?up|zoom|macro|fabric|texture|material|crop|cropped|graphic|logo[-_ ]?shot|chest[-_ ]?graphic|print[-_ ]?detail)/i.test(lower)) {
+    score -= 55;
+  }
+  if (/(screenshot|screen[-_ ]?shot|share|social|swatch|colorchip|variant|thumb|thumbnail|icon|sprite|logo|banner|header|footer|ui|nav)/i.test(lower)) {
+    score -= 45;
   }
   if (/(logo|icon|sprite|favicon|placeholder|badge|payment|loader)/i.test(lower)) {
-    score -= 12;
-  }
-  const dims = [...lower.matchAll(/(?:_|-|\/)(\d{3,4})(?:x|_|-)(\d{3,4})/g)];
-  for (const dim of dims) {
-    score += Math.min(6, (Number(dim[1]) + Number(dim[2])) / 500);
+    score -= 70;
   }
   return score;
 }
 
+function safeHost(url: string) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function imageScoreReasons(url: string): string[] {
+  const lower = url.toLowerCase();
+  const reasons: string[] = [];
+  const dims = imageDimensionHints(url);
+  const largestDim = dims.length ? Math.max(...dims) : 0;
+  if (/(product|pdp|gallery|image|photo|model|main|packshot|studio)/i.test(lower)) {
+    reasons.push("product/gallery URL hint");
+  }
+  if (/^image\.hm\.com$/i.test(safeHost(url))) reasons.push("H&M product image host");
+  if (largestDim >= 700) reasons.push(`large image hint ${largestDim}px`);
+  if (/(detail|close[-_ ]?up|zoom|macro|fabric|texture|material|crop|cropped|graphic|logo[-_ ]?shot|chest[-_ ]?graphic|print[-_ ]?detail)/i.test(lower)) {
+    reasons.push("detail/close-up URL penalty");
+  }
+  if (/(share|social|swatch|thumb|thumbnail|icon|sprite|logo|banner|header|footer|ui|nav)/i.test(lower)) {
+    reasons.push("thumbnail/social URL penalty");
+  }
+  return reasons.length ? reasons : ["generic URL and resolution heuristic"];
+}
+
 function dedupeStableImageUrls(urls: string[]): string[] {
-  const seen = new Set<string>();
-  return urls.filter((url) => {
-    if (/\s/.test(url)) return false;
-    const key = url.replace(/([?&])(imwidth|width|height|w|h)=\d+/gi, "$1").toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return scoreImageUrl(url) >= -2;
+  const byKey = new Map<string, { url: string; firstIndex: number; score: number }>();
+  urls.forEach((url, index) => {
+    if (/\s/.test(url)) return;
+    const key = url.replace(/([?&])(imwidth|width|height|w|h|sw|sh|q|quality)=\d+/gi, "$1").toLowerCase();
+    const score = scoreImageUrl(url);
+    if (score < -2) return;
+    const existing = byKey.get(key);
+    if (!existing || score > existing.score || (score === existing.score && url.localeCompare(existing.url) < 0)) {
+      byKey.set(key, {
+        url,
+        firstIndex: existing?.firstIndex ?? index,
+        score,
+      });
+    }
   });
+  return Array.from(byKey.values())
+    .sort((a, b) => a.firstIndex - b.firstIndex || a.url.localeCompare(b.url))
+    .map((entry) => entry.url);
 }
 
 function isHmProductUrl(url: URL) {
@@ -330,6 +391,24 @@ function productNodeMatchesArticle(product: JsonObject, articleId: string) {
   return candidates.some((value) => value.includes(articleId));
 }
 
+function rankImageUrlsByUrlHeuristic(urls: string[], sourceUrl: string, label: string) {
+  const ranked = urls
+    .map((url, index) => ({ url, index, score: scoreImageUrl(url), reasons: imageScoreReasons(url) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index || a.url.localeCompare(b.url));
+  ranked.forEach((entry, rank) => {
+    logger.info("[LINK_IMAGE_SCORE] URL heuristic score", {
+      sourceUrl,
+      source: label,
+      sourceIndex: entry.index,
+      rank,
+      url: entry.url,
+      score: entry.score,
+      reasons: entry.reasons,
+    });
+  });
+  return ranked.map((entry) => entry.url);
+}
+
 function extractHmScopedProductImages(html: string, baseUrl: URL): string[] | null {
   if (!isHmProductUrl(baseUrl)) return null;
   const articleId = hmArticleIdFromUrl(baseUrl);
@@ -338,7 +417,11 @@ function extractHmScopedProductImages(html: string, baseUrl: URL): string[] | nu
     ? products.find((product) => productNodeMatchesArticle(product, articleId))
     : products[0];
   const rawImages = scopedProduct ? imageValuesFromJsonLd(scopedProduct.image, baseUrl) : [];
-  const scopedImages = dedupeStableImageUrls(rawImages).slice(0, 8);
+  const scopedImages = rankImageUrlsByUrlHeuristic(
+    dedupeStableImageUrls(rawImages),
+    baseUrl.toString(),
+    "hm_scoped_json_ld",
+  ).slice(0, 8);
   logger.info("[LINK_PRODUCT_SCOPE]", {
     sourceUrl: baseUrl.toString(),
     retailer: "hm",
@@ -656,18 +739,7 @@ export function extractProductImagesFromHtml(url: string, html: string): string[
     candidateCount: deduped.length,
     urls: deduped.slice(0, 20),
   });
-  const ranked = deduped
-    .sort((a, b) => scoreImageUrl(b) - scoreImageUrl(a))
-    .slice(0, 8);
-  ranked.forEach((imageUrl, index) => {
-    logger.info("[LINK_IMAGE_SCORE] URL heuristic score", {
-      sourceUrl: url,
-      index,
-      url: imageUrl,
-      score: scoreImageUrl(imageUrl),
-      reasons: ["generic URL and resolution heuristic"],
-    });
-  });
+  const ranked = rankImageUrlsByUrlHeuristic(deduped, url, "generic_extraction").slice(0, 8);
   logger.info("[LINK_IMAGE_PRIMARY] generic primary image selected", {
     sourceUrl: url,
     primaryImageUrl: ranked[0] ?? null,

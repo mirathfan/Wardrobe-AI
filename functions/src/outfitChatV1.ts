@@ -97,7 +97,11 @@ function normalizeAction(value: unknown): ChatAction {
 
 function normalizeSlot(value: unknown): Slot | null {
   const raw = String(value ?? "").trim().toLowerCase();
-  return raw === "top" || raw === "bottom" || raw === "footwear" || raw === "outerwear"
+  return raw === "top" ||
+    raw === "bottom" ||
+    raw === "footwear" ||
+    raw === "outerwear" ||
+    raw === "accessory"
     ? raw
     : null;
 }
@@ -162,13 +166,14 @@ function normalizeProfile(profile: unknown): UserProfile | null {
 }
 
 function countSlots(items: WardrobeItem[]): Record<Slot, number> {
-  const counts: Record<Slot, number> = {top: 0, bottom: 0, footwear: 0, outerwear: 0};
+  const counts: Record<Slot, number> = {top: 0, bottom: 0, footwear: 0, outerwear: 0, accessory: 0};
   for (const item of items) {
     const category = String(item.category ?? "").trim().toLowerCase();
     if (category === "top" || category === "one_piece") counts.top += 1;
     else if (category === "bottom") counts.bottom += 1;
     else if (category === "footwear" || category === "shoes") counts.footwear += 1;
     else if (category === "outerwear") counts.outerwear += 1;
+    else if (category === "accessory") counts.accessory += 1;
   }
   return counts;
 }
@@ -395,8 +400,8 @@ async function parseChatAction(params: {
 }
 
 function buildIncompleteWardrobeMessage(slotCounts: Record<Slot, number>): string {
-  const missing = (Object.keys(slotCounts) as Slot[])
-    .filter((slot) => slot !== "outerwear" && slotCounts[slot] === 0)
+  const missing = (["top", "bottom", "footwear"] as Slot[])
+    .filter((slot) => slotCounts[slot] === 0)
     .map((slot) => slot.replace(/_/g, " "));
   if (missing.length === 0) {
     return "I can only build partial outfits right now. Add more analyzed items and try again.";
@@ -587,8 +592,9 @@ export const outfitChatV1 = onCall(
           const outfitData = outfitSnap.exists
             ? (outfitSnap.data() as {picks?: Array<{slot: Slot; itemId: string}>} | undefined)
             : null;
-          const currentPicks = Array.isArray(outfitData?.picks)
-            ? outfitData!.picks.filter((pick) => normalizeSlot(pick.slot))
+          const existingPicks = outfitData?.picks;
+          const currentPicks = Array.isArray(existingPicks)
+            ? existingPicks.filter((pick) => normalizeSlot(pick.slot))
             : [];
 
           if (currentPicks.length === 0) {

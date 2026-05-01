@@ -11,6 +11,7 @@ import {
   extractImageCandidates,
   fallbackImageCandidates,
   productCategoryHintsFromText,
+  rankProductExtractionImages,
   rankProductLinkImages,
   type AuraCandidateItem,
 } from "./shared/auraCandidatePreview";
@@ -18,6 +19,7 @@ import { classifyAuraLinkIntent, extractUrlsFromText } from "./shared/auraLinkIn
 import { buildAuraContext } from "./shared/buildAuraContext";
 import { loadCompactAuraMemoryContext } from "./shared/auraMemory";
 import { analyzeOutfitPhoto, isOutfitPhotoIntent } from "./shared/auraOutfitPhotoAnalysis";
+import { dedupeAuraLookAccessories } from "./shared/auraAccessorySelection";
 import { type WardrobeGapSuggestion } from "./shared/detectWardrobeGaps";
 import { loadAuraUserProfile } from "./shared/loadAuraUserProfile";
 import { handleLaundryIntent } from "./shared/laundryIntent";
@@ -347,6 +349,17 @@ function normalizeLookSurface(
 ) {
   if (look.stylingNote) {
     look.stylingNote = shortenLookReply(look.stylingNote);
+  }
+
+  const accessorySelection = dedupeAuraLookAccessories(
+    look,
+    auraContext?.preferenceContext ?? null
+  );
+  look.pieces = accessorySelection.pieces;
+  if (DEBUG_AURA_SPARSE && accessorySelection.discarded.length > 0) {
+    logger.info("[AURA_ACCESSORY_SLOT]", {
+      discarded: accessorySelection.discarded.map((entry) => entry.reason),
+    });
   }
 
   const ownedPieces = look.pieces
@@ -1312,7 +1325,8 @@ export const askAuraStream = onRequest(
         try {
           const extractions = [];
           for (const detectedUrl of detectedUrls.slice(0, 5)) {
-            extractions.push(await extractProductFromUrl(detectedUrl.normalized));
+            const extraction = await extractProductFromUrl(detectedUrl.normalized);
+            extractions.push(await rankProductExtractionImages({ client, extraction }));
           }
           const data = candidatePreviewResponse(candidatesFromProductExtractions(extractions));
           logger.info("[AURA_CANDIDATE_BACKEND] raw link candidate object before stream", {

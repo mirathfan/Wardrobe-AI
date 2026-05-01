@@ -60,6 +60,7 @@ function buildSummary(items: WardrobeItem[], itemHash: string): WardrobeSummaryR
     bottom: 0,
     footwear: 0,
     outerwear: 0,
+    accessory: 0,
   };
   const colors = new Map<string, number>();
   const brands = new Map<string, number>();
@@ -90,7 +91,7 @@ function buildSummary(items: WardrobeItem[], itemHash: string): WardrobeSummaryR
   const summaryParts = [
     `${items.length} wardrobe items`,
     `${eligibleItems} analyzed and ready`,
-    `slots top:${slotCounts.top}, bottom:${slotCounts.bottom}, footwear:${slotCounts.footwear}, outerwear:${slotCounts.outerwear}`,
+    `slots top:${slotCounts.top}, bottom:${slotCounts.bottom}, footwear:${slotCounts.footwear}, outerwear:${slotCounts.outerwear}, accessory:${slotCounts.accessory}`,
     topColors.length > 0 ? `top colors ${topColors.join(", ")}` : "",
     topBrands.length > 0 ? `common brands ${topBrands.join(", ")}` : "",
     topSubCategories.length > 0 ? `frequent pieces ${topSubCategories.join(", ")}` : "",

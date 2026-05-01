@@ -1,12 +1,14 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import OpenAI from "openai";
 
 import {
   ProductLinkError,
   createDraftItemFromProductLink,
   extractProductFromUrl,
 } from "./shared/productLinkExtractor";
+import { rankProductExtractionImages } from "./shared/auraCandidatePreview";
 
 function messageForError(error: unknown) {
   if (error instanceof ProductLinkError) return error.message;
@@ -53,7 +55,13 @@ export const importProductLink = onCall(
 
     try {
       logger.info("[SNAP_DONE_LINK] importing product link", { uid, url, itemId });
-      const extraction = await extractProductFromUrl(url);
+      const client = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+      const extraction = await rankProductExtractionImages({
+        client,
+        extraction: await extractProductFromUrl(url),
+      });
       const created = await createDraftItemFromProductLink({
         uid,
         itemId: itemId ?? undefined,
