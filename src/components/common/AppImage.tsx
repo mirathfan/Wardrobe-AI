@@ -24,6 +24,16 @@ function toFastImageResizeMode(resizeMode?: AppImageResizeMode): ResizeMode | un
   }
 }
 
-export default function AppImage({ resizeMode, ...props }: AppImageProps) {
-  return <FastImage {...props} resizeMode={toFastImageResizeMode(resizeMode)} />;
+function normalizeFastImageSource(source: FastImageProps["source"]) {
+  if (!source || typeof source === "number" || Array.isArray(source)) return source;
+  if (!source.uri) return source;
+  return {
+    priority: "normal" as const,
+    cache: "immutable" as const,
+    ...source,
+  };
+}
+
+export default function AppImage({ resizeMode, source, ...props }: AppImageProps) {
+  return <FastImage {...props} source={normalizeFastImageSource(source)} resizeMode={toFastImageResizeMode(resizeMode)} />;
 }

@@ -13,6 +13,7 @@ import Reanimated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useReduceMotion } from "@/hooks/useReduceMotion";
+import { runHaptic } from "@/src/lib/haptics";
 import {
   DOCK_HEIGHT,
   DOCK_RADIUS,
@@ -32,9 +33,9 @@ const TAB_META: Record<
   profile: { label: "Profile", icon: "person-circle-outline" },
 };
 
-const ROW_HORIZONTAL_PADDING = 8;
-const ACTIVE_BUBBLE_WIDTH = 66;
-const ACTIVE_BUBBLE_HEIGHT = 56;
+const ROW_HORIZONTAL_PADDING = 7;
+const ACTIVE_BUBBLE_WIDTH = 64;
+const ACTIVE_BUBBLE_HEIGHT = 52;
 
 type ExpoRouterTabOptions = {
   href?: string | null;
@@ -94,6 +95,18 @@ export default function FloatingGlassTabBar({
   const tabWidth = visibleRoutes.length
     ? availableDockWidth / visibleRoutes.length
     : 0;
+  const scrimColors = useMemo(
+    () => [colors.scrimTop, colors.scrimMid, colors.scrimBottom] as const,
+    [colors.scrimBottom, colors.scrimMid, colors.scrimTop],
+  );
+  const materialFillStyle = useMemo(
+    () => ({
+      backgroundColor: isDark
+        ? "rgba(10, 10, 16, 0.48)"
+        : "rgba(255, 255, 255, 0.46)",
+    }),
+    [isDark],
+  );
 
   useEffect(() => {
     if (reduceMotion) {
@@ -138,7 +151,7 @@ export default function FloatingGlassTabBar({
     <View pointerEvents="box-none" style={StyleSheet.absoluteFillObject}>
       <LinearGradient
         pointerEvents="none"
-        colors={[colors.scrimTop, colors.scrimMid, colors.scrimBottom]}
+        colors={scrimColors}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
         style={[styles.scrim, { bottom: dockBottom }]}
@@ -146,7 +159,7 @@ export default function FloatingGlassTabBar({
 
       <View style={[styles.container, { bottom: dockBottom }]}>
         <BlurView
-          intensity={78}
+          intensity={58}
           tint={isDark ? "dark" : "light"}
           style={StyleSheet.absoluteFill}
         />
@@ -155,11 +168,7 @@ export default function FloatingGlassTabBar({
           pointerEvents="none"
           style={[
             styles.materialFill,
-            {
-              backgroundColor: isDark
-                ? "rgba(10, 10, 16, 0.48)"
-                : "rgba(255, 255, 255, 0.46)",
-            },
+            materialFillStyle,
           ]}
         />
 
@@ -213,6 +222,7 @@ export default function FloatingGlassTabBar({
               });
 
               if (!isFocused && !event.defaultPrevented) {
+                void runHaptic("selection");
                 navigation.navigate(route.name, route.params);
               }
             };
@@ -244,7 +254,7 @@ export default function FloatingGlassTabBar({
   );
 }
 
-function TabBarItem({
+const TabBarItem = React.memo(function TabBarItem({
   isFocused,
   iconName,
   iconSize,
@@ -265,6 +275,7 @@ function TabBarItem({
 }) {
   const reduceMotion = useReduceMotion();
   const iconScale = useSharedValue(isFocused ? 1.02 : 1);
+  const pressScale = useSharedValue(1);
 
   useEffect(() => {
     if (reduceMotion) {
@@ -278,7 +289,7 @@ function TabBarItem({
   }, [iconScale, isFocused, reduceMotion]);
 
   const iconStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: iconScale.value }],
+    transform: [{ scale: iconScale.value * pressScale.value }],
   }));
 
   return (
@@ -286,6 +297,14 @@ function TabBarItem({
       accessibilityRole="button"
       accessibilityState={isFocused ? { selected: true } : {}}
       onPress={onPress}
+      onPressIn={() => {
+        if (reduceMotion) return;
+        pressScale.value = withTiming(0.94, { duration: 90 });
+      }}
+      onPressOut={() => {
+        if (reduceMotion) return;
+        pressScale.value = withSpring(1, { damping: 16, stiffness: 220 });
+      }}
       onLongPress={onLongPress}
       style={styles.item}
     >
@@ -312,14 +331,14 @@ function TabBarItem({
       </Text>
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   scrim: {
     position: "absolute",
     left: 0,
     right: 0,
-    height: DOCK_HEIGHT + 18,
+    height: DOCK_HEIGHT + 16,
   },
   container: {
     position: "absolute",
@@ -330,10 +349,10 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: "rgba(10,10,16,0.44)",
     shadowColor: "#000",
-    shadowOpacity: 0.22,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 14,
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
   },
   materialFill: {
     ...StyleSheet.absoluteFillObject,
@@ -373,7 +392,7 @@ const styles = StyleSheet.create({
     height: "100%",
     alignItems: "center",
     justifyContent: "center",
-    gap: 3,
+    gap: 2,
     zIndex: 1,
   },
   activeBubble: {
@@ -388,15 +407,15 @@ const styles = StyleSheet.create({
     zIndex: 0,
   },
   iconWrap: {
-    width: 26,
-    height: 25,
+    width: 25,
+    height: 24,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
   },
   label: {
-    fontSize: 10.5,
-    letterSpacing: -0.1,
+    fontSize: 10.3,
+    letterSpacing: 0,
     zIndex: 1,
   },
   auraMarkWrap: {
@@ -416,7 +435,7 @@ const styles = StyleSheet.create({
   },
 });
 
-function AuraTabMark({ active }: { active: boolean }) {
+const AuraTabMark = React.memo(function AuraTabMark({ active }: { active: boolean }) {
   const color = active ? "#FFFFFF" : "rgba(235,235,245,0.56)";
   const size = 24;
   const ringSize = 22;
@@ -463,4 +482,4 @@ function AuraTabMark({ active }: { active: boolean }) {
       />
     </View>
   );
-}
+});

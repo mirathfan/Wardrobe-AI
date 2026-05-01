@@ -72,6 +72,8 @@ export type ItemImageDecoration = {
   };
 };
 
+export type ItemImageSource = { uri: string } | null;
+
 const DEBUG_ITEM_IMAGES =
   __DEV__ && process.env.EXPO_PUBLIC_DEBUG_ITEM_IMAGES === "1";
 
@@ -117,6 +119,16 @@ function pickBestUrl(values: (string | null | undefined)[], context: "cutout" | 
     .map((value) => String(value ?? "").trim())
     .filter((value) => isValidImageUrl(value))
     .sort((a, b) => scoreImageCandidate(b, context) - scoreImageCandidate(a, context))[0] ?? null;
+}
+
+function derivedImageUrl(value: string | null | undefined): string | null {
+  const url = String(value ?? "").trim();
+  if (!isValidImageUrl(url)) return null;
+  return /normalized|cleaned|vision-cutout|cutout|transparent|alpha|isolated|preview|thumb|thumbnail|cropped|crop/.test(
+    url.toLowerCase()
+  )
+    ? url
+    : null;
 }
 
 function getCleanedSource(item: ImageLikeItem): string {
@@ -282,14 +294,14 @@ const SURFACE_PROFILES: Record<ItemImageSurface, SurfaceProfile> = {
     aspectRatioMin: 0.72,
     aspectRatioMax: 1.02,
     aspectRatioWeight: 0.58,
-    fillTargetHeight: 92,
-    fillTargetWidth: 88,
-    fillAggressiveness: 1.02,
-    minScale: 0.98,
-    maxScale: 1.38,
-    translateMin: -10,
-    translateMax: 16,
-    verticalBiasStrength: 0.12,
+    fillTargetHeight: 82,
+    fillTargetWidth: 78,
+    fillAggressiveness: 0.92,
+    minScale: 0.9,
+    maxScale: 1.16,
+    translateMin: -7,
+    translateMax: 10,
+    verticalBiasStrength: 0.08,
   },
   home_continue: {
     aspectRatioMin: 0.72,
@@ -537,6 +549,18 @@ export function getItemImageUrl(
     ],
     "cutout"
   );
+  const preferredThumbnail = pickBestUrl(
+    [
+      item.photos?.cleanedThumbUrl,
+      item.photos?.thumbUrl,
+      item.photos?.croppedUrl,
+      item.photos?.previewUrl,
+      derivedImageUrl(item.photos?.primaryUrl),
+      derivedImageUrl(item.photoUrl),
+      ...(item.photos?.urls ?? []).map(derivedImageUrl),
+    ],
+    "original"
+  );
   const preferredOriginal = pickBestUrl(
     [
       primaryImage.originalUrl,
@@ -552,25 +576,37 @@ export function getItemImageUrl(
     "original"
   );
   const picked =
-    preferredCutout ??
-    preferredOriginal ??
-    firstValidUrl([
-      ...fallbackCleaned,
-      primaryImage.originalUrl,
-      item.photos?.primaryUrl,
-      item.photoUrl,
-      item.photoUri,
-      item.cleanedLocalUri,
-      item.pendingPhotoUri,
-      item.photos?.thumbUrl,
-      item.photos?.croppedUrl,
-      item.photos?.urls?.[0],
-    ]);
+    options.variant === "thumb"
+      ? preferredCutout ??
+        preferredThumbnail ??
+        firstValidUrl([
+          ...fallbackCleaned,
+          item.cleanedLocalUri,
+          item.photos?.cleanedThumbUrl,
+          item.photos?.thumbUrl,
+          item.photos?.croppedUrl,
+          item.photos?.previewUrl,
+        ])
+      : preferredCutout ??
+        preferredOriginal ??
+        firstValidUrl([
+          ...fallbackCleaned,
+          primaryImage.originalUrl,
+          item.photos?.primaryUrl,
+          item.photoUrl,
+          item.photoUri,
+          item.cleanedLocalUri,
+          item.pendingPhotoUri,
+          item.photos?.thumbUrl,
+          item.photos?.croppedUrl,
+          item.photos?.urls?.[0],
+        ]);
   if (DEBUG_ITEM_IMAGES) {
     console.log("[ITEM_IMAGE_PICK]", {
       variant: options.variant,
       picked,
       preferredCutout,
+      preferredThumbnail,
       preferredOriginal,
       hasPrimaryCleaned: !!primaryImage.cleanedUrl,
       hasCleanedImageUrl: !!item.cleanedImageUrl,
@@ -581,4 +617,11 @@ export function getItemImageUrl(
     });
   }
   return picked;
+}
+
+export function getBestThumbnailImageSource(
+  item: ImageLikeItem | null | undefined
+): ItemImageSource {
+  const uri = getItemImageUrl(item, { variant: "thumb" });
+  return uri ? { uri } : null;
 }

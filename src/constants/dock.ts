@@ -1,8 +1,8 @@
-export const FLOATING_TAB_BAR_HEIGHT = 62;
+export const FLOATING_TAB_BAR_HEIGHT = 58;
 export const DOCK_HEIGHT = FLOATING_TAB_BAR_HEIGHT;
-export const DOCK_RADIUS = 26;
+export const DOCK_RADIUS = 24;
 export const DOCK_SIDE_MARGIN = 16;
-export const FLOATING_TAB_BAR_BOTTOM_INSET_MIN = 16;
+export const FLOATING_TAB_BAR_BOTTOM_INSET_MIN = 14;
 export const DOCK_BOTTOM_GAP = FLOATING_TAB_BAR_BOTTOM_INSET_MIN;
 export const DOCK_ITEM_COUNT = 5;
 export const FLOATING_CONTROL_GAP = 14;

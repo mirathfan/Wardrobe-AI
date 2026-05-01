@@ -47,7 +47,9 @@ type Props = {
 };
 
 const BOARD_MAX_WIDTH = 760;
+const HOME_BOARD_MAX_WIDTH = 520;
 const BOARD_ASPECT_RATIO = 1;
+const HOME_BOARD_ASPECT_RATIO = 0.72;
 
 function firstNonEmpty<T>(...values: (T | null | undefined)[]): T | undefined {
   return values.find(Boolean) as T | undefined;
@@ -319,23 +321,25 @@ export const AuraLookCard = memo(function AuraLookCard({
 
   const effectiveVariant = boardVariant ?? (swipeVariant ? "swipe" : "chat");
   const isStudio = effectiveVariant === "studio";
-  const cardHorizontalPadding = compact || swipeVariant || isStudio ? 12 : 14;
+  const isHome = effectiveVariant === "home";
+  const isCondensed = compact || isHome;
+  const cardHorizontalPadding = isCondensed || swipeVariant || isStudio ? 12 : 14;
   const availableBoardWidth = Math.max(
     1,
-    (viewportWidth ?? screenWidth) - cardHorizontalPadding * 2,
+    (viewportWidth ?? screenWidth) - cardHorizontalPadding * 2 - (isHome ? 28 : 0),
   );
   const boardWidth = Math.min(
     availableBoardWidth,
-    BOARD_MAX_WIDTH,
+    isHome ? HOME_BOARD_MAX_WIDTH : BOARD_MAX_WIDTH,
   );
-  const boardHeight = Math.round(boardWidth * BOARD_ASPECT_RATIO);
+  const boardHeight = Math.round(boardWidth * (isHome ? HOME_BOARD_ASPECT_RATIO : BOARD_ASPECT_RATIO));
   const displayTitle = deriveEditorialLookTitle(look);
   const displayReason = deriveEditorialSubtitle(look);
   const directionLabel = normalizeDirectionLabel(option?.optionLabel, look.personalizationLabel, look.vibe);
   const vibeLabelSource =
     cleanShortLabel(look.vibe) || cleanShortLabel(look.personalizationLabel);
   const vibeLabel = vibeLabelSource && vibeLabelSource !== directionLabel ? vibeLabelSource : "";
-  const visibleClosetItems = compact
+  const visibleClosetItems = isCondensed
     ? (look.fromCloset ?? []).filter(Boolean).slice(0, swipeVariant ? 2 : 3)
     : (look.fromCloset ?? []).filter(Boolean).slice(0, 5);
   const hiddenClosetCount = Math.max(0, (look.fromCloset ?? []).filter(Boolean).length - visibleClosetItems.length);
@@ -355,13 +359,14 @@ export const AuraLookCard = memo(function AuraLookCard({
   }, [look]);
   const overflowLabels = Array.from(
     new Set(renderPlan.overflowItems.map((item) => getItemLabel(item)).filter(Boolean)),
-  ).slice(0, compact ? 2 : 3);
+  ).slice(0, isCondensed ? 2 : 3);
 
   const boardContent = (
     <View
       style={[
         styles.board,
         compact ? styles.boardCompact : null,
+        isHome ? styles.boardHome : null,
         swipeVariant ? styles.boardSwipe : null,
         isStudio ? styles.boardStudio : null,
         { width: boardWidth, height: boardHeight, backgroundColor: colors.outfitBoardBackground },
@@ -405,6 +410,7 @@ export const AuraLookCard = memo(function AuraLookCard({
       style={[
         styles.card,
         compact ? styles.cardCompact : null,
+        isHome ? styles.cardHome : null,
         swipeVariant ? styles.cardSwipe : null,
         isStudio ? styles.cardStudio : null,
         {
@@ -420,6 +426,7 @@ export const AuraLookCard = memo(function AuraLookCard({
             <View
               style={[
                 styles.headerChip,
+                isHome ? styles.headerChipHome : null,
                 styles.directionChip,
                 {
                   backgroundColor: colors.purpleSurface,
@@ -427,7 +434,7 @@ export const AuraLookCard = memo(function AuraLookCard({
                 },
               ]}
             >
-              <View style={[styles.directionDot, { backgroundColor: colors.softPurple }]} />
+              <View style={[styles.directionDot, isHome ? styles.directionDotHome : null, { backgroundColor: colors.softPurple }]} />
               <Text style={[styles.directionChipText, { color: colors.lightPurple }]}>
                 {directionLabel.toUpperCase()}
               </Text>
@@ -437,6 +444,7 @@ export const AuraLookCard = memo(function AuraLookCard({
             <View
               style={[
                 styles.headerChip,
+                isHome ? styles.headerChipHome : null,
                 { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
               ]}
             >
@@ -448,13 +456,14 @@ export const AuraLookCard = memo(function AuraLookCard({
 
       {boardContent}
 
-      <View style={[styles.copyBlock, swipeVariant ? styles.copyBlockSwipe : null, isStudio ? styles.copyBlockStudio : null]}>
+      <View style={[styles.copyBlock, isHome ? styles.copyBlockHome : null, swipeVariant ? styles.copyBlockSwipe : null, isStudio ? styles.copyBlockStudio : null]}>
         {!!displayTitle && (
           <Text
             numberOfLines={1}
             style={[
               styles.title,
               compact ? styles.titleCompact : null,
+              isHome ? styles.titleHome : null,
               swipeVariant ? styles.titleSwipe : null,
             ]}
           >
@@ -464,10 +473,11 @@ export const AuraLookCard = memo(function AuraLookCard({
 
         {!!displayReason && (
           <Text
-            numberOfLines={swipeVariant ? 1 : 2}
+            numberOfLines={swipeVariant || isHome ? 1 : 2}
             style={[
               styles.subtitle,
               compact ? styles.subtitleCompact : null,
+              isHome ? styles.subtitleHome : null,
               swipeVariant ? styles.subtitleSwipe : null,
             ]}
           >
@@ -477,7 +487,7 @@ export const AuraLookCard = memo(function AuraLookCard({
       </View>
 
       {!!visibleClosetItems.length && (
-        <View style={styles.metaBlock}>
+        <View style={[styles.metaBlock, isHome ? styles.metaBlockHome : null]}>
           <Text style={[styles.metaLabel, { color: colors.softPurple }]}>FROM YOUR CLOSET</Text>
           <View style={styles.closetChips}>
             {visibleClosetItems.map((item) => (
@@ -485,6 +495,7 @@ export const AuraLookCard = memo(function AuraLookCard({
                 key={`${look.lookTitle}-${item}`}
                 style={[
                   styles.closetChip,
+                  isHome ? styles.closetChipHome : null,
                   { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
                 ]}
               >
@@ -497,6 +508,7 @@ export const AuraLookCard = memo(function AuraLookCard({
               <View
                 style={[
                   styles.closetChip,
+                  isHome ? styles.closetChipHome : null,
                   styles.moreChip,
                   { backgroundColor: colors.purpleSurface, borderColor: colors.purpleBorder },
                 ]}
@@ -509,7 +521,7 @@ export const AuraLookCard = memo(function AuraLookCard({
       )}
 
       {!!overflowLabels.length && (
-        <View style={styles.metaBlock}>
+        <View style={[styles.metaBlock, isHome ? styles.metaBlockHome : null]}>
           <Text style={[styles.metaLabel, { color: colors.softPurple }]}>ALSO INCLUDED</Text>
           <View style={styles.closetChips}>
             {overflowLabels.map((item) => (
@@ -517,6 +529,7 @@ export const AuraLookCard = memo(function AuraLookCard({
                 key={`${look.lookTitle}-extra-${item}`}
                 style={[
                   styles.closetChip,
+                  isHome ? styles.closetChipHome : null,
                   { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
                 ]}
               >
@@ -530,10 +543,11 @@ export const AuraLookCard = memo(function AuraLookCard({
       )}
 
       {!hideActions ? (
-        <View style={styles.actions}>
+        <View style={[styles.actions, isHome ? styles.actionsHome : null]}>
           <AuraPressable
             style={[
               styles.actionButton,
+              isHome ? styles.actionButtonHome : null,
               styles.primaryButton,
               { backgroundColor: colors.ctaCream, borderColor: colors.ctaCream },
             ]}
@@ -551,6 +565,7 @@ export const AuraLookCard = memo(function AuraLookCard({
           <AuraPressable
             style={[
               styles.actionButton,
+              isHome ? styles.actionButtonHome : null,
               styles.secondaryButton,
               { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
             ]}
@@ -569,11 +584,12 @@ export const AuraLookCard = memo(function AuraLookCard({
       ) : null}
 
       {!hideActions && (canLikeLook || canNotMyVibe || canShowMoreLikeThis || canLessLikeThis) ? (
-        <View style={styles.tertiaryActions}>
+        <View style={[styles.tertiaryActions, isHome ? styles.tertiaryActionsHome : null]}>
           {canLikeLook ? (
             <AuraPressable
               style={[
                 styles.tertiaryAction,
+                isHome ? styles.tertiaryActionHome : null,
                 { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
               ]}
               haptic="selection"
@@ -589,9 +605,10 @@ export const AuraLookCard = memo(function AuraLookCard({
             <AuraPressable
               style={[
                 styles.tertiaryAction,
+                isHome ? styles.tertiaryActionHome : null,
                 { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
               ]}
-              haptic="medium"
+              haptic="selection"
               hapticTrigger="press"
               pressedScale={0.96}
               pressedOpacity={0.88}
@@ -604,6 +621,7 @@ export const AuraLookCard = memo(function AuraLookCard({
             <AuraPressable
               style={[
                 styles.tertiaryAction,
+                isHome ? styles.tertiaryActionHome : null,
                 { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
               ]}
               haptic="selection"
@@ -619,6 +637,7 @@ export const AuraLookCard = memo(function AuraLookCard({
             <AuraPressable
               style={[
                 styles.tertiaryAction,
+                isHome ? styles.tertiaryActionHome : null,
                 { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
               ]}
               haptic="selection"
@@ -634,11 +653,12 @@ export const AuraLookCard = memo(function AuraLookCard({
       ) : null}
 
       {!hideActions && (canShopMissingPieces || canUseOnlyMyCloset || canMakeItDressier) ? (
-        <View style={styles.tertiaryActions}>
+        <View style={[styles.tertiaryActions, isHome ? styles.tertiaryActionsHome : null]}>
           {canUseOnlyMyCloset ? (
             <AuraPressable
               style={[
                 styles.tertiaryAction,
+                isHome ? styles.tertiaryActionHome : null,
                 { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
               ]}
               haptic="selection"
@@ -654,6 +674,7 @@ export const AuraLookCard = memo(function AuraLookCard({
             <AuraPressable
               style={[
                 styles.tertiaryAction,
+                isHome ? styles.tertiaryActionHome : null,
                 { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
               ]}
               haptic="selection"
@@ -669,6 +690,7 @@ export const AuraLookCard = memo(function AuraLookCard({
             <AuraPressable
               style={[
                 styles.tertiaryAction,
+                isHome ? styles.tertiaryActionHome : null,
                 { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
               ]}
               haptic="selection"
@@ -711,6 +733,13 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.08)",
   },
   cardCompact: {
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderRadius: 24,
+  },
+  cardHome: {
     gap: 8,
     paddingHorizontal: 12,
     paddingTop: 12,
@@ -760,6 +789,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
   },
+  headerChipHome: {
+    minHeight: 28,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 6,
+  },
   directionChip: {
     backgroundColor: "rgba(124,92,255,0.12)",
     borderColor: "rgba(124,92,255,0.25)",
@@ -769,6 +804,10 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 999,
     backgroundColor: "#7C5CFF",
+  },
+  directionDotHome: {
+    width: 6,
+    height: 6,
   },
   directionChipText: {
     color: "#A78BFA",
@@ -793,6 +832,9 @@ const styles = StyleSheet.create({
   },
   boardCompact: {
     borderRadius: 16,
+  },
+  boardHome: {
+    borderRadius: 14,
   },
   boardSwipe: {
     borderRadius: 16,
@@ -860,6 +902,9 @@ const styles = StyleSheet.create({
   copyBlock: {
     gap: 5,
   },
+  copyBlockHome: {
+    gap: 3,
+  },
   copyBlockSwipe: {
     gap: 3,
   },
@@ -872,17 +917,21 @@ const styles = StyleSheet.create({
     fontSize: 24,
     lineHeight: 28,
     fontWeight: "800",
-    letterSpacing: -0.8,
+    letterSpacing: 0,
   },
   titleCompact: {
     fontSize: 20,
     lineHeight: 24,
-    letterSpacing: -0.6,
+    letterSpacing: 0,
+  },
+  titleHome: {
+    fontSize: 20,
+    lineHeight: 24,
   },
   titleSwipe: {
     fontSize: 18,
     lineHeight: 22,
-    letterSpacing: -0.45,
+    letterSpacing: 0,
   },
   subtitle: {
     color: "rgba(223, 231, 241, 0.78)",
@@ -895,6 +944,11 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     lineHeight: 17,
   },
+  subtitleHome: {
+    color: "rgba(223, 231, 241, 0.72)",
+    fontSize: 12.5,
+    lineHeight: 17,
+  },
   subtitleSwipe: {
     color: "rgba(223, 231, 241, 0.66)",
     fontSize: 11.5,
@@ -902,6 +956,9 @@ const styles = StyleSheet.create({
   },
   metaBlock: {
     gap: 7,
+  },
+  metaBlockHome: {
+    gap: 5,
   },
   metaLabel: {
     color: "#7C5CFF",
@@ -923,6 +980,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
   },
+  closetChipHome: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   moreChip: {
     backgroundColor: "rgba(124,92,255,0.12)",
     borderColor: "rgba(124,92,255,0.25)",
@@ -938,6 +999,10 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingTop: 2,
   },
+  actionsHome: {
+    gap: 10,
+    paddingTop: 0,
+  },
   actionButton: {
     flex: 1,
     minHeight: 50,
@@ -945,6 +1010,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
+  },
+  actionButtonHome: {
+    minHeight: 46,
+    borderRadius: 16,
   },
   primaryButton: {
     backgroundColor: "#EDE9E3",
@@ -970,6 +1039,9 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 10,
   },
+  tertiaryActionsHome: {
+    gap: 8,
+  },
   tertiaryAction: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -977,6 +1049,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)",
     backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  tertiaryActionHome: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
   tertiaryActionText: {
     color: "rgba(235,240,248,0.86)",

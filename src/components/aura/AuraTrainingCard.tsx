@@ -32,7 +32,7 @@ export default function AuraTrainingCard({
                 color: colors.lightPurple,
                 fontSize: 12.5,
                 fontWeight: "800",
-                letterSpacing: -0.2,
+                letterSpacing: 0,
               }}
             >
               Train AURA faster
@@ -97,7 +97,7 @@ export default function AuraTrainingCard({
             fontSize: 22,
             lineHeight: 27,
             fontWeight: "900",
-            letterSpacing: -0.5,
+            letterSpacing: 0,
           }}
         >
           Train your style faster

@@ -26,6 +26,7 @@ type AuraPressableProps = Omit<PressableProps, "children" | "style"> & {
   containerStyle?: StyleProp<ViewStyle>;
   pressedScale?: number;
   pressedOpacity?: number;
+  disabledOpacity?: number;
   haptic?: AuraHapticType;
   hapticTrigger?: HapticTrigger;
 };
@@ -45,7 +46,8 @@ export default function AuraPressable({
   style,
   containerStyle,
   pressedScale = 0.97,
-  pressedOpacity,
+  pressedOpacity = 0.9,
+  disabledOpacity = 0.5,
   haptic,
   hapticTrigger = "pressIn",
   disabled,
@@ -64,15 +66,21 @@ export default function AuraPressable({
     const scale = reduceMotion
       ? 1
       : interpolate(pressedProgress.value, [0, 1], [1, pressedScale]);
-    const opacity =
-      pressedOpacity == null
-        ? 1
-        : interpolate(pressedProgress.value, [0, 1], [1, pressedOpacity]);
+    const restingOpacity = disabled ? disabledOpacity : 1;
+    const activeOpacity = disabled ? disabledOpacity : pressedOpacity;
+    const opacity = interpolate(pressedProgress.value, [0, 1], [restingOpacity, activeOpacity]);
     return {
       transform: [{ scale }],
       opacity,
     };
-  }, [pressedOpacity, pressedScale, reduceMotion]);
+  }, [disabled, disabledOpacity, pressedOpacity, pressedScale, reduceMotion]);
+
+  React.useEffect(() => {
+    if (!disabled) return;
+    setPressed(false);
+    pressedProgress.value = withTiming(0, { duration: reduceMotion ? 0 : 120 });
+    hapticFiredRef.current = false;
+  }, [disabled, pressedProgress, reduceMotion]);
 
   const fireHaptic = React.useCallback(
     (trigger: HapticTrigger) => {
@@ -130,6 +138,10 @@ export default function AuraPressable({
       <Pressable
         {...rest}
         disabled={disabled}
+        accessibilityState={{
+          ...rest.accessibilityState,
+          disabled: disabled || rest.accessibilityState?.disabled,
+        }}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         onPress={handlePress}
