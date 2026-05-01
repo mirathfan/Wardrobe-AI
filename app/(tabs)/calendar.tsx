@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { collection, doc, increment, onSnapshot, orderBy, query, serverTimestamp, writeBatch } from "firebase/firestore";
+import { doc, increment, serverTimestamp, writeBatch } from "firebase/firestore";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -20,7 +20,6 @@ import DateRail from "@/src/components/calendar/DateRail";
 import DayContextCard from "@/src/components/calendar/DayContextCard";
 import SwapSheet from "@/src/components/calendar/SwapSheet";
 import TimelineCard from "@/src/components/calendar/TimelineCard";
-import WeatherStrip from "@/src/components/calendar/WeatherStrip";
 import { useDayEvents } from "@/src/hooks/useDayEvents";
 import { useDayWeather } from "@/src/hooks/useDayWeather";
 import { useNow } from "@/src/hooks/useNow";
@@ -45,12 +44,13 @@ import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { db } from "@/src/lib/firebase";
-import { MAX_WEARS_BEFORE_WASH, isVisibleWardrobeItem, normalizeLaundryStatus, toCanonicalCategory } from "@/src/lib/items";
+import { MAX_WEARS_BEFORE_WASH, listenToItems, normalizeLaundryStatus, toCanonicalCategory } from "@/src/lib/items";
 import { Toast } from "@/src/lib/toast";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 type SectionIconName = "calendar" | "sparkles" | "chart.bar.xaxis";
 type SlotKey = keyof OutfitItemsByCategory;
+type RailWeather = { high?: number; low?: number; label?: string };
 
 const DateTimePickerModule = (() => {
   try {
@@ -198,7 +198,7 @@ export default function CalendarScreen() {
   const [loggedDaySet, setLoggedDaySet] = useState<Set<string>>(new Set());
   const [railStatuses, setRailStatuses] = useState<Record<string, { planned?: boolean; worn?: boolean; streak?: boolean }>>({});
   const [weeklyFlags, setWeeklyFlags] = useState<number[]>(Array.from({ length: 7 }, () => 0));
-  const [weekWeather, setWeekWeather] = useState<{ label: string; high?: number; low?: number; selected: boolean }[]>([]);
+  const [railWeatherByDate, setRailWeatherByDate] = useState<Record<string, RailWeather>>({});
   const [swapOpen, setSwapOpen] = useState(false);
   const [swapSlot, setSwapSlot] = useState<SlotKey | null>(null);
   const [jumpPickerOpen, setJumpPickerOpen] = useState(false);
@@ -231,7 +231,6 @@ export default function CalendarScreen() {
   }, [loadStreakData]);
 
   useEffect(() => {
-    let unsub: undefined | (() => void);
     if (!uid) {
       setItems([]);
       setLoadingItems(false);
@@ -239,24 +238,27 @@ export default function CalendarScreen() {
       return;
     }
 
-    const itemsRef = collection(db, "users", uid, "items");
-    const qItems = query(itemsRef, orderBy("createdAt", "desc"));
-    unsub = onSnapshot(
-      qItems,
-      (snap) => {
-        const next = snap.docs
-          .map((d) => ({ id: d.id, ...(d.data() as Omit<ClothingItem, "id">) }))
-          .filter((item) => isVisibleWardrobeItem(item));
+    setItems([]);
+    setLoadingItems(true);
+    const unsub = listenToItems(
+      uid,
+      (next) => {
         setItems(next as ClothingItem[]);
         setLoadingItems(false);
       },
-      (err) => {
-        console.log(err);
-        Alert.alert("Firestore error", err.message);
-        setLoadingItems(false);
+      {
+        status: "ALL",
+        sort: "NEWEST",
+        onError: (message) => {
+          if (__DEV__) {
+            console.log(message);
+          }
+          Alert.alert("Firestore error", message);
+          setLoadingItems(false);
+        },
       }
     );
-    return () => unsub?.();
+    return () => unsub();
   }, [uid]);
 
   useEffect(() => {
@@ -332,9 +334,9 @@ export default function CalendarScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadWeekWeather() {
+    async function loadRailWeather() {
       if (weather.permission !== "granted") {
-        setWeekWeather([]);
+        setRailWeatherByDate({});
         return;
       }
 
@@ -363,26 +365,39 @@ export default function CalendarScreen() {
         const values = await Promise.all(dates.map((date) => getDailyWeather(lat, lon, date)));
         if (cancelled) return;
 
-        setWeekWeather(
-          values.map((value, index) => ({
-            label: new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(dates[index]),
+        const nextWeatherByDate: Record<string, RailWeather> = {};
+        values.forEach((value, index) => {
+          nextWeatherByDate[toDayKey(dates[index])] = {
             high: value.highC,
             low: value.lowC,
-            selected: toDayKey(dates[index]) === selectedDayKey,
-          }))
-        );
+            label: value.conditionLabel,
+          };
+        });
+        setRailWeatherByDate(nextWeatherByDate);
       } catch {
-        if (!cancelled) setWeekWeather([]);
+        if (!cancelled) setRailWeatherByDate({});
       }
     }
 
-    loadWeekWeather().catch(() => {
-      if (!cancelled) setWeekWeather([]);
+    loadRailWeather().catch(() => {
+      if (!cancelled) setRailWeatherByDate({});
     });
     return () => {
       cancelled = true;
     };
-  }, [day.weekDates, selectedDayKey, weather.permission]);
+  }, [day.weekDates, weather.permission]);
+
+  const dateRailWeather = useMemo(() => {
+    const next = { ...railWeatherByDate };
+    if (weather.weather) {
+      next[selectedDayKey] = {
+        high: weather.weather.highC,
+        low: weather.weather.lowC,
+        label: weather.weather.conditionLabel,
+      };
+    }
+    return next;
+  }, [railWeatherByDate, selectedDayKey, weather.weather]);
 
   const weatherSummary = useMemo(() => {
     if (weather.permission === "unknown" || weather.permission === "denied") return "Enable weather insights";
@@ -472,11 +487,16 @@ export default function CalendarScreen() {
 
   const onUseOutfit = useCallback(async () => {
     if (!uid || !selectedLook) return;
-    const planned = lookToPlanned(selectedLook);
-    const next = await setPlanned(uid, selectedDayKey, planned);
-    setRecord(next);
-    setSelectedLookId(selectedLook.id);
-    await hapticLight();
+    try {
+      const planned = lookToPlanned(selectedLook);
+      const next = await setPlanned(uid, selectedDayKey, planned);
+      setRecord(next);
+      setSelectedLookId(selectedLook.id);
+      Toast.success("Planned", "Outfit attached to this day.");
+      await hapticLight();
+    } catch (error: any) {
+      Toast.error("Plan failed", error?.message ?? "Unable to plan this outfit.");
+    }
   }, [selectedDayKey, selectedLook, uid]);
 
   const onClearPlan = useCallback(async () => {
@@ -670,7 +690,12 @@ export default function CalendarScreen() {
           <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
         </Pressable>
 
-        <DateRail selectedDate={day.selectedDate} onSelectDate={onSelectDate} statuses={railStatuses} />
+        <DateRail
+          selectedDate={day.selectedDate}
+          onSelectDate={onSelectDate}
+          statuses={railStatuses}
+          weatherByDate={dateRailWeather}
+        />
 
         <DayContextCard
           greeting={greeting}
@@ -683,12 +708,6 @@ export default function CalendarScreen() {
           weatherState={weather.state}
           onWeatherAction={onWeatherAction}
         />
-
-        {weekWeather.length > 0 ? (
-          <View style={themedStyles.weatherStripWrap}>
-            <WeatherStrip days={weekWeather} />
-          </View>
-        ) : null}
 
         <SectionHeader icon="calendar" title="Agenda" />
         <AgendaCard
@@ -706,8 +725,11 @@ export default function CalendarScreen() {
         <View style={themedStyles.sectionGap} />
         <SectionHeader icon="sparkles" title="Outfit for this date" />
         {isPast && !record?.wornOutfit ? (
-          <View style={themedStyles.card}>
-            <Text style={themedStyles.muted}>No outfit logged for {selectedDateLabel}.</Text>
+          <View style={[themedStyles.card, themedStyles.emptyDayCard]}>
+            <Text style={themedStyles.emptyDayTitle}>No outfit logged</Text>
+            <Text style={themedStyles.muted}>
+              Nothing was marked worn for {selectedDateLabel}. You can still plan a look if you want this day filled in.
+            </Text>
             <Pressable style={themedStyles.planCta} onPress={() => setSelectedLookId("casual")}>
               <Text style={themedStyles.planCtaText}>Plan an outfit</Text>
             </Pressable>
@@ -847,7 +869,7 @@ return StyleSheet.create({
     textTransform: "uppercase",
   },
   monthPicker: {
-    marginTop: 8,
+    marginTop: 6,
     marginBottom: 4,
     alignSelf: "flex-start",
     flexDirection: "row",
@@ -855,18 +877,15 @@ return StyleSheet.create({
     gap: 4,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderColor: colors.purpleBorder,
+    backgroundColor: colors.purpleSurface,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
   },
   monthPickerText: {
-    color: colors.text,
+    color: colors.lightPurple,
     fontSize: 12,
-    fontWeight: "700",
-  },
-  weatherStripWrap: {
-    marginTop: layout.sectionGap - 10,
+    fontWeight: "900",
   },
   sectionGap: {
     height: layout.sectionGap - 4,
@@ -877,6 +896,17 @@ return StyleSheet.create({
     borderRadius: layout.mediumRadius,
     padding: layout.cardPadding,
     backgroundColor: colors.surface,
+  },
+  emptyDayCard: {
+    backgroundColor: "rgba(255,255,255,0.045)",
+    borderColor: "rgba(255,255,255,0.1)",
+  },
+  emptyDayTitle: {
+    color: colors.text,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "900",
+    marginBottom: 4,
   },
   muted: {
     color: colors.textSecondary,
@@ -892,8 +922,8 @@ return StyleSheet.create({
     paddingVertical: 10,
   },
   planCtaText: {
-    color: "#fff",
-    fontWeight: "700",
+    color: colors.ctaText,
+    fontWeight: "800",
     fontSize: 12,
   },
   weekBars: {
@@ -959,7 +989,7 @@ return StyleSheet.create({
     alignItems: "center",
   },
   modalPrimaryText: {
-    color: "#fff",
+    color: colors.ctaText,
     fontWeight: "800",
   },
 });

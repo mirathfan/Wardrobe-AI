@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
@@ -17,6 +17,18 @@ type Props = {
 export default function SwapSheet({ visible, title, options, onSelect, onClear, onClose }: Props) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
+  const renderOption = React.useCallback(
+    ({ item }: { item: Option }) => (
+      <Pressable
+        style={[styles.option, { borderColor: colors.border, backgroundColor: colors.overlay }]}
+        onPress={() => onSelect(item.id)}
+      >
+        <Text style={[styles.optionText, { color: colors.text }]}>{item.label}</Text>
+      </Pressable>
+    ),
+    [colors.border, colors.overlay, colors.text, onSelect],
+  );
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
@@ -33,15 +45,17 @@ export default function SwapSheet({ visible, title, options, onSelect, onClear, 
         >
           <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
           {options.length === 0 ? <Text style={[styles.empty, { color: colors.textSecondary }]}>No matching items yet.</Text> : null}
-          {options.map((option) => (
-            <Pressable
-              key={option.id}
-              style={[styles.option, { borderColor: colors.border, backgroundColor: colors.overlay }]}
-              onPress={() => onSelect(option.id)}
-            >
-              <Text style={[styles.optionText, { color: colors.text }]}>{option.label}</Text>
-            </Pressable>
-          ))}
+          <FlatList
+            data={options}
+            keyExtractor={(item) => item.id}
+            renderItem={renderOption}
+            ItemSeparatorComponent={OptionSeparator}
+            style={styles.optionsList}
+            removeClippedSubviews
+            initialNumToRender={12}
+            maxToRenderPerBatch={10}
+            windowSize={6}
+          />
           {onClear ? (
             <Pressable style={[styles.clear, { borderColor: "#ef4444" }]} onPress={onClear}>
               <Text style={styles.clearText}>Clear slot</Text>
@@ -56,11 +70,17 @@ export default function SwapSheet({ visible, title, options, onSelect, onClear, 
   );
 }
 
+function OptionSeparator() {
+  return <View style={{ height: 8 }} />;
+}
+
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.25)", justifyContent: "flex-end" },
   sheet: {
     gap: 8,
+    maxHeight: "82%",
   },
+  optionsList: { flexGrow: 0 },
   title: { fontSize: 16, fontWeight: "800", marginBottom: 8 },
   option: {
     paddingVertical: 12,

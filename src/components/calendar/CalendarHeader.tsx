@@ -1,7 +1,8 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
 import { formatHeaderDate } from "../../utils/date";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
@@ -14,10 +15,6 @@ type Props = {
 export default function CalendarHeader({ selectedDate, today, onJumpToToday }: Props) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
-  const monthLabel = new Intl.DateTimeFormat(undefined, {
-    month: "long",
-    year: "numeric",
-  }).format(selectedDate);
 
   const isToday =
     selectedDate.getFullYear() === today.getFullYear() &&
@@ -27,17 +24,21 @@ export default function CalendarHeader({ selectedDate, today, onJumpToToday }: P
   return (
     <View style={[styles.wrap, { gap: 8 }]}>
       <Text style={[styles.kicker, { color: colors.iridescentStart }]}>Plan the week</Text>
-      <Text style={[styles.title, { color: colors.text, fontSize: 30 * layout.titleScale }]}>Calendar</Text>
-      <Text style={[styles.date, { color: colors.textSecondary }]}>{formatHeaderDate(selectedDate)}</Text>
       <View style={styles.row}>
-        <Text style={[styles.month, { color: colors.text }]}>{monthLabel}</Text>
+        <View style={{ flex: 1, gap: 3 }}>
+          <Text style={[styles.title, { color: colors.text, fontSize: 30 * layout.titleScale }]}>Calendar</Text>
+          <Text style={[styles.date, { color: colors.textSecondary }]}>{formatHeaderDate(selectedDate)}</Text>
+        </View>
         {!isToday ? (
-          <Pressable
+          <AuraPressable
             onPress={onJumpToToday}
+            haptic="selection"
+            hapticTrigger="press"
+            pressedScale={0.96}
             style={[styles.todayBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
           >
             <Text style={[styles.todayBtnText, { color: colors.text }]}>Jump to Today</Text>
-          </Pressable>
+          </AuraPressable>
         ) : null}
       </View>
     </View>
@@ -49,15 +50,14 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   kicker: { fontSize: 11, fontWeight: "800", letterSpacing: 1.5, textTransform: "uppercase" },
-  title: { fontWeight: "900", letterSpacing: -0.5 },
+  title: { fontWeight: "900", letterSpacing: 0 },
   date: { marginTop: 2, fontSize: 14, lineHeight: 22, opacity: 0.65 },
   row: {
-    marginTop: 10,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: 12,
   },
-  month: { fontSize: 16, fontWeight: "800" },
   todayBtn: {
     paddingHorizontal: 10,
     paddingVertical: 6,
