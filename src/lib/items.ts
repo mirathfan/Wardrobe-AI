@@ -15,6 +15,7 @@ import {
 import { db } from "./firebase";
 import { logItemStyleEvent } from "./auraMemory";
 import { buildSignalFromItem, updateAssistantMemoryFromAction } from "./assistantMemory";
+import { getCachedClosetItems, setCachedClosetItems } from "./localCache";
 import { ClothingItem, ClothingStatus, LaundryStatus } from "../types/ClothingItem";
 import { Category } from "../shared/wardrobeTaxonomy";
 
@@ -301,14 +302,61 @@ export function isInCategory(item: ClosetItem, filter: CategoryFilter) {
   return categoryValuesFor(filter).includes(category);
 }
 
-export function listenToItems(
-  uid: string,
-  cb: (items: ClosetItem[]) => void,
+export type ClosetItemsSourceMeta = {
+  source: "cache" | "firestore";
+  stale?: boolean;
+  updatedAt?: number;
+};
+
+function applyItemOptions(
+  items: ClosetItem[],
   options?: {
     status?: StatusFilter;
     sort?: ItemSort;
     includeDrafts?: boolean;
+  }
+) {
+  const status = options?.status ?? "ALL";
+  const sort = options?.sort ?? "NEWEST";
+  const visible = options?.includeDrafts ? items : items.filter((item) => isVisibleWardrobeItem(item));
+  const filtered =
+    status === "ALL"
+      ? visible
+      : visible.filter((item) => item.status === status || legacyStatusForLaundryStatus(normalizeLaundryStatus(item)) === status);
+
+  return [...filtered].sort((left, right) => {
+    if (sort === "MOST_WORN") {
+      return Number(right.wearCountSinceWash ?? 0) - Number(left.wearCountSinceWash ?? 0);
+    }
+    return toTimestampNumber(right.createdAt) - toTimestampNumber(left.createdAt);
+  });
+}
+
+function toTimestampNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value && typeof value === "object") {
+    const maybeTimestamp = value as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
+    if (typeof maybeTimestamp.toMillis === "function") {
+      const millis = maybeTimestamp.toMillis();
+      return Number.isFinite(millis) ? millis : 0;
+    }
+    if (typeof maybeTimestamp.seconds === "number") {
+      return maybeTimestamp.seconds * 1000 + Math.floor((maybeTimestamp.nanoseconds ?? 0) / 1000000);
+    }
+  }
+  return 0;
+}
+
+export function listenToItems(
+  uid: string,
+  cb: (items: ClosetItem[], meta?: ClosetItemsSourceMeta) => void,
+  options?: {
+    status?: StatusFilter;
+    sort?: ItemSort;
+    includeDrafts?: boolean;
+    hydrateFromCache?: boolean;
     onError?: (message: string) => void;
+    onCacheStatus?: (meta: ClosetItemsSourceMeta) => void;
   }
 ) {
   const constraints: QueryConstraint[] = [];
@@ -327,18 +375,38 @@ export function listenToItems(
 
   const itemsRef = collection(db, "users", uid, "items");
   const q = query(itemsRef, ...constraints);
+  let active = true;
 
-  return onSnapshot(
+  if (options?.hydrateFromCache !== false) {
+    void getCachedClosetItems(uid).then((cached) => {
+      if (!active || !cached?.data?.length) return;
+      const meta: ClosetItemsSourceMeta = {
+        source: "cache",
+        stale: cached.stale,
+        updatedAt: cached.updatedAt,
+      };
+      options?.onCacheStatus?.(meta);
+      cb(applyItemOptions(cached.data as ClosetItem[], options), meta);
+    });
+  }
+
+  const unsubscribe = onSnapshot(
     q,
     (snap) => {
       const next: ClosetItem[] = snap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as any),
       }));
-      cb(options?.includeDrafts ? next : next.filter((item) => isVisibleWardrobeItem(item)));
+      void setCachedClosetItems(uid, next);
+      cb(applyItemOptions(next, options), { source: "firestore" });
     },
     (err) => options?.onError?.(err.message)
   );
+
+  return () => {
+    active = false;
+    unsubscribe();
+  };
 }
 
 function toDateValue(value: unknown): Date | null {

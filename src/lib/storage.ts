@@ -19,8 +19,9 @@ export const Storage = {
   },
   clearUserScopedData: (uid: string) => {
     const prefix = `aura:${uid}:`;
+    const legacyChatPrefix = `outfit-chat:${uid}:`;
     storage.getAllKeys().forEach((key) => {
-      if (key.startsWith(prefix)) storage.remove(key);
+      if (key.startsWith(prefix) || key.startsWith(legacyChatPrefix)) storage.remove(key);
     });
     return Promise.resolve();
   },

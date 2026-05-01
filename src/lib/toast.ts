@@ -44,4 +44,13 @@ export const Toast = {
       duration: 2,
     });
   },
+
+  laundryUpdated: (message = "Laundry status updated") => {
+    Burnt.toast({
+      title: "Laundry updated",
+      message,
+      preset: "done",
+      duration: 2,
+    });
+  },
 };

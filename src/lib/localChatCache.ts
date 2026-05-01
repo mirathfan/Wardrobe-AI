@@ -3,8 +3,10 @@ import { Storage } from "@/src/lib/storage";
 const CACHE_PREFIX = "outfit-chat:";
 const MAX_MESSAGES_PER_SESSION = 30;
 const MAX_SESSIONS = 6;
+const DEBUG_LOCAL_CHAT_CACHE = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 
 function logSession(event: string, data: Record<string, unknown>) {
+  if (!DEBUG_LOCAL_CHAT_CACHE) return;
   console.log(`[AIChatSession] ${event}`, data);
 }
 
@@ -36,8 +38,28 @@ function getScopedKey(uid: string, suffix: string) {
   return `${CACHE_PREFIX}${uid}:${suffix}`;
 }
 
+function sanitizeForCache<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeForCache(entry)) as T;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key !== "localUri")
+        .map(([key, entry]) => [key, sanitizeForCache(entry)])
+        .filter(([, entry]) => entry !== undefined)
+    ) as T;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^data:/i.test(trimmed) || /^file:/i.test(trimmed)) return undefined as T;
+    return (trimmed.length > 8000 ? `${trimmed.slice(0, 8000)}...` : trimmed) as T;
+  }
+  return value;
+}
+
 function trimMessages<T>(messages: T[]) {
-  return messages.slice(-MAX_MESSAGES_PER_SESSION);
+  return messages.slice(-MAX_MESSAGES_PER_SESSION).map((message) => sanitizeForCache(message));
 }
 
 function sortSessions<T>(sessions: LocalChatSession<T>[]) {
@@ -168,7 +190,7 @@ export async function loadLatestChatCache<T>(uid: string): Promise<CachePayload<
         return {
           chatId: typeof parsed.chatId === "string" ? parsed.chatId : null,
           threadId: typeof parsed.threadId === "string" ? parsed.threadId : null,
-          messages: parsed.messages,
+          messages: trimMessages(parsed.messages),
           updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
         };
       }

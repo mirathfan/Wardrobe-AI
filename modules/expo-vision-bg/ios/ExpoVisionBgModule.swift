@@ -42,7 +42,7 @@ public class ExpoVisionBgModule: Module {
   private static let antialiasMaskKernel = CIColorKernel(source: """
   kernel vec4 antialiasMask(__sample mask) {
     float value = clamp(max(mask.r, max(mask.g, mask.b)), 0.0, 1.0);
-    float alpha = smoothstep(0.02, 0.98, value);
+    float alpha = smoothstep(0.01, 0.99, value);
     return vec4(alpha, alpha, alpha, alpha);
   }
   """)
@@ -55,8 +55,8 @@ public class ExpoVisionBgModule: Module {
     }
 
     float interiorAlpha = clamp(interiorColor.a, 0.0, 1.0);
-    float partialEdge = (1.0 - smoothstep(0.92, 0.995, alpha)) * smoothstep(0.005, 0.08, alpha);
-    float safeInterior = smoothstep(0.005, 0.05, interiorAlpha);
+    float partialEdge = (1.0 - smoothstep(0.985, 0.999, alpha)) * smoothstep(0.002, 0.05, alpha);
+    float safeInterior = smoothstep(0.001, 0.025, interiorAlpha);
     vec3 safeRGB = mix(source.rgb, interiorColor.rgb, safeInterior);
     vec3 rgb = mix(source.rgb, safeRGB, partialEdge);
     return vec4(rgb, alpha);
@@ -628,8 +628,8 @@ public class ExpoVisionBgModule: Module {
 
     let finalInteriorMask = thresholdMaskImage(interiorMask, threshold: 0.5, to: targetExtent)
 
-    // Feathering the original source reintroduces contaminated semi-transparent RGB. Instead,
-    // add a tiny clean antialias band around the already-tight matte.
+    // The tight mask removes the halo-prone outer rim. A final clean antialias band
+    // smooths fabric curves without returning to Vision's contaminated soft mask.
     _ = feather
     return (
       antialiasedMaskImage(finalInteriorMask, to: targetExtent),
@@ -668,7 +668,7 @@ public class ExpoVisionBgModule: Module {
   ) -> CIImage {
     let smoothed = mask
       .applyingFilter("CIGaussianBlur", parameters: [
-        kCIInputRadiusKey: 0.35
+        kCIInputRadiusKey: 0.65
       ])
       .cropped(to: targetExtent)
 
@@ -690,8 +690,9 @@ public class ExpoVisionBgModule: Module {
     targetExtent: CGRect
   ) -> CIImage {
     let transparentBg = CIImage(color: .clear).cropped(to: targetExtent)
-    // Dark cards expose white/gray edge RGB. Sample replacement color from the
-    // tight interior mask, not from the already-composited cutout edge.
+    // Decontaminated RGB prevents white fringe from returning: partial-alpha
+    // pixels sample replacement color from the safe interior garment area, not
+    // from the original background-contaminated edge or composited cutout.
     let interiorOnly = transparentBg.applyingFilter("CIBlendWithMask", parameters: [
       kCIInputImageKey: sourceImage,
       kCIInputBackgroundImageKey: transparentBg,
@@ -700,8 +701,12 @@ public class ExpoVisionBgModule: Module {
 
     let interiorColor = interiorOnly
       .applyingFilter("CIPremultiplyAlpha")
+      .applyingFilter("CIMorphologyMaximum", parameters: [
+        kCIInputRadiusKey: 1.05
+      ])
+      .cropped(to: targetExtent)
       .applyingFilter("CIGaussianBlur", parameters: [
-        kCIInputRadiusKey: 1.25
+        kCIInputRadiusKey: 1.45
       ])
       .cropped(to: targetExtent)
       .applyingFilter("CIUnpremultiplyAlpha")

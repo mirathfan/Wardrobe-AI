@@ -1,5 +1,10 @@
 import { ClothingItem } from "../types/ClothingItem";
 import { MAX_WEARS_BEFORE_WASH, normalizeLaundryStatus, toCanonicalCategory } from "./items";
+import {
+  ACCESSORY_SLOT_ORDER,
+  getAccessorySlot,
+  type AccessorySlot,
+} from "@/shared/accessorySlots";
 
 export type OutfitIntent = {
   occasion?: string;
@@ -133,6 +138,212 @@ function colorPreferenceBonus(items: ClothingItem[], intent: OutfitIntent) {
   return bonus;
 }
 
+const DEBUG_AURA_ACCESSORIES =
+  __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
+const accessoryDiscardDebugKeys = new Set<string>();
+
+type AccessoryMood = "safe" | "balanced" | "bold";
+
+function itemStyleText(item: ClothingItem) {
+  const extended = item as ClothingItem & {
+    visualWeight?: string | null;
+  };
+  return [
+    item.category,
+    item.subCategory,
+    item.type,
+    item.name,
+    item.brand,
+    item.style,
+    item.formality,
+    item.pattern,
+    item.material,
+    extended.visualWeight,
+    ...(item.aestheticTags ?? []),
+    ...(item.occasionTags ?? []),
+    ...(item.seasonTags ?? []),
+    ...(item.detailTags ?? []),
+  ]
+    .map((value) => String(value ?? "").toLowerCase())
+    .join(" ");
+}
+
+function intentText(intent: OutfitIntent) {
+  return `${intent.vibe ?? ""} ${intent.occasion ?? ""}`.toLowerCase();
+}
+
+function inferAccessoryMood(intent: OutfitIntent): AccessoryMood {
+  const text = intentText(intent);
+  if (/\b(safe|minimal|clean|simple|quiet|classic|work|office|formal|interview)\b/.test(text)) {
+    return "safe";
+  }
+  if (/\b(bold|statement|party|night|tonight|date|edgy|colorful|standout)\b/.test(text)) {
+    return "bold";
+  }
+  return "balanced";
+}
+
+function isFormalIntent(intent: OutfitIntent) {
+  return /\b(formal|office|work|business|interview|wedding|black tie|smart)\b/.test(intentText(intent));
+}
+
+function isStreetwearIntent(intent: OutfitIntent) {
+  return /\b(street|streetwear|skate|sneaker|casual|hoodie|cargo)\b/.test(intentText(intent));
+}
+
+function isColdIntent(intent: OutfitIntent) {
+  return /\b(cold|winter|snow|freezing|chilly)\b/.test(intentText(intent));
+}
+
+function isWarmSunnyIntent(intent: OutfitIntent) {
+  return /\b(hot|summer|sun|sunny|beach|humid|warm)\b/.test(intentText(intent));
+}
+
+function accessoryLabel(item: ClothingItem) {
+  return item.name || item.subCategory || item.type || item.category || "Accessory";
+}
+
+function debugAccessoryDiscard(
+  slot: AccessorySlot,
+  discarded: ClothingItem,
+  winner: ClothingItem
+) {
+  if (!DEBUG_AURA_ACCESSORIES) return;
+  const key = `${slot}:${discarded.id}:${winner.id}`;
+  if (accessoryDiscardDebugKeys.has(key) || accessoryDiscardDebugKeys.size > 80) return;
+  accessoryDiscardDebugKeys.add(key);
+  console.log(
+    `[AURA_ACCESSORY_SLOT] Discarded accessory "${accessoryLabel(discarded)}" because ${slot} slot already has "${accessoryLabel(winner)}" with better color/vibe score.`
+  );
+}
+
+function accessoryScoreForOutfit(
+  accessory: ClothingItem,
+  baseItems: ClothingItem[],
+  intent: OutfitIntent
+) {
+  const slot = getAccessorySlot(accessory);
+  const mood = inferAccessoryMood(intent);
+  const text = itemStyleText(accessory);
+  const accessoryColors = colorList(accessory);
+  const baseColors = baseItems.flatMap(colorList);
+  const uniqueBaseColors = new Set(baseColors);
+  const hasNeutral = accessoryColors.some((color) => NEUTRAL_COLORS.has(color));
+  const hasNonNeutral = accessoryColors.some((color) => !NEUTRAL_COLORS.has(color));
+  const sharesBaseColor = accessoryColors.some((color) => uniqueBaseColors.has(color));
+  const isMinimal = /\b(minimal|simple|classic|clean|plain|solid|thin|slim|subtle)\b/.test(text);
+  const isStatement = /\b(statement|bold|chunky|logo|graphic|bright|colorful|oversized|monogram)\b/.test(text);
+  const isSporty = /\b(cap|baseball|snapback|beanie|sport|athletic|gym|backpack)\b/.test(text);
+  const streetwear = isStreetwearIntent(intent) || /\b(streetwear|skate|sneaker)\b/.test(text);
+
+  let score =
+    comboColorScore([...baseItems, accessory]) -
+    comboColorScore(baseItems) +
+    brandContinuityScore([...baseItems, accessory]) -
+    brandContinuityScore(baseItems) +
+    colorPreferenceBonus([accessory], intent) -
+    wearPenalty([accessory]) * 0.5;
+
+  if (accessory.isFavorite) score += 2;
+  if (sharesBaseColor) score += 1.2;
+  if (hasNeutral) score += 0.8;
+
+  if (mood === "safe") {
+    if (isMinimal || hasNeutral) score += 1.6;
+    if (isStatement || (hasNonNeutral && !sharesBaseColor)) score -= 1.6;
+  } else if (mood === "balanced") {
+    if (sharesBaseColor || hasNeutral) score += 1;
+    if (hasNonNeutral && uniqueBaseColors.size <= 3) score += 0.6;
+    if (isStatement) score -= 0.25;
+  } else {
+    if (isStatement || hasNonNeutral) score += 1.3;
+    if (hasNeutral) score += 0.25;
+  }
+
+  if (isFormalIntent(intent)) {
+    if (slot === "wrist" || slot === "neck") score += 1.1;
+    if (slot === "bag" && /\b(handbag)\b/.test(text)) score += 0.7;
+    if (isSporty && !streetwear) score -= 2.4;
+  }
+
+  if (streetwear) {
+    if (slot === "headwear") score += 1.4;
+    if (slot === "neck" || slot === "bag") score += 0.45;
+  }
+
+  if (isColdIntent(intent)) {
+    if (/\bbeanie\b/.test(text)) score += 1.3;
+    if (slot === "eyewear") score -= 0.6;
+  }
+
+  if (isWarmSunnyIntent(intent)) {
+    if (slot === "eyewear") score += 1.2;
+    if (/\bbeanie\b/.test(text)) score -= 1.2;
+  }
+
+  if (/\b(travel|commute|errand|airport)\b/.test(intentText(intent)) && slot === "bag") {
+    score += 1;
+  }
+
+  if (uniqueBaseColors.size >= 4 && hasNonNeutral && !sharesBaseColor) {
+    score -= 1.25;
+  }
+
+  return score;
+}
+
+function sortAccessoriesForOutfit(
+  items: ClothingItem[],
+  baseItems: ClothingItem[],
+  intent: OutfitIntent
+) {
+  return items
+    .map((item, index) => ({
+      item,
+      index,
+      score: accessoryScoreForOutfit(item, baseItems, intent),
+    }))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+}
+
+function dedupeAccessorySelection(
+  items: ClothingItem[],
+  baseItems: ClothingItem[],
+  intent: OutfitIntent
+) {
+  const grouped: Partial<Record<AccessorySlot, ClothingItem[]>> = {};
+  const passthrough: ClothingItem[] = [];
+
+  for (const item of items) {
+    const slot = getAccessorySlot(item);
+    if (!slot) {
+      passthrough.push(item);
+      continue;
+    }
+    grouped[slot] = [...(grouped[slot] ?? []), item];
+  }
+
+  const winners: ClothingItem[] = [];
+  for (const slot of ACCESSORY_SLOT_ORDER) {
+    const group = grouped[slot] ?? [];
+    if (!group.length) continue;
+    const ranked = sortAccessoriesForOutfit(group, baseItems, intent);
+    const winner = ranked[0]?.item;
+    if (!winner) continue;
+    winners.push(winner);
+    for (const discarded of ranked.slice(1)) {
+      debugAccessoryDiscard(slot, discarded.item, winner);
+    }
+  }
+
+  const seen = new Set<string>();
+  return [...winners, ...passthrough].filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
 function suggestionTitle(intent: OutfitIntent, index: number) {
   const vibe = norm(intent.vibe);
   const occasion = norm(intent.occasion);
@@ -165,19 +376,39 @@ function reasonText(items: ClothingItem[], intent: OutfitIntent) {
   return `${base.join(", ")}.`;
 }
 
-function buildAccessoryOptions(items: ClothingItem[], includeAccessory: boolean) {
+function buildAccessoryOptions(
+  items: ClothingItem[],
+  includeAccessory: boolean,
+  baseItems: ClothingItem[],
+  intent: OutfitIntent
+) {
   if (!includeAccessory || items.length === 0) return [[] as ClothingItem[]];
 
-  const top = items.slice(0, 6);
+  const mood = inferAccessoryMood(intent);
+  const top = sortAccessoriesForOutfit(items, baseItems, intent)
+    .slice(0, mood === "safe" || isFormalIntent(intent) ? 5 : 8)
+    .map((entry) => entry.item);
   const out: ClothingItem[][] = [[]];
+  const seen = new Set<string>([""]);
+
+  const addOption = (selection: ClothingItem[]) => {
+    const deduped = dedupeAccessorySelection(selection, baseItems, intent);
+    if (!deduped.length) return;
+    const key = deduped.map((item) => item.id).sort().join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(deduped);
+  };
 
   for (let i = 0; i < top.length; i += 1) {
-    out.push([top[i]]);
+    addOption([top[i]]);
   }
 
+  const maxOptions = mood === "safe" || isFormalIntent(intent) ? 10 : 18;
   for (let i = 0; i < top.length; i += 1) {
     for (let j = i + 1; j < top.length; j += 1) {
-      out.push([top[i], top[j]]);
+      addOption([top[i], top[j]]);
+      if (out.length >= maxOptions) return out;
     }
   }
 
@@ -215,12 +446,15 @@ function generateSparseOutfits({
   accessories: ClothingItem[];
   intent: OutfitIntent;
 }): OutfitSuggestion[] {
+  const accessoryPool = intent.includeAccessory
+    ? sortAccessoriesForOutfit(accessories, [], intent).slice(0, 3).map((entry) => entry.item)
+    : [];
   const pools = [
     tops.slice(0, 6),
     bottoms.slice(0, 6),
     shoes.slice(0, 6),
     intent.includeOuterwear ? outerwear.slice(0, 4) : [],
-    intent.includeAccessory ? accessories.slice(0, 3) : [],
+    accessoryPool,
   ].filter((pool) => pool.length > 0);
 
   if (pools.length === 0) return [];
@@ -294,8 +528,6 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
   }
 
   const outerOptions = intent.includeOuterwear ? [null, ...outerwear.slice(0, 8)] : [null];
-  const accessoryOptions = buildAccessoryOptions(accessories, !!intent.includeAccessory);
-
   const candidates: ScoredOutfit[] = [];
   let created = 0;
 
@@ -303,8 +535,18 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
     for (const bottom of bottoms.slice(0, 16)) {
       for (const shoe of shoes.slice(0, 16)) {
         for (const outer of outerOptions) {
+          const baseItems = [top, bottom, shoe, ...(outer ? [outer] : [])];
+          const accessoryOptions = buildAccessoryOptions(
+            accessories,
+            !!intent.includeAccessory,
+            baseItems,
+            intent
+          );
           for (const acc of accessoryOptions) {
-            const comboItems = [top, bottom, shoe, ...(outer ? [outer] : []), ...acc];
+            const comboItems = [
+              ...baseItems,
+              ...dedupeAccessorySelection(acc, baseItems, intent),
+            ];
 
             const score =
               comboColorScore(comboItems) +

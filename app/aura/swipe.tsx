@@ -198,9 +198,7 @@ export default function AuraSwipeScreen() {
     if (processingSwipe || !activeLookRef.current) return;
     const lookEntry = activeLookRef.current;
     setProcessingSwipe(true);
-    void Haptics.impactAsync(
-      direction === "up" ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light,
-    );
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     const target =
       direction === "left"
@@ -645,7 +643,7 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     fontSize: 18,
     fontWeight: "800",
-    letterSpacing: -0.35,
+    letterSpacing: 0,
     fontFamily: Fonts.sans,
   },
   headerButton: {
@@ -830,7 +828,7 @@ const styles = StyleSheet.create({
   caughtUpMarkText: {
     fontSize: 24,
     fontWeight: "900",
-    letterSpacing: -0.5,
+    letterSpacing: 0,
     fontFamily: Fonts.sans,
   },
   caughtUpButton: {

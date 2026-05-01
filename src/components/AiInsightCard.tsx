@@ -179,6 +179,8 @@ export const AiInsightCard = React.memo(function AiInsightCard({
       </Text>
     );
   }, [
+    colors.text,
+    colors.textSecondary,
     weather.actions.openSettings,
     weather.actions.refresh,
     weather.actions.requestPermission,
@@ -249,6 +251,8 @@ export const AiInsightCard = React.memo(function AiInsightCard({
     calendar.moreCount,
     calendar.permission,
     calendar.state,
+    colors.text,
+    colors.textSecondary,
   ]);
 
   return (

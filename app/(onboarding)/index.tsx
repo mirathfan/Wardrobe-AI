@@ -247,6 +247,32 @@ export default function OnboardingScreen() {
           preferredFit: profile.preferredFit ?? "regular",
         });
       })
+      .catch(() => {
+        if (cancelled) return;
+        const units = unitsForPreference(detected.unitsPreference);
+        const heightDefault = detected.unitsPreference === "imperial" ? 67 : 170;
+        setDraft({
+          ...EMPTY_USER_PROFILE_PREFERENCES,
+          region: detected.region,
+          unitsPreference: detected.unitsPreference,
+          units,
+          firstName:
+            user.displayName?.split(" ")[0] ??
+            user.email?.split("@")[0] ??
+            "",
+          body: {
+            height: heightDefault,
+          },
+          height: {
+            value: heightDefault,
+            unit: detected.unitsPreference === "imperial" ? "ft_in" : "cm",
+          },
+          defaultSizes: {
+            shoes: "EU 42",
+          },
+          preferredFit: "regular",
+        });
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });

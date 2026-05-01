@@ -51,7 +51,21 @@ export default function AgendaCard({
           <Text style={[styles.linkText, { color: colors.text }]}>Calendar unavailable · Retry</Text>
         </Pressable>
       ) : events.length === 0 ? (
-        <Text style={[styles.muted, { color: colors.textSecondary }]}>No events today</Text>
+        <View
+          style={{
+            borderRadius: 16,
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.08)",
+            backgroundColor: "rgba(255,255,255,0.04)",
+            padding: 12,
+            gap: 5,
+          }}
+        >
+          <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900" }}>Open day</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 18 }}>
+            No calendar events here. AURA can bias this day toward comfort, weather, and your planned outfit.
+          </Text>
+        </View>
       ) : (
         <View style={{ gap: 8 }}>
           {events.map((event) => (

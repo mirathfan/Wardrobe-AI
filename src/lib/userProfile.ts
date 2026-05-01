@@ -1,6 +1,7 @@
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
 import { db } from "./firebase";
+import { getCachedProfilePreferences, setCachedProfilePreferences } from "./localCache";
 import { Category } from "../shared/wardrobeTaxonomy";
 import type { UserProfilePreferences } from "../types/UserProfilePreferences";
 
@@ -52,6 +53,15 @@ export const EMPTY_USER_ACCOUNT_PROFILE: UserAccountProfile = {
   name: null,
   photoURL: null,
 };
+
+function isOfflineFirestoreError(error: unknown) {
+  const code = typeof error === "object" && error && "code" in error ? String((error as any).code) : "";
+  const message =
+    typeof error === "object" && error && "message" in error
+      ? String((error as any).message)
+      : String(error ?? "");
+  return code === "unavailable" || /client is offline/i.test(message);
+}
 
 function cleanString(value: unknown) {
   const text = String(value ?? "").trim();
@@ -251,9 +261,20 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
 }
 
 export async function loadUserProfilePreferences(uid: string) {
-  const snap = await getDoc(doc(db, "users", uid));
-  if (!snap.exists()) return EMPTY_USER_PROFILE_PREFERENCES;
-  return normalizeUserProfilePreferences(snap.data()?.profilePreferences);
+  try {
+    const snap = await getDoc(doc(db, "users", uid));
+    const profile = snap.exists()
+      ? normalizeUserProfilePreferences(snap.data()?.profilePreferences)
+      : EMPTY_USER_PROFILE_PREFERENCES;
+    void setCachedProfilePreferences(uid, profile);
+    return profile;
+  } catch (error) {
+    if (isOfflineFirestoreError(error)) {
+      const cached = await getCachedProfilePreferences(uid).catch(() => null);
+      if (cached?.data) return cached.data;
+    }
+    throw error;
+  }
 }
 
 export function normalizeUserAccountProfile(value: unknown): UserAccountProfile {
@@ -265,9 +286,14 @@ export function normalizeUserAccountProfile(value: unknown): UserAccountProfile 
 }
 
 export async function loadUserAccountProfile(uid: string) {
-  const snap = await getDoc(doc(db, "users", uid));
-  if (!snap.exists()) return EMPTY_USER_ACCOUNT_PROFILE;
-  return normalizeUserAccountProfile(snap.data());
+  try {
+    const snap = await getDoc(doc(db, "users", uid));
+    if (!snap.exists()) return EMPTY_USER_ACCOUNT_PROFILE;
+    return normalizeUserAccountProfile(snap.data());
+  } catch (error) {
+    if (isOfflineFirestoreError(error)) return EMPTY_USER_ACCOUNT_PROFILE;
+    throw error;
+  }
 }
 
 export async function saveUserAccountProfile(uid: string, accountProfile: UserAccountProfile) {
@@ -356,6 +382,11 @@ export async function saveUserProfilePreferences(
     },
     { merge: true },
   );
+  void setCachedProfilePreferences(uid, {
+    ...normalized,
+    createdAt: normalized.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  });
 }
 
 export function getDefaultSizeForSelection(
