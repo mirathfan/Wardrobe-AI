@@ -177,6 +177,20 @@ function formatShoeHalf(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function messageForOnboardingSaveError(error: unknown) {
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+  if (code === "permission-denied" || code === "unauthenticated") {
+    return "We couldn't save your setup because your session expired. Please sign in again and retry.";
+  }
+  if (code === "unavailable" || code === "deadline-exceeded") {
+    return "We couldn't save your setup because the network is unavailable. Check your connection and try again.";
+  }
+  return "We couldn't save your setup. Please try again.";
+}
+
 function shoeValueFromDraft(draft: UserProfilePreferences) {
   const raw = String(draft.defaultSizes.shoes ?? "").match(/\d+/)?.[0];
   const next = raw ? Number(raw) : 42;
@@ -189,10 +203,12 @@ export default function OnboardingScreen() {
   const { width } = useWindowDimensions();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [autoAdvancing, setAutoAdvancing] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [draft, setDraft] = useState<UserProfilePreferences>(EMPTY_USER_PROFILE_PREFERENCES);
   const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInFlightRef = useRef(false);
 
   const detected = useMemo(() => getLocaleParts(), []);
   const step = STEPS[stepIndex];
@@ -307,17 +323,21 @@ export default function OnboardingScreen() {
   }
 
   async function onFinish() {
-    if (!user?.uid) return;
+    if (saveInFlightRef.current) return;
+    if (!user?.uid) {
+      const message = "Please sign in again before finishing setup.";
+      setSaveError(message);
+      Alert.alert("Couldn't finish setup", message);
+      return;
+    }
+    saveInFlightRef.current = true;
     try {
       setSaving(true);
+      setSaveError(null);
       const normalizedSizingDraft = normalizeProfileSizePayload({
         ...draft,
         region: draft.region ?? detected.region,
         units,
-        favoriteColors: [],
-        avoidedColors: [],
-        accessoryPreferences: [],
-        goals: ["outfit_suggestions"],
         defaultSizes: {
           ...draft.defaultSizes,
           shoes: draft.defaultSizes.shoes ?? "EU 42",
@@ -328,6 +348,17 @@ export default function OnboardingScreen() {
         normalizedSizingDraft.body.height ??
         normalizedSizingDraft.height.value ??
         (draft.unitsPreference === "imperial" ? 67 : 170);
+      const goals = normalizedSizingDraft.goals.length
+        ? normalizedSizingDraft.goals
+        : ["outfit_suggestions"];
+      const favoriteColors =
+        normalizedSizingDraft.favoriteColors.length > 0
+          ? normalizedSizingDraft.favoriteColors
+          : (normalizedSizingDraft.stylePreferences.favoriteColors ?? []);
+      const avoidedColors =
+        normalizedSizingDraft.avoidedColors.length > 0
+          ? normalizedSizingDraft.avoidedColors
+          : (normalizedSizingDraft.stylePreferences.avoidedColors ?? []);
 
       const profileToSave: UserProfilePreferences = {
         ...normalizedSizingDraft,
@@ -335,10 +366,10 @@ export default function OnboardingScreen() {
         region: normalizedSizingDraft.region ?? detected.region,
         unitsPreference: draft.unitsPreference,
         units,
-        favoriteColors: [],
-        avoidedColors: [],
-        accessoryPreferences: [],
-        goals: ["outfit_suggestions"],
+        favoriteColors,
+        avoidedColors,
+        accessoryPreferences: normalizedSizingDraft.accessoryPreferences,
+        goals,
         defaultSizes: {
           ...normalizedSizingDraft.defaultSizes,
           shoes: normalizedSizingDraft.defaultSizes.shoes ?? "EU 42",
@@ -377,28 +408,22 @@ export default function OnboardingScreen() {
           unit: draft.unitsPreference === "imperial" ? "ft_in" : "cm",
         },
         weight: {
-          value: null,
+          value: normalizedSizingDraft.weight.value,
           unit: draft.unitsPreference === "imperial" ? "lb" : "kg",
         },
         body: {
           ...normalizedSizingDraft.body,
           height: heightValue,
-          weight: null,
+          weight: normalizedSizingDraft.weight.value ?? normalizedSizingDraft.body.weight ?? null,
         },
         advancedFit: {
-          bust: null,
-          waistMeasurement: null,
-          hips: null,
-          inseam: null,
-          shoulderWidth: null,
-          sleeveLength: null,
-          braSize: null,
+          ...normalizedSizingDraft.advancedFit,
         },
         stylePreferences: {
           ...normalizedSizingDraft.stylePreferences,
           preferredStyles: normalizedSizingDraft.styleAesthetics,
-          favoriteColors: [],
-          avoidedColors: [],
+          favoriteColors,
+          avoidedColors,
         },
         fitPreferences: {
           ...normalizedSizingDraft.fitPreferences,
@@ -409,23 +434,27 @@ export default function OnboardingScreen() {
         },
       };
 
-      await Promise.all([
-        saveUserProfilePreferences(user.uid, profileToSave),
-        saveUserAccountProfile(user.uid, {
-          name:
-            (draft.firstName ?? "").trim() ||
-            user.displayName ||
-            user.email?.split("@")[0] ||
-            null,
-        }),
-      ]);
+      await saveUserAccountProfile(user.uid, {
+        name:
+          (draft.firstName ?? "").trim() ||
+          user.displayName ||
+          user.email?.split("@")[0] ||
+          null,
+      });
+      await saveUserProfilePreferences(user.uid, profileToSave);
       router.replace("/(tabs)");
+    } catch (error) {
+      const message = messageForOnboardingSaveError(error);
+      setSaveError(message);
+      Alert.alert("Couldn't finish setup", message);
     } finally {
       setSaving(false);
+      saveInFlightRef.current = false;
     }
   }
 
-  function nextStep() {
+  async function nextStep() {
+    if (saving) return;
     if (!canContinue) {
       if (step.key === "style") {
         Alert.alert("Choose your style", "Pick at least one style aesthetic.");
@@ -438,9 +467,10 @@ export default function OnboardingScreen() {
     }
 
     if (stepIndex === STEPS.length - 1) {
-      void onFinish();
+      await onFinish();
       return;
     }
+    setSaveError(null);
     goToStep(stepIndex + 1);
   }
 
@@ -552,6 +582,9 @@ export default function OnboardingScreen() {
 
           {!isFirstStep ? (
             <View style={[styles.footer, { backgroundColor: colors.background }]}>
+              {saveError ? (
+                <Text style={styles.saveErrorText}>{saveError}</Text>
+              ) : null}
               <Pressable
                 onPress={nextStep}
                 disabled={saving || !canContinue}
@@ -1210,6 +1243,13 @@ const styles = StyleSheet.create({
     gap: 10,
     borderTopWidth: 1,
     borderTopColor: "rgba(255,255,255,0.06)",
+  },
+  saveErrorText: {
+    color: "#FFB4A8",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+    textAlign: "center",
   },
   primaryButton: {
     borderRadius: 18,
