@@ -16,6 +16,7 @@ import {
 } from "@/src/constants/auraControls";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
+import { runHaptic } from "@/src/lib/haptics";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraCandidateAction, AuraCandidateItem, AuraLaundryConfirmationAction, AuraLook, AuraLookOptionMeta, AuraOutfitPhotoAction, AuraResponse } from "@/src/types/aura";
@@ -658,11 +659,16 @@ function FeedbackChip({
     }).start();
   }
 
+  function handlePress() {
+    void runHaptic("selection");
+    onPress();
+  }
+
   return (
     <Animated.View style={{ transform: [{ scale }] }}>
       <Pressable
         hitSlop={8}
-        onPress={onPress}
+        onPress={handlePress}
         onPressIn={() => animateTo(0.96)}
         onPressOut={() => animateTo(1)}
         style={({ pressed }) => ({

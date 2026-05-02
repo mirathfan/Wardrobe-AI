@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
 import { Animated, Easing, Image, Text, View } from "react-native";
 import Reanimated, {
@@ -9,6 +10,7 @@ import Reanimated, {
 
 import { Fonts, type AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { formatUrlForDisplay, isUrlOnlyMessage } from "@/src/lib/formatChatText";
 import { sanitizeDisplayText } from "@/src/lib/text";
@@ -178,6 +180,7 @@ type ChatMessageProps = {
   onAuraCandidateAction?: (action: AuraCandidateAction, message: AIMessage) => void;
   onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
   onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
+  onRetryAuraResponse?: (message: AIMessage) => void;
 };
 
 function ChatMessage({
@@ -193,6 +196,7 @@ function ChatMessage({
   onAuraCandidateAction,
   onAuraOutfitPhotoAction,
   onAuraLaundryAction,
+  onRetryAuraResponse,
 }: ChatMessageProps) {
   const layout = useResponsiveLayout();
   const fade = useRef(new Animated.Value(0)).current;
@@ -391,6 +395,7 @@ function ChatMessage({
       (displayText ?? "").startsWith("Try this today:") ||
       (displayText ?? "").startsWith("Stylist note:");
     const isError = /\b(trouble|couldn'?t|could not|failed|unavailable|unable|try again)\b/i.test(displayText ?? "");
+    const canRetry = isError && !!onRetryAuraResponse;
     return (
       <Animated.View
         style={{
@@ -401,28 +406,57 @@ function ChatMessage({
       >
         <View
           style={{
-            borderRadius: isSuggestion || isError ? 20 : 999,
-            paddingHorizontal: isSuggestion || isError ? 16 : 14,
-            paddingVertical: isSuggestion || isError ? 14 : 8,
+            borderRadius: isSuggestion || isError ? 18 : 999,
+            paddingHorizontal: isSuggestion || isError ? 13 : 14,
+            paddingVertical: isSuggestion || isError ? 12 : 8,
             backgroundColor: isError
-              ? colors.surfaceElevated
+              ? "rgba(255,255,255,0.035)"
               : isSuggestion
                 ? assistantSurface
                 : colors.surfaceSoft,
-            borderWidth: isSuggestion || isError ? 1 : 0,
-            borderColor: isError ? colors.danger : isSuggestion ? assistantBorder : "transparent",
+            borderWidth: isSuggestion || isError ? 0.75 : 0,
+            borderColor: isError ? "rgba(255,255,255,0.075)" : isSuggestion ? assistantBorder : "transparent",
             marginLeft: isSuggestion || isError ? 0 : 10,
-            maxWidth: isSuggestion || isError ? "100%" : "74%",
+            maxWidth: isSuggestion || isError ? "94%" : "74%",
           }}
         >
           {isSuggestion || isError ? (
-            <View style={{ gap: 6 }}>
-              <Text style={{ color: isError ? colors.danger : labelTextColor, fontSize: 11, fontWeight: "800", letterSpacing: 0.8 }}>
-                {isError ? "AURA PAUSED" : "AURA NOTE"}
+            <View style={{ gap: 8 }}>
+              <Text style={{ color: labelTextColor, fontSize: 10.5, fontWeight: "800", letterSpacing: 0 }}>
+                {isError ? "AURA couldn't finish" : "AURA note"}
               </Text>
-              <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: "600" }}>
+              <Text selectable={isError} style={{ color: isError ? colors.textSecondary : colors.text, fontSize: 13.5, lineHeight: 20, fontWeight: "600" }}>
                 {displayText}
               </Text>
+              {canRetry ? (
+                <AuraPressable
+                  onPress={() => onRetryAuraResponse?.(message)}
+                  haptic="selection"
+                  hapticTrigger="press"
+                  pressedScale={0.97}
+                  pressedOpacity={0.88}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry AURA response"
+                  style={{
+                    alignSelf: "flex-start",
+                    minHeight: 30,
+                    borderRadius: 999,
+                    paddingHorizontal: 10,
+                    paddingVertical: 0,
+                    backgroundColor: "rgba(255,255,255,0.045)",
+                    borderWidth: 0.75,
+                    borderColor: "rgba(255,255,255,0.09)",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Ionicons name="refresh-outline" size={13} color={colors.text} />
+                  <Text style={{ color: colors.text, fontSize: 11.5, fontWeight: "800", fontFamily: Fonts.sans }}>
+                    Retry
+                  </Text>
+                </AuraPressable>
+              ) : null}
             </View>
           ) : (
             <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "600" }}>{displayText}</Text>

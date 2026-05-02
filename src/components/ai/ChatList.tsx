@@ -7,7 +7,6 @@ import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLookAction
 
 import ChatMessage from "./ChatMessage";
 import type { AIMessage } from "./chatTypes";
-import { auraTheme } from "./aiTheme";
 
 const FOLLOW_DISTANCE_THRESHOLD = 96;
 const FOCUS_MESSAGE_VIEW_POSITION = 0;
@@ -78,25 +77,30 @@ function TypingBubble({ colors }: { colors: AppColors }) {
     <View style={{ alignItems: "flex-start" }}>
       <View
         style={{
-          borderRadius: 20,
-          paddingHorizontal: 14,
-          paddingVertical: 11,
-          backgroundColor: auraTheme.surface,
-          borderWidth: 1,
-          borderColor: auraTheme.borderSoft,
+          borderRadius: 18,
+          paddingHorizontal: 12,
+          paddingVertical: 9,
+          backgroundColor: "rgba(255,255,255,0.032)",
+          borderWidth: 0.75,
+          borderColor: "rgba(255,255,255,0.07)",
           flexDirection: "row",
+          alignItems: "center",
           gap: 8,
         }}
       >
+        <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700" }}>Thinking</Text>
         {[0, 1, 2].map((index) => (
           <Animated.View
             key={index}
             style={{
-              width: 8,
-              height: 8,
+              width: 5,
+              height: 5,
               borderRadius: 999,
               backgroundColor: colors.textSecondary,
-              opacity: pulse,
+              opacity: pulse.interpolate({
+                inputRange: [0.45, 1],
+                outputRange: [0.35 + index * 0.12, 0.95 - index * 0.1],
+              }),
             }}
           />
         ))}
@@ -123,6 +127,7 @@ export default function ChatList({
   onAuraCandidateAction,
   onAuraOutfitPhotoAction,
   onAuraLaundryAction,
+  onRetryAuraResponse,
 }: {
   colors: AppColors;
   messages: AIMessage[];
@@ -146,6 +151,7 @@ export default function ChatList({
   onAuraCandidateAction?: (action: AuraCandidateAction, message: AIMessage) => void;
   onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
   onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
+  onRetryAuraResponse?: (message: AIMessage) => void;
 }) {
   const listRef = useRef<FlatList<AIMessage>>(null);
   const previousCountRef = useRef(messages.length);
@@ -424,6 +430,7 @@ export default function ChatList({
               onAuraCandidateAction={onAuraCandidateAction}
               onAuraOutfitPhotoAction={onAuraOutfitPhotoAction}
               onAuraLaundryAction={onAuraLaundryAction}
+              onRetryAuraResponse={onRetryAuraResponse}
             />
           </View>
         </ChatErrorBoundary>
@@ -438,6 +445,7 @@ export default function ChatList({
       onAuraLaundryAction,
       onAuraOutfitPhotoAction,
       onMoreLikeThis,
+      onRetryAuraResponse,
       onSaveOutfit,
       onSwapOutfit,
       savingId,

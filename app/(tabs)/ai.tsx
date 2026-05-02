@@ -85,7 +85,7 @@ const CHAT_BOTTOM_BREATHING_ROOM = 18;
 const STREAM_FLUSH_INTERVAL_MS = 24;
 const AURA_REPLY_START_HAPTIC = "light" as const;
 const AURA_REPLY_FINISH_HAPTIC = "selection" as const;
-const AURA_OFFLINE_MESSAGE = "AURA is having trouble connecting right now. Try again in a moment.";
+const AURA_OFFLINE_MESSAGE = "AURA couldn't finish that. Check your connection and try again.";
 const AURA_DRAFT_FAILURE_MESSAGE = "I couldn't create that wardrobe draft. Please try again.";
 const AURA_ATTACHMENT_FAILURE_MESSAGE = "I couldn't upload that attachment. Please try again.";
 const RECENT_CHAT_LIMIT = 24;
@@ -98,9 +98,13 @@ const OUTERWEAR_REQUEST_RE =
 const AURA_EMPTY_STATE_CHIPS = [
   "Style me today",
   "Build from my closet",
-  "Help me pick an outfit",
+  "Polish this outfit",
   "What should I wear tonight?",
 ];
+type AskAuraOptions = {
+  retryUserMessage?: AIMessage;
+  removeMessageId?: string;
+};
 type OptionalAudioRecorder = {
   uri: string | null;
   prepareToRecordAsync: () => Promise<void>;
@@ -166,65 +170,63 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
       style={{
         marginHorizontal: Math.max(12, layout.horizontalPadding - 4),
         marginBottom: 10,
-        borderRadius: 28,
+        borderRadius: 24,
         overflow: "hidden",
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.surfaceGlass,
-        padding: layout.screenSize === "compact" ? 18 : 22,
-        gap: 18,
+        borderWidth: 0.75,
+        borderColor: "rgba(255,255,255,0.075)",
+        backgroundColor: "rgba(12,13,19,0.74)",
+        padding: layout.screenSize === "compact" ? 14 : 16,
+        gap: 13,
       }}
     >
       <LinearGradient
         pointerEvents="none"
-        colors={[colors.purpleSurfaceStrong, colors.warmGlow, colors.surfaceGlass]}
+        colors={["rgba(124,92,255,0.12)", "rgba(255,255,255,0.022)", "transparent"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{ position: "absolute", inset: 0 }}
       />
-      <View style={{ alignItems: "center", gap: 14 }}>
-        <View style={{ width: 104, height: 104, alignItems: "center", justifyContent: "center" }}>
-          <AnimatedAuraRing size={96} stroke={2} rotationDuration={5200} />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <View style={{ width: 42, height: 42, alignItems: "center", justifyContent: "center" }}>
+          <AnimatedAuraRing size={38} stroke={1.5} rotationDuration={5200} />
           <Text
             pointerEvents="none"
             style={{
               position: "absolute",
               color: colors.text,
-              fontSize: 16,
+              fontSize: 9,
               fontWeight: "900",
-              letterSpacing: 1.4,
+              letterSpacing: 0.8,
             }}
           >
             AURA
           </Text>
         </View>
-        <View style={{ gap: 7, alignItems: "center" }}>
+        <View style={{ flex: 1, gap: 4 }}>
           <Text
             style={{
               color: colors.text,
-              fontSize: layout.screenSize === "compact" ? 23 : 25,
-              lineHeight: layout.screenSize === "compact" ? 29 : 31,
+              fontSize: layout.screenSize === "compact" ? 17 : 18,
+              lineHeight: layout.screenSize === "compact" ? 22 : 23,
               fontWeight: "900",
-              textAlign: "center",
+              letterSpacing: 0,
             }}
           >
-            What are we styling today?
+            Ask your stylist
           </Text>
           <Text
             style={{
               color: colors.textSecondary,
-              fontSize: 14,
-              lineHeight: 21,
+              fontSize: 12.5,
+              lineHeight: 18,
               fontWeight: "600",
-              textAlign: "center",
-              maxWidth: 300,
             }}
           >
-            AURA can style outfits from your closet, plan around the day, and keep the result grounded in pieces you actually own.
+            Start with a plan, a photo, or a closet question.
           </Text>
         </View>
       </View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 8 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
         {AURA_EMPTY_STATE_CHIPS.map((chip) => (
           <AuraPressable
             key={chip}
@@ -235,14 +237,14 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
             pressedOpacity={0.88}
             style={{
               borderRadius: 999,
-              paddingHorizontal: 12,
-              paddingVertical: 9,
-              backgroundColor: colors.chipBackground,
-              borderWidth: 1,
-              borderColor: colors.border,
+              paddingHorizontal: 10,
+              paddingVertical: 7,
+              backgroundColor: "rgba(255,255,255,0.035)",
+              borderWidth: 0.75,
+              borderColor: "rgba(255,255,255,0.075)",
             }}
           >
-            <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "800" }}>{chip}</Text>
+            <Text style={{ color: colors.text, fontSize: 11.5, fontWeight: "800" }}>{chip}</Text>
           </AuraPressable>
         ))}
       </View>
@@ -866,10 +868,16 @@ function userFacingAuraError(error: unknown) {
     return AURA_DRAFT_FAILURE_MESSAGE;
   }
   if (lower.includes("parse") || lower.includes("json")) {
-    return "I couldn't parse AURA's response. Please try again.";
+    return "AURA had trouble reading that response. Try once more.";
   }
-  if (lower.includes("network") || lower.includes("request failed") || lower.includes("timed out")) {
-    return "I couldn't reach AURA right now. Please try again in a moment.";
+  if (
+    lower.includes("network") ||
+    lower.includes("request failed") ||
+    lower.includes("timed out") ||
+    lower.includes("offline") ||
+    lower.includes("unavailable")
+  ) {
+    return AURA_OFFLINE_MESSAGE;
   }
   return AURA_OFFLINE_MESSAGE;
 }
@@ -1298,14 +1306,20 @@ export default function AIScreen() {
   }, [layout.height]);
 
   const handleAsk = React.useCallback(
-    async (override?: string) => {
+    async (override?: string, options?: AskAuraOptions) => {
       if (!uid) {
         Alert.alert("AURA", "Please sign in to chat with AURA.");
         return;
       }
 
-      const prompt = String(override ?? message).trim();
-      const outgoingAttachments = override ? [] : pendingAttachments;
+      const retryUserMessage = options?.retryUserMessage;
+      const isRetry = !!retryUserMessage;
+      const prompt = String(retryUserMessage?.text ?? override ?? message).trim();
+      const outgoingAttachments = retryUserMessage
+        ? retryUserMessage.attachments ?? []
+        : override
+          ? []
+          : pendingAttachments;
       if ((!prompt && outgoingAttachments.length === 0) || loading) return;
       stopStreamingRequestedRef.current = false;
 
@@ -1330,7 +1344,9 @@ export default function AIScreen() {
       setLoading(true);
       let uploadedAttachments = outgoingAttachments;
       try {
-        uploadedAttachments = outgoingAttachments.length
+        uploadedAttachments = isRetry
+          ? outgoingAttachments
+          : outgoingAttachments.length
           ? await uploadAuraAttachments(uid, outgoingAttachments)
           : [];
         if (DEBUG_AURA_CLIENT) {
@@ -1366,24 +1382,40 @@ export default function AIScreen() {
         return;
       }
 
-      const userMessage = createUserMessageWithAttachments(prompt, uploadedAttachments);
+      const userMessage = retryUserMessage ?? createUserMessageWithAttachments(prompt, uploadedAttachments);
       logAuraChatState("message_created", {
         messageId: userMessage.id,
         type: userMessage.type,
         kind: userMessage.kind,
         attachmentCount: uploadedAttachments.length,
+        retry: isRetry,
       });
       const chatSeedText = buildChatSeedText(prompt, uploadedAttachments);
-      const nextLocalMessages = orderChatMessages([...latestMessagesRef.current, userMessage]);
-      const structuredBatchPrompt = buildStructuredOutfitBatchPrompt(prompt, latestMessagesRef.current);
+      const baselineMessages = latestMessagesRef.current.filter(
+        (entry) => entry.id !== options?.removeMessageId,
+      );
+      const retryBaselineMessages =
+        isRetry && !baselineMessages.some((entry) => entry.id === userMessage.id)
+          ? [...baselineMessages, userMessage]
+          : baselineMessages;
+      const nextLocalMessages = orderChatMessages(
+        isRetry ? retryBaselineMessages : [...retryBaselineMessages, userMessage],
+      );
+      const requestHistoryMessages = isRetry
+        ? nextLocalMessages.filter(
+            (entry) => !(entry.type === "assistant" && entry.replyToMessageId === userMessage.id),
+          )
+        : nextLocalMessages;
+      const historyMessagesBeforeRequest = isRetry ? retryBaselineMessages : latestMessagesRef.current;
+      const structuredBatchPrompt = buildStructuredOutfitBatchPrompt(prompt, historyMessagesBeforeRequest);
       const shouldForceStructuredBatch = wantsStructuredOutfitBatch(
         prompt,
         uploadedAttachments.length,
-        latestMessagesRef.current,
+        historyMessagesBeforeRequest,
       );
       setMessages(nextLocalMessages);
       setFocusMessageId(userMessage.id);
-      if (!override) {
+      if (!override && !isRetry) {
         setMessage("");
         setPendingAttachments([]);
       }
@@ -1412,7 +1444,9 @@ export default function AIScreen() {
         }
 
         void updateAuraSessionContextFromPrompt(uid, chatId, prompt);
-        await appendMessageToChat(uid, chatId, userMessage, { titleFromUserText: chatSeedText });
+        if (!isRetry) {
+          await appendMessageToChat(uid, chatId, userMessage, { titleFromUserText: chatSeedText });
+        }
 
         const imageIntent = classifyAuraImageIntent(prompt, uploadedAttachments);
         if (DEBUG_AURA_CLIENT) {
@@ -1614,7 +1648,7 @@ export default function AIScreen() {
             message: prompt,
             chatId,
             attachments: uploadedAttachments,
-            history: buildAuraHistory(nextLocalMessages),
+            history: buildAuraHistory(requestHistoryMessages),
             clientIntent: imageIntent,
             clientContext: {
               minimumCloset: minimumClosetSummary,
@@ -1766,6 +1800,7 @@ export default function AIScreen() {
           }
           return;
         }
+        flushStreamingTextNow?.();
         streamFinalized = true;
         cancelStreamingFlush?.();
         if (DEBUG_AURA_CLIENT) {
@@ -1778,8 +1813,33 @@ export default function AIScreen() {
           });
         }
         const fallback = userFacingAuraError(error);
-        setMessages((prev) => orderChatMessages(appendUniqueSystemMessage(prev, fallback, streamingMessageId)));
-        Toast.error("AURA paused", fallback);
+        const partialText = streamedTextSoFar.trim();
+        const partialAssistantMessage: AIMessage | null = partialText
+          ? {
+              id: streamingMessageId,
+              type: "assistant",
+              kind: "aura_text",
+              text: partialText,
+              streaming: false,
+              createdAt: streamingMessageCreatedAt,
+              clientCreatedAt: streamingMessageCreatedAt,
+              localSequence: streamingMessageLocalSequence,
+              replyToMessageId: userMessage.id,
+            }
+          : null;
+        setMessages((prev) => {
+          const withPartial = partialAssistantMessage
+            ? updateMessageById(prev, streamingMessageId, () => partialAssistantMessage)
+            : prev;
+          return orderChatMessages(
+            appendUniqueSystemMessage(
+              withPartial,
+              fallback,
+              partialAssistantMessage ? undefined : streamingMessageId,
+            ),
+          );
+        });
+        Toast.error("AURA couldn't finish", fallback);
       } finally {
         cancelStreamingFlush?.();
         if (activeStreamController && streamAbortControllerRef.current === activeStreamController) {
@@ -1797,6 +1857,32 @@ export default function AIScreen() {
     streamAbortControllerRef.current?.abort();
     void runHaptic("selection");
   }, []);
+
+  const handleRetryAuraResponse = React.useCallback(
+    (sourceMessage: AIMessage) => {
+      if (loading) return;
+      const currentMessages = latestMessagesRef.current;
+      const sourceIndex = currentMessages.findIndex((entry) => entry.id === sourceMessage.id);
+      const startIndex = sourceIndex >= 0 ? sourceIndex - 1 : currentMessages.length - 1;
+      let retryUserMessage: AIMessage | null = null;
+      for (let index = startIndex; index >= 0; index -= 1) {
+        const candidate = currentMessages[index];
+        if (candidate?.type === "user") {
+          retryUserMessage = candidate;
+          break;
+        }
+      }
+      if (!retryUserMessage) {
+        Toast.error("Nothing to retry", "Send a new message and AURA will pick it up.");
+        return;
+      }
+      void handleAsk(undefined, {
+        retryUserMessage,
+        removeMessageId: sourceMessage.id,
+      });
+    },
+    [handleAsk, loading],
+  );
 
   const handleAuraLookAction = React.useCallback(
     async (
@@ -2169,6 +2255,7 @@ export default function AIScreen() {
           onAuraCandidateAction={handleAuraCandidateAction}
           onAuraOutfitPhotoAction={handleAuraOutfitPhotoAction}
           onAuraLaundryAction={handleAuraLaundryAction}
+          onRetryAuraResponse={handleRetryAuraResponse}
           />
           {showKeyboardWatermark ? (
             <Text
