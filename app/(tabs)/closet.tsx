@@ -51,7 +51,12 @@ import {
   toCanonicalCategory,
 } from "@/src/lib/items";
 import { logItemStyleEvent } from "@/src/lib/auraMemory";
-import { getMinimumClosetProgress, getSuggestedAddItemCategory } from "@/src/lib/minimumCloset";
+import {
+  getMinimumClosetProgress,
+  getSuggestedAddItemCategory,
+  MINIMUM_CLOSET_TARGETS,
+  MINIMUM_CLOSET_UNLOCK_ITEM_COUNT,
+} from "@/src/lib/minimumCloset";
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
 import { Toast } from "@/src/lib/toast";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
@@ -162,6 +167,16 @@ const STATUS_OPTIONS: { key: "ALL" | ClothingStatus; label: string }[] = [
 
 const PROCESSING_STALE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEBUG_CLOSET_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
+const FIRST_CLOSET_AURA_PROMPT =
+  "My closet is empty. What should I add first so AURA can build strong outfits? Give me a concise starter plan with tops, bottoms, footwear, one layer, and one accessory.";
+
+const FIRST_CLOSET_TARGETS = [
+  { key: "tops", label: "Tops", target: MINIMUM_CLOSET_TARGETS.tops },
+  { key: "bottoms", label: "Bottoms", target: MINIMUM_CLOSET_TARGETS.bottoms },
+  { key: "footwear", label: "Footwear", target: MINIMUM_CLOSET_TARGETS.footwear },
+  { key: "outerwear", label: "Outerwear", target: MINIMUM_CLOSET_TARGETS.outerwear },
+  { key: "accessories", label: "Accessory", target: MINIMUM_CLOSET_TARGETS.accessories },
+] as const;
 
 function debugClosetLog(...args: Parameters<typeof console.log>) {
   if (DEBUG_CLOSET_CLIENT) {
@@ -353,25 +368,13 @@ const ClosetEmptyState = React.memo(function ClosetEmptyState({
       style={{
         borderRadius: layout.largeRadius,
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.1)",
-        backgroundColor: "rgba(255,255,255,0.045)",
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceElevated,
         padding: layout.cardPadding + 2,
         gap: 16,
         overflow: "hidden",
       }}
     >
-      <View
-        pointerEvents="none"
-        style={{
-          position: "absolute",
-          top: -42,
-          right: -36,
-          width: 128,
-          height: 128,
-          borderRadius: 999,
-          backgroundColor: "rgba(167,139,250,0.12)",
-        }}
-      />
       <View
         style={{
           width: 44,
@@ -379,9 +382,9 @@ const ClosetEmptyState = React.memo(function ClosetEmptyState({
           borderRadius: 999,
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: "rgba(237,233,227,0.1)",
+          backgroundColor: colors.purpleSurface,
           borderWidth: 1,
-          borderColor: "rgba(237,233,227,0.16)",
+          borderColor: colors.purpleBorder,
         }}
       >
         <Ionicons name={filtered ? "search-outline" : "shirt-outline"} size={21} color={colors.ctaCream} />
@@ -396,6 +399,39 @@ const ClosetEmptyState = React.memo(function ClosetEmptyState({
             : "Add a few clean photos so AURA can start building outfits from what you actually own."}
         </Text>
       </View>
+      {!filtered ? (
+        <View style={{ gap: 10 }}>
+          <Text style={{ color: colors.lightPurple, fontSize: 11, fontWeight: "900", letterSpacing: 1 }}>
+            {MINIMUM_CLOSET_UNLOCK_ITEM_COUNT}-PIECE STYLE CORE
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {FIRST_CLOSET_TARGETS.map((target) => (
+              <View
+                key={target.key}
+                style={{
+                  flexGrow: 1,
+                  flexBasis: "30%",
+                  minWidth: 104,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: colors.chipBackground,
+                  paddingHorizontal: 10,
+                  paddingVertical: 9,
+                  gap: 2,
+                }}
+              >
+                <Text style={{ color: colors.text, fontSize: 17, lineHeight: 21, fontWeight: "900" }}>
+                  {target.target}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }} numberOfLines={1}>
+                  {target.label}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
         <AuraPressable
           onPress={filtered ? onClearFilters : onAddItem}
@@ -421,13 +457,15 @@ const ClosetEmptyState = React.memo(function ClosetEmptyState({
           style={{
             borderRadius: 999,
             borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.12)",
-            backgroundColor: "rgba(255,255,255,0.05)",
+            borderColor: colors.border,
+            backgroundColor: colors.surfaceSoft,
             paddingHorizontal: 14,
             paddingVertical: 10,
           }}
         >
-          <Text style={{ color: colors.text, fontSize: 13, fontWeight: "900" }}>Ask AURA</Text>
+          <Text style={{ color: colors.text, fontSize: 13, fontWeight: "900" }}>
+            {filtered ? "Ask AURA" : "Ask AURA what to add first"}
+          </Text>
         </AuraPressable>
       </View>
     </View>
@@ -1390,7 +1428,19 @@ export default function ClosetScreen() {
       <ClosetEmptyState
         filtered={visibleItems.length > 0}
         onAddItem={() => router.push("/(tabs)/add")}
-        onAskAura={() => router.push("/(tabs)/ai")}
+        onAskAura={() => {
+          if (visibleItems.length > 0) {
+            router.push("/(tabs)/ai");
+            return;
+          }
+          router.push({
+            pathname: "/(tabs)/ai",
+            params: {
+              prompt: FIRST_CLOSET_AURA_PROMPT,
+              promptKey: `closet-empty-${Date.now()}`,
+            },
+          });
+        }}
         onClearFilters={clearFilters}
       />
     );

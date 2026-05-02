@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -14,6 +15,7 @@ import {
 import ContinueSection from "@/src/components/home/ContinueSection";
 import ContinueChatCard from "@/src/components/home/ContinueChatCard";
 import MinimumClosetProgressCard from "@/src/components/closet/MinimumClosetProgressCard";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import AuraLookModule from "@/src/components/home/AuraLookModule";
 import HomeHero from "@/src/components/home/HomeHero";
 import InsightCard from "@/src/components/home/InsightCard";
@@ -21,6 +23,7 @@ import QuickActionRail, { type QuickActionItem } from "@/src/components/home/Qui
 import SmartToolsGrid, { type SmartTool } from "@/src/components/home/SmartToolsGrid";
 import { HOME_DEFERRED_FEATURES } from "@/src/components/home/homeDeferredFeatures";
 import { homeTypography } from "@/src/components/home/homeTypography";
+import type { AppColors } from "@/constants/theme";
 import AuraTrainingCard from "@/src/components/aura/AuraTrainingCard";
 import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
 import { useAuth } from "@/src/hooks/useAuth";
@@ -33,7 +36,12 @@ import { loadChatMessages, loadLatestChatThread, type AIChatThread } from "@/src
 import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
 import { loadLatestSavedAuraLook } from "@/src/lib/auraLooks";
 import { listenToItems, normalizeLaundryStatus } from "@/src/lib/items";
-import { getMinimumClosetProgress, getSuggestedAddItemCategory } from "@/src/lib/minimumCloset";
+import {
+  getMinimumClosetProgress,
+  getSuggestedAddItemCategory,
+  MINIMUM_CLOSET_TARGETS,
+  MINIMUM_CLOSET_UNLOCK_ITEM_COUNT,
+} from "@/src/lib/minimumCloset";
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
 import {
@@ -46,6 +54,17 @@ import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook, AuraLookAction, AuraResponse } from "@/src/types/aura";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 import { subscribeOutfitByDate, type DailyOutfitRecord } from "@/src/utils/dailyOutfits";
+
+const FIRST_CLOSET_AURA_PROMPT =
+  "My closet is empty. What should I add first so AURA can build strong outfits? Give me a concise starter plan with tops, bottoms, footwear, one layer, and one accessory.";
+
+const FIRST_CLOSET_TARGETS = [
+  { key: "tops", label: "Tops", target: MINIMUM_CLOSET_TARGETS.tops },
+  { key: "bottoms", label: "Bottoms", target: MINIMUM_CLOSET_TARGETS.bottoms },
+  { key: "footwear", label: "Footwear", target: MINIMUM_CLOSET_TARGETS.footwear },
+  { key: "outerwear", label: "Outerwear", target: MINIMUM_CLOSET_TARGETS.outerwear },
+  { key: "accessories", label: "Accessory", target: MINIMUM_CLOSET_TARGETS.accessories },
+] as const;
 
 function toMillis(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -88,6 +107,131 @@ function RevealSection({
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
       {children}
     </Animated.View>
+  );
+}
+
+function BuildFirstClosetSection({
+  colors,
+  onAddFirstItem,
+  onAskAura,
+}: {
+  colors: AppColors;
+  onAddFirstItem: () => void;
+  onAskAura: () => void;
+}) {
+  const layout = useResponsiveLayout();
+
+  return (
+    <View
+      style={{
+        borderRadius: layout.largeRadius,
+        padding: layout.cardPadding + 2,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.border,
+        gap: 16,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 999,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: colors.purpleSurface,
+            borderWidth: 1,
+            borderColor: colors.purpleBorder,
+          }}
+        >
+          <Ionicons name="shirt-outline" size={21} color={colors.ctaCream} />
+        </View>
+        <View style={{ flex: 1, gap: 6 }}>
+          <Text style={[homeTypography.label, { color: colors.lightPurple }]}>FIRST VALUE</Text>
+          <Text style={[homeTypography.titleSmall, { color: colors.text }]}>
+            Build your first closet
+          </Text>
+          <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, opacity: 0.84 }]}>
+            Add {MINIMUM_CLOSET_UNLOCK_ITEM_COUNT} core pieces and AURA can start giving sharper outfit ideas from what you actually own.
+          </Text>
+        </View>
+      </View>
+
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {FIRST_CLOSET_TARGETS.map((target) => (
+          <View
+            key={target.key}
+            style={{
+              flexGrow: 1,
+              flexBasis: "30%",
+              minWidth: 104,
+              borderRadius: 8,
+              paddingVertical: 9,
+              paddingHorizontal: 10,
+              backgroundColor: colors.chipBackground,
+              borderWidth: 1,
+              borderColor: colors.border,
+              gap: 2,
+            }}
+          >
+            <Text style={[homeTypography.titleSmall, { color: colors.text, fontSize: 17, lineHeight: 21 }]}>
+              {target.target}
+            </Text>
+            <Text style={[homeTypography.caption, { color: colors.textSecondary }]} numberOfLines={1}>
+              {target.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+        <AuraPressable
+          onPress={onAddFirstItem}
+          haptic="selection"
+          hapticTrigger="press"
+          pressedScale={0.97}
+          style={{
+            minHeight: 44,
+            borderRadius: layout.pillRadius,
+            paddingHorizontal: 14,
+            alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "row",
+            gap: 8,
+            backgroundColor: colors.ctaCream,
+          }}
+        >
+          <Ionicons name="add" size={16} color={colors.ctaText} />
+          <Text style={[homeTypography.caption, { color: colors.ctaText, fontWeight: "900" }]}>
+            Add first item
+          </Text>
+        </AuraPressable>
+        <AuraPressable
+          onPress={onAskAura}
+          haptic="selection"
+          hapticTrigger="press"
+          pressedScale={0.97}
+          style={{
+            minHeight: 44,
+            borderRadius: layout.pillRadius,
+            paddingHorizontal: 14,
+            alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "row",
+            gap: 8,
+            backgroundColor: colors.surfaceSoft,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
+          <Ionicons name="sparkles-outline" size={15} color={colors.text} />
+          <Text style={[homeTypography.caption, { color: colors.text, fontWeight: "900" }]}>
+            Ask AURA what to add first
+          </Text>
+        </AuraPressable>
+      </View>
+    </View>
   );
 }
 
@@ -363,6 +507,7 @@ export default function HomeScreen() {
   const hasMinimalWardrobe = availableCount < 4;
   const minimumClosetProgress = useMemo(() => getMinimumClosetProgress(items), [items]);
   const showMinimumClosetCard = !minimumClosetProgress.isUnlocked;
+  const hasNoClosetItems = items.length === 0;
   const openAddMissingItem = React.useCallback(() => {
     const suggestedCategory = getSuggestedAddItemCategory(items);
     router.push({
@@ -825,6 +970,16 @@ export default function HomeScreen() {
             onSecondaryAction={() => openAIWithPrompt("Show me three outfit directions for today: one safe, one balanced, and one bold.")}
           />
         </RevealSection>
+
+        {hasNoClosetItems ? (
+          <RevealSection delay={20}>
+            <BuildFirstClosetSection
+              colors={colors}
+              onAddFirstItem={openAddMissingItem}
+              onAskAura={() => openAIWithPrompt(FIRST_CLOSET_AURA_PROMPT)}
+            />
+          </RevealSection>
+        ) : null}
 
         <RevealSection delay={40}>
           <View style={{ gap: 10 }}>
