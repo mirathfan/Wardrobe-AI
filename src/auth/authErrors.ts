@@ -1,7 +1,8 @@
 export function getAuthErrorMessage(error: unknown): string {
   const code = (error as { code?: string; name?: string })?.code ?? (error as { name?: string })?.name;
+  const normalizedCode = String(code ?? "").replace(/^auth\//, "");
 
-  switch (code) {
+  switch (normalizedCode) {
     case "SIGN_IN_CANCELLED":
       return "Sign in cancelled";
     case "IN_PROGRESS":
@@ -11,15 +12,23 @@ export function getAuthErrorMessage(error: unknown): string {
     case "1001":
     case "ERR_REQUEST_CANCELED":
       return "Sign in cancelled";
-    case "auth/account-exists-with-different-credential":
+    case "account-exists-with-different-credential":
       return "An account already exists with this email. Please sign in with your original method.";
-    case "auth/invalid-credential":
-      return "Sign in failed. Please try again.";
-    case "auth/user-disabled":
+    case "invalid-email":
+      return "Enter a valid email address.";
+    case "invalid-credential":
+    case "wrong-password":
+    case "user-not-found":
+      return "Email or password is incorrect.";
+    case "email-already-in-use":
+      return "That email is already registered.";
+    case "weak-password":
+      return "Use at least 6 characters.";
+    case "user-disabled":
       return "This account has been disabled.";
-    case "auth/network-request-failed":
-      return "Network error. Check your connection.";
-    case "auth/too-many-requests":
+    case "network-request-failed":
+      return "Network issue. Try again.";
+    case "too-many-requests":
       return "Too many attempts. Please wait a moment.";
     default:
       return "Sign in failed. Please try again.";

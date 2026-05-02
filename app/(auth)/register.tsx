@@ -1,7 +1,7 @@
 import { router } from "expo-router";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import React, { useState } from "react";
-import { Alert, View } from "react-native";
+import React, { useRef, useState } from "react";
+import { Alert, TextInput, View } from "react-native";
 
 import {
   AuthInlineLink,
@@ -23,6 +23,9 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmPasswordRef = useRef<TextInput>(null);
 
   async function onRegister() {
     const normalizedName = normalize(name);
@@ -65,28 +68,47 @@ export default function RegisterScreen() {
         </View>
       }
     >
-      <AuthInput value={name} onChangeText={setName} autoComplete="name" placeholder="First name" />
       <AuthInput
+        value={name}
+        onChangeText={setName}
+        autoComplete="name"
+        placeholder="First name"
+        returnKeyType="next"
+        blurOnSubmit={false}
+        onSubmitEditing={() => emailRef.current?.focus()}
+      />
+      <AuthInput
+        ref={emailRef}
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
         keyboardType="email-address"
         autoComplete="email"
         placeholder="Email"
+        returnKeyType="next"
+        blurOnSubmit={false}
+        onSubmitEditing={() => passwordRef.current?.focus()}
       />
       <AuthInput
+        ref={passwordRef}
         value={password}
         onChangeText={setPassword}
         secureTextEntry
         autoComplete="new-password"
         placeholder="Password"
+        returnKeyType="next"
+        blurOnSubmit={false}
+        onSubmitEditing={() => confirmPasswordRef.current?.focus()}
       />
       <AuthInput
+        ref={confirmPasswordRef}
         value={confirmPassword}
         onChangeText={setConfirmPassword}
         secureTextEntry
         autoComplete="new-password"
         placeholder="Confirm password"
+        returnKeyType="done"
+        onSubmitEditing={onRegister}
       />
       <PrimaryAuthButton label={loading ? "Creating..." : "Create Account"} onPress={onRegister} disabled={loading} />
     </AuthScaffold>

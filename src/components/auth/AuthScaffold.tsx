@@ -49,6 +49,17 @@ export function AuthScaffold({
             <View style={{ gap: headerGap }}>
               <Text
                 style={{
+                  color: colors.text,
+                  fontSize: theme.typography.wordmark.fontSize,
+                  fontWeight: theme.typography.wordmark.fontWeight,
+                  letterSpacing: theme.typography.wordmark.letterSpacing,
+                  fontFamily: Fonts.sans,
+                }}
+              >
+                AURA
+              </Text>
+              <Text
+                style={{
                   color: colors.textSecondary,
                   fontSize: theme.typography.eyebrow.fontSize,
                   fontWeight: theme.typography.eyebrow.fontWeight,
@@ -78,29 +89,31 @@ export function AuthScaffold({
   );
 }
 
-export function AuthInput(props: React.ComponentProps<typeof TextInput>) {
+export const AuthInput = React.forwardRef<TextInput, React.ComponentProps<typeof TextInput>>(
+function AuthInput(props, ref) {
   const { colors } = useAppTheme();
   const isWeb = Platform.OS === "web";
   const webInputStyle = isWeb
     ? ({
         outlineStyle: "none",
         boxShadow: "none",
-        WebkitTextFillColor: colors.background,
+        WebkitTextFillColor: colors.text,
         opacity: 1,
       } as const)
     : null;
   return (
     <TextInput
-      placeholderTextColor={isWeb ? "rgba(10,10,15,0.42)" : colors.textMuted}
+      ref={ref}
+      placeholderTextColor={colors.textMuted}
       selectionColor={colors.softPurple}
       {...props}
       style={[
         {
           borderWidth: 1,
-          borderColor: isWeb ? "rgba(237,233,227,0.7)" : colors.border,
+          borderColor: colors.borderStrong,
           borderRadius: 18,
-          backgroundColor: isWeb ? colors.ctaCream : colors.inputBackground,
-          color: isWeb ? colors.background : colors.textPrimary,
+          backgroundColor: colors.inputBackground,
+          color: colors.textPrimary,
           paddingHorizontal: 16,
           paddingVertical: 16,
           fontSize: 17,
@@ -112,7 +125,7 @@ export function AuthInput(props: React.ComponentProps<typeof TextInput>) {
       ]}
     />
   );
-}
+});
 
 export function PrimaryAuthButton({
   label,

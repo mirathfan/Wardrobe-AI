@@ -11,12 +11,14 @@ import {
   NativeSyntheticEvent,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import type { AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { SafeScreen } from "../../../src/components/SafeScreen";
 import { ALLOWED_COLORS } from "../../../src/shared/wardrobeTaxonomy";
@@ -134,23 +136,157 @@ function formatValue(value?: string | null) {
   return normalized ? normalized : "—";
 }
 
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
+    card: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 12,
+      backgroundColor: colors.surfaceGlass,
+    },
+    quickFact: {
+      flexBasis: "48%",
+      gap: 4,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.chipBackground,
+    },
+    btn: {
+      flex: 1,
+      paddingVertical: 14,
+      borderRadius: 14,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    btnText: {
+      fontWeight: "900",
+      fontSize: 16,
+    },
+    pill: {
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+    },
+    pillText: {
+      fontWeight: "900",
+    },
+    textInput: {
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 16,
+      backgroundColor: colors.inputBackground,
+      color: colors.text,
+    },
+    imagePlaceholder: {
+      height: 216,
+      borderRadius: 18,
+      backgroundColor: colors.chipBackground,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    selectedLaundryPill: {
+      backgroundColor: colors.ctaCream,
+      borderWidth: 0,
+    },
+    unselectedLaundryPill: {
+      backgroundColor: colors.chipBackground,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+    },
+    warningBox: {
+      marginTop: 12,
+      borderWidth: 1,
+      borderColor: colors.warning,
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: 12,
+      padding: 12,
+    },
+    footer: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      paddingTop: 12,
+      backgroundColor: colors.dockBackground,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      gap: 10,
+    },
+    secondaryButton: {
+      borderColor: colors.borderStrong,
+      borderWidth: 1,
+      backgroundColor: colors.surfaceSoft,
+    },
+    tertiaryButton: {
+      borderColor: colors.border,
+      borderWidth: 1,
+      backgroundColor: colors.surface,
+    },
+    modalRoot: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    modalTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: "800",
+      textAlign: "center",
+    },
+    modalCloseButton: {
+      position: "absolute",
+      right: 12,
+      zIndex: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 999,
+      backgroundColor: colors.surfaceGlass,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    modalImageStage: {
+      width: "100%",
+      minHeight: 360,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: colors.outfitBoardBackground,
+      borderRadius: 20,
+      overflow: "hidden",
+      paddingHorizontal: 24,
+      paddingVertical: 24,
+    },
+    carouselFrame: {
+      width: "100%",
+      overflow: "hidden",
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 1,
+    },
+    paginationText: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      fontWeight: "700",
+    },
+  });
+}
+
 function QuickFact(props: { label: string; value: string; tone?: "default" | "success" | "danger" }) {
   const { label, value, tone = "default" } = props;
   const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const valueColor =
     tone === "success" ? colors.success : tone === "danger" ? colors.danger : colors.text;
   return (
     <View
-      style={{
-        flexBasis: "48%",
-        gap: 4,
-        paddingVertical: 10,
-        paddingHorizontal: 12,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.08)",
-        backgroundColor: "rgba(255,255,255,0.04)",
-      }}
+      style={styles.quickFact}
     >
       <Text
         style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700", textTransform: "uppercase" }}
@@ -170,14 +306,13 @@ function SectionCard(props: {
   const { title, subtitle = null, children } = props;
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View
       style={[
-        card,
+        styles.card,
         {
-          borderColor: "rgba(255,255,255,0.08)",
           borderRadius: layout.mediumRadius,
-          backgroundColor: "rgba(255,255,255,0.035)",
         },
       ]}
     >
@@ -196,6 +331,7 @@ export default function ItemDetailsScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const uid = user?.uid ?? null;
   const { id, sourceTab } = useLocalSearchParams<{ id: string; sourceTab?: string }>();
   const itemId = useMemo(() => (Array.isArray(id) ? id[0] : id), [id]);
@@ -574,15 +710,15 @@ export default function ItemDetailsScreen() {
         >
           <Pressable
             onPress={navigateBackToSource}
-            style={[pill, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            style={[styles.pill, { backgroundColor: colors.surface, borderColor: colors.border }]}
           >
-            <Text style={[pillText, { color: colors.text }]}>Back</Text>
+            <Text style={[styles.pillText, { color: colors.text }]}>Back</Text>
           </Pressable>
           <Text style={{ fontSize: 20, fontWeight: "900", color: colors.text }}>Item</Text>
           <Pressable
             onPress={onOpenOverflowMenu}
             style={[
-              pill,
+              styles.pill,
               {
                 minWidth: 44,
                 alignItems: "center",
@@ -592,7 +728,7 @@ export default function ItemDetailsScreen() {
               },
             ]}
           >
-            <Text style={[pillText, { fontSize: 20, lineHeight: 20, color: colors.text }]}>⋯</Text>
+            <Text style={[styles.pillText, { fontSize: 20, lineHeight: 20, color: colors.text }]}>⋯</Text>
           </Pressable>
         </View>
 
@@ -614,15 +750,7 @@ export default function ItemDetailsScreen() {
                   imageDecoration={imageDecoration}
                 />
               ) : (
-                <View
-                  style={{
-                    height: 216,
-                    borderRadius: 18,
-                    backgroundColor: "rgba(255,255,255,0.04)",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
+                <View style={styles.imagePlaceholder}>
                   <Text style={{ color: colors.textSecondary, fontWeight: "800" }}>No photo</Text>
                 </View>
               )}
@@ -697,14 +825,14 @@ export default function ItemDetailsScreen() {
                       pressedScale={0.96}
                       pressedOpacity={0.84}
                       disabledOpacity={0.72}
-                      style={{
-                        borderRadius: 999,
-                        paddingHorizontal: 12,
-                        paddingVertical: 9,
-                        backgroundColor: selected ? colors.ctaCream : "rgba(255,255,255,0.045)",
-                        borderWidth: selected ? 0 : 1,
-                        borderColor: "rgba(255,255,255,0.1)",
-                      }}
+                      style={[
+                        {
+                          borderRadius: 999,
+                          paddingHorizontal: 12,
+                          paddingVertical: 9,
+                        },
+                        selected ? styles.selectedLaundryPill : styles.unselectedLaundryPill,
+                      ]}
                     >
                       <Text style={{ color: selected ? colors.ctaText : colors.text, fontWeight: "900" }}>
                         {LAUNDRY_STATUS_LABELS[status]}
@@ -735,16 +863,7 @@ export default function ItemDetailsScreen() {
                 </Text>
               ) : null}
               {item.colorNeedsReview && item.colorSource !== "user" ? (
-                <View
-                  style={{
-                    marginTop: 12,
-                    borderWidth: 1,
-                    borderColor: "rgba(242,198,109,0.45)",
-                    backgroundColor: "rgba(242,198,109,0.12)",
-                    borderRadius: 12,
-                    padding: 12,
-                  }}
-                >
+                <View style={styles.warningBox}>
                   <Text style={{ color: colors.warning, fontWeight: "700", lineHeight: 20 }}>
                     Color check: AI said {item.aiColorLabel || "—"}, pixels suggest{" "}
                     {toTitleCase(item.pixelColors?.[0] || "—")}. Confirm a color below if needed.
@@ -769,9 +888,9 @@ export default function ItemDetailsScreen() {
                       haptic="selection"
                       hapticTrigger="press"
                       pressedScale={0.97}
-                      style={[pill, { borderColor: colors.border, backgroundColor: "rgba(255,255,255,0.04)" }]}
+                      style={[styles.pill, { borderColor: colors.border, backgroundColor: colors.inputBackground }]}
                     >
-                      <Text style={[pillText, { color: colors.text }]}>Auto (AI)</Text>
+                      <Text style={[styles.pillText, { color: colors.text }]}>Auto (AI)</Text>
                     </AuraPressable>
                     <TextInput
                       value={patternDraft}
@@ -779,7 +898,7 @@ export default function ItemDetailsScreen() {
                       onEndEditing={() => void saveField("pattern", patternDraft.trim() || null)}
                       placeholder={item.pattern || "Auto (AI)"}
                       placeholderTextColor={colors.textSecondary}
-                      style={[textInput, { flex: 1, color: colors.text, borderColor: colors.border, backgroundColor: "rgba(255,255,255,0.04)" }]}
+                      style={[styles.textInput, { flex: 1, borderColor: colors.border }]}
                     />
                   </View>
                 </View>
@@ -794,9 +913,9 @@ export default function ItemDetailsScreen() {
                       haptic="selection"
                       hapticTrigger="press"
                       pressedScale={0.97}
-                      style={[pill, { borderColor: colors.border, backgroundColor: "rgba(255,255,255,0.04)" }]}
+                      style={[styles.pill, { borderColor: colors.border, backgroundColor: colors.inputBackground }]}
                     >
-                      <Text style={[pillText, { color: colors.text }]}>Auto (AI)</Text>
+                      <Text style={[styles.pillText, { color: colors.text }]}>Auto (AI)</Text>
                     </AuraPressable>
                     <TextInput
                       value={materialDraft}
@@ -804,7 +923,7 @@ export default function ItemDetailsScreen() {
                       onEndEditing={() => void saveField("material", materialDraft.trim() || null)}
                       placeholder={item.material || "Auto (AI)"}
                       placeholderTextColor={colors.textSecondary}
-                      style={[textInput, { flex: 1, color: colors.text, borderColor: colors.border, backgroundColor: "rgba(255,255,255,0.04)" }]}
+                      style={[styles.textInput, { flex: 1, borderColor: colors.border }]}
                     />
                   </View>
                 </View>
@@ -826,8 +945,8 @@ export default function ItemDetailsScreen() {
                             paddingHorizontal: 11,
                             borderRadius: 999,
                             borderWidth: 1,
-                            borderColor: isSelected ? colors.text : "rgba(255,255,255,0.12)",
-                            backgroundColor: isSelected ? colors.text : "rgba(255,255,255,0.03)",
+                            borderColor: isSelected ? colors.text : colors.borderStrong,
+                            backgroundColor: isSelected ? colors.text : colors.chipBackground,
                             opacity: colorSaving ? 0.65 : 1,
                           }}
                         >
@@ -855,8 +974,8 @@ export default function ItemDetailsScreen() {
                           paddingHorizontal: 10,
                           borderRadius: 999,
                           borderWidth: 1,
-                          borderColor: "rgba(255,255,255,0.18)",
-                          backgroundColor: "rgba(255,255,255,0.03)",
+                          borderColor: colors.borderStrong,
+                          backgroundColor: colors.chipBackground,
                         }}
                       >
                         <Text style={{ color: colors.text, fontWeight: "700" }}>Reset to AI</Text>
@@ -874,19 +993,13 @@ export default function ItemDetailsScreen() {
       </ScrollView>
       {!loading && item ? (
         <View
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: 0,
-            paddingHorizontal: layout.horizontalPadding,
-            paddingTop: 12,
-            paddingBottom: footerOffset,
-            backgroundColor: "rgba(15,15,15,0.92)",
-            borderTopWidth: 1,
-            borderTopColor: "rgba(255,255,255,0.08)",
-            gap: 10,
-          }}
+          style={[
+            styles.footer,
+            {
+              paddingHorizontal: layout.horizontalPadding,
+              paddingBottom: footerOffset,
+            },
+          ]}
           onLayout={(event) => {
             const nextHeight = Math.round(event.nativeEvent.layout.height);
             if (nextHeight !== footerHeight) {
@@ -904,11 +1017,11 @@ export default function ItemDetailsScreen() {
               pressedOpacity={0.86}
               disabledOpacity={0.6}
               style={[
-                btn,
+                styles.btn,
                 { backgroundColor: colors.ctaCream },
               ]}
             >
-              <Text style={[btnText, { color: colors.ctaText }]}>Mark as Washed</Text>
+              <Text style={[styles.btnText, { color: colors.ctaText }]}>Mark as Washed</Text>
             </AuraPressable>
           ) : (
             <>
@@ -921,11 +1034,11 @@ export default function ItemDetailsScreen() {
                 pressedOpacity={0.86}
                 disabledOpacity={0.5}
                 style={[
-                  btn,
+                  styles.btn,
                   { backgroundColor: colors.ctaCream },
                 ]}
               >
-                <Text style={[btnText, { color: colors.ctaText }]}>Mark as Worn</Text>
+                <Text style={[styles.btnText, { color: colors.ctaText }]}>Mark as Worn</Text>
               </AuraPressable>
 
               <View style={{ flexDirection: "row", gap: 10 }}>
@@ -938,15 +1051,11 @@ export default function ItemDetailsScreen() {
                   pressedOpacity={0.86}
                   disabledOpacity={0.6}
                   style={[
-                    btn,
-                    {
-                      borderColor: "rgba(255,255,255,0.22)",
-                      borderWidth: 1,
-                      backgroundColor: "rgba(255,255,255,0.04)",
-                    },
+                    styles.btn,
+                    styles.secondaryButton,
                   ]}
                 >
-                  <Text style={[btnText, { color: colors.text }]}>Send to Laundry</Text>
+                  <Text style={[styles.btnText, { color: colors.text }]}>Send to Laundry</Text>
                 </AuraPressable>
                 <AuraPressable
                   onPress={onConfirmWashed}
@@ -957,15 +1066,11 @@ export default function ItemDetailsScreen() {
                   pressedOpacity={0.86}
                   disabledOpacity={0.6}
                   style={[
-                    btn,
-                    {
-                      borderColor: "rgba(255,255,255,0.16)",
-                      borderWidth: 1,
-                      backgroundColor: "transparent",
-                    },
+                    styles.btn,
+                    styles.tertiaryButton,
                   ]}
                 >
-                  <Text style={[btnText, { color: "rgba(255,255,255,0.88)" }]}>Mark as Washed</Text>
+                  <Text style={[styles.btnText, { color: colors.textSecondary }]}>Mark as Washed</Text>
                 </AuraPressable>
               </View>
             </>
@@ -976,48 +1081,6 @@ export default function ItemDetailsScreen() {
   );
 }
 
-const card = {
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.08)",
-  borderRadius: 16,
-  padding: 12,
-  backgroundColor: "rgba(255,255,255,0.035)",
-} as const;
-
-const btn = {
-  flex: 1,
-  paddingVertical: 14,
-  borderRadius: 14,
-  alignItems: "center",
-  justifyContent: "center",
-} as const;
-
-const btnText = {
-  fontWeight: "900",
-  fontSize: 16,
-} as const;
-
-const pill = {
-  paddingVertical: 8,
-  paddingHorizontal: 12,
-  borderRadius: 999,
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.12)",
-} as const;
-
-const pillText = {
-  fontWeight: "900",
-} as const;
-
-const textInput = {
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.12)",
-  borderRadius: 12,
-  paddingHorizontal: 12,
-  paddingVertical: 10,
-  fontSize: 16,
-} as const;
-
 function ItemImageModal(props: {
   visible: boolean;
   images: DetailImageAsset[];
@@ -1025,6 +1088,8 @@ function ItemImageModal(props: {
   onClose: () => void;
 }) {
   const { visible, images, initialIndex, onClose } = props;
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const [activeIndex, setActiveIndex] = useState(initialIndex);
   const windowWidth = Dimensions.get("window").width;
@@ -1043,32 +1108,17 @@ function ItemImageModal(props: {
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: "#111" }}>
+      <View style={styles.modalRoot}>
         <Text
-          style={{
-            color: "#fff",
-            fontSize: 18,
-            fontWeight: "800",
-            textAlign: "center",
-            paddingTop: insets.top + 16,
-          }}
+          style={[styles.modalTitle, { paddingTop: insets.top + 16 }]}
         >
           Photo
         </Text>
         <Pressable
           onPress={onClose}
-          style={{
-            position: "absolute",
-            top: insets.top + 12,
-            right: 12,
-            zIndex: 10,
-            paddingVertical: 10,
-            paddingHorizontal: 12,
-            borderRadius: 999,
-            backgroundColor: "rgba(0,0,0,0.55)",
-          }}
+          style={[styles.modalCloseButton, { top: insets.top + 12 }]}
         >
-          <Text style={{ color: "#fff", fontWeight: "800" }}>Close</Text>
+          <Text style={{ color: colors.text, fontWeight: "800" }}>Close</Text>
         </Pressable>
         <ScrollView
           style={{ flex: 1 }}
@@ -1101,19 +1151,7 @@ function ItemImageModal(props: {
                     justifyContent: "center",
                   }}
                 >
-                  <View
-                    style={{
-                      width: "100%",
-                      minHeight: 360,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      backgroundColor: "#e5d6bf",
-                      borderRadius: 20,
-                      overflow: "hidden",
-                      paddingHorizontal: 24,
-                      paddingVertical: 24,
-                    }}
-                  >
+                  <View style={styles.modalImageStage}>
                     <AppImage
                       source={{
                         uri: image.uri,
@@ -1135,11 +1173,11 @@ function ItemImageModal(props: {
                     width: index === activeIndex ? 18 : 8,
                     height: 8,
                     borderRadius: 999,
-                    backgroundColor: index === activeIndex ? "#fff" : "rgba(255,255,255,0.3)",
+                    backgroundColor: index === activeIndex ? colors.text : colors.borderStrong,
                   }}
                 />
               ))}
-              <Text style={{ color: "rgba(255,255,255,0.78)", fontWeight: "700", marginLeft: 8 }}>
+              <Text style={{ color: colors.textSecondary, fontWeight: "700", marginLeft: 8 }}>
                 {activeIndex + 1} / {images.length}
               </Text>
             </View>
@@ -1176,6 +1214,8 @@ function DetailImageCarousel(props: {
     imageDecoration,
   } = props;
   const layout = useResponsiveLayout();
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const windowWidth = Dimensions.get("window").width;
   const cardWidth = Math.max(windowWidth - layout.horizontalPadding * 2 - 36, 1);
   const cardHeight = Math.min(540, Math.max(300, cardWidth / Math.max(containerAspectRatio, 0.58)));
@@ -1212,19 +1252,17 @@ function DetailImageCarousel(props: {
             }}
           >
             <View
-              style={{
-                width: "100%",
-                height: cardHeight,
-                borderRadius: 18,
-                backgroundColor: isHeroImage ? "#e5d6bf" : "rgba(255,255,255,0.04)",
-                overflow: "hidden",
-                alignItems: "center",
-                justifyContent: "center",
-                borderWidth: 1,
-                borderColor: isHeroImage ? "rgba(88,66,38,0.08)" : "rgba(255,255,255,0.08)",
-                paddingHorizontal: isHeroImage ? 22 : 0,
-                paddingVertical: isHeroImage ? 24 : 0,
-              }}
+              style={[
+                styles.carouselFrame,
+                {
+                  height: cardHeight,
+                  borderRadius: 18,
+                  backgroundColor: isHeroImage ? colors.outfitBoardBackground : colors.chipBackground,
+                  borderColor: isHeroImage ? colors.border : colors.borderStrong,
+                  paddingHorizontal: isHeroImage ? 22 : 0,
+                  paddingVertical: isHeroImage ? 24 : 0,
+                },
+              ]}
             >
               {isHeroImage ? (
                 <View
@@ -1235,7 +1273,7 @@ function DetailImageCarousel(props: {
                     height: imageDecoration.shadowStyle.height,
                     bottom: imageDecoration.shadowStyle.bottom,
                     borderRadius: 999,
-                    backgroundColor: "#6a5131",
+                    backgroundColor: colors.shadow,
                     opacity: imageDecoration.shadowStyle.opacity,
                   }}
                 />
@@ -1270,12 +1308,12 @@ function DetailImageCarousel(props: {
                   width: index === activeIndex ? 18 : 8,
                   height: 8,
                   borderRadius: 999,
-                  backgroundColor: index === activeIndex ? "#8bcfff" : "rgba(255,255,255,0.18)",
+                  backgroundColor: index === activeIndex ? colors.lightPurple : colors.borderStrong,
                 }}
               />
             ))}
           </View>
-          <Text style={{ color: "#9aa3af", fontSize: 13, fontWeight: "700" }}>
+          <Text style={styles.paginationText}>
             {activeIndex + 1} / {images.length}
           </Text>
         </View>

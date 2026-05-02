@@ -2,10 +2,9 @@ import AntDesign from "@expo/vector-icons/AntDesign";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { router } from "expo-router";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { Colors } from "@/constants/theme";
 import {
   AuthInlineLink,
   AuthInput,
@@ -15,6 +14,7 @@ import {
 import { getAuthErrorMessage } from "@/src/auth/authErrors";
 import { signInWithApple } from "@/src/auth/appleAuth";
 import { signInWithGoogle } from "@/src/auth/googleAuth";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { auth } from "@/src/lib/firebase";
 
 function normalize(value: string) {
@@ -24,12 +24,14 @@ function normalize(value: string) {
 const WEB_AUTH_INPUT_STYLE_ID = "aura-auth-web-inputs";
 
 export default function LoginScreen() {
+  const { colors } = useAppTheme();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [appleAvailable, setAppleAvailable] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const passwordRef = useRef<TextInput>(null);
   const authInProgress = loading || appleLoading || googleLoading;
 
   useEffect(() => {
@@ -58,20 +60,20 @@ export default function LoginScreen() {
       input[data-testid="auth-password"],
       #auth-email,
       #auth-password {
-        color: #FFFFFF !important;
-        -webkit-text-fill-color: #FFFFFF !important;
-        caret-color: #7C5CFF !important;
+        color: ${colors.text} !important;
+        -webkit-text-fill-color: ${colors.text} !important;
+        caret-color: ${colors.softPurple} !important;
         opacity: 1 !important;
         font-weight: 700 !important;
-        background: rgba(25, 27, 38, 0.98) !important;
+        background: ${colors.surfaceElevated} !important;
       }
 
       input[data-testid="auth-email"]::placeholder,
       input[data-testid="auth-password"]::placeholder,
       #auth-email::placeholder,
       #auth-password::placeholder {
-        color: rgba(255, 255, 255, 0.22) !important;
-        -webkit-text-fill-color: rgba(255, 255, 255, 0.22) !important;
+        color: ${colors.textMuted} !important;
+        -webkit-text-fill-color: ${colors.textMuted} !important;
       }
 
       input[data-testid="auth-email"]:-webkit-autofill,
@@ -83,22 +85,22 @@ export default function LoginScreen() {
       input[data-testid="auth-password"]:-webkit-autofill,
       input[data-testid="auth-password"]:-webkit-autofill:hover,
       input[data-testid="auth-password"]:-webkit-autofill:focus {
-        -webkit-text-fill-color: #FFFFFF !important;
-        -webkit-box-shadow: 0 0 0 1000px rgba(25, 27, 38, 0.98) inset !important;
-        box-shadow: 0 0 0 1000px rgba(25, 27, 38, 0.98) inset !important;
+        -webkit-text-fill-color: ${colors.text} !important;
+        -webkit-box-shadow: 0 0 0 1000px ${colors.surfaceElevated} inset !important;
+        box-shadow: 0 0 0 1000px ${colors.surfaceElevated} inset !important;
         transition: background-color 9999s ease-out 0s !important;
       }
 
       #auth-password:-webkit-autofill,
       #auth-password:-webkit-autofill:hover,
       #auth-password:-webkit-autofill:focus {
-        -webkit-text-fill-color: #FFFFFF !important;
-        -webkit-box-shadow: 0 0 0 1000px rgba(25, 27, 38, 0.98) inset !important;
-        box-shadow: 0 0 0 1000px rgba(25, 27, 38, 0.98) inset !important;
+        -webkit-text-fill-color: ${colors.text} !important;
+        -webkit-box-shadow: 0 0 0 1000px ${colors.surfaceElevated} inset !important;
+        box-shadow: 0 0 0 1000px ${colors.surfaceElevated} inset !important;
         transition: background-color 9999s ease-out 0s !important;
       }
     `;
-  }, []);
+  }, [colors.softPurple, colors.surfaceElevated, colors.text, colors.textMuted]);
 
   async function onLogin() {
     const normalizedEmail = normalize(email).toLowerCase();
@@ -155,14 +157,14 @@ export default function LoginScreen() {
         <View pointerEvents={authInProgress ? "none" : "auto"} style={styles.oauthButtonFrame}>
           <AppleAuthentication.AppleAuthenticationButton
             buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE_OUTLINE}
             cornerRadius={18}
             style={styles.appleButton}
             onPress={onAppleSignIn}
           />
           {appleLoading ? (
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator color="#000000" />
+            <View style={[styles.loadingOverlay, { backgroundColor: colors.overlay }]}>
+              <ActivityIndicator color={colors.text} />
             </View>
           ) : null}
         </View>
@@ -173,23 +175,25 @@ export default function LoginScreen() {
         style={({ pressed }) => [
           styles.googleButton,
           {
+            backgroundColor: colors.surfaceSoft,
+            borderColor: colors.borderStrong,
             opacity: authInProgress ? 0.62 : pressed ? 0.82 : 1,
           },
         ]}
       >
         {googleLoading ? (
-          <ActivityIndicator color="#202124" />
+          <ActivityIndicator color={colors.text} />
         ) : (
           <>
             <AntDesign name="google" size={20} color="#4285F4" style={styles.googleIcon} />
-            <Text style={styles.googleButtonText}>Continue with Google</Text>
+            <Text style={[styles.googleButtonText, { color: colors.text }]}>Continue with Google</Text>
           </>
         )}
       </Pressable>
       <View style={styles.dividerRow}>
-        <View style={styles.dividerLine} />
-        <Text style={styles.dividerText}>or</Text>
-        <View style={styles.dividerLine} />
+        <View style={[styles.dividerLine, { backgroundColor: colors.borderStrong }]} />
+        <Text style={[styles.dividerText, { color: colors.textSecondary }]}>or</Text>
+        <View style={[styles.dividerLine, { backgroundColor: colors.borderStrong }]} />
       </View>
       <AuthInput
         nativeID="auth-email"
@@ -202,8 +206,12 @@ export default function LoginScreen() {
         spellCheck={false}
         autoComplete={Platform.OS === "web" ? "off" : "email"}
         placeholder="Email"
+        returnKeyType="next"
+        blurOnSubmit={false}
+        onSubmitEditing={() => passwordRef.current?.focus()}
       />
       <AuthInput
+        ref={passwordRef}
         nativeID="auth-password"
         testID="auth-password"
         value={password}
@@ -213,9 +221,11 @@ export default function LoginScreen() {
         spellCheck={false}
         autoComplete={Platform.OS === "web" ? "off" : "password"}
         placeholder="Password"
+        returnKeyType="done"
+        onSubmitEditing={onLogin}
       />
       <PrimaryAuthButton label={loading ? "Signing in..." : "Sign In"} onPress={onLogin} disabled={authInProgress} />
-      <Text style={{ color: "rgba(255,255,255,0.58)", fontSize: 13, lineHeight: 19 }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19 }}>
         Your styling profile, saved looks, and planner stay synced to this account.
       </Text>
     </AuthScaffold>
@@ -235,13 +245,10 @@ const styles = StyleSheet.create({
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
-    backgroundColor: "rgba(237,233,227,0.72)",
     justifyContent: "center",
   },
   googleButton: {
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderColor: "#E0E0E0",
     borderRadius: 18,
     borderWidth: 1,
     flexDirection: "row",
@@ -255,7 +262,6 @@ const styles = StyleSheet.create({
     position: "absolute",
   },
   googleButtonText: {
-    color: "#202124",
     fontSize: 15,
     fontWeight: "700",
   },
@@ -266,12 +272,10 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   dividerLine: {
-    backgroundColor: Colors.dark.borderStrong,
     flex: 1,
     height: 1,
   },
   dividerText: {
-    color: Colors.dark.textSecondary,
     fontSize: 13,
     fontWeight: "700",
   },
