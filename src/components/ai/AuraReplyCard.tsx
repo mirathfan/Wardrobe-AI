@@ -25,6 +25,10 @@ import { auraShadow, auraTheme } from "./aiTheme";
 const DEBUG_AURA_CLIENT =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<AuraLook>);
+const FEEDBACK_BUTTON_HEIGHT = 30;
+const FEEDBACK_BUTTON_PADDING = 9;
+const SMART_BUY_CHIP_HEIGHT = 28;
+const CARD_SECTION_RADIUS = 18;
 
 function getAuraLookStableKey(look: AuraLook) {
   const pieceKey = (look.pieces ?? [])
@@ -170,14 +174,14 @@ function AuraReplyCard({
             style={({ pressed }) => ({
               alignSelf: "flex-start",
               borderRadius: 999,
-              paddingHorizontal: 11,
-              paddingVertical: 6,
+              paddingHorizontal: 10,
+              paddingVertical: 5,
               backgroundColor: pressed ? auraTheme.accentTintStrong : auraTheme.accentTint,
-              borderWidth: 1,
+              borderWidth: CHIP_BORDER_WIDTH,
               borderColor: auraTheme.borderAccent,
             })}
           >
-            <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "800", fontFamily: Fonts.sans }}>
+            <Text style={{ color: colors.text, fontSize: 11.5, fontWeight: "800", fontFamily: Fonts.sans }}>
               Add All
             </Text>
           </Pressable>
@@ -381,25 +385,25 @@ function AuraReplyCard({
   }
 
   return (
-      <View
-        style={{
-          borderRadius: layout.mediumRadius + 4,
-          borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.105)",
-          backgroundColor: "rgba(255,255,255,0.045)",
-          paddingHorizontal: layout.cardPadding - 4,
-          paddingVertical: layout.screenSize === "compact" ? 12 : 14,
-          gap: 12,
-          width: "100%",
-          ...auraShadow(0.1),
-        }}
-      >
+    <View
+      style={{
+        borderRadius: Math.max(20, layout.mediumRadius + 2),
+        borderWidth: CHIP_BORDER_WIDTH,
+        borderColor: "rgba(255,255,255,0.075)",
+        backgroundColor: "rgba(12,13,19,0.86)",
+        paddingHorizontal: Math.max(13, layout.cardPadding - 5),
+        paddingVertical: layout.screenSize === "compact" ? 13 : 15,
+        gap: 14,
+        width: "100%",
+        ...auraShadow(0.07),
+      }}
+    >
       <View style={{ gap: 5 }}>
         <Text
           style={{
             color: colors.text,
-            fontSize: 16.5,
-            lineHeight: 21,
+            fontSize: 15.5,
+            lineHeight: 20,
             fontWeight: "800",
             letterSpacing: 0,
             fontFamily: Fonts.sans,
@@ -408,6 +412,10 @@ function AuraReplyCard({
           {sanitizeDisplayText(data.title) || "AURA"}
         </Text>
       </View>
+
+      {!!data.reason ? (
+        <MetaRow label="Why it works" value={data.reason} colors={colors} />
+      ) : null}
 
       {!!ownedPieces.length && !data.look ? (
         <Group title="From your closet" tone="owned">
@@ -431,10 +439,6 @@ function AuraReplyCard({
             <Tag key={`fallback-${item}`} label={sanitizeDisplayText(item)} colors={colors} tone="default" />
           ))}
         </View>
-      ) : null}
-
-      {!!data.reason ? (
-        <MetaRow label="Why it works" value={data.reason} colors={colors} />
       ) : null}
 
       {!!data.swapSuggestion && !data.look ? (
@@ -487,18 +491,19 @@ function LevelThisUpSection({
   return (
     <View
       style={{
-        gap: 9,
-        marginTop: 2,
-        paddingTop: 12,
-        borderTopWidth: 1,
-        borderTopColor: "rgba(255,255,255,0.08)",
+        gap: 10,
+        padding: 11,
+        borderRadius: CARD_SECTION_RADIUS,
+        backgroundColor: "rgba(255,255,255,0.028)",
+        borderWidth: CHIP_BORDER_WIDTH,
+        borderColor: "rgba(255,255,255,0.055)",
       }}
     >
       <View style={{ gap: 2 }}>
         <Text
           style={{
             color: colors.text,
-            fontSize: 13,
+            fontSize: 13.25,
             lineHeight: 17,
             fontWeight: "800",
             letterSpacing: 0,
@@ -510,7 +515,7 @@ function LevelThisUpSection({
         <Text
           style={{
             color: auraTheme.textFaint,
-            fontSize: 11.5,
+            fontSize: 11.25,
             lineHeight: 15,
             fontWeight: "600",
             fontFamily: Fonts.sans,
@@ -525,12 +530,12 @@ function LevelThisUpSection({
             key={`level-up-${item.label}`}
             style={{
               borderRadius: 999,
-              minHeight: 34,
-              paddingHorizontal: 12,
+              minHeight: SMART_BUY_CHIP_HEIGHT,
+              paddingHorizontal: 9,
               paddingVertical: 0,
-              backgroundColor: "rgba(255,255,255,0.045)",
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.1)",
+              backgroundColor: "rgba(255,255,255,0.035)",
+              borderWidth: CHIP_BORDER_WIDTH,
+              borderColor: "rgba(255,255,255,0.075)",
               justifyContent: "center",
               maxWidth: "100%",
             }}
@@ -538,8 +543,8 @@ function LevelThisUpSection({
             <Text
               style={{
                 color: "rgba(245,248,251,0.9)",
-                fontSize: 12,
-                lineHeight: 15,
+                fontSize: 11.25,
+                lineHeight: 14,
                 fontWeight: "700",
                 fontFamily: Fonts.sans,
               }}
@@ -595,12 +600,13 @@ function FeedbackRail({
       style={{
         flexDirection: "row",
         alignItems: "center",
-        justifyContent: "space-between",
-        gap: 8,
+        justifyContent: "flex-end",
+        alignSelf: "flex-end",
+        gap: 6,
         paddingTop: 2,
         paddingHorizontal: 0,
         paddingBottom: 0,
-        borderRadius: PILL_RADIUS,
+        marginTop: 1,
         backgroundColor: "transparent",
       }}
     >
@@ -653,41 +659,40 @@ function FeedbackChip({
   }
 
   return (
-    <Animated.View style={{ flex: 1, transform: [{ scale }] }}>
+    <Animated.View style={{ transform: [{ scale }] }}>
       <Pressable
+        hitSlop={8}
         onPress={onPress}
         onPressIn={() => animateTo(0.96)}
         onPressOut={() => animateTo(1)}
         style={({ pressed }) => ({
-          flex: 1,
-          height: 34,
-          minHeight: 34,
+          minHeight: FEEDBACK_BUTTON_HEIGHT,
           borderRadius: PILL_RADIUS,
-          paddingHorizontal: 10,
+          paddingHorizontal: FEEDBACK_BUTTON_PADDING,
           paddingVertical: 0,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: 6,
+          gap: 5,
           backgroundColor: active
             ? label === "Not it"
-              ? "rgba(255,77,79,0.1)"
-              : "rgba(124,92,255,0.12)"
-            : "rgba(255,255,255,0.035)",
+              ? "rgba(255,77,79,0.075)"
+              : "rgba(124,92,255,0.095)"
+            : "rgba(255,255,255,0.025)",
           borderWidth: CHIP_BORDER_WIDTH,
-          borderColor: active ? (label === "Not it" ? "rgba(255,77,79,0.22)" : "rgba(167,139,250,0.22)") : "rgba(255,255,255,0.075)",
+          borderColor: active ? (label === "Not it" ? "rgba(255,77,79,0.18)" : "rgba(167,139,250,0.18)") : "rgba(255,255,255,0.055)",
           opacity: pressed ? 0.88 : 1,
         })}
       >
         <Ionicons
           name={icon}
-          size={14}
+          size={13}
           color={active ? (label === "Not it" ? colors.danger : colors.text) : auraTheme.textMuted}
         />
         <Text
           style={{
             color: active ? (label === "Not it" ? colors.danger : colors.text) : auraTheme.textMuted,
-            fontSize: 11,
+            fontSize: 10.5,
             fontWeight: "700",
             fontFamily: Fonts.sans,
           }}
@@ -720,7 +725,7 @@ function LookActionRow({
         backgroundColor={colors.ctaCream}
         borderColor={colors.ctaCream}
       >
-        <Text style={{ color: colors.ctaText, fontSize: 14, fontWeight: "800", fontFamily: Fonts.sans }}>
+        <Text style={{ color: colors.ctaText, fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
           Save look
         </Text>
       </ActionButton>
@@ -730,7 +735,7 @@ function LookActionRow({
         backgroundColor={colors.surfaceSoft}
         borderColor={colors.border}
       >
-        <Text style={{ color: colors.text, fontSize: 14, fontWeight: "800", fontFamily: Fonts.sans }}>
+        <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
           Plan today
         </Text>
       </ActionButton>
@@ -755,14 +760,14 @@ function OutfitAnalysisCard({
   return (
     <View
       style={{
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: auraTheme.borderSoft,
-        backgroundColor: auraTheme.surface,
+        borderRadius: 20,
+        borderWidth: CHIP_BORDER_WIDTH,
+        borderColor: "rgba(255,255,255,0.075)",
+        backgroundColor: "rgba(12,13,19,0.86)",
         padding: 14,
         gap: 12,
         width: "100%",
-        ...auraShadow(0.08),
+        ...auraShadow(0.07),
       }}
     >
       <View style={{ gap: 4 }}>
@@ -781,12 +786,12 @@ function OutfitAnalysisCard({
           <View
             key={`${piece.role}-${piece.label}-${index}`}
             style={{
-              borderRadius: 13,
-              paddingHorizontal: 10,
-              paddingVertical: 8,
-              backgroundColor: "rgba(255,255,255,0.045)",
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.09)",
+              borderRadius: 14,
+              paddingHorizontal: 9,
+              paddingVertical: 7,
+              backgroundColor: "rgba(255,255,255,0.032)",
+              borderWidth: CHIP_BORDER_WIDTH,
+              borderColor: "rgba(255,255,255,0.07)",
               maxWidth: "100%",
             }}
           >
@@ -807,7 +812,7 @@ function OutfitAnalysisCard({
       </View>
 
       {missing.length ? (
-        <MetaRow label="NOT VISIBLE" value={missing.map(sanitizeDisplayText).join(", ")} colors={colors} />
+        <MetaRow label="Not visible" value={missing.map(sanitizeDisplayText).join(", ")} colors={colors} />
       ) : null}
 
       {(analysis.stylingNotes ?? []).length ? (
@@ -898,7 +903,7 @@ function ActionButton({
           paddingHorizontal: CTA_HORIZONTAL_PADDING,
           alignItems: "center",
           justifyContent: "center",
-          borderWidth: 1,
+          borderWidth: CHIP_BORDER_WIDTH,
           borderColor,
           backgroundColor: pressed ? pressedBackground : backgroundColor,
           opacity: pressed ? 0.96 : 1,
@@ -920,20 +925,24 @@ function Group({
   children: React.ReactNode;
 }) {
   const titleColor = tone === "owned" ? "rgba(214,198,255,0.92)" : "rgba(255,255,255,0.68)";
+  const sectionBackground = tone === "owned" ? "rgba(124,92,255,0.07)" : "rgba(255,255,255,0.028)";
+  const sectionBorder = tone === "owned" ? "rgba(167,139,250,0.13)" : "rgba(255,255,255,0.055)";
 
   return (
     <View
       style={{
         gap: 8,
-        paddingTop: tone === "suggested" ? 10 : 0,
-        borderTopWidth: tone === "suggested" ? 1 : 0,
-        borderTopColor: "rgba(255,255,255,0.07)",
+        padding: 10,
+        borderRadius: CARD_SECTION_RADIUS,
+        backgroundColor: sectionBackground,
+        borderWidth: CHIP_BORDER_WIDTH,
+        borderColor: sectionBorder,
       }}
     >
       <Text
         style={{
           color: titleColor,
-          fontSize: 12,
+          fontSize: 12.5,
           lineHeight: 15,
           fontWeight: "800",
           letterSpacing: 0,
@@ -959,15 +968,15 @@ function MetaRow({
   emphasis?: boolean;
 }) {
   return (
-    <View style={{ gap: 5, paddingTop: 2 }}>
-      <Text style={{ color: auraTheme.textMuted, fontSize: 12, lineHeight: 15, fontWeight: "800", letterSpacing: 0, fontFamily: Fonts.sans }}>
+    <View style={{ gap: 5 }}>
+      <Text style={{ color: auraTheme.textMuted, fontSize: 11.5, lineHeight: 15, fontWeight: "800", letterSpacing: 0, fontFamily: Fonts.sans }}>
         {label}
       </Text>
       <Text
         style={{
           color: emphasis ? colors.text : colors.textSecondary,
-          fontSize: 13,
-          lineHeight: 19,
+          fontSize: 13.25,
+          lineHeight: 20,
           fontWeight: emphasis ? "700" : "500",
           fontFamily: Fonts.sans,
         }}
@@ -1008,10 +1017,10 @@ function CandidateCard({
   return (
     <View
       style={{
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: auraTheme.borderSoft,
-        backgroundColor: auraTheme.surface,
+        borderRadius: 20,
+        borderWidth: CHIP_BORDER_WIDTH,
+        borderColor: "rgba(255,255,255,0.075)",
+        backgroundColor: "rgba(12,13,19,0.86)",
         padding: 12,
         gap: 10,
         width: "100%",
@@ -1164,6 +1173,7 @@ function CandidateButton({
     <Animated.View style={{ transform: [{ scale }] }}>
       <Pressable
         disabled={disabled}
+        hitSlop={6}
         onPress={onPress}
         onPressIn={() => animateTo(0.97)}
         onPressOut={() => animateTo(1)}
@@ -1180,7 +1190,7 @@ function CandidateButton({
           opacity: disabled ? 0.42 : pressed ? 0.94 : 1,
         })}
       >
-        <Text style={{ color: "white", fontSize: 11.5, fontWeight: "800", fontFamily: Fonts.sans }}>{label}</Text>
+        <Text style={{ color: "white", fontSize: 11.25, fontWeight: "800", fontFamily: Fonts.sans }}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -1197,25 +1207,25 @@ function Tag({
 }) {
   const backgroundColor =
     tone === "owned"
-      ? "rgba(124,92,255,0.13)"
+      ? "rgba(124,92,255,0.095)"
       : tone === "suggested"
-        ? "rgba(255,255,255,0.04)"
+        ? "rgba(255,255,255,0.028)"
         : auraTheme.surfaceSofter;
   const borderColor =
     tone === "owned"
-      ? "rgba(167,139,250,0.2)"
-      : "rgba(255,255,255,0.095)";
+      ? "rgba(167,139,250,0.16)"
+      : "rgba(255,255,255,0.07)";
   const textColor = tone === "owned" ? "rgba(232,225,255,0.95)" : "rgba(245,248,251,0.9)";
 
   return (
     <View
       style={{
-        minHeight: 32,
-        paddingHorizontal: 11,
+        minHeight: SMART_BUY_CHIP_HEIGHT,
+        paddingHorizontal: 9,
         paddingVertical: 0,
         borderRadius: 999,
         backgroundColor,
-        borderWidth: 1,
+        borderWidth: CHIP_BORDER_WIDTH,
         borderColor,
         justifyContent: "center",
         maxWidth: "100%",
@@ -1224,8 +1234,8 @@ function Tag({
       <Text
         style={{
           color: textColor,
-          fontSize: 11.5,
-          lineHeight: 15,
+          fontSize: 11,
+          lineHeight: 14,
           fontWeight: "700",
           fontFamily: Fonts.sans,
         }}

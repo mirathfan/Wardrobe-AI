@@ -445,7 +445,7 @@ export const AuraLookCard = memo(function AuraLookCard({
             >
               <View style={[styles.directionDot, isHome ? styles.directionDotHome : null, { backgroundColor: colors.softPurple }]} />
               <Text style={[styles.directionChipText, { color: colors.lightPurple }]}>
-                {directionLabel.toUpperCase()}
+                {directionLabel}
               </Text>
             </View>
           )}
@@ -499,7 +499,7 @@ export const AuraLookCard = memo(function AuraLookCard({
 
       {!!visibleClosetItems.length && (
         <View style={[styles.metaBlock, isHome ? styles.metaBlockHome : null]}>
-          <Text style={[styles.metaLabel, { color: colors.softPurple }]}>FROM YOUR CLOSET</Text>
+          <Text style={[styles.metaLabel, { color: colors.softPurple }]}>From your closet</Text>
           <View style={styles.closetChips}>
             {visibleClosetItems.map((item) => (
               <View
@@ -507,7 +507,7 @@ export const AuraLookCard = memo(function AuraLookCard({
                 style={[
                   styles.closetChip,
                   isHome ? styles.closetChipHome : null,
-                  { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+                  { backgroundColor: "rgba(124,92,255,0.095)", borderColor: "rgba(167,139,250,0.16)" },
                 ]}
               >
                 <Text numberOfLines={1} style={[styles.closetChipText, { color: colors.textPrimary }]}>
@@ -533,7 +533,7 @@ export const AuraLookCard = memo(function AuraLookCard({
 
       {!!overflowLabels.length && (
         <View style={[styles.metaBlock, isHome ? styles.metaBlockHome : null]}>
-          <Text style={[styles.metaLabel, { color: colors.softPurple }]}>ALSO INCLUDED</Text>
+          <Text style={[styles.metaLabel, { color: colors.softPurple }]}>Also included</Text>
           <View style={styles.closetChips}>
             {overflowLabels.map((item) => (
               <View
@@ -541,7 +541,7 @@ export const AuraLookCard = memo(function AuraLookCard({
                 style={[
                   styles.closetChip,
                   isHome ? styles.closetChipHome : null,
-                  { backgroundColor: colors.surfaceSoft, borderColor: colors.border },
+                  { backgroundColor: "rgba(255,255,255,0.028)", borderColor: "rgba(255,255,255,0.07)" },
                 ]}
               >
                 <Text numberOfLines={1} style={[styles.closetChipText, { color: colors.textPrimary }]}>
@@ -734,21 +734,21 @@ export const AuraLookCard = memo(function AuraLookCard({
 
 const styles = StyleSheet.create({
   card: {
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingTop: 14,
+    gap: 9,
+    paddingHorizontal: 13,
+    paddingTop: 13,
     paddingBottom: 12,
-    borderRadius: 28,
+    borderRadius: 24,
     backgroundColor: "#11131A",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderWidth: CHIP_BORDER_WIDTH,
+    borderColor: "rgba(255,255,255,0.075)",
   },
   cardCompact: {
-    gap: 8,
+    gap: 7,
     paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 10,
-    borderRadius: 24,
+    borderRadius: 22,
   },
   cardHome: {
     gap: 8,
@@ -758,11 +758,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
   },
   cardSwipe: {
-    gap: 8,
+    gap: 7,
     paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 10,
-    borderRadius: 26,
+    borderRadius: 22,
   },
   cardStudio: {
     gap: 14,
@@ -786,19 +786,19 @@ const styles = StyleSheet.create({
   labelRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 6,
   },
   headerChip: {
-    minHeight: 34,
+    minHeight: 30,
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 6,
     backgroundColor: "rgba(255,255,255,0.05)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderWidth: CHIP_BORDER_WIDTH,
+    borderColor: "rgba(255,255,255,0.07)",
   },
   headerChipHome: {
     minHeight: 28,
@@ -822,14 +822,14 @@ const styles = StyleSheet.create({
   },
   directionChipText: {
     color: "#A78BFA",
-    fontSize: 11.5,
+    fontSize: 11,
     lineHeight: 14,
     fontWeight: "800",
-    letterSpacing: 0.85,
+    letterSpacing: 0,
   },
   vibeChipText: {
     color: "#E8EDF3",
-    fontSize: 12,
+    fontSize: 11.5,
     lineHeight: 15,
     fontWeight: "600",
   },
@@ -925,14 +925,14 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#FAFBFC",
-    fontSize: 24,
-    lineHeight: 28,
+    fontSize: 22,
+    lineHeight: 26,
     fontWeight: "800",
     letterSpacing: 0,
   },
   titleCompact: {
-    fontSize: 20,
-    lineHeight: 24,
+    fontSize: 19,
+    lineHeight: 23,
     letterSpacing: 0,
   },
   titleHome: {
@@ -966,34 +966,37 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   metaBlock: {
-    gap: 7,
+    gap: 6,
   },
   metaBlockHome: {
     gap: 5,
   },
   metaLabel: {
     color: "#7C5CFF",
-    fontSize: 10.5,
+    fontSize: 11.25,
     fontWeight: "800",
-    letterSpacing: 1.5,
+    letterSpacing: 0,
   },
   closetChips: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 6,
   },
   closetChip: {
     maxWidth: "100%",
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    minHeight: 28,
+    paddingHorizontal: 9,
+    paddingVertical: 0,
     backgroundColor: "rgba(245, 247, 251, 0.08)",
-    borderWidth: 1,
+    borderWidth: CHIP_BORDER_WIDTH,
     borderColor: "rgba(255,255,255,0.08)",
+    justifyContent: "center",
   },
   closetChipHome: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    minHeight: 26,
+    paddingHorizontal: 8,
+    paddingVertical: 0,
   },
   moreChip: {
     backgroundColor: "rgba(124,92,255,0.12)",
@@ -1001,8 +1004,8 @@ const styles = StyleSheet.create({
   },
   closetChipText: {
     color: "#E7EDF4",
-    fontSize: 12.5,
-    lineHeight: 16,
+    fontSize: 11.25,
+    lineHeight: 14,
     fontWeight: "600",
   },
   actions: {
@@ -1021,7 +1024,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: CTA_HORIZONTAL_PADDING,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
+    borderWidth: CHIP_BORDER_WIDTH,
   },
   actionButtonHome: {
     minHeight: CTA_HEIGHT,
@@ -1037,12 +1040,12 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: "#F5F8FB",
-    fontSize: 15,
+    fontSize: 13.5,
     fontWeight: "800",
   },
   secondaryButtonText: {
     color: "#E7EDF5",
-    fontSize: 15,
+    fontSize: 13.5,
     fontWeight: "800",
   },
   tertiaryActions: {
@@ -1072,8 +1075,8 @@ const styles = StyleSheet.create({
   },
   tertiaryActionText: {
     color: "rgba(235,240,248,0.86)",
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 11.25,
+    lineHeight: 15,
     fontWeight: "700",
   },
 });

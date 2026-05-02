@@ -55,38 +55,38 @@ function OutfitMessage({
 
   return (
     <LinearGradient
-      colors={[colors.surfaceElevated, colors.surface]}
+      colors={["rgba(17,19,26,0.96)", "rgba(11,12,18,0.98)"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{
-        borderRadius: 28,
-        padding: 18,
-        borderWidth: 1,
-        borderColor: colors.border,
-        gap: 16,
-        ...auraShadow(0.2),
+        borderRadius: 24,
+        padding: 15,
+        borderWidth: CHIP_BORDER_WIDTH,
+        borderColor: "rgba(255,255,255,0.075)",
+        gap: 14,
+        ...auraShadow(0.1),
       }}
     >
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <View style={{ gap: 4 }}>
-          <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: "700", letterSpacing: 0.8 }}>
-            LOOK {index + 1}
+          <Text style={{ color: colors.textMuted, fontSize: 11.5, fontWeight: "700", letterSpacing: 0 }}>
+            Stylist edit {index + 1}
           </Text>
-          <Text style={{ color: colors.text, fontSize: 22, fontWeight: "800" }} numberOfLines={1}>
+          <Text style={{ color: colors.text, fontSize: 19, lineHeight: 23, fontWeight: "800" }} numberOfLines={1}>
             Styled for right now
           </Text>
         </View>
         <View
           style={{
-            paddingHorizontal: 12,
-            paddingVertical: 7,
+            paddingHorizontal: 9,
+            paddingVertical: 5,
             borderRadius: 999,
             backgroundColor: colors.purpleSurface,
-            borderWidth: 1,
+            borderWidth: CHIP_BORDER_WIDTH,
             borderColor: colors.purpleBorder,
           }}
         >
-          <Text style={{ color: colors.text, fontSize: 12, fontWeight: "800" }}>
+          <Text style={{ color: colors.text, fontSize: 11, fontWeight: "800" }}>
             {Math.round(outfit.score * 100)}% match
           </Text>
         </View>
@@ -96,11 +96,11 @@ function OutfitMessage({
         <View
           style={{
             paddingHorizontal: 12,
-            paddingVertical: 10,
-            borderRadius: 16,
-            backgroundColor: colors.surfaceSoft,
-            borderWidth: 1,
-            borderColor: colors.border,
+            paddingVertical: 9,
+            borderRadius: 15,
+            backgroundColor: "rgba(255,255,255,0.032)",
+            borderWidth: CHIP_BORDER_WIDTH,
+            borderColor: "rgba(255,255,255,0.065)",
           }}
         >
           <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>
@@ -109,11 +109,11 @@ function OutfitMessage({
         </View>
       ) : null}
 
-      <Text style={{ color: colors.textSecondary, fontSize: 15, lineHeight: 23 }} numberOfLines={4}>
+      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21 }} numberOfLines={4}>
         {cleanReason}
       </Text>
 
-      <View style={{ flexDirection: "row", gap: 12 }}>
+      <View style={{ flexDirection: "row", gap: 10 }}>
         {pickedItems.map(({ slot, item }) => {
           const imageUri = getItemImageUrl(item, { variant: "thumb" });
           const imagePresentation = getItemImagePresentation(item, { surface: "ai_outfit" });
@@ -122,11 +122,11 @@ function OutfitMessage({
             <View key={`${outfit.id}-${slot}-${item.id}`} style={{ flex: 1, minWidth: 0, gap: 10 }}>
               <View
                 style={{
-                  borderRadius: 20,
-                  padding: 12,
-                  backgroundColor: colors.chipBackground,
-                  borderWidth: 1,
-                  borderColor: colors.border,
+                  borderRadius: 18,
+                  padding: 10,
+                  backgroundColor: "rgba(255,255,255,0.032)",
+                  borderWidth: CHIP_BORDER_WIDTH,
+                  borderColor: "rgba(255,255,255,0.065)",
                   aspectRatio: imagePresentation.containerAspectRatio,
                   justifyContent: "center",
                   alignItems: "center",
@@ -172,7 +172,7 @@ function OutfitMessage({
                 )}
               </View>
               <View style={{ gap: 3 }}>
-                <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0.7 }}>
+                <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0 }}>
                   {slotLabel(slot)}
                 </Text>
                 <Text numberOfLines={2} style={{ color: colors.text, fontSize: 13, fontWeight: "700", lineHeight: 18 }}>
@@ -206,7 +206,7 @@ function OutfitMessage({
             opacity: saving ? 0.6 : 1,
           }}
         >
-          <Text style={{ color: colors.ctaText, fontWeight: "800" }}>{saving ? "Saving..." : "Save to Today"}</Text>
+          <Text style={{ color: colors.ctaText, fontSize: 12, fontWeight: "800" }}>{saving ? "Saving..." : "Save to Today"}</Text>
         </AuraPressable>
         <AuraPressable
           onPress={() => onSwap(outfit)}
@@ -227,7 +227,7 @@ function OutfitMessage({
             justifyContent: "center",
           }}
         >
-          <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>Swap item</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700" }}>Swap item</Text>
         </AuraPressable>
         <AuraPressable
           onPress={() => onMoreLikeThis(outfit)}
@@ -247,7 +247,7 @@ function OutfitMessage({
             justifyContent: "center",
           }}
         >
-          <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>More like this</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700" }}>More like this</Text>
         </AuraPressable>
       </View>
     </LinearGradient>
