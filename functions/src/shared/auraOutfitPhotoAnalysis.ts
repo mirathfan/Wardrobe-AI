@@ -1,8 +1,13 @@
 import OpenAI from "openai";
+import { logger } from "firebase-functions/v2";
 
 export type AuraAttachmentForOutfitAnalysis = {
   type?: "image" | "audio";
   uri?: string;
+  mimeType?: string | null;
+  storagePath?: string | null;
+  width?: number | null;
+  height?: number | null;
 };
 
 export type AuraDetectedOutfitPiece = {
@@ -21,9 +26,66 @@ export type AuraOutfitPhotoAnalysis = {
 };
 
 const OUTFIT_PHOTO_INTENTS = new Set(["outfit_analysis", "worn_outfit_photo"]);
+const WORN_OUTFIT_PHOTO_RE =
+  /\b(outfit photo|mirror|selfie|wearing|worn outfit|my outfit|this outfit|this fit|fit check|what am i wearing|what are you seeing|improve this outfit|fix this outfit|rate this outfit)\b/i;
 
 export function isOutfitPhotoIntent(clientIntent?: string | null) {
   return OUTFIT_PHOTO_INTENTS.has(String(clientIntent ?? ""));
+}
+
+export function isOutfitPhotoRequest(params: {
+  clientIntent?: string | null;
+  userMessage?: string | null;
+  attachments?: AuraAttachmentForOutfitAnalysis[];
+}) {
+  if (isOutfitPhotoIntent(params.clientIntent)) return true;
+  const hasImage = (params.attachments ?? []).some(
+    (attachment) => attachment.type === "image" && !!attachment.uri,
+  );
+  return hasImage && WORN_OUTFIT_PHOTO_RE.test(String(params.userMessage ?? ""));
+}
+
+export function safeAuraVisionError(error: unknown) {
+  const candidate = error as {
+    status?: unknown;
+    code?: unknown;
+    type?: unknown;
+    param?: unknown;
+    message?: unknown;
+    error?: { message?: unknown; code?: unknown; type?: unknown; param?: unknown };
+    requestID?: unknown;
+  };
+  return {
+    status: typeof candidate?.status === "number" ? candidate.status : null,
+    code: String(candidate?.code ?? candidate?.error?.code ?? "") || null,
+    type: String(candidate?.type ?? candidate?.error?.type ?? "") || null,
+    param: String(candidate?.param ?? candidate?.error?.param ?? "") || null,
+    requestID: String(candidate?.requestID ?? "") || null,
+    message:
+      String(candidate?.error?.message ?? candidate?.message ?? "")
+        .replace(/\s+/g, " ")
+        .slice(0, 300) || null,
+  };
+}
+
+function safeImageRef(uri: string) {
+  try {
+    const parsed = new URL(uri);
+    const pathParts = parsed.pathname.split("/").filter(Boolean);
+    return {
+      host: parsed.hostname,
+      pathTail: pathParts.slice(-2).join("/"),
+      hasToken: parsed.searchParams.has("token"),
+      hasAltMedia: parsed.searchParams.get("alt") === "media",
+    };
+  } catch {
+    return {
+      host: null,
+      pathTail: null,
+      hasToken: false,
+      hasAltMedia: false,
+    };
+  }
 }
 
 function clampConfidence(value: unknown) {
@@ -127,6 +189,17 @@ export async function analyzeOutfitPhoto(params: {
       attachment.type === "image" && !!attachment.uri,
   );
   if (!images.length) return outfitPhotoAnalysisResponse(normalizeOutfitPhotoAnalysis({}));
+  logger.info("[AURA_OUTFIT_PHOTO] vision request built", {
+    imageCount: images.length,
+    images: images.slice(0, 2).map((image) => ({
+      ...safeImageRef(image.uri),
+      mimeType: image.mimeType ?? null,
+      storagePathTail: image.storagePath?.split("/").slice(-2).join("/") ?? null,
+      width: image.width ?? null,
+      height: image.height ?? null,
+    })),
+    promptLength: params.userMessage.length,
+  });
 
   const response = await params.client.responses.create({
     model: "gpt-5.4",
@@ -193,5 +266,11 @@ export async function analyzeOutfitPhoto(params: {
   } catch {
     parsed = {};
   }
-  return outfitPhotoAnalysisResponse(normalizeOutfitPhotoAnalysis(parsed), images[0]?.uri ?? null);
+  const analysis = normalizeOutfitPhotoAnalysis(parsed);
+  logger.info("[AURA_OUTFIT_PHOTO] vision response parsed", {
+    detectedPieceCount: analysis.detectedPieces.length,
+    roles: analysis.detectedPieces.map((piece) => piece.role),
+    missingToComplete: analysis.missingToComplete ?? [],
+  });
+  return outfitPhotoAnalysisResponse(analysis, images[0]?.uri ?? null);
 }

@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
+import {
+  SafeFetchError,
+  redactUrlForLogs,
+  safeFetch,
+  validateSafeUrlForFetch,
+} from "./safeFetch";
 
 export type ProductMetadata = {
   sourceUrl: string;
@@ -48,7 +52,7 @@ type ProductLinkAdapter = {
   }) => Partial<ProductExtraction>;
 };
 
-const FETCH_TIMEOUT_MS = 9000;
+const MAX_HTML_BYTES = 3 * 1024 * 1024;
 const MAX_HTML_CHARS = 1_500_000;
 const USER_AGENT =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) " +
@@ -998,90 +1002,70 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
 
 export const extractAmazonLinkData = handleAmazonLink;
 
-function isPrivateIp(address: string): boolean {
-  if (address === "127.0.0.1" || address === "::1") return true;
-  if (address.startsWith("10.")) return true;
-  if (address.startsWith("192.168.")) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(address)) return true;
-  if (address.startsWith("169.254.")) return true;
-  if (address.startsWith("fc") || address.startsWith("fd")) return true;
-  return false;
+export async function validateProductUrl(rawUrl: string): Promise<URL> {
+  try {
+    return await validateSafeUrlForFetch(rawUrl);
+  } catch (error) {
+    if (error instanceof SafeFetchError) {
+      if (error.code === "invalid_url") {
+        throw new ProductLinkError("Invalid product link.", "invalid_url");
+      }
+      if (error.code === "unsafe_url") {
+        throw new ProductLinkError("That link is not safe to fetch.", "unsafe_url");
+      }
+    }
+    throw new ProductLinkError("Could not validate that product link.", "fetch_failed");
+  }
 }
 
-export async function validateProductUrl(rawUrl: string): Promise<URL> {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new ProductLinkError("Invalid product link.", "invalid_url");
+export async function filterSafeExternalImageUrls(imageUrls: string[], context: { domain: string }) {
+  const safeUrls: string[] = [];
+  for (const imageUrl of imageUrls) {
+    try {
+      safeUrls.push((await validateSafeUrlForFetch(imageUrl)).toString());
+    } catch (error) {
+      logger.warn("[AURA_LINK_SECURITY] rejected unsafe product image URL", {
+        domain: context.domain,
+        imageUrl: redactUrlForLogs(imageUrl),
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new ProductLinkError("Only http and https links are supported.", "invalid_url");
-  }
-  const host = parsed.hostname.toLowerCase();
-  if (
-    !host ||
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    isPrivateIp(host)
-  ) {
-    throw new ProductLinkError("That link is not safe to fetch.", "unsafe_url");
-  }
-  if (isIP(host) && isPrivateIp(host)) {
-    throw new ProductLinkError("That link is not safe to fetch.", "unsafe_url");
-  }
-  const addresses = await lookup(host, { all: true }).catch(() => []);
-  if (addresses.some((entry) => isPrivateIp(entry.address))) {
-    throw new ProductLinkError("That link is not safe to fetch.", "unsafe_url");
-  }
-  parsed.hash = "";
-  return parsed;
+  return Array.from(new Set(safeUrls));
 }
 
 export async function fetchResolvedProductPage(url: URL): Promise<FetchedProductPage> {
-  let currentUrl = url;
-  for (let redirectCount = 0; redirectCount < 4; redirectCount += 1) {
-    const response = await fetchProductHtmlOnce(currentUrl);
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      if (!location) {
-        throw new ProductLinkError("Product page redirected without a location.", "fetch_failed");
-      }
-      currentUrl = await validateProductUrl(new URL(location, currentUrl).toString());
-      continue;
-    }
-    if (!response.ok) {
-      throw new ProductLinkError(`Product page returned ${response.status}.`, "fetch_failed");
-    }
-    const contentType = response.headers.get("content-type") ?? "";
-    if (contentType && !contentType.includes("text/html")) {
-      throw new ProductLinkError("That link did not return a product page.", "fetch_failed");
-    }
-    return {
-      html: (await response.text()).slice(0, MAX_HTML_CHARS),
-      finalUrl: currentUrl,
-    };
-  }
-  throw new ProductLinkError("Product page redirected too many times.", "fetch_failed");
-}
-
-async function fetchProductHtmlOnce(url: URL): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    return await fetch(url.toString(), {
-      signal: controller.signal,
-      redirect: "manual",
+    const response = await safeFetch(url, {
+      expectedKind: "html",
+      maxBytes: MAX_HTML_BYTES,
+      maxRedirects: 3,
       headers: {
         "user-agent": USER_AGENT,
         accept: "text/html,application/xhtml+xml",
       },
     });
+    if (!response.ok) {
+      throw new ProductLinkError(`Product page returned ${response.status}.`, "fetch_failed");
+    }
+    return {
+      html: response.text.slice(0, MAX_HTML_CHARS),
+      finalUrl: response.finalUrl,
+    };
   } catch (error) {
     if (error instanceof ProductLinkError) throw error;
+    if (error instanceof SafeFetchError) {
+      if (error.code === "unsafe_url") {
+        throw new ProductLinkError("That link is not safe to fetch.", "unsafe_url");
+      }
+      if (error.code === "invalid_url") {
+        throw new ProductLinkError("Invalid product link.", "invalid_url");
+      }
+      if (error.code === "unsupported_format") {
+        throw new ProductLinkError("That link did not return a product page.", "fetch_failed");
+      }
+    }
     throw new ProductLinkError("Could not fetch that product link.", "fetch_failed");
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -1129,15 +1113,37 @@ export async function extractProductFromUrl(rawUrl: string): Promise<ProductExtr
 
   if (isAmazonProductUrl(finalUrl)) {
     const amazonExtraction = extractAmazonLinkData(finalUrl, html);
-    if (!amazonExtraction.metadata.title && !amazonExtraction.imageUrls.length) {
+    const imageUrls = await filterSafeExternalImageUrls(amazonExtraction.imageUrls, {
+      domain: finalUrl.hostname,
+    });
+    if (!amazonExtraction.metadata.title && !imageUrls.length) {
       throw new ProductLinkError("No usable Amazon product metadata found.", "no_metadata");
     }
-    return amazonExtraction;
+    return {
+      ...amazonExtraction,
+      imageUrls,
+      partialData: amazonExtraction.partialData
+        ? {
+            ...amazonExtraction.partialData,
+            imageUrls: amazonExtraction.partialData.imageUrls
+              ? await filterSafeExternalImageUrls(amazonExtraction.partialData.imageUrls, {
+                  domain: finalUrl.hostname,
+                })
+              : undefined,
+          }
+        : undefined,
+    };
   }
 
   const metadata = extractProductMetadataFromHtml(finalUrl.toString(), html);
   const imageUrls = extractProductImagesFromHtml(finalUrl.toString(), html);
-  const extraction = applyAdapter(finalUrl, html, { metadata, imageUrls });
+  const rawExtraction = applyAdapter(finalUrl, html, { metadata, imageUrls });
+  const extraction = {
+    ...rawExtraction,
+    imageUrls: await filterSafeExternalImageUrls(rawExtraction.imageUrls, {
+      domain: metadata.domain,
+    }),
+  };
 
   logger.info("[AURA_LINK_EXTRACT] extraction complete", {
     domain: metadata.domain,
@@ -1265,13 +1271,13 @@ export async function createDraftItemFromProductLink(params: {
     logger.info("[LINK_IMAGE_SAVE] product link draft image fields", {
       uid,
       itemId: createdItemId,
-      sourceUrl: extraction.metadata.sourceUrl,
-      primaryUrl,
-      imageUrls: extraction.imageUrls,
+      sourceUrl: redactUrlForLogs(extraction.metadata.sourceUrl),
+      primaryUrl: redactUrlForLogs(primaryUrl),
+      imageUrls: extraction.imageUrls.map((imageUrl) => redactUrlForLogs(imageUrl)),
       savedFields: {
-        originalImageUrl: primaryUrl,
-        photoUrl: primaryUrl,
-        photosPrimaryUrl: primaryUrl,
+        originalImageUrl: redactUrlForLogs(primaryUrl),
+        photoUrl: redactUrlForLogs(primaryUrl),
+        photosPrimaryUrl: redactUrlForLogs(primaryUrl),
         cleanedImageUrl: null,
       },
     });

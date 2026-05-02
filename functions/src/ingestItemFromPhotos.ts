@@ -19,6 +19,7 @@ import {
   isValidCategorySubCategory,
   wearSlot,
 } from "./shared/wardrobeTaxonomy";
+import { redactUrlForLogs, safeFetch, validateSafeUrlForFetch } from "./shared/safeFetch";
 
 if (!getApps().length) {
   initializeApp();
@@ -440,6 +441,10 @@ function extractStoragePathFromUrl(url: string): string | null {
   }
 }
 
+function isUserOwnedStoragePath(uid: string, storagePath: string | null) {
+  return !!storagePath && storagePath.startsWith(`users/${uid}/`);
+}
+
 function extractDownloadTokenFromUrl(url: string): string | null {
   try {
     return new URL(url).searchParams.get("token");
@@ -839,13 +844,66 @@ function mapRgbToAllowedColor(r: number, g: number, b: number): AllowedColor {
   return "grey";
 }
 
-async function downloadImageBytes(url: string): Promise<Buffer> {
-  const response = await fetch(url);
+async function validateImageInputUrls(uid: string, itemId: string, urls: string[], label: string) {
+  const safeUrls: string[] = [];
+  for (const url of urls) {
+    const storagePath = extractStoragePathFromUrl(url);
+    if (storagePath) {
+      if (isUserOwnedStoragePath(uid, storagePath)) {
+        safeUrls.push(url);
+      } else {
+        logger.warn("[INGEST_SECURITY] rejected foreign Storage image URL", {
+          uid,
+          itemId,
+          label,
+          storagePath,
+        });
+      }
+      continue;
+    }
+    try {
+      safeUrls.push((await validateSafeUrlForFetch(url)).toString());
+    } catch (error) {
+      logger.warn("[INGEST_SECURITY] rejected unsafe external image URL", {
+        uid,
+        itemId,
+        label,
+        url: redactUrlForLogs(url),
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return Array.from(new Set(safeUrls));
+}
+
+async function downloadImageBytes(uid: string, url: string): Promise<Buffer> {
+  const storagePath = extractStoragePathFromUrl(url);
+  if (storagePath) {
+    if (!isUserOwnedStoragePath(uid, storagePath)) {
+      throw new Error("Image Storage path is not owned by this user.");
+    }
+    const file = getStorage().bucket().file(storagePath);
+    const [metadata] = await file.getMetadata();
+    const size = Number(metadata.size ?? 0);
+    const contentType = String(metadata.contentType ?? "").toLowerCase();
+    if (Number.isFinite(size) && size > 10 * 1024 * 1024) {
+      throw new Error("Image is too large.");
+    }
+    if (!contentType.startsWith("image/")) {
+      throw new Error("Storage file is not an image.");
+    }
+    const [bytes] = await file.download();
+    return bytes;
+  }
+
+  const response = await safeFetch(url, {
+    expectedKind: "image",
+    maxBytes: 10 * 1024 * 1024,
+  });
   if (!response.ok) {
     throw new Error(`Failed to download image: ${response.status}`);
   }
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  return response.bytes;
 }
 
 async function hasTransparentPngBackground(bytes: Buffer): Promise<boolean> {
@@ -893,7 +951,15 @@ async function applyServerBackgroundRemoval(params: {
       logger.warn("[BgRemoval] Server-side removal skipped; unable to parse Storage path", {
         uid,
         itemId,
-        photoUrl,
+        photoUrl: redactUrlForLogs(photoUrl),
+      });
+      return { bytes: imageBytes, method: "none" };
+    }
+    if (!isUserOwnedStoragePath(uid, storagePath)) {
+      logger.warn("[BgRemoval] Server-side removal skipped; Storage path is not user-owned", {
+        uid,
+        itemId,
+        storagePath,
       });
       return { bytes: imageBytes, method: "none" };
     }
@@ -1367,13 +1433,15 @@ export const ingestItemFromPhotos = onDocumentWritten(
     const after = event.data?.after.data() as ItemDoc | undefined;
     if (!after) return;
 
-    const photoUrls = extractPhotoUrls(after);
+    const rawPhotoUrls = extractPhotoUrls(after);
+    const rawSourceUrls = extractIngestionSourceUrls(after);
+    const photoUrls = await validateImageInputUrls(uid, itemId, rawPhotoUrls, "photo");
+    const sourceUrls = await validateImageInputUrls(uid, itemId, rawSourceUrls, "source");
     const sourceType = String(after.ingestionSource?.sourceType ?? "").trim();
     const isSnapDoneDraft =
       after.isDraft === true &&
       (sourceType === "aura_chat" || sourceType === "aura_product_link");
-    const hasPhoto =
-      photoUrls.length > 0 || !!String(after.photoUrl ?? "").trim();
+    const hasPhoto = photoUrls.length > 0;
     const status = getIngestionStatus(after);
     const lifecycleStatus = String(after.itemLifecycleStatus ?? "").trim().toLowerCase();
     const draftState = String(after.draftState ?? "").trim().toLowerCase();
@@ -1394,10 +1462,12 @@ export const ingestItemFromPhotos = onDocumentWritten(
       isDraft: after.isDraft ?? null,
       hasImagesArray: Array.isArray(after.images),
       imagesCount: Array.isArray(after.images) ? after.images.length : 0,
-      photoUrl: String(after.photoUrl ?? "").trim() || null,
-      photosPrimaryUrl: String(after.photos?.primaryUrl ?? "").trim() || null,
-      photosUrls: Array.isArray(after.photos?.urls) ? after.photos?.urls : [],
-      extractedPhotoUrls: photoUrls,
+      photoUrl: redactUrlForLogs(String(after.photoUrl ?? "").trim() || null),
+      photosPrimaryUrl: redactUrlForLogs(String(after.photos?.primaryUrl ?? "").trim() || null),
+      photosUrls: Array.isArray(after.photos?.urls)
+        ? after.photos?.urls.map((url) => redactUrlForLogs(url))
+        : [],
+      extractedPhotoUrls: photoUrls.map((url) => redactUrlForLogs(url)),
       hasPhoto,
     });
     if (isCancelledOrDeleted) {
@@ -1430,6 +1500,23 @@ export const ingestItemFromPhotos = onDocumentWritten(
       return;
     }
     if (!hasPhoto) {
+      if (rawPhotoUrls.length > 0) {
+        await getFirestore()
+          .doc(`users/${uid}/items/${itemId}`)
+          .set(
+            {
+              itemLifecycleStatus: "failed",
+              ingestionStatus: "failed",
+              ingestion: {
+                status: "failed",
+                lastRunAt: FieldValue.serverTimestamp(),
+                error: { message: "Image URL is not safe to process." },
+              },
+              updatedAt: Date.now(),
+            },
+            { merge: true },
+          );
+      }
       logger.info("[INGEST_VALIDATE] skipping no photo URLs", {
         uid,
         itemId,
@@ -1442,8 +1529,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
       return;
     }
 
-    const sourceUrls = extractIngestionSourceUrls(after);
-    const beforeSourceUrls = before ? extractIngestionSourceUrls(before) : [];
+    const beforeSourceUrls = before
+      ? await validateImageInputUrls(uid, itemId, extractIngestionSourceUrls(before), "before-source")
+      : [];
     const photoHash = hashPhotoUrls(photoUrls);
     const declaredSourceHash =
       String(after.ingestionSource?.sourceHash ?? "").trim() || null;
@@ -1523,8 +1611,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
       beforeExists: !!before,
       beforeStatus: String(before?.ingestion?.status ?? "").trim() || null,
       afterStatus: status || null,
-      beforeSourceUrls,
-      afterSourceUrls: sourceUrls,
+      beforeSourceUrls: beforeSourceUrls.map((url) => redactUrlForLogs(url)),
+      afterSourceUrls: sourceUrls.map((url) => redactUrlForLogs(url)),
       declaredSourceHash,
       previousSourceHash: previousSourceHash || null,
       currentSourceHash: currentSourceHash || null,
@@ -1637,7 +1725,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
     try {
       let backgroundRemovalMethod: "client" | "server" | "none" =
         hasClientCleanedImage(after) ? "client" : "none";
-      let originalBytes = await downloadImageBytes(photoUrls[0]);
+      let originalBytes = await downloadImageBytes(uid, photoUrls[0]);
       if (backgroundRemovalMethod !== "client") {
         const serverRemoval = await applyServerBackgroundRemoval({
           uid,

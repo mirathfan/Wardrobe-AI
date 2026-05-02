@@ -9,6 +9,7 @@ import {
   extractProductFromUrl,
 } from "./shared/productLinkExtractor";
 import { rankProductExtractionImages } from "./shared/auraCandidatePreview";
+import { redactUrlForLogs } from "./shared/safeFetch";
 
 function messageForError(error: unknown) {
   if (error instanceof ProductLinkError) return error.message;
@@ -54,7 +55,11 @@ export const importProductLink = onCall(
     const itemId = String(request.data?.itemId ?? "").trim() || null;
 
     try {
-      logger.info("[SNAP_DONE_LINK] importing product link", { uid, url, itemId });
+      logger.info("[SNAP_DONE_LINK] importing product link", {
+        uid,
+        url: redactUrlForLogs(url),
+        itemId,
+      });
       const client = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY,
       });
@@ -77,7 +82,12 @@ export const importProductLink = onCall(
       return { ok: true, itemId: created.itemId, imageCount: created.imageCount };
     } catch (error) {
       const message = messageForError(error);
-      logger.error("[SNAP_DONE_LINK] import failed", { uid, url, itemId, error });
+      logger.error("[SNAP_DONE_LINK] import failed", {
+        uid,
+        url: redactUrlForLogs(url),
+        itemId,
+        error,
+      });
       await markImportFailed(uid, itemId, message);
       throw new HttpsError("internal", message);
     }

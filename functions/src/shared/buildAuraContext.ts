@@ -170,6 +170,8 @@ export function buildAuraContext({
 }: AuraContextArgs) {
   const DEBUG_AURA_SPARSE =
     process.env.FUNCTIONS_EMULATOR === "true" || process.env.NODE_ENV !== "production";
+  const DEBUG_AURA_CONTEXT =
+    process.env.DEBUG_AURA_CONTEXT === "1" || process.env.DEBUG_AURA_CONTEXT === "true";
   const excluded = {
     drafts: [] as Record<string, string>[],
     laundry: [] as Record<string, string>[],
@@ -280,14 +282,18 @@ export function buildAuraContext({
         ...(wardrobe.footwear.length ? [] : ["footwear"]),
       ],
     },
-    wardrobeDebug: {
-      footwearAvailable: wardrobe.footwear,
-      bottomsAvailable: wardrobe.bottoms,
-      accessoriesAvailable: wardrobe.accessories,
-      excludedFootwear: [...excluded.drafts, ...excluded.laundry, ...excluded.uncategorized].filter(
-        (item) => mapCategory(item.subCategory || item.category || item.type) === "footwear"
-      ),
-    },
+    ...(DEBUG_AURA_CONTEXT
+      ? {
+          wardrobeDebug: {
+            footwearAvailable: wardrobe.footwear,
+            bottomsAvailable: wardrobe.bottoms,
+            accessoriesAvailable: wardrobe.accessories,
+            excludedFootwear: [...excluded.drafts, ...excluded.laundry, ...excluded.uncategorized].filter(
+              (item) => mapCategory(item.subCategory || item.category || item.type) === "footwear"
+            ),
+          },
+        }
+      : {}),
     stylingPolicy: {
       preferOwnedClosetItems: true,
       preferOwnedFootwear: true,

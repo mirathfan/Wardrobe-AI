@@ -15,7 +15,11 @@ import {
 import { classifyAuraLinkIntent, extractUrlsFromText } from "./shared/auraLinkIntent";
 import { buildAuraContext } from "./shared/buildAuraContext";
 import { loadCompactAuraMemoryContext } from "./shared/auraMemory";
-import { analyzeOutfitPhoto, isOutfitPhotoIntent } from "./shared/auraOutfitPhotoAnalysis";
+import {
+  analyzeOutfitPhoto,
+  isOutfitPhotoRequest,
+  safeAuraVisionError,
+} from "./shared/auraOutfitPhotoAnalysis";
 import { dedupeAuraLookAccessories } from "./shared/auraAccessorySelection";
 import { type WardrobeGapSuggestion } from "./shared/detectWardrobeGaps";
 import { loadAuraUserProfile } from "./shared/loadAuraUserProfile";
@@ -24,6 +28,7 @@ import {
   ProductLinkError,
   extractProductFromUrl,
 } from "./shared/productLinkExtractor";
+import { redactUrlForLogs, validateSafeUrlForFetch } from "./shared/safeFetch";
 
 const db = getFirestore();
 const AURA_BACKEND_VERSION = "candidate-preview-url-v9-zara-product-api";
@@ -63,7 +68,7 @@ function styleCoreNoteFromClientContext(value: unknown) {
 }
 
 type AuraResponse = {
-  presentation: "chat" | "card" | "candidate_preview" | "laundry_confirmation";
+  presentation: "chat" | "card" | "candidate_preview" | "outfit_analysis" | "laundry_confirmation";
   title: string;
   reply: string;
   reason: string;
@@ -129,11 +134,14 @@ type AuraResponse = {
 };
 
 type AuraAttachment = {
-  type?: "image" | "audio";
+  type?: "image";
   uri?: string;
   role?: string | null;
   groupId?: string | null;
-  transcript?: string | null;
+  mimeType?: string | null;
+  storagePath?: string | null;
+  width?: number | null;
+  height?: number | null;
 };
 
 const ADD_IMAGE_RE =
@@ -593,24 +601,45 @@ function normalizeAuraResponse(
   return response;
 }
 
-function parseAuraAttachments(input: unknown): AuraAttachment[] {
+async function parseAuraAttachments(uid: string, input: unknown): Promise<AuraAttachment[]> {
   if (!Array.isArray(input)) return [];
-  return input.reduce<AuraAttachment[]>((out, entry) => {
-      if (!entry || typeof entry !== "object") return out;
-      const candidate = entry as Record<string, unknown>;
-      const type = candidate.type === "audio" ? "audio" : candidate.type === "image" ? "image" : null;
-      const uri = String(candidate.uri ?? "").trim();
-      if (!type || !uri) return out;
-      out.push({
-        type,
-        uri,
-        role: typeof candidate.role === "string" ? candidate.role : null,
-        groupId: typeof candidate.groupId === "string" ? candidate.groupId : null,
-        transcript: typeof candidate.transcript === "string" ? candidate.transcript : null,
+  const out: AuraAttachment[] = [];
+  for (const entry of input.slice(0, 8)) {
+    if (!entry || typeof entry !== "object") continue;
+    const candidate = entry as Record<string, unknown>;
+    if (candidate.type !== "image") continue;
+    const uri = String(candidate.uri ?? "").trim();
+    if (!uri) continue;
+    const storagePath = String(candidate.storagePath ?? "").trim() || null;
+    if (storagePath && !storagePath.startsWith(`users/${uid}/auraAttachments/`)) {
+      logger.warn("[AURA_ATTACHMENTS] rejected foreign image attachment", {
+        uid,
+        storagePath,
       });
-      return out;
-    }, [])
-    .slice(0, 8);
+      continue;
+    }
+    try {
+      await validateSafeUrlForFetch(uri);
+    } catch (error) {
+      logger.warn("[AURA_ATTACHMENTS] rejected unsafe image attachment URL", {
+        uid,
+        uri: redactUrlForLogs(uri),
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+    out.push({
+      type: "image",
+      uri,
+      role: typeof candidate.role === "string" ? candidate.role : null,
+      groupId: typeof candidate.groupId === "string" ? candidate.groupId : null,
+      mimeType: typeof candidate.mimeType === "string" ? candidate.mimeType : null,
+      storagePath,
+      width: typeof candidate.width === "number" ? candidate.width : null,
+      height: typeof candidate.height === "number" ? candidate.height : null,
+    });
+  }
+  return out;
 }
 
 function attachmentContextText(attachments: AuraAttachment[]) {
@@ -621,8 +650,11 @@ function attachmentContextText(attachments: AuraAttachment[]) {
       type: attachment.type,
       role: attachment.role ?? null,
       groupId: attachment.groupId ?? null,
-      transcript: attachment.transcript ?? null,
-      uri: attachment.uri,
+      mimeType: attachment.mimeType ?? null,
+      storagePath: attachment.storagePath ?? null,
+      width: attachment.width ?? null,
+      height: attachment.height ?? null,
+      uri: redactUrlForLogs(attachment.uri),
     })),
     null,
     2
@@ -736,7 +768,7 @@ export const askAura = onCall(
 
     const userMessage = sanitizeUserInput(String(request.data?.message || ""));
     const styleCoreNote = styleCoreNoteFromClientContext(request.data?.clientContext);
-    const attachments = parseAuraAttachments(request.data?.attachments);
+    const attachments = await parseAuraAttachments(uid, request.data?.attachments);
     const clientIntent = typeof request.data?.clientIntent === "string" ? request.data.clientIntent : null;
     const linkIntent = classifyAuraLinkIntent(userMessage);
     const detectedUrls = extractUrlsFromText(userMessage);
@@ -752,6 +784,10 @@ export const askAura = onCall(
         type: attachment.type,
         role: attachment.role ?? null,
         groupId: attachment.groupId ?? null,
+        mimeType: attachment.mimeType ?? null,
+        storagePath: attachment.storagePath ?? null,
+        width: attachment.width ?? null,
+        height: attachment.height ?? null,
         hasUri: !!attachment.uri,
         uriHost: safeUrlHost(attachment.uri),
       })),
@@ -784,13 +820,35 @@ export const askAura = onCall(
     });
     const imageCandidateGroups = imageGroupsForAddIntent(userMessage, attachments, clientIntent);
 
-    if (isOutfitPhotoIntent(clientIntent)) {
+    if (isOutfitPhotoRequest({ clientIntent, userMessage, attachments })) {
       logger.info("[AURA_OUTFIT_PHOTO] callable outfit analysis intent classified", {
         uid,
+        clientIntent,
         attachmentCount: attachments.length,
+        attachments: attachments.map((attachment) => ({
+          type: attachment.type,
+          mimeType: attachment.mimeType ?? null,
+          storagePath: attachment.storagePath ?? null,
+          uriHost: safeUrlHost(attachment.uri),
+          width: attachment.width ?? null,
+          height: attachment.height ?? null,
+        })),
       });
-      const data = await analyzeOutfitPhoto({ client, attachments, userMessage });
-      return { ok: true, data };
+      try {
+        const data = await analyzeOutfitPhoto({ client, attachments, userMessage });
+        return { ok: true, data };
+      } catch (error) {
+        logger.error("[AURA_OUTFIT_PHOTO] callable vision analysis failed", {
+          uid,
+          clientIntent,
+          attachmentCount: attachments.length,
+          error: safeAuraVisionError(error),
+        });
+        return {
+          ok: true,
+          data: fallbackAuraResponse("I couldn't read that image as a supported photo. Try sending it again as a JPEG or PNG."),
+        };
+      }
     }
 
     if (imageCandidateGroups.length > 0) {

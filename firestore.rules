@@ -324,6 +324,10 @@ service cloud.firestore {
         allow delete: if isOwner(uid);
       }
 
+      match /auraLooks/{lookId} {
+        allow read, write: if isOwner(uid);
+      }
+
       match /savedOutfits/{lookId} {
         allow read, write: if isOwner(uid);
       }

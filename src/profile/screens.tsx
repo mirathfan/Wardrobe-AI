@@ -2,8 +2,9 @@ import { router } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
 import * as ImagePicker from "expo-image-picker";
-import { deleteUser, sendEmailVerification, sendPasswordResetEmail, signOut, updateProfile } from "firebase/auth";
+import { sendEmailVerification, sendPasswordResetEmail, signOut, updateProfile } from "firebase/auth";
 import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -24,7 +25,7 @@ import { SafeScreen } from "@/src/components/SafeScreen";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
-import { auth, db, storage } from "@/src/lib/firebase";
+import { app, auth, db, storage } from "@/src/lib/firebase";
 import { signOutGoogle } from "@/src/auth/googleAuth";
 import { Storage } from "@/src/lib/storage";
 import { clearAssistantMemory, buildCompactMemorySummary, loadAssistantProfile, loadBehaviorProfile } from "@/src/lib/assistantMemory";
@@ -79,6 +80,13 @@ const SHOE_SIZE_OPTIONS = {
   UK: ["UK 4", "UK 4.5", "UK 5", "UK 5.5", "UK 6", "UK 6.5", "UK 7", "UK 7.5", "UK 8", "UK 8.5", "UK 9", "UK 9.5", "UK 10", "UK 11", "UK 12"],
   EU: ["EU 38", "EU 39", "EU 40", "EU 41", "EU 42", "EU 43", "EU 44", "EU 45", "EU 46", "EU 47"],
 } as const;
+
+type DeleteAccountDataResult = {
+  ok: boolean;
+  firestoreDocumentsDeleted: number;
+  storageFilesDeleted: number;
+  authUserDeleted: boolean;
+};
 
 const TOP_FIT_OPTIONS = ["slim", "regular", "relaxed", "oversized"] as const;
 const OUTERWEAR_FIT_OPTIONS = ["slim", "regular", "roomy"] as const;
@@ -760,30 +768,31 @@ export function AccountScreen() {
   const confirmDeleteAccount = useCallback(() => {
     Alert.alert(
       "Delete account?",
-      "This deletes account access in Firebase Auth. Full backend data deletion is not implemented here, so closet data will not be silently deleted.",
+      "This permanently deletes your account, closet data, AURA chats, saved looks, and uploaded files.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Continue",
           style: "destructive",
           onPress: () => {
-            Alert.alert("Final confirmation", "Delete this account access now?", [
+            Alert.alert("Final confirmation", "Delete your account and data now?", [
               { text: "Cancel", style: "cancel" },
               {
                 text: "Delete",
                 style: "destructive",
                 onPress: () => {
                   void runAction("Delete account", async () => {
-                    if (!auth.currentUser) throw new Error("Please sign in again first.");
-                    try {
-                      await deleteUser(auth.currentUser);
-                      router.replace("/(auth)/welcome");
-                    } catch (error: any) {
-                      if (error?.code === "auth/requires-recent-login") {
-                        throw new Error("Please log in again before deleting your account.");
-                      }
-                      throw error;
-                    }
+                    const uid = auth.currentUser?.uid ?? user?.uid ?? null;
+                    if (!uid) throw new Error("Please sign in again first.");
+                    const callable = httpsCallable<{ uid: string }, DeleteAccountDataResult>(
+                      getFunctions(app),
+                      "deleteAccountData",
+                    );
+                    await callable({ uid });
+                    await signOutGoogle().catch(() => undefined);
+                    await Storage.clearUserScopedData(uid).catch(() => undefined);
+                    await signOut(auth).catch(() => undefined);
+                    router.replace("/(auth)/welcome");
                   });
                 },
               },
@@ -792,7 +801,7 @@ export function AccountScreen() {
         },
       ],
     );
-  }, [runAction]);
+  }, [runAction, user?.uid]);
 
   return (
     <SafeScreen backgroundColor={colors.background} style={{ flex: 1 }}>

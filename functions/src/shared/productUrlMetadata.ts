@@ -2,11 +2,13 @@ import * as cheerio from "cheerio";
 import { logger } from "firebase-functions/v2";
 import {
   extractAmazonLinkData,
+  filterSafeExternalImageUrls,
   extractNikeSelectedVariantData,
   extractProductImagesFromHtml,
   isAmazonProductUrl,
   validateProductUrl,
 } from "./productLinkExtractor";
+import { redactUrlForLogs, safeFetch, SafeFetchExpectedKind } from "./safeFetch";
 
 export type ProductUrlMetadata = {
   sourceUrl: string;
@@ -21,7 +23,6 @@ export type ProductUrlMetadata = {
   status?: "ready" | "needs_review";
 };
 
-const FETCH_TIMEOUT_MS = 9000;
 const USER_AGENT =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) " +
   "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
@@ -52,20 +53,20 @@ function hmContentFallbackUrls(url: URL) {
   ];
 }
 
-async function fetchTextWithTimeout(url: string, headers: HeadersInit) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers,
-      redirect: "follow",
-    });
-    const text = await response.text();
-    return { response, text };
-  } finally {
-    clearTimeout(timeout);
-  }
+async function fetchTextWithTimeout(
+  url: string,
+  headers: HeadersInit,
+  expectedKind: SafeFetchExpectedKind,
+) {
+  const response = await safeFetch(url, {
+    expectedKind,
+    headers,
+    maxRedirects: 3,
+  });
+  return {
+    response,
+    text: response.text,
+  };
 }
 
 function cleanText(value: unknown, maxLength = 300) {
@@ -134,11 +135,15 @@ async function extractZaraProductUrlMetadata(url: URL): Promise<ProductUrlMetada
     path: detailsUrl.pathname,
   });
 
-  const { response, text } = await fetchTextWithTimeout(detailsUrl.toString(), {
-    accept: "application/json,text/plain,*/*",
-    "accept-language": "en-US,en;q=0.9",
-    "user-agent": USER_AGENT,
-  });
+  const { response, text } = await fetchTextWithTimeout(
+    detailsUrl.toString(),
+    {
+      accept: "application/json,text/plain,*/*",
+      "accept-language": "en-US,en;q=0.9",
+      "user-agent": USER_AGENT,
+    },
+    "json",
+  );
   if (!response.ok) {
     logger.warn("[AURA_URL_FETCH] Zara product details API failed", {
       host: url.hostname,
@@ -171,7 +176,9 @@ async function extractZaraProductUrlMetadata(url: URL): Promise<ProductUrlMetada
     .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
     .map((media) => zaraImageUrl(media.extraInfo?.deliveryUrl ?? media.url))
     .filter((imageUrl): imageUrl is string => !!imageUrl);
-  const deduped = Array.from(new Set(imageUrls)).slice(0, 12);
+  const deduped = (await filterSafeExternalImageUrls(Array.from(new Set(imageUrls)), {
+    domain: url.hostname,
+  })).slice(0, 12);
   const metadata = {
     sourceUrl: url.toString(),
     title: cleanText(product?.name, 220),
@@ -209,21 +216,15 @@ async function fetchHtml(url: URL) {
   let originalStatus: number | null = null;
   let originalError: unknown = null;
   try {
-    const { response, text } = await fetchTextWithTimeout(url.toString(), headers);
+    const { response, text } = await fetchTextWithTimeout(url.toString(), headers, "html");
     originalStatus = response.status;
     if (response.ok) {
-      const finalUrl = (() => {
-        try {
-          return new URL(response.url || url.toString());
-        } catch {
-          return url;
-        }
-      })();
+      const finalUrl = response.finalUrl;
       logger.info("[AURA_URL_FETCH] fetched product URL", {
         host: url.hostname,
         htmlLength: text.length,
         fallback: null,
-        finalUrl: finalUrl.toString(),
+        finalUrl: redactUrlForLogs(finalUrl),
       });
       return {
         html: text,
@@ -271,23 +272,17 @@ async function tryHmContentFallback(
         originalStatus,
         originalError: originalError instanceof Error ? originalError.message : null,
       });
-      const fallbackResult = await fetchTextWithTimeout(fallbackUrl, headers);
+      const fallbackResult = await fetchTextWithTimeout(fallbackUrl, headers, "json");
       if (
         fallbackResult.response.ok &&
         /<html|og:image|productArticleDetails/i.test(fallbackResult.text)
       ) {
-        const finalUrl = (() => {
-          try {
-            return new URL(fallbackResult.response.url || url.toString());
-          } catch {
-            return url;
-          }
-        })();
+        const finalUrl = fallbackResult.response.finalUrl;
         logger.info("[AURA_URL_FETCH] fetched H&M content fallback", {
           host: url.hostname,
           htmlLength: fallbackResult.text.length,
           status: fallbackResult.response.status,
-          finalUrl: finalUrl.toString(),
+          finalUrl: redactUrlForLogs(finalUrl),
         });
         return {
           html: fallbackResult.text,
@@ -358,11 +353,14 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
   const finalUrl = fetched.finalUrl;
   if (isAmazonProductUrl(finalUrl)) {
     const amazon = extractAmazonLinkData(finalUrl, html);
+    const imageUrls = await filterSafeExternalImageUrls(amazon.imageUrls, {
+      domain: finalUrl.hostname,
+    });
     return {
       sourceUrl: amazon.metadata.sourceUrl,
       title: amazon.metadata.title ?? amazon.partialData?.title ?? null,
-      imageUrl: amazon.imageUrls[0] ?? null,
-      imageUrls: amazon.imageUrls,
+      imageUrl: imageUrls[0] ?? null,
+      imageUrls,
       description: null,
       brand: amazon.status === "ready" ? amazon.metadata.brand ?? null : null,
       category: amazon.status === "ready" ? amazon.metadata.categoryHints?.[0] ?? null : null,
@@ -378,14 +376,18 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
       ? nikeVariant.imageUrls
       : extractProductImagesFromHtml(finalUrl.toString(), html);
   const ogImage = normalizeImageUrl(finalUrl, metaContent($, "og:image") ?? undefined);
+  const safeImageUrls = await filterSafeExternalImageUrls(
+    (imageUrls.length ? imageUrls : [ogImage ?? firstLargeImage($, finalUrl)].filter((value): value is string => !!value)),
+    { domain: finalUrl.hostname },
+  );
   const metadata = {
     sourceUrl: nikeVariant?.metadata?.sourceUrl ?? finalUrl.toString(),
     title:
       nikeVariant?.metadata?.title ??
       metaContent($, "og:title") ??
       cleanText($("title").first().text(), 220),
-    imageUrl: imageUrls[0] ?? ogImage ?? firstLargeImage($, finalUrl),
-    imageUrls: imageUrls.length ? imageUrls : [ogImage ?? firstLargeImage($, finalUrl)].filter((value): value is string => !!value),
+    imageUrl: safeImageUrls[0] ?? null,
+    imageUrls: safeImageUrls,
     description:
       nikeVariant?.metadata?.description ??
       metaContent($, "og:description") ??
@@ -398,7 +400,7 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
     imageCount: metadata.imageUrls.length,
     hasDescription: !!metadata.description,
     imageHost: metadata.imageUrl ? new URL(metadata.imageUrl).hostname : null,
-    sourceUrl: metadata.sourceUrl,
+    sourceUrl: redactUrlForLogs(metadata.sourceUrl),
   });
   return metadata;
 }
