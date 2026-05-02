@@ -168,10 +168,6 @@ function AuthGate() {
       <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="aura/swipe" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="modal"
-        options={{ presentation: "modal", title: "Modal" }}
-      />
     </Stack>
   );
 }
@@ -180,7 +176,7 @@ const loadingStyles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: "center",
-    backgroundColor: "#0A0A0F",
+    backgroundColor: Colors.dark.background,
     overflow: "hidden",
   },
   loadingStack: {
@@ -191,7 +187,7 @@ const loadingStyles = StyleSheet.create({
     transform: [{ translateY: -80 }],
   },
   message: {
-    color: "#FFFFFF",
+    color: Colors.dark.textPrimary,
     fontSize: 16,
     letterSpacing: 1,
     textAlign: "center",
