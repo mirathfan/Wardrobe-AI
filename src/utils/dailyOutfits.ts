@@ -28,6 +28,9 @@ export type OutfitItemsByCategory = {
   shoes?: string;
 };
 
+// Canonical saved daily plan shape for Calendar, Today, and AURA "Plan Today".
+// Server-generated candidate outfits may share users/{uid}/outfits, but they are
+// not daily plan records unless they include this plannedOutfit shape on a date-key doc.
 export type PlannedOutfit = {
   itemsByCategory: OutfitItemsByCategory;
   locked?: {
@@ -196,6 +199,8 @@ export async function savePlannedOutfit(
 ) {
   const key = normalizeDateKey(dateKey);
   const ref = outfitDocRef(uid, key);
+  // Daily docs are keyed by date and must carry plannedOutfit. Do not replace
+  // this with server candidate payloads that only contain picks/itemIds.
   const rawPayload = {
     dateKey: key,
     itemIds: itemIds.filter(Boolean),

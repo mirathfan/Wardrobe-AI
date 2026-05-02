@@ -1,3 +1,5 @@
+// Deprecated planner hook: the current Calendar/Today flows subscribe through
+// dailyOutfits.ts and generate Calendar suggestions with outfitPlanning.ts.
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ClothingItem } from "../../src/types/ClothingItem";

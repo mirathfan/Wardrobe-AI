@@ -1,3 +1,5 @@
+// Deprecated planner path: current Calendar/Today flows use outfitPlanning.ts for
+// suggestions and dailyOutfits.ts for saved daily outfit records.
 import { normalizeLaundryStatus, toCanonicalCategory } from "../../src/lib/items";
 import { ClothingItem } from "../../src/types/ClothingItem";
 
