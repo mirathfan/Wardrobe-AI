@@ -11,11 +11,11 @@ import AuraChatDrawer from "@/src/components/ai/AuraChatDrawer";
 import AuraQuickChips from "@/src/components/ai/AuraQuickChips";
 import ChatList from "@/src/components/ai/ChatList";
 import InputBar from "@/src/components/ai/InputBar";
-import { auraTheme } from "@/src/components/ai/aiTheme";
 import AuraGlowBackground from "@/src/components/aura/AuraGlowBackground";
 import AnimatedAuraRing from "@/src/components/aura/AnimatedAuraRing";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
+import { DOCK_HEIGHT, FLOATING_CONTROL_GAP } from "@/src/constants/dock";
 import type {
   AIMessage,
   ChatAttachment,
@@ -27,7 +27,8 @@ import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { askAuraStream, isAuraStreamAbortError, transcribeAuraAudio } from "@/src/lib/aura";
-import { logAuraLookStyleEvent, updateAuraSessionContextFromPrompt } from "@/src/lib/auraMemory";
+import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
+import { updateAuraSessionContextFromPrompt } from "@/src/lib/auraMemory";
 import {
   type AuraCandidateLocalPhoto,
   createAuraItemDraftsFromCandidates,
@@ -36,8 +37,6 @@ import {
   uploadAuraTranscriptionAudio,
 } from "@/src/lib/auraAttachments";
 import { classifyAuraImageIntent } from "@/src/lib/auraIntent";
-import { auraLookToPlannedOutfit, saveAuraLook } from "@/src/lib/auraLooks";
-import { saveAuraOutfitFeedback } from "@/src/lib/auraOutfitFeedback";
 import { generateAuraSwipeBatch } from "@/src/lib/auraSwipe";
 import { runHaptic } from "@/src/lib/haptics";
 import { getItemImageUrl } from "@/src/lib/itemImage";
@@ -68,7 +67,7 @@ import {
 } from "@/src/lib/localCache";
 import type { AuraCandidateAction, AuraCandidateItem, AuraLaundryConfirmationAction, AuraLookAction, AuraLookOptionMeta, AuraResponse } from "@/src/types/aura";
 import type { ClothingItem } from "@/src/types/ClothingItem";
-import { markAnalyzedOutfitWorn, savePlannedRecord } from "@/src/utils/dailyOutfits";
+import { markAnalyzedOutfitWorn } from "@/src/utils/dailyOutfits";
 
 const TRAIN_AURA_CHIP_LABEL = "Train AURA faster";
 const AURA_TOP_CHIPS = [
@@ -81,6 +80,8 @@ const AURA_TOP_CHIPS = [
 const DEFAULT_CHIPS = AURA_TOP_CHIPS.filter((chip) => chip !== TRAIN_AURA_CHIP_LABEL);
 
 const DEFAULT_COMPOSER_HEIGHT = 56;
+const CHAT_COMPOSER_TAB_GAP = 8;
+const CHAT_BOTTOM_BREATHING_ROOM = 18;
 const STREAM_FLUSH_INTERVAL_MS = 24;
 const AURA_REPLY_START_HAPTIC = "light" as const;
 const AURA_REPLY_FINISH_HAPTIC = "selection" as const;
@@ -393,19 +394,6 @@ function buildAssistantCardIntro(data: AuraResponse, userRequest?: string) {
   }
 
   return "Got you — here’s what I’d do.";
-}
-
-function buildAuraLookFeedbackPrompt(action: AuraLookAction, promptBase: string) {
-  if (action === "notMyVibe") {
-    return `Take this in a different direction from ${promptBase}. Keep it polished, but shift the palette, silhouette, or overall attitude so it feels more like me.`;
-  }
-  if (action === "showMoreLikeThis") {
-    return `Show me 3 more looks in the same lane as ${promptBase}, but vary the styling so they do not feel repetitive.`;
-  }
-  if (action === "lessLikeThis") {
-    return `Pull away from ${promptBase}. Keep the same level of polish, but give me a noticeably different palette, silhouette, or vibe.`;
-  }
-  return "";
 }
 
 function buildShareTranscript(thread: AIChatThread, messages: AIMessage[]) {
@@ -1858,91 +1846,24 @@ export default function AIScreen() {
       const promptBase = look?.lookTitle || sourceMessage.aura?.title || "this look";
       if (!look || !uid) return;
       if (loading) return;
-      if (action === "saveLook") {
-        try {
-          await saveAuraLook(uid, look, { title: sourceMessage.aura?.title });
-          void runHaptic("light");
-          Toast.saved();
-        } catch (error: any) {
-          Toast.error("Save failed", error?.message ?? "Unable to save this look.");
-        }
-        return;
-      }
-      if (action === "planForToday") {
-        try {
-          await savePlannedRecord(uid, new Date(), auraLookToPlannedOutfit(look));
-          void runHaptic("light");
-          Toast.success("Planned", "This look is now attached to today.");
-        } catch (error: any) {
-          Toast.error("Plan failed", error?.message ?? "Unable to plan this look for today.");
-        }
-        return;
-      }
-      if (action === "likeLook") {
-        await logAuraLookStyleEvent(uid, "outfit_liked", look, { source: "aura" });
-        await saveAuraOutfitFeedback(uid, {
-          feedbackType: "outfit_liked",
-          look,
+      await handleSharedAuraLookAction({
+        uid,
+        action,
+        look,
+        promptBase,
+        saveTitle: sourceMessage.aura?.title,
+        feedbackContext: {
           chatId: activeChatId,
           messageId: sourceMessage.id,
           option: lookOption,
-          source: "aura",
-        });
-        Alert.alert("Noted", "AURA will keep more of this energy in rotation.");
-        return;
-      }
-      if (action === "notMyVibe") {
-        await logAuraLookStyleEvent(uid, "outfit_disliked", look, { source: "aura" });
-        await saveAuraOutfitFeedback(uid, {
-          feedbackType: "outfit_disliked",
-          look,
-          chatId: activeChatId,
-          messageId: sourceMessage.id,
-          option: lookOption,
-          source: "aura",
-        });
-        void handleAsk(buildAuraLookFeedbackPrompt(action, promptBase));
-        return;
-      }
-      if (action === "showMoreLikeThis") {
-        void logAuraLookStyleEvent(uid, "more_like_this", look, { source: "aura" });
-        void handleAsk(buildAuraLookFeedbackPrompt(action, promptBase));
-        return;
-      }
-      if (action === "lessLikeThis") {
-        await logAuraLookStyleEvent(uid, "less_like_this", look, { source: "aura" });
-        void handleAsk(buildAuraLookFeedbackPrompt(action, promptBase));
-        return;
-      }
-      if (action === "shopMissingPieces") {
-        const missingPieces = look.addToComplete.filter(Boolean);
-        Alert.alert(
-          "Missing pieces",
-          missingPieces.length
-            ? missingPieces.join("\n")
-            : "AURA does not see any missing pieces in this look yet.",
-          missingPieces.length
-            ? [
-                { text: "Close", style: "cancel" },
-                {
-                  text: "Create shopping brief",
-                  onPress: () =>
-                    void handleAsk(
-                      `Turn ${promptBase} into a concise shopping brief. Tell me what is actually missing from my wardrobe, what matters most to buy first, and what can wait.`
-                    ),
-                },
-              ]
-            : [{ text: "Close", style: "cancel" }]
-        );
-        return;
-      }
-      if (action === "useOnlyMyCloset") {
-        void handleAsk(`Fix ${promptBase} using only my closet. Keep the same overall intent, but make it feel more resolved with pieces I already own.`);
-        return;
-      }
-      if (action === "makeItDressier") {
-        void handleAsk(`Fix ${promptBase} and make it dressier. Keep it polished, tasteful, and still like me.`);
-      }
+        },
+        onPrompt: (prompt) => {
+          void handleAsk(prompt);
+        },
+        onAlert: (title, message, buttons) => Alert.alert(title, message, buttons),
+        onAfterSave: () => runHaptic("light"),
+        onAfterPlan: () => runHaptic("light"),
+      });
     },
     [activeChatId, handleAsk, loading, uid]
   );
@@ -2179,17 +2100,23 @@ export default function AIScreen() {
     [colors.background, colors.surface, colors.surfaceSoft],
   );
   const chatBottomGlowColors = useMemo(
-    () => [colors.purpleSurface, colors.surfaceGlass, "transparent"] as const,
-    [colors.purpleSurface, colors.surfaceGlass],
+    () => ["rgba(167,139,250,0.045)", "rgba(255,255,255,0.016)", "transparent"] as const,
+    [],
   );
-  const restingComposerBottom = layout.composerOffset;
+  const restingComposerBottom =
+    layout.composerOffset - Math.max(0, FLOATING_CONTROL_GAP - CHAT_COMPOSER_TAB_GAP);
   const isComposerActive = isComposerFocused || keyboardHeight > 0;
   const keyboardComposerBottom =
     keyboardHeight > 0
       ? Math.max(12, keyboardHeight + (Platform.OS === "ios" ? 8 : 4))
       : 0;
   const composerBottom = keyboardHeight > 0 ? keyboardComposerBottom : restingComposerBottom;
-  const chatBottomReservation = composerBottom + composerHeight + 24;
+  const closedDockStackInset =
+    Math.max(insets.bottom, layout.floatingDockBottom) + DOCK_HEIGHT + CHAT_COMPOSER_TAB_GAP;
+  const chatBottomInset = Math.max(
+    composerBottom + composerHeight,
+    closedDockStackInset + composerHeight,
+  ) + CHAT_BOTTOM_BREATHING_ROOM;
   const showEmptyState = orderedMessages.length === 0 && !loading && !isBooting && !message.trim();
   const showKeyboardWatermark = keyboardHeight > 0 && orderedMessages.length < 2;
   const visibleHeroChips = AURA_TOP_CHIPS;
@@ -2237,7 +2164,7 @@ export default function AIScreen() {
           left: 0,
           right: 0,
           bottom: 0,
-          height: 180,
+          height: 112,
         }}
       />
         <AuraHeader
@@ -2262,7 +2189,7 @@ export default function AIScreen() {
         }}
       />
 
-        <View style={{ paddingTop: 10, paddingBottom: 0 }}>
+        <View style={{ paddingTop: 10, paddingBottom: 8 }}>
           <AuraQuickChips
             variant="pills"
             chips={visibleHeroChips}
@@ -2283,7 +2210,7 @@ export default function AIScreen() {
           itemsById={itemsById}
           savingId={null}
           loading={loading}
-          contentBottomPadding={chatBottomReservation}
+          contentBottomPadding={chatBottomInset}
           autoScrollSignal={focusScrollSignal}
           focusMessageId={focusMessageId}
           emptyState={emptyChatState}
@@ -2302,7 +2229,7 @@ export default function AIScreen() {
                 position: "absolute",
                 left: 0,
                 right: 0,
-                bottom: chatBottomReservation + 20,
+                bottom: chatBottomInset + 20,
                 textAlign: "center",
                 color: colors.text,
                 opacity: 0.06,

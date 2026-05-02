@@ -41,6 +41,7 @@ type AuraContextArgs = {
 
 type AuraCategory =
   | "tops"
+  | "one_piece"
   | "outerwear"
   | "bottoms"
   | "footwear"
@@ -59,6 +60,112 @@ function normalizeToken(value?: string | null): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+const CANONICAL_AURA_CATEGORY_ALIASES: Record<Exclude<AuraCategory, "other">, readonly string[]> = {
+  // Keep this alias table in sync with src/lib/items.ts.
+  one_piece: ["one piece", "dress", "jumpsuit", "romper", "set", "matching set"],
+  tops: [
+    "top",
+    "tops",
+    "tshirt",
+    "t shirt",
+    "t-shirt",
+    "tee",
+    "shirt",
+    "polo",
+    "sweater",
+    "sweatshirt",
+    "blouse",
+    "crop top",
+    "tank",
+    "tank top",
+    "kurta",
+  ],
+  outerwear: [
+    "outerwear",
+    "jacket",
+    "jackets",
+    "hoodie",
+    "hoodies",
+    "coat",
+    "coats",
+    "blazer",
+    "blazers",
+    "overshirt",
+    "overshirts",
+    "cardigan",
+    "cardigans",
+    "shacket",
+    "trench",
+    "parka",
+    "bomber",
+    "layer",
+    "layers",
+  ],
+  bottoms: [
+    "bottom",
+    "bottoms",
+    "pants",
+    "jeans",
+    "trousers",
+    "shorts",
+    "cargo",
+    "cargos",
+    "chinos",
+    "joggers",
+    "trackpants",
+    "track pants",
+  ],
+  footwear: [
+    "footwear",
+    "shoes",
+    "shoe",
+    "sneaker",
+    "sneakers",
+    "boot",
+    "boots",
+    "sandal",
+    "sandals",
+    "slide",
+    "slides",
+    "loafer",
+    "loafers",
+    "heel",
+    "heels",
+    "formal shoe",
+    "formal shoes",
+    "derby",
+    "derbies",
+    "oxford",
+    "oxfords",
+    "chelsea boot",
+    "chelsea boots",
+  ],
+  accessories: [
+    "accessories",
+    "accessory",
+    "watch",
+    "bag",
+    "handbag",
+    "tote",
+    "tote bag",
+    "crossbody",
+    "belt",
+    "perfume",
+    "jewellery",
+    "jewelry",
+    "cap",
+    "hat",
+    "sunglasses",
+    "glasses",
+    "necklace",
+    "bracelet",
+    "ring",
+    "earrings",
+    "scarf",
+    "socks",
+  ],
+};
 
 function pickColor(item: WardrobeItem): string {
   return (
@@ -121,95 +228,13 @@ function compactUserPreferences(userProfile?: AuraUserProfile | null) {
 
 export function mapCategory(raw?: string | null): AuraCategory {
   const value = normalizeToken(raw);
-
-  if (
-    [
-      "top",
-      "tops",
-      "tshirt",
-      "t-shirt",
-      "tee",
-      "shirt",
-      "hoodie",
-      "sweater",
-      "polo",
-      "sweatshirt",
-      "tank",
-      "overshirt",
-      "kurta",
-    ].includes(value)
-  ) {
-    return "tops";
+  if (!value) return "other";
+  for (const [category, aliases] of Object.entries(CANONICAL_AURA_CATEGORY_ALIASES) as [
+    Exclude<AuraCategory, "other">,
+    readonly string[],
+  ][]) {
+    if (aliases.includes(value)) return category;
   }
-
-  if (["outerwear", "jacket", "coat", "blazer", "overshirt"].includes(value)) {
-    return "outerwear";
-  }
-
-  if (
-    [
-      "bottom",
-      "bottoms",
-      "pants",
-      "jeans",
-      "trousers",
-      "shorts",
-      "cargo",
-      "cargos",
-      "chinos",
-      "joggers",
-      "trackpants",
-    ].includes(value)
-  ) {
-    return "bottoms";
-  }
-
-  if (
-    [
-      "footwear",
-      "shoes",
-      "shoe",
-      "sneaker",
-      "sneakers",
-      "boot",
-      "boots",
-      "sandal",
-      "sandals",
-      "slide",
-      "slides",
-      "loafer",
-      "loafers",
-      "formal shoe",
-      "formal shoes",
-      "derby",
-      "derbies",
-      "oxford",
-      "oxfords",
-      "chelsea boot",
-      "chelsea boots",
-    ].includes(value)
-  ) {
-    return "footwear";
-  }
-
-  if (
-    [
-      "accessories",
-      "accessory",
-      "watch",
-      "bag",
-      "belt",
-      "perfume",
-      "jewellery",
-      "jewelry",
-      "cap",
-      "hat",
-      "sunglasses",
-    ].includes(value)
-  ) {
-    return "accessories";
-  }
-
   return "other";
 }
 
@@ -232,6 +257,7 @@ export function buildAuraContext({
   };
   const wardrobe = {
     tops: [] as Record<string, string>[],
+    one_piece: [] as Record<string, string>[],
     outerwear: [] as Record<string, string>[],
     bottoms: [] as Record<string, string>[],
     footwear: [] as Record<string, string>[],
@@ -293,6 +319,7 @@ export function buildAuraContext({
   };
   const totalItemCount =
     categoryCounts.tops +
+    wardrobe.one_piece.length +
     categoryCounts.outerwear +
     categoryCounts.bottoms +
     categoryCounts.footwear +

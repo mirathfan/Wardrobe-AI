@@ -32,6 +32,14 @@ export type CanonicalCategory =
   | "shoes"
   | "outerwear"
   | "accessory";
+export type CanonicalCategoryGroup =
+  | "tops"
+  | "one_piece"
+  | "bottoms"
+  | "footwear"
+  | "outerwear"
+  | "accessories"
+  | "other";
 export type CategoryFilter =
   | "ALL"
   | "TOP"
@@ -68,6 +76,120 @@ const CATEGORY_MAP: Record<Exclude<CategoryFilter, "ALL">, string[]> = {
 
 function norm(v?: string | null) {
   return (v ?? "").trim().toLowerCase();
+}
+
+const CANONICAL_CATEGORY_ALIASES: Record<Exclude<CanonicalCategoryGroup, "other">, readonly string[]> = {
+  // Keep this alias table in sync with functions/src/shared/buildAuraContext.ts.
+  one_piece: ["one piece", "dress", "jumpsuit", "romper", "set", "matching set"],
+  tops: [
+    "top",
+    "tops",
+    "tshirt",
+    "t shirt",
+    "t-shirt",
+    "shirt",
+    "tee",
+    "polo",
+    "sweater",
+    "sweatshirt",
+    "blouse",
+    "crop top",
+    "tank",
+    "tank top",
+    "kurta",
+  ],
+  outerwear: [
+    "outerwear",
+    "jacket",
+    "jackets",
+    "hoodie",
+    "hoodies",
+    "coat",
+    "coats",
+    "blazer",
+    "blazers",
+    "overshirt",
+    "overshirts",
+    "cardigan",
+    "cardigans",
+    "shacket",
+    "trench",
+    "parka",
+    "bomber",
+    "layer",
+    "layers",
+  ],
+  bottoms: [
+    "bottom",
+    "bottoms",
+    "pants",
+    "trousers",
+    "jeans",
+    "shorts",
+    "joggers",
+    "skirt",
+    "cargo",
+    "cargos",
+    "chinos",
+    "trackpants",
+    "track pants",
+  ],
+  footwear: [
+    "shoes",
+    "shoe",
+    "footwear",
+    "sneakers",
+    "sneaker",
+    "boots",
+    "boot",
+    "slides",
+    "slide",
+    "sandals",
+    "sandal",
+    "loafers",
+    "loafer",
+    "heel",
+    "heels",
+    "formal shoe",
+    "formal shoes",
+    "derby",
+    "derbies",
+    "oxford",
+    "oxfords",
+    "chelsea boot",
+    "chelsea boots",
+  ],
+  accessories: [
+    "accessory",
+    "accessories",
+    "cap",
+    "hat",
+    "watch",
+    "sunglasses",
+    "glasses",
+    "belt",
+    "handbag",
+    "bag",
+    "tote",
+    "tote bag",
+    "crossbody",
+    "necklace",
+    "bracelet",
+    "ring",
+    "earrings",
+    "scarf",
+    "perfume",
+    "jewellery",
+    "jewelry",
+    "socks",
+  ],
+};
+
+function normalizedCategoryToken(raw?: string | null) {
+  return norm(raw)
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function normalizeLaundryStatus(item: Partial<ClosetItem> | null | undefined): LaundryStatus {
@@ -210,79 +332,28 @@ export function isProcessingWardrobeItem(
   return lifecycle === "uploading" || lifecycle === "processing" || lifecycle === "needs_review" || lifecycle === "failed";
 }
 
+export function toCanonicalCategoryGroup(raw?: string | null): CanonicalCategoryGroup {
+  const value = normalizedCategoryToken(raw);
+  if (!value) return "other";
+
+  for (const [category, aliases] of Object.entries(CANONICAL_CATEGORY_ALIASES) as [
+    Exclude<CanonicalCategoryGroup, "other">,
+    readonly string[],
+  ][]) {
+    if (aliases.includes(value)) return category;
+  }
+
+  return "other";
+}
+
 export function toCanonicalCategory(raw?: string | null): CanonicalCategory {
-  const v = norm(raw).replace(/\s+/g, " ");
-
-  if (
-    [
-      "one_piece",
-      "dress",
-      "jumpsuit",
-      "romper",
-      "set",
-      "matching_set",
-    ].includes(v)
-  ) {
-    return "one_piece";
-  }
-
-  if (
-    [
-      "top",
-      "tshirt",
-      "t-shirt",
-      "shirt",
-      "tee",
-      "polo",
-      "sweater",
-      "blouse",
-      "crop_top",
-      "tank",
-    ].includes(v)
-  ) {
-    return "top";
-  }
-
-  if (
-    ["bottom", "pants", "trousers", "jeans", "shorts", "joggers", "skirt"].includes(v)
-  ) {
-    return "bottom";
-  }
-
-  if (
-    ["shoes", "footwear", "sneakers", "sneaker", "boots", "slides", "sandal", "loafer", "heel"].includes(
-      v
-    )
-  ) {
-    return "shoes";
-  }
-
-  if (["outerwear", "jacket", "hoodie", "coat", "blazer"].includes(v)) {
-    return "outerwear";
-  }
-
-  if (
-    [
-      "accessory",
-      "accessories",
-      "cap",
-      "hat",
-      "watch",
-      "sunglasses",
-      "belt",
-      "handbag",
-      "bag",
-      "necklace",
-      "bracelet",
-      "ring",
-      "earrings",
-      "scarf",
-      "perfume",
-    ].includes(v)
-  ) {
-    return "accessory";
-  }
-
+  const category = toCanonicalCategoryGroup(raw);
+  if (category === "tops") return "top";
+  if (category === "bottoms") return "bottom";
+  if (category === "footwear") return "shoes";
+  if (category === "accessories") return "accessory";
+  if (category === "one_piece") return "one_piece";
+  if (category === "outerwear") return "outerwear";
   return "accessory";
 }
 
@@ -292,9 +363,14 @@ export function categoryValuesFor(filter: CategoryFilter) {
 }
 
 export function normalizeCategoryForStorage(raw?: string | null): Category {
-  const v = norm(raw).replace(/\s+/g, " ");
-  if (v === "shoes") return Category.FOOTWEAR;
-  if (v === "one piece") return Category.ONE_PIECE;
+  const category = toCanonicalCategoryGroup(raw);
+  if (category === "tops") return Category.TOP;
+  if (category === "bottoms") return Category.BOTTOM;
+  if (category === "footwear") return Category.FOOTWEAR;
+  if (category === "outerwear") return Category.OUTERWEAR;
+  if (category === "one_piece") return Category.ONE_PIECE;
+  if (category === "accessories") return Category.ACCESSORY;
+  const v = normalizedCategoryToken(raw);
   if (Object.values(Category).includes(v as Category)) return v as Category;
   return Category.TOP;
 }

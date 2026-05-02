@@ -30,12 +30,11 @@ import { useNow } from "@/src/hooks/useNow";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { buildVisiblePreferenceHint, loadAssistantProfile } from "@/src/lib/assistantMemory";
 import { loadChatMessages, loadLatestChatThread, type AIChatThread } from "@/src/lib/aiChats";
-import { logAuraLookStyleEvent } from "@/src/lib/auraMemory";
-import { auraLookToPlannedOutfit, loadLatestSavedAuraLook, saveAuraLook } from "@/src/lib/auraLooks";
+import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
+import { loadLatestSavedAuraLook } from "@/src/lib/auraLooks";
 import { listenToItems, normalizeLaundryStatus } from "@/src/lib/items";
 import { getMinimumClosetProgress, getSuggestedAddItemCategory } from "@/src/lib/minimumCloset";
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
-import { Toast } from "@/src/lib/toast";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
 import {
   getCachedChatList,
@@ -44,9 +43,9 @@ import {
   setCachedHomeSnapshot,
 } from "@/src/lib/localCache";
 import type { ClothingItem } from "@/src/types/ClothingItem";
-import type { AuraLookAction, AuraResponse } from "@/src/types/aura";
+import type { AuraLook, AuraLookAction, AuraResponse } from "@/src/types/aura";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
-import { savePlannedRecord, subscribeOutfitByDate, type DailyOutfitRecord } from "@/src/utils/dailyOutfits";
+import { subscribeOutfitByDate, type DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
 function toMillis(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -90,19 +89,6 @@ function RevealSection({
       {children}
     </Animated.View>
   );
-}
-
-function buildAuraLookFeedbackPrompt(action: AuraLookAction, promptBase: string) {
-  if (action === "notMyVibe") {
-    return `Take this in a different direction from ${promptBase}. Keep it polished, but shift the palette, silhouette, or overall attitude so it feels more like me.`;
-  }
-  if (action === "showMoreLikeThis") {
-    return `Show me 3 more looks in the same lane as ${promptBase}, but vary the styling so they do not feel repetitive.`;
-  }
-  if (action === "lessLikeThis") {
-    return `Pull away from ${promptBase}. Keep the same level of polish, but give me a noticeably different palette, silhouette, or vibe.`;
-  }
-  return "";
 }
 
 export default function HomeScreen() {
@@ -686,78 +672,18 @@ export default function HomeScreen() {
     });
   }, []);
 
-  async function handleAuraLookAction(action: AuraLookAction, selectedLook?: import("@/src/types/aura").AuraLook) {
+  async function handleAuraLookAction(action: AuraLookAction, selectedLook?: AuraLook) {
     const look = selectedLook ?? latestLook;
-    if (!look || !uid) return;
-    const promptBase = look.lookTitle;
-    if (action === "saveLook") {
-      try {
-        const saved = await saveAuraLook(uid, look, { title: promptBase });
-        setLatestSavedLook(saved);
-        Toast.saved();
-      } catch (error: any) {
-        Toast.error("Save failed", error?.message ?? "Unable to save this look.");
-      }
-      return;
-    }
-    if (action === "planForToday") {
-      try {
-        await savePlannedRecord(uid, new Date(), auraLookToPlannedOutfit(look));
-        Toast.success("Planned", "This look is now attached to today.");
-      } catch (error: any) {
-        Toast.error("Plan failed", error?.message ?? "Unable to plan this look for today.");
-      }
-      return;
-    }
-    if (action === "likeLook") {
-      await logAuraLookStyleEvent(uid, "outfit_liked", look, { source: "aura" });
-      Alert.alert("Noted", "AURA will keep more of this energy in rotation.");
-      return;
-    }
-    if (action === "notMyVibe") {
-      await logAuraLookStyleEvent(uid, "outfit_disliked", look, { source: "aura" });
-      openAIWithPrompt(buildAuraLookFeedbackPrompt(action, promptBase));
-      return;
-    }
-    if (action === "showMoreLikeThis") {
-      void logAuraLookStyleEvent(uid, "more_like_this", look, { source: "aura" });
-      openAIWithPrompt(buildAuraLookFeedbackPrompt(action, promptBase));
-      return;
-    }
-    if (action === "lessLikeThis") {
-      await logAuraLookStyleEvent(uid, "less_like_this", look, { source: "aura" });
-      openAIWithPrompt(buildAuraLookFeedbackPrompt(action, promptBase));
-      return;
-    }
-    if (action === "shopMissingPieces") {
-      const missingPieces = look.addToComplete.filter(Boolean);
-      Alert.alert(
-        "Missing pieces",
-        missingPieces.length
-          ? missingPieces.join("\n")
-          : "AURA does not see any missing pieces in this look yet.",
-        missingPieces.length
-          ? [
-              { text: "Close", style: "cancel" },
-              {
-                text: "Create shopping brief",
-                onPress: () =>
-                  openAIWithPrompt(
-                    `Turn ${promptBase} into a concise shopping brief. Tell me what is actually missing from my wardrobe, what matters most to buy first, and what can wait.`
-                  ),
-              },
-            ]
-          : [{ text: "Close", style: "cancel" }]
-      );
-      return;
-    }
-    if (action === "useOnlyMyCloset") {
-      openAIWithPrompt(`Fix ${promptBase} using only my closet. Keep the same overall intent, but make it feel more resolved with pieces I already own.`);
-      return;
-    }
-    if (action === "makeItDressier") {
-      openAIWithPrompt(`Fix ${promptBase} and make it dressier. Keep it polished, tasteful, and still like me.`);
-    }
+    await handleSharedAuraLookAction({
+      uid,
+      action,
+      look,
+      promptBase: look?.lookTitle,
+      saveTitle: look?.lookTitle,
+      onPrompt: openAIWithPrompt,
+      onAlert: (title, message, buttons) => Alert.alert(title, message, buttons),
+      onSavedLook: setLatestSavedLook,
+    });
   }
 
   const smartTools = useMemo<SmartTool[]>(
