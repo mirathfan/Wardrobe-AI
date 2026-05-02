@@ -183,6 +183,15 @@ export function useItemExtraction({
     [isEdit, uid]
   );
 
+  const cleanupDraftDocIfInactive = useCallback(
+    (itemId: string | null) => {
+      if (!itemId) return;
+      if (createSessionRef.current.draftId === itemId) return;
+      void cleanupDraftDoc(itemId);
+    },
+    [cleanupDraftDoc, createSessionRef]
+  );
+
   const ensureDraftDocExists = useCallback(async () => {
     if (!uid || isEdit) return null;
     const existingDraftId = createSessionRef.current.draftId ?? draftItemId;
@@ -765,7 +774,13 @@ export function useItemExtraction({
           : 0,
       };
     }
-  }, [draft, photo.actions, photo.refs, setAutofillStatusThrottled]);
+  }, [
+    createSessionRef,
+    draft,
+    draftPhotoHash,
+    photo.actions,
+    setAutofillStatusThrottled,
+  ]);
 
   const attachDraftSubscription = useCallback(
     (itemId: string, sessionId?: string, runId?: number) => {
@@ -915,7 +930,7 @@ export function useItemExtraction({
           "Photo upload"
         );
         if (runId !== aiRunIdRef.current) {
-          void cleanupDraftDoc(draftRef.id);
+          cleanupDraftDocIfInactive(draftRef.id);
           return;
         }
         const now = Date.now();
@@ -977,7 +992,7 @@ export function useItemExtraction({
         };
         await setDoc(draftRef, draftPayload, { merge: true });
         if (runId !== aiRunIdRef.current) {
-          void cleanupDraftDoc(draftRef.id);
+          cleanupDraftDocIfInactive(draftRef.id);
           return;
         }
         setDraftItemId(draftRef.id);
@@ -1001,7 +1016,7 @@ export function useItemExtraction({
         photo.refs.syncedPreviewUriRef.current = localPhotoUri;
         attachDraftSubscription(draftRef.id, params.token.sessionId, runId);
         if (previousDraftId && previousDraftId !== draftRef.id) {
-          void cleanupDraftDoc(previousDraftId);
+          cleanupDraftDocIfInactive(previousDraftId);
         }
       } catch (error) {
         const message =
@@ -1012,8 +1027,7 @@ export function useItemExtraction({
     },
     [
       attachDraftSubscription,
-      ensureDraftDocExists,
-      cleanupDraftDoc,
+      cleanupDraftDocIfInactive,
       createSessionRef,
       draftItemId,
       draftPhotoHash,
@@ -1093,7 +1107,13 @@ export function useItemExtraction({
     setAiStage("Color");
     setIsAutofillRunning(!isEdit);
     lastAutofillStartedHashRef.current = null;
-  }, [bumpAiRun, isEdit, resetDraftTracking]);
+  }, [
+    bumpAiRun,
+    draft.actions,
+    draft.refs.userEditedKeysRef,
+    isEdit,
+    resetDraftTracking,
+  ]);
 
   const setAutofillRunningState = useCallback(() => {
     setAiStatus("running");
@@ -1399,6 +1419,7 @@ export function useItemExtraction({
     isEdit,
     photo,
     startDraftAutofill,
+    attachDraftSubscription,
     uid,
     setAutofillStatusThrottled,
   ]);
@@ -1460,6 +1481,7 @@ export function useItemExtraction({
     stopDraftSubscription,
     attachDraftSubscription,
     cleanupDraftDoc,
+    cleanupDraftDocIfInactive,
     ensureDraftDocExists,
     resetDraftTracking,
     maybeApplyAutofillFromDraft,

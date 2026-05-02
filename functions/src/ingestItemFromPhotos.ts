@@ -48,6 +48,8 @@ type ItemDoc = {
   category?: string;
   subCategory?: string;
   type?: string | null;
+  pattern?: string | null;
+  material?: string | null;
   fit?: string;
   style?: string;
   sleeveLength?: string;
@@ -92,6 +94,7 @@ type ItemDoc = {
   displayColors?: string[] | null;
   colorSource?: "ai" | "user";
   colorUpdatedAt?: number;
+  userEditedFields?: string[];
   aiColorLabel?: string;
   aiColors?: string[];
   pixelColors?: string[];
@@ -358,6 +361,36 @@ function toMillis(value: LastRunAtValue): number | null {
     return value.toMillis();
   }
   return null;
+}
+
+function normalizeComparableValue(value: unknown): unknown {
+  if (value == null) return null;
+  if (Array.isArray(value)) return value.map(normalizeComparableValue);
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const normalized: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      normalized[key] = normalizeComparableValue(record[key]);
+    }
+    return normalized;
+  }
+  return value;
+}
+
+function valuesDiffer(left: unknown, right: unknown): boolean {
+  return (
+    JSON.stringify(normalizeComparableValue(left)) !==
+    JSON.stringify(normalizeComparableValue(right))
+  );
+}
+
+function stringSet(value: unknown): Set<string> {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(
+    value
+      .map((entry) => String(entry ?? "").trim())
+      .filter(Boolean),
+  );
 }
 
 function extractPhotoUrls(item: ItemDoc): string[] {
@@ -2260,6 +2293,63 @@ export const ingestItemFromPhotos = onDocumentWritten(
             .map((value: unknown) => String(value ?? "").trim())
             .filter(Boolean)
         : photoUrls;
+      const latestUserEditedFields = stringSet(
+        latestBeforeDone.get("userEditedFields"),
+      );
+      const latestValueChanged = (fieldPath: string, originalValue: unknown) =>
+        valuesDiffer(latestBeforeDone.get(fieldPath), originalValue);
+      const latestBrandSource = String(
+        latestBeforeDone.get("brandSource") ?? after.brandSource ?? "",
+      )
+        .trim()
+        .toLowerCase();
+      const latestColorSource = String(
+        latestBeforeDone.get("colorSource") ?? after.colorSource ?? "",
+      )
+        .trim()
+        .toLowerCase();
+      const latestName = String(latestBeforeDone.get("name") ?? "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const preserveCategory =
+        latestUserEditedFields.has("category") ||
+        latestValueChanged("category", after.category);
+      const preserveSubCategory =
+        preserveCategory ||
+        latestUserEditedFields.has("subCategory") ||
+        latestValueChanged("subCategory", after.subCategory);
+      const preservePattern =
+        latestUserEditedFields.has("pattern") ||
+        latestValueChanged("pattern", after.pattern);
+      const preserveMaterial =
+        latestUserEditedFields.has("material") ||
+        latestValueChanged("material", after.material);
+      const preserveFit =
+        latestUserEditedFields.has("fit") ||
+        latestValueChanged("fit", after.fit);
+      const preserveOccasionTags =
+        latestUserEditedFields.has("occasionTags") ||
+        latestValueChanged("occasionTags", after.occasionTags);
+      const preserveSeasonTags =
+        latestUserEditedFields.has("seasonTags") ||
+        latestValueChanged("seasonTags", after.seasonTags);
+      const preserveName =
+        latestUserEditedFields.has("name") ||
+        latestValueChanged("name", after.name);
+      const preserveColors =
+        latestColorSource === "user" ||
+        latestUserEditedFields.has("colors") ||
+        latestValueChanged("colors", after.colors) ||
+        latestValueChanged("primaryColor", after.primaryColor) ||
+        latestValueChanged("displayColor", after.displayColor) ||
+        latestValueChanged("displayColors", after.displayColors);
+      const preserveBrand =
+        latestBrandSource === "user" ||
+        latestUserEditedFields.has("brand") ||
+        latestValueChanged("brand", after.brand);
+      const completionColorNeedsReview = preserveColors
+        ? false
+        : colorNeedsReview;
 
       await ref.set(
         {
@@ -2274,19 +2364,17 @@ export const ingestItemFromPhotos = onDocumentWritten(
               ? { isDraft: false, draftState: "ready", itemLifecycleStatus: "ready" }
               : { draftState: "photo_uploaded", itemLifecycleStatus: "needs_review" }
             : {}),
-          ...(!String(after.name ?? "").trim() && inferredName
+          ...(!preserveName && !latestName && inferredName
             ? { name: inferredName }
             : {}),
-          category,
-          subCategory,
+          ...(!preserveCategory ? { category, wearSlot: wearSlot(category) } : {}),
+          ...(!preserveSubCategory ? { subCategory } : {}),
           ...(itemType ? { type: itemType } : {}),
-          wearSlot: wearSlot(category),
-          pattern,
-          material,
-          materialConfidence,
+          ...(!preservePattern ? { pattern } : {}),
+          ...(!preserveMaterial ? { material, materialConfidence } : {}),
           ...(detailTags.length > 0 ? { detailTags } : {}),
           confidenceSummary,
-          fit,
+          ...(!preserveFit ? { fit } : {}),
           style,
           ...(formality ? { formality } : {}),
           ...(warmth ? { warmth } : {}),
@@ -2301,11 +2389,15 @@ export const ingestItemFromPhotos = onDocumentWritten(
           legShape,
           hasLogo,
           logoPlacement,
-          ...(occasionTags.length > 0 ? { occasionTags } : {}),
-          ...(seasonTags.length > 0 ? { seasonTags } : {}),
+          ...(!preserveOccasionTags && occasionTags.length > 0
+            ? { occasionTags }
+            : {}),
+          ...(!preserveSeasonTags && seasonTags.length > 0
+            ? { seasonTags }
+            : {}),
           ...(aestheticTags.length > 0 ? { aestheticTags } : {}),
           crop: cropRect.normalized,
-          ...(!hasUserColorOverride
+          ...(!preserveColors
             ? {
                 ...(finalColors.length > 0 ? { colors: finalColors } : {}),
                 ...(finalColorLabel ? { colorLabel: finalColorLabel } : {}),
@@ -2326,7 +2418,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
                 colorUpdatedAt: Date.now(),
               }
             : {}),
-          ...(!hasUserBrandOverride && !shouldPreserveLegacyManualBrand
+          ...(!preserveBrand && !shouldPreserveLegacyManualBrand
             ? {
                 brand,
                 brandConfidence,
@@ -2352,8 +2444,8 @@ export const ingestItemFromPhotos = onDocumentWritten(
             ...(pixelResult.pixelHex
               ? { pixelColorHex: pixelResult.pixelHex }
               : {}),
-            ...(hasUserColorOverride ? {} : { colorConfidence }),
-            colorNeedsReview: persistedColorNeedsReview,
+            ...(preserveColors ? {} : { colorConfidence }),
+            colorNeedsReview: completionColorNeedsReview,
           },
           formalityScore,
           warmthScore,

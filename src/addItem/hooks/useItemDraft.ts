@@ -93,6 +93,21 @@ export function useItemDraft({
     keys.forEach((key) => userEditedKeysRef.current.delete(key));
   }, []);
 
+  const buildUserEditMetadata = useCallback(() => {
+    const userEditedFields = Array.from(userEditedKeysRef.current).sort();
+    if (!userEditedFields.length) return {};
+    return {
+      userEditedFields,
+      userEditedFieldsUpdatedAt: Date.now(),
+      ...(userEditedKeysRef.current.has("colors")
+        ? {
+            colorSource: "user",
+            colorUpdatedAt: Date.now(),
+          }
+        : {}),
+    };
+  }, []);
+
   const toggleSection = useCallback(
     (
       section: "fabric" | "size" | "notes" | "occasion" | "season" | "fit",
@@ -156,6 +171,7 @@ export function useItemDraft({
     try {
       const draftRef = doc(db, "users", uid, "items", draftItemId);
       await updateDoc(draftRef, {
+        ...buildUserEditMetadata(),
         ...(userEditedKeysRef.current.has("brand")
           ? {
               brand: cleanBrandInput(brand) || "",
@@ -192,6 +208,7 @@ export function useItemDraft({
     } catch {}
   }, [
     brand,
+    buildUserEditMetadata,
     category,
     displayColor,
     displayColors,
@@ -395,6 +412,7 @@ export function useItemDraft({
           : doc(itemsRef);
 
       const payloadBase = {
+        ...buildUserEditMetadata(),
         ...(userEditedKeysRef.current.has("brand")
           ? {
               brand: b || "",
@@ -605,6 +623,7 @@ export function useItemDraft({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     brand,
+    buildUserEditMetadata,
     category,
     editItemId,
     extractionRef,

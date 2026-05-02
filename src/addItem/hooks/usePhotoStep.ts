@@ -1219,6 +1219,10 @@ export function usePhotoStep({
     const attemptId = beginUploadAttempt("retry-upload");
     try {
       if (extraction.state.draftItemId) {
+        extraction.actions.setAutofillRunningState?.();
+        extraction.actions.setIngestionStatus?.("pending");
+        extraction.actions.setAutofillError?.(null);
+        extraction.actions.setIsAutofillRunning?.(true);
         const uploaded = await uploadWithTimeout(
           uploadItemPhoto({
             uid,
@@ -1232,6 +1236,10 @@ export function usePhotoStep({
           UPLOAD_TIMEOUT_MS,
           "Retry photo upload"
         );
+        const nextSourceHash =
+          pendingPhotoHash ??
+          `${pendingPhotoUri}-${pendingPhotoWidth ?? "unknown-width"}`;
+        const now = Date.now();
         await updateDoc(doc(db, "users", uid, "items", extraction.state.draftItemId), {
           photoUrl: uploaded.primaryUrl,
           originalImageUrl: uploaded.originalUrl,
@@ -1266,11 +1274,18 @@ export function usePhotoStep({
               }
             : {}),
           draftState: "photo_uploaded",
+          itemLifecycleStatus: "processing",
+          ingestionStatus: "pending",
           ingestion: {
             status: "pending",
-            lastRunAt: Date.now(),
+            lastRunAt: now,
+          },
+          ingestionSource: {
+            sourceHash: nextSourceHash,
+            sourceType: uploaded.cleanedUrl ? "ios_vision" : "original",
           },
         });
+        extraction.actions.setDraftPhotoHash?.(nextSourceHash);
         setPhotoUrl(uploaded.primaryUrl);
         setCleanedPhotoUrl(uploaded.cleanedUrl);
         setServerCleanedUrl(uploaded.cleanedUrl);
@@ -1312,6 +1327,10 @@ export function usePhotoStep({
       const message =
         error instanceof Error ? error.message : "Photo upload failed. Please retry.";
       setUploadError(message);
+      extraction.actions.setAiStatus?.("error");
+      extraction.actions.setIsAutofillRunning?.(false);
+      extraction.actions.setIngestionStatus?.("failed");
+      extraction.actions.setAutofillError?.(message);
     } finally {
       endUploadAttempt(attemptId, "retry-upload");
     }

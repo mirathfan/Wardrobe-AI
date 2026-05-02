@@ -17,6 +17,24 @@ function messageForError(error: unknown) {
   return "Could not import that product link.";
 }
 
+function codeForError(
+  error: unknown,
+): "invalid-argument" | "failed-precondition" | "internal" {
+  if (!(error instanceof ProductLinkError)) return "internal";
+  switch (error.code) {
+    case "invalid_url":
+    case "unsafe_url":
+    case "fetch_failed":
+      return "invalid-argument";
+    case "no_metadata":
+    case "no_images":
+      return "failed-precondition";
+    case "draft_failed":
+    default:
+      return "internal";
+  }
+}
+
 async function markImportFailed(uid: string, itemId: string | null, message: string) {
   if (!itemId) return;
   await getFirestore()
@@ -86,10 +104,11 @@ export const importProductLink = onCall(
         uid,
         url: redactUrlForLogs(url),
         itemId,
-        error,
+        code: error instanceof ProductLinkError ? error.code : null,
+        error: message,
       });
       await markImportFailed(uid, itemId, message);
-      throw new HttpsError("internal", message);
+      throw new HttpsError(codeForError(error), message);
     }
   }
 );
