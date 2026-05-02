@@ -1,6 +1,4 @@
 import { LinearGradient } from "expo-linear-gradient";
-import * as FileSystem from "expo-file-system/legacy";
-import * as ImagePicker from "expo-image-picker";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Keyboard, KeyboardEvent, Platform, Share, Text, View } from "react-native";
@@ -18,25 +16,30 @@ import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
 import { DOCK_HEIGHT, FLOATING_CONTROL_GAP } from "@/src/constants/dock";
 import type {
   AIMessage,
-  ChatAttachment,
-  ChatAttachmentGroupRole,
-  ChatOutfit,
   ChatImageAttachment,
+  ChatOutfit,
 } from "@/src/components/ai/chatTypes";
 import { useAuth } from "@/src/hooks/useAuth";
+import { useAuraChatHydration } from "@/src/hooks/aura/useAuraChatHydration";
+import { useAuraComposerState } from "@/src/hooks/aura/useAuraComposerState";
+import { useAuraStreamingState } from "@/src/hooks/aura/useAuraStreamingState";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { askAuraStream, isAuraStreamAbortError, transcribeAuraAudio } from "@/src/lib/aura";
+import { askAuraStream, isAuraStreamAbortError } from "@/src/lib/aura";
 import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
 import {
+  appendUniqueSystemMessage,
   buildChatSeedText,
   buildShareTranscript,
   buildStructuredOutfitBatchPrompt,
+  createStreamingAssistantMessage,
+  createSystemMessage,
   createMessageId,
-  createUserMessage,
+  createUserMessageWithAttachments,
   latestAuraLookCount,
   nextLocalMessageSequence,
   resolveStructuredBatchLookCount,
+  updateMessageById,
   wantsStructuredOutfitBatch,
 } from "@/src/lib/auraChatHelpers";
 import { updateAuraSessionContextFromPrompt } from "@/src/lib/auraMemory";
@@ -45,7 +48,6 @@ import {
   createAuraItemDraftsFromCandidates,
   createAuraItemDraftsFromDetectedOutfit,
   uploadAuraAttachments,
-  uploadAuraTranscriptionAudio,
 } from "@/src/lib/auraAttachments";
 import { classifyAuraImageIntent } from "@/src/lib/auraIntent";
 import { generateAuraSwipeBatch } from "@/src/lib/auraSwipe";
@@ -60,7 +62,6 @@ import {
   createChatThread,
   deleteChatThread,
   loadChatMessages,
-  loadRecentChatThreads,
   renameChatThread,
   setChatArchived,
   setChatPinned,
@@ -68,13 +69,11 @@ import {
   type AIChatThread,
   updateChatThread,
 } from "@/src/lib/aiChats";
-import { clearLatestChatCache, loadLatestChatCache, saveLatestChatCache } from "@/src/lib/localChatCache";
+import { clearLatestChatCache, saveLatestChatCache } from "@/src/lib/localChatCache";
 import { messageOrderMillis, orderChatMessages } from "@/src/lib/chatMessageOrder";
 import {
   clearCachedRecentMessages,
-  getCachedChatList,
   getCachedRecentMessages,
-  setCachedRecentMessages,
 } from "@/src/lib/localCache";
 import type { AuraCandidateAction, AuraCandidateItem, AuraLaundryConfirmationAction, AuraLookAction, AuraLookOptionMeta, AuraResponse } from "@/src/types/aura";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -114,49 +113,10 @@ type AskAuraOptions = {
   retryUserMessage?: AIMessage;
   removeMessageId?: string;
 };
-type OptionalAudioRecorder = {
-  uri: string | null;
-  prepareToRecordAsync: () => Promise<void>;
-  record: () => void;
-  stop: () => Promise<void>;
-};
 
 function logAuraChatState(event: string, payload?: Record<string, unknown>) {
   if (!DEBUG_AURA_CLIENT) return;
   console.log("[AURA_CHAT_STATE]", event, payload ?? {});
-}
-
-function createStreamingAssistantMessage(
-  id: string,
-  createdAt: number,
-  replyToMessageId: string,
-  localSequence: number,
-): AIMessage {
-  return {
-    id,
-    type: "assistant",
-    kind: "aura_text",
-    text: "",
-    streaming: true,
-    createdAt,
-    clientCreatedAt: createdAt,
-    localSequence,
-    replyToMessageId,
-  };
-}
-
-function updateMessageById(
-  messages: AIMessage[],
-  messageId: string,
-  updater: (message: AIMessage) => AIMessage
-) {
-  const index = messages.findIndex((entry) => entry.id === messageId);
-  if (index < 0) return messages;
-  const updatedMessage = updater(messages[index]);
-  if (updatedMessage === messages[index]) return messages;
-  const next = messages.slice();
-  next[index] = updatedMessage;
-  return next;
 }
 
 function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }) {
@@ -279,13 +239,6 @@ function AuraChatLoadingState() {
   );
 }
 
-function createUserMessageWithAttachments(text: string, attachments: ChatAttachment[]): AIMessage {
-  return {
-    ...createUserMessage(text),
-    attachments,
-  };
-}
-
 function deriveAssistantChatTitle(prompt: string, message: AIMessage) {
   return summarizeChatTitle({
     userText: prompt,
@@ -295,10 +248,6 @@ function deriveAssistantChatTitle(prompt: string, message: AIMessage) {
       message.assistantIntroText ??
       message.text,
   });
-}
-
-function createLocalAttachmentId() {
-  return `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function candidateImageSet(candidate: AuraCandidateItem) {
@@ -699,33 +648,6 @@ function buildAuraHistory(messages: AIMessage[]) {
     .slice(-8);
 }
 
-function createSystemMessage(text: string): AIMessage {
-  const createdAt = Date.now();
-  return {
-    id: createMessageId(),
-    type: "system/action",
-    kind: "system",
-    text,
-    createdAt,
-    clientCreatedAt: createdAt,
-    localSequence: nextLocalMessageSequence(),
-  };
-}
-
-function appendUniqueSystemMessage(
-  messages: AIMessage[],
-  text: string,
-  removeMessageId?: string
-) {
-  const withoutRemoved = removeMessageId
-    ? messages.filter((entry) => entry.id !== removeMessageId)
-    : messages;
-  const alreadyShown = withoutRemoved.some(
-    (entry) => entry.type === "system/action" && entry.text === text
-  );
-  return alreadyShown ? withoutRemoved : [...withoutRemoved, createSystemMessage(text)];
-}
-
 function userFacingAuraError(error: unknown) {
   const messageText =
     error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? "");
@@ -765,36 +687,34 @@ export default function AIScreen() {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const insets = useSafeAreaInsets();
-  const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<AIMessage[]>([]);
+  const uid = user?.uid ?? null;
+  const {
+    attachmentRole,
+    handleAttachmentRoleChange,
+    handleMicPress,
+    handlePickImages,
+    handleRemoveAttachment,
+    handleTakePhoto,
+    message,
+    pendingAttachments,
+    recordingAudio,
+    setMessage,
+    setPendingAttachments,
+  } = useAuraComposerState({ uid });
   const [loading, setLoading] = useState(false);
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
-  const [isBooting, setIsBooting] = useState(true);
-  const [, setQuickChips] = useState<string[]>(DEFAULT_CHIPS);
-  const [recentThreads, setRecentThreads] = useState<AIChatThread[]>([]);
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(DEFAULT_COMPOSER_HEIGHT);
-  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
-  const [attachmentRole, setAttachmentRole] = useState<ChatAttachmentGroupRole>("reference");
-  const [recordingAudio, setRecordingAudio] = useState(false);
   const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
   const [focusScrollSignal, setFocusScrollSignal] = useState(0);
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
-  const latestMessagesRef = useRef<AIMessage[]>([]);
-  const lastHydratedUidRef = useRef<string | null>(null);
-  const audioRecorderRef = useRef<OptionalAudioRecorder | null>(null);
-  const recordingStartedAtRef = useRef<number | null>(null);
-  const streamAbortControllerRef = useRef<AbortController | null>(null);
-  const stopStreamingRequestedRef = useRef(false);
   const consumedPromptTokens = useRef(new Set<string>());
-  const consumedChatTokens = useRef(new Set<string>());
-  const uid = user?.uid ?? null;
-  const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
-  const minimumClosetSummary = useMemo(() => buildMinimumClosetSummary(items), [items]);
-  const orderedMessages = useMemo(() => orderChatMessages(messages), [messages]);
-  const hasStreamingMessage = useMemo(() => orderedMessages.some((entry) => entry.streaming), [orderedMessages]);
+  const {
+    handleStopGenerating,
+    stopStreamingRequestedRef,
+    streamAbortControllerRef,
+  } = useAuraStreamingState();
 
   useFocusEffect(
     React.useCallback(() => {
@@ -822,6 +742,29 @@ export default function AIScreen() {
     return typeof raw === "string" && raw.trim() ? raw.trim() : routeChatId;
   }, [params.chatKey, routeChatId]);
 
+  const {
+    activeChatId,
+    hasStreamingMessage,
+    isBooting,
+    latestMessagesRef,
+    orderedMessages,
+    recentThreads,
+    refreshRecentThreads,
+    setActiveChatId,
+    setMessages,
+    setQuickChips,
+    setRecentThreads,
+  } = useAuraChatHydration({
+    uid,
+    routeChatId,
+    routeChatKey,
+    recentChatLimit: RECENT_CHAT_LIMIT,
+    defaultChips: DEFAULT_CHIPS,
+    debug: DEBUG_AURA_CLIENT,
+  });
+  const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const minimumClosetSummary = useMemo(() => buildMinimumClosetSummary(items), [items]);
+
   useEffect(() => {
     if (!uid) {
       setItems([]);
@@ -835,230 +778,6 @@ export default function AIScreen() {
     return () => {
       unsub();
     };
-  }, [uid]);
-
-  useEffect(() => {
-    latestMessagesRef.current = orderedMessages;
-  }, [orderedMessages]);
-
-  const addImageAssets = React.useCallback(
-    (assets: ImagePicker.ImagePickerAsset[]) => {
-      const groupId = `grp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const next: ChatImageAttachment[] = assets
-        .filter((asset) => !!asset.uri)
-        .map((asset) => ({
-          id: createLocalAttachmentId(),
-          type: "image",
-          uri: asset.uri,
-          localUri: asset.uri,
-          mimeType: asset.mimeType ?? null,
-          groupId,
-          role: attachmentRole,
-          width: asset.width ?? null,
-          height: asset.height ?? null,
-        }));
-      if (!next.length) return;
-      setPendingAttachments((prev) => [...prev, ...next].slice(0, 8));
-    },
-    [attachmentRole],
-  );
-
-  const handlePickImages = React.useCallback(async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Photos", "Please allow photo access to attach images.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsMultipleSelection: true,
-      quality: 0.9,
-      exif: false,
-    });
-    if (result.canceled) return;
-    addImageAssets(result.assets ?? []);
-  }, [addImageAssets]);
-
-  const handleTakePhoto = React.useCallback(async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Camera", "Please allow camera access to attach a photo.");
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ["images"],
-      allowsEditing: false,
-      quality: 0.9,
-      exif: false,
-    });
-    if (result.canceled) return;
-    addImageAssets(result.assets ?? []);
-  }, [addImageAssets]);
-
-  const handleMicPress = React.useCallback(async () => {
-    if (!uid) return;
-    try {
-      if (recordingAudio && audioRecorderRef.current) {
-        const recorder = audioRecorderRef.current;
-        await recorder.stop();
-        const uri = recorder.uri;
-        const startedAt = recordingStartedAtRef.current;
-        audioRecorderRef.current = null;
-        recordingStartedAtRef.current = null;
-        setRecordingAudio(false);
-        if (!uri) return;
-        const durationMs = startedAt ? Date.now() - startedAt : null;
-        try {
-          const uploaded = await uploadAuraTranscriptionAudio(uid, {
-            id: createLocalAttachmentId(),
-            uri,
-            localUri: uri,
-            mimeType: "audio/mp4",
-            durationMs,
-          });
-          const transcript = await transcribeAuraAudio(uploaded);
-          if (transcript) {
-            setMessage((prev) => (prev.trim() ? `${prev.trim()} ${transcript}` : transcript));
-          } else {
-            Alert.alert("Voice", "I couldn't hear any words in that recording.");
-          }
-        } finally {
-          void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
-        }
-        return;
-      }
-
-      const audio = await import("expo-audio").catch(() => null);
-      if (!audio) {
-        Alert.alert("Voice", "Voice input needs the latest native build. Image and text chat still work.");
-        return;
-      }
-
-      const permission = await audio.requestRecordingPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert("Voice", "Please allow microphone access to dictate a message.");
-        return;
-      }
-      const recorder = new audio.AudioRecorder(audio.RecordingPresets.LOW_QUALITY);
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      audioRecorderRef.current = recorder;
-      recordingStartedAtRef.current = Date.now();
-      setRecordingAudio(true);
-    } catch (error: any) {
-      audioRecorderRef.current = null;
-      recordingStartedAtRef.current = null;
-      setRecordingAudio(false);
-      const messageText = String(error?.message ?? "");
-      Alert.alert(
-        "Voice",
-        messageText.includes("ExpoAudio")
-          ? "Voice input needs the latest native build. Image and text chat still work."
-          : messageText || "Unable to transcribe right now."
-      );
-    }
-  }, [recordingAudio, uid]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function hydrate() {
-      if (!uid) {
-        setMessages([]);
-        setActiveChatId(null);
-        setRecentThreads([]);
-        lastHydratedUidRef.current = null;
-        setIsBooting(false);
-        return;
-      }
-
-      if (lastHydratedUidRef.current !== uid) {
-        setMessages([]);
-        setActiveChatId(null);
-        setRecentThreads([]);
-        lastHydratedUidRef.current = uid;
-      }
-      setIsBooting(true);
-
-      const cachedThreads = await getCachedChatList(uid);
-      if (!cancelled && cachedThreads?.data?.length) {
-        setRecentThreads(cachedThreads.data);
-      }
-
-      const cachedActiveChatId = routeChatId || cachedThreads?.data?.find((thread) => !thread.archived)?.chatId || "";
-      if (cachedActiveChatId) {
-        const cachedMessages = await getCachedRecentMessages(uid, cachedActiveChatId);
-        if (!cancelled && cachedMessages?.data?.length) {
-          setMessages(orderChatMessages(cachedMessages.data));
-          setActiveChatId(cachedActiveChatId);
-        }
-      } else {
-        const cached = await loadLatestChatCache<AIMessage>(uid);
-        if (!cancelled && cached?.messages?.length) {
-          setMessages(orderChatMessages(cached.messages));
-          setActiveChatId(cached.chatId ?? null);
-        }
-      }
-
-      try {
-        const shouldLoadSpecificChat =
-          !!routeChatId && !consumedChatTokens.current.has(`${routeChatKey}:${routeChatId}`);
-        if (shouldLoadSpecificChat) {
-          consumedChatTokens.current.add(`${routeChatKey}:${routeChatId}`);
-          const threadMessages = await loadChatMessages(uid, routeChatId);
-          const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
-          if (!cancelled) {
-            setMessages(orderChatMessages(threadMessages));
-            setActiveChatId(routeChatId);
-            setQuickChips(DEFAULT_CHIPS);
-            setRecentThreads(recent);
-            await saveLatestChatCache(uid, routeChatId, null, threadMessages);
-          }
-          return;
-        }
-
-        const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
-        const latestThread = recent[0] ?? null;
-        if (!cancelled && latestThread?.chatId) {
-          const threadMessages = await loadChatMessages(uid, latestThread.chatId);
-          setMessages(orderChatMessages(threadMessages));
-          setActiveChatId(latestThread.chatId);
-          setRecentThreads(recent);
-          await saveLatestChatCache(uid, latestThread.chatId, latestThread.threadId, threadMessages);
-        } else if (!cancelled) {
-          setRecentThreads(recent);
-        }
-      } catch (error) {
-        if (DEBUG_AURA_CLIENT) {
-          console.log("[AURA] hydrate failed", error);
-        }
-      } finally {
-        if (!cancelled) setIsBooting(false);
-      }
-    }
-
-    void hydrate();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [routeChatId, routeChatKey, uid]);
-
-  useEffect(() => {
-    if (isBooting) return;
-    if (!uid) return;
-    if (hasStreamingMessage) return;
-    if (activeChatId) {
-      void setCachedRecentMessages(uid, activeChatId, orderedMessages);
-    }
-    void saveLatestChatCache(uid, activeChatId, null, orderedMessages);
-  }, [activeChatId, hasStreamingMessage, isBooting, orderedMessages, uid]);
-
-  const refreshRecentThreads = React.useCallback(async () => {
-    if (!uid) return [];
-    const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
-    setRecentThreads(recent);
-    return recent;
   }, [uid]);
 
   const handleShareChatThread = React.useCallback(
@@ -1106,7 +825,7 @@ export default function AIScreen() {
       }
       await refreshRecentThreads();
     },
-    [activeChatId, refreshRecentThreads, uid],
+    [activeChatId, latestMessagesRef, refreshRecentThreads, setRecentThreads, uid],
   );
 
   const handleArchiveThread = React.useCallback(
@@ -1122,7 +841,7 @@ export default function AIScreen() {
       }
       await refreshRecentThreads();
     },
-    [activeChatId, refreshRecentThreads, uid],
+    [activeChatId, refreshRecentThreads, setActiveChatId, setMessages, setRecentThreads, uid],
   );
 
   const handleDeleteThread = React.useCallback(
@@ -1138,7 +857,7 @@ export default function AIScreen() {
       }
       await refreshRecentThreads();
     },
-    [activeChatId, refreshRecentThreads, uid],
+    [activeChatId, refreshRecentThreads, setActiveChatId, setMessages, setRecentThreads, uid],
   );
 
   useEffect(() => {
@@ -1404,8 +1123,7 @@ export default function AIScreen() {
             await updateChatThread(uid, chatId, {
               title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
             });
-            const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
-            setRecentThreads(recent);
+            await refreshRecentThreads();
             return;
           }
           const outfitBatch = await generateAuraSwipeBatch({
@@ -1448,8 +1166,7 @@ export default function AIScreen() {
           await updateChatThread(uid, chatId, {
             title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
           });
-          const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
-          setRecentThreads(recent);
+          await refreshRecentThreads();
           return;
         }
 
@@ -1626,8 +1343,7 @@ export default function AIScreen() {
         if (DEBUG_AURA_CLIENT) {
           console.log("[AURA_STREAM]", "stream flow complete", { uid, chatId });
         }
-        const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
-        setRecentThreads(recent);
+        await refreshRecentThreads();
       } catch (error) {
         const wasStopped = stopStreamingRequestedRef.current || isAuraStreamAbortError(error);
         if (wasStopped) {
@@ -1659,8 +1375,7 @@ export default function AIScreen() {
             await updateChatThread(uid, chatId, {
               title: deriveAssistantChatTitle(chatSeedText, stoppedAssistantMessage),
             });
-            const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
-            setRecentThreads(recent);
+            await refreshRecentThreads();
           }
           if (DEBUG_AURA_CLIENT) {
             console.log("[AURA_STREAM]", "stream stopped by user", {
@@ -1721,14 +1436,25 @@ export default function AIScreen() {
         setLoading(false);
       }
     },
-    [activeChatId, items, loading, message, minimumClosetSummary, pendingAttachments, uid]
+    [
+      activeChatId,
+      items,
+      latestMessagesRef,
+      loading,
+      message,
+      minimumClosetSummary,
+      pendingAttachments,
+      refreshRecentThreads,
+      setActiveChatId,
+      setMessage,
+      setMessages,
+      setPendingAttachments,
+      setQuickChips,
+      stopStreamingRequestedRef,
+      streamAbortControllerRef,
+      uid,
+    ]
   );
-
-  const handleStopGenerating = React.useCallback(() => {
-    stopStreamingRequestedRef.current = true;
-    streamAbortControllerRef.current?.abort();
-    void runHaptic("selection");
-  }, []);
 
   const handleRetryAuraResponse = React.useCallback(
     (sourceMessage: AIMessage) => {
@@ -1753,7 +1479,7 @@ export default function AIScreen() {
         removeMessageId: sourceMessage.id,
       });
     },
-    [handleAsk, loading],
+    [handleAsk, latestMessagesRef, loading],
   );
 
   const handleAuraLookAction = React.useCallback(
@@ -1816,7 +1542,7 @@ export default function AIScreen() {
         )
       );
     },
-    []
+    [setMessages]
   );
 
   const handleAuraCandidateAction = React.useCallback(
@@ -1887,8 +1613,7 @@ export default function AIScreen() {
         setMessages((prev) => orderChatMessages(appendUniqueSystemMessage(prev, systemMessage.text ?? "")));
         if (activeChatId) {
           await appendMessageToChat(uid, activeChatId, systemMessage);
-          const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
-          setRecentThreads(recent);
+          await refreshRecentThreads();
         }
       } catch (error) {
         if (DEBUG_AURA_CLIENT) {
@@ -1903,7 +1628,7 @@ export default function AIScreen() {
         updateCandidateStatuses(sourceMessage, targetCandidates.map((candidate) => candidate.candidateId), "failed");
       }
     },
-    [activeChatId, uid, updateCandidateStatuses]
+    [activeChatId, latestMessagesRef, refreshRecentThreads, setMessages, uid, updateCandidateStatuses]
   );
 
   const handleAuraOutfitPhotoAction = React.useCallback(
@@ -1963,7 +1688,7 @@ export default function AIScreen() {
         }
       }
     },
-    [handleAsk, uid]
+    [handleAsk, latestMessagesRef, uid]
   );
 
   const handleAuraLaundryAction = React.useCallback(
@@ -1993,7 +1718,7 @@ export default function AIScreen() {
         Toast.error("Laundry update failed", error?.message ?? "Could not update that item.");
       }
     },
-    [activeChatId, itemsById, uid]
+    [activeChatId, itemsById, setMessages, uid]
   );
 
   useEffect(() => {
@@ -2167,17 +1892,8 @@ export default function AIScreen() {
         onTakePhoto={() => void handleTakePhoto()}
         attachments={pendingAttachments}
         attachmentRole={attachmentRole}
-        onAttachmentRoleChange={(role) => {
-          setAttachmentRole(role);
-          setPendingAttachments((prev) =>
-            prev.map((attachment) =>
-              attachment.type === "image" ? { ...attachment, role } : attachment
-            )
-          );
-        }}
-        onRemoveAttachment={(id) =>
-          setPendingAttachments((prev) => prev.filter((attachment) => attachment.id !== id))
-        }
+        onAttachmentRoleChange={handleAttachmentRoleChange}
+        onRemoveAttachment={handleRemoveAttachment}
         onMicPress={() => void handleMicPress()}
         recording={recordingAudio}
         />

@@ -33,6 +33,78 @@ export function createUserMessage(text: string): AIMessage {
   };
 }
 
+export function createUserMessageWithAttachments(text: string, attachments: ChatAttachment[]): AIMessage {
+  return {
+    ...createUserMessage(text),
+    attachments,
+  };
+}
+
+export function createStreamingAssistantMessage(
+  id: string,
+  createdAt: number,
+  replyToMessageId: string,
+  localSequence: number,
+): AIMessage {
+  return {
+    id,
+    type: "assistant",
+    kind: "aura_text",
+    text: "",
+    streaming: true,
+    createdAt,
+    clientCreatedAt: createdAt,
+    localSequence,
+    replyToMessageId,
+  };
+}
+
+export function createSystemMessage(text: string): AIMessage {
+  const createdAt = Date.now();
+  return {
+    id: createMessageId(),
+    type: "system/action",
+    kind: "system",
+    text,
+    createdAt,
+    clientCreatedAt: createdAt,
+    localSequence: nextLocalMessageSequence(),
+  };
+}
+
+export function createLocalAttachmentId() {
+  return `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function updateMessageById(
+  messages: AIMessage[],
+  messageId: string,
+  updater: (message: AIMessage) => AIMessage
+) {
+  const index = messages.findIndex((entry) => entry.id === messageId);
+  if (index < 0) return messages;
+  const updatedMessage = updater(messages[index]);
+  if (updatedMessage === messages[index]) return messages;
+  const next = messages.slice();
+  next[index] = updatedMessage;
+  return next;
+}
+
+export function appendUniqueSystemMessage(
+  messages: AIMessage[],
+  text: string,
+  removeMessageId?: string
+) {
+  const withoutRemoved = removeMessageId
+    ? messages.filter((entry) => entry.id !== removeMessageId)
+    : messages;
+  const alreadyExists = withoutRemoved.some(
+    (entry) => entry.type === "system/action" && entry.text === text
+  );
+  if (alreadyExists) return withoutRemoved;
+  return [...withoutRemoved, createSystemMessage(text)];
+}
+
 export function buildChatSeedText(prompt: string, attachments: ChatAttachment[]) {
   if (prompt.trim()) return prompt.trim();
   if (attachments.some((attachment) => attachment.type === "image")) {
