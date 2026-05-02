@@ -40,7 +40,7 @@ function formatWeatherLine(weather?: RailWeather) {
   const high = typeof weather?.high === "number" ? Math.round(weather.high) : null;
   const low = typeof weather?.low === "number" ? Math.round(weather.low) : null;
   if (high !== null || low !== null) {
-    return `${high ?? "—"}° / ${low ?? "—"}°`;
+    return `${high ?? "—"}°/${low ?? "—"}°`;
   }
   return weather?.label ?? "";
 }
@@ -79,7 +79,7 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
       const weatherLine = formatWeatherLine(weatherByDate[item.key]);
       const weekdayColor = isActive ? colors.ctaText : colors.textSecondary;
       const dayColor = isActive ? colors.ctaText : colors.text;
-      const weatherColor = isActive ? colors.ctaText : colors.textSecondary;
+      const weatherColor = isActive ? colors.ctaText : colors.textMuted;
       const markerColor = isActive ? colors.ctaText : colors.aiAccent;
       return (
         <AuraPressable
@@ -89,7 +89,7 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
           pressedOpacity={0.88}
           style={[
             styles.cell,
-            { borderColor: colors.border, backgroundColor: colors.surface },
+            { borderColor: colors.border, backgroundColor: colors.surfaceSoft },
             isActive
               ? [
                   styles.cellActive,
@@ -134,9 +134,10 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
       colors.border,
       colors.ctaCream,
       colors.ctaText,
-      colors.surface,
+      colors.surfaceSoft,
       colors.success,
       colors.text,
+      colors.textMuted,
       colors.textSecondary,
       onSelectDate,
       selectedKey,
@@ -188,18 +189,19 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
 
 const styles = StyleSheet.create({
   content: {
-    paddingVertical: 8,
+    paddingTop: 6,
+    paddingBottom: 10,
     paddingHorizontal: RAIL_SIDE_PADDING,
   },
   cell: {
     width: ITEM_WIDTH - 6,
     marginHorizontal: 3,
-    minHeight: 82,
+    minHeight: 76,
     borderRadius: 16,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 9,
+    paddingVertical: 8,
     paddingHorizontal: 5,
   },
   cellActive: {
@@ -219,7 +221,7 @@ const styles = StyleSheet.create({
   },
   weatherSlot: {
     minHeight: 14,
-    marginTop: 4,
+    marginTop: 3,
     justifyContent: "center",
   },
   weather: {

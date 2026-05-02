@@ -1,7 +1,6 @@
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
-import { formatHeaderDate } from "../../utils/date";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
@@ -27,7 +26,7 @@ export default function CalendarHeader({ selectedDate, today, onJumpToToday }: P
       <View style={styles.row}>
         <View style={{ flex: 1, gap: 3 }}>
           <Text style={[styles.title, { color: colors.text, fontSize: 30 * layout.titleScale }]}>Calendar</Text>
-          <Text style={[styles.date, { color: colors.textSecondary }]}>{formatHeaderDate(selectedDate)}</Text>
+          <Text style={[styles.date, { color: colors.textSecondary }]}>Plan outfits by date</Text>
         </View>
         {!isToday ? (
           <AuraPressable
