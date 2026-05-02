@@ -17,11 +17,19 @@ const AURA_CUTOUT_LOG = "[AURA_CUTOUT]";
 const MIN_USABLE_CUTOUT_TRANSPARENCY = 0.05;
 const AURA_CUTOUT_TIMEOUT_MS = 25_000;
 const MAX_TRANSCRIPTION_AUDIO_BYTES = 10 * 1024 * 1024;
+const DEBUG_AURA_ATTACHMENTS =
+  __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const fileSystem = FileSystem as unknown as {
   cacheDirectory?: string | null;
   downloadAsync?: (uri: string, fileUri: string) => Promise<{ uri: string }>;
 };
 const fileSystemCacheDirectory = fileSystem.cacheDirectory ?? null;
+
+function debugAuraAttachmentLog(...args: Parameters<typeof console.log>) {
+  if (DEBUG_AURA_ATTACHMENTS) {
+    console.log(...args);
+  }
+}
 
 export type AuraCandidateLocalPhoto = {
   localUri: string;
@@ -83,7 +91,7 @@ async function jpegUploadSourceForAttachment(attachment: ChatAttachment) {
       compress: 0.92,
       format: ImageManipulator.SaveFormat.JPEG,
     });
-    console.log(AURA_UPLOAD_LOG, "normalized image attachment for upload", {
+    debugAuraAttachmentLog(AURA_UPLOAD_LOG, "normalized image attachment for upload", {
       attachmentId: attachment.id,
       sourceMimeType: attachment.mimeType ?? null,
       sourceWidth: attachment.width ?? null,
@@ -102,7 +110,7 @@ async function jpegUploadSourceForAttachment(attachment: ChatAttachment) {
       height: normalized.height ?? attachment.height ?? null,
     };
   } catch (error) {
-    console.log(AURA_UPLOAD_LOG, "image normalization failed", {
+    debugAuraAttachmentLog(AURA_UPLOAD_LOG, "image normalization failed", {
       attachmentId: attachment.id,
       sourceMimeType: attachment.mimeType ?? null,
       reason: error instanceof Error ? error.message : String(error),
@@ -119,7 +127,7 @@ export async function uploadAuraAttachment(uid: string, attachment: ChatAttachme
   const sourceUri = uploadSource.sourceUri;
   if (/^https?:\/\//i.test(sourceUri)) return attachment;
 
-  console.log(AURA_UPLOAD_LOG, "starting attachment upload", {
+  debugAuraAttachmentLog(AURA_UPLOAD_LOG, "starting attachment upload", {
     uid,
     attachmentId: attachment.id,
     type: attachment.type,
@@ -134,7 +142,7 @@ export async function uploadAuraAttachment(uid: string, attachment: ChatAttachme
     contentType: uploadSource.contentType,
   });
   const uri = await getDownloadURL(fileRef);
-  console.log(AURA_UPLOAD_LOG, "attachment upload complete", {
+  debugAuraAttachmentLog(AURA_UPLOAD_LOG, "attachment upload complete", {
     uid,
     attachmentId: attachment.id,
     type: attachment.type,
@@ -165,7 +173,7 @@ export async function uploadAuraAttachment(uid: string, attachment: ChatAttachme
 }
 
 export async function uploadAuraAttachments(uid: string, attachments: ChatAttachment[]) {
-  console.log(AURA_UPLOAD_LOG, "uploading attachment batch", {
+  debugAuraAttachmentLog(AURA_UPLOAD_LOG, "uploading attachment batch", {
     uid,
     count: attachments.length,
     types: attachments.map((attachment) => attachment.type),
@@ -191,7 +199,7 @@ export async function uploadAuraTranscriptionAudio(
   const storagePath = `users/${uid}/tmp/transcription/${Date.now()}-${recordingId}.m4a`;
   const fileRef = ref(storage, storagePath);
   await uploadBytes(fileRef, blob, { contentType });
-  console.log(AURA_UPLOAD_LOG, "temporary transcription audio uploaded", {
+  debugAuraAttachmentLog(AURA_UPLOAD_LOG, "temporary transcription audio uploaded", {
     uid,
     storagePath,
     contentType,
@@ -222,7 +230,7 @@ export async function createAuraItemDraftsFromImages(params: {
   const itemGroups = mode === "separate_items" ? images.map((image) => [image]) : [images];
   const created: { itemId: string; imageCount: number }[] = [];
 
-  console.log(AURA_DRAFT_LOG, "creating item drafts from AURA images", {
+  debugAuraAttachmentLog(AURA_DRAFT_LOG, "creating item drafts from AURA images", {
     uid,
     mode,
     imageCount: images.length,
@@ -279,7 +287,7 @@ export async function createAuraItemDraftsFromImages(params: {
       createdAt: now,
       updatedAt: now,
     });
-    console.log(AURA_DRAFT_LOG, "created item draft", {
+    debugAuraAttachmentLog(AURA_DRAFT_LOG, "created item draft", {
       uid,
       itemId: docRef.id,
       imageCount: group.length,
@@ -303,7 +311,7 @@ export async function createAuraItemDraftsFromImages(params: {
         height: primary.height ?? null,
       },
     }).catch((error) => {
-      console.log("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
+      debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
         uid,
         itemId: docRef.id,
         candidateId: primary.id,
@@ -318,7 +326,7 @@ export async function createAuraItemDraftsFromImages(params: {
     throw new Error("No wardrobe drafts were created from the attached images.");
   }
 
-  console.log(AURA_DRAFT_LOG, "item draft creation finished", {
+  debugAuraAttachmentLog(AURA_DRAFT_LOG, "item draft creation finished", {
     uid,
     created,
   });
@@ -357,7 +365,7 @@ export async function createProductLinkProcessingDraft(params: {
     createdAt: now,
     updatedAt: now,
   });
-  console.log(AURA_DRAFT_LOG, "created product link processing draft", {
+  debugAuraAttachmentLog(AURA_DRAFT_LOG, "created product link processing draft", {
     uid,
     itemId: docRef.id,
     url,
@@ -394,21 +402,21 @@ async function runPostSavePrimaryImageCutout(params: {
     subCategory,
     localPhoto,
   } = params;
-  console.log("[PRIMARY_POSTSAVE_CUTOUT] item save processing start", {
+  debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] item save processing start", {
     uid,
     itemId,
     candidateId,
     sourceType,
     primaryUrl,
   });
-  console.log("[PRIMARY_POSTSAVE_CUTOUT] primary source used", {
+  debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] primary source used", {
     uid,
     itemId,
     candidateId,
     source: localPhoto?.localUri ? "local_review_photo" : "remote_primary_download",
     hasLocalPhoto: !!localPhoto?.localUri,
   });
-  console.log("[PRIMARY_POSTSAVE_CUTOUT] secondaries untouched count", {
+  debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] secondaries untouched count", {
     uid,
     itemId,
     candidateId,
@@ -426,7 +434,7 @@ async function runPostSavePrimaryImageCutout(params: {
     undefined;
 
   if (!resolvedLocalPhoto?.localUri) {
-    console.log("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
+    debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
       uid,
       itemId,
       candidateId,
@@ -450,7 +458,7 @@ async function runPostSavePrimaryImageCutout(params: {
   });
 
   if (!cutout?.cleanedLocalUri) {
-    console.log("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
+    debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
       uid,
       itemId,
       candidateId,
@@ -506,7 +514,7 @@ async function runPostSavePrimaryImageCutout(params: {
       primaryImageProcessedAt: Date.now(),
       updatedAt: Date.now(),
     });
-    console.log("[PRIMARY_POSTSAVE_CUTOUT] success with cleaned fields written", {
+    debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] success with cleaned fields written", {
       uid,
       itemId,
       candidateId,
@@ -517,7 +525,7 @@ async function runPostSavePrimaryImageCutout(params: {
       photosCleanedUrl: uploaded.cleanedUrl ?? null,
     });
   } catch (error) {
-    console.log("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
+    debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
       uid,
       itemId,
       candidateId,
@@ -577,7 +585,7 @@ function normalizeLinkBrandAndTitle(candidate: AuraCandidateItem) {
       .replace(new RegExp(`^${brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`, "i"), "")
       .trim();
   }
-  console.log("[LINK_BRAND_NORMALIZE]", {
+  debugAuraAttachmentLog("[LINK_BRAND_NORMALIZE]", {
     sourceUrl: candidate.sourceUrl ?? null,
     rawBrand: candidate.brand ?? null,
     rawTitle: candidate.title ?? null,
@@ -653,7 +661,7 @@ function buildFinalLinkImageSet(candidate: AuraCandidateItem) {
         : primaryHmFamily && family
         ? family === primaryHmFamily
         : sameRetailerImageHost(primaryUrl, url) && finalUrls.length === 1;
-    console.log("[LINK_IMAGE_SECONDARY_VALIDATE]", {
+    debugAuraAttachmentLog("[LINK_IMAGE_SECONDARY_VALIDATE]", {
       sourceUrl: candidate.sourceUrl ?? null,
       primaryUrl,
       url,
@@ -680,7 +688,7 @@ function buildFinalLinkImageSet(candidate: AuraCandidateItem) {
     if (finalUrls.length >= 6) break;
   }
 
-  console.log("[LINK_IMAGE_FINAL_SET]", {
+  debugAuraAttachmentLog("[LINK_IMAGE_FINAL_SET]", {
     sourceUrl: candidate.sourceUrl ?? null,
     primaryUrl,
     finalUrls,
@@ -827,7 +835,7 @@ async function prepareAuraCandidateCutout(params: {
   if (!localUri) return null;
 
   try {
-    console.log(AURA_CUTOUT_LOG, "starting client cutout for AURA candidate", {
+    debugAuraAttachmentLog(AURA_CUTOUT_LOG, "starting client cutout for AURA candidate", {
       uid,
       candidateId,
       hasAttachmentUri: !!localPhoto.attachmentUri,
@@ -853,7 +861,7 @@ async function prepareAuraCandidateCutout(params: {
       cutout.transparentPixelRatio >= MIN_USABLE_CUTOUT_TRANSPARENCY;
     const canNormalizePrimary =
       !!cutout.contentBounds && !!cutout.width && !!cutout.height && !!(cutout.uri || localUri);
-    console.log(AURA_CUTOUT_LOG, "client cutout finished", {
+    debugAuraAttachmentLog(AURA_CUTOUT_LOG, "client cutout finished", {
       uid,
       candidateId,
       usableCutout,
@@ -891,7 +899,7 @@ async function prepareAuraCandidateCutout(params: {
       visualNormalization,
     };
   } catch (error) {
-    console.log(AURA_CUTOUT_LOG, "client cutout failed; saving original only", {
+    debugAuraAttachmentLog(AURA_CUTOUT_LOG, "client cutout failed; saving original only", {
       uid,
       candidateId,
       errorMessage: error instanceof Error ? error.message : String(error),
@@ -908,7 +916,7 @@ async function downloadCandidateImageToLocal(params: {
 }): Promise<AuraCandidateLocalPhoto | null> {
   const url = String(params.imageUrl ?? "").trim();
   if (!/^https?:\/\//i.test(url)) {
-    console.log("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
+    debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
       uid: params.uid,
       candidateId: params.candidateId,
       reason: "primary image URL is not http/https",
@@ -917,7 +925,7 @@ async function downloadCandidateImageToLocal(params: {
     return null;
   }
   if (!fileSystemCacheDirectory || !fileSystem.downloadAsync) {
-    console.log("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
+    debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
       uid: params.uid,
       candidateId: params.candidateId,
       reason: "expo file downloader unavailable",
@@ -928,7 +936,7 @@ async function downloadCandidateImageToLocal(params: {
   }
   try {
     const destination = `${fileSystemCacheDirectory}aura-${params.candidateId}-${Date.now()}.jpg`;
-    console.log(AURA_CUTOUT_LOG, "downloading remote candidate image for cutout", {
+    debugAuraAttachmentLog(AURA_CUTOUT_LOG, "downloading remote candidate image for cutout", {
       uid: params.uid,
       candidateId: params.candidateId,
       url,
@@ -941,7 +949,7 @@ async function downloadCandidateImageToLocal(params: {
       height: null,
     };
   } catch (error) {
-    console.log(AURA_CUTOUT_LOG, "remote candidate download failed", {
+    debugAuraAttachmentLog(AURA_CUTOUT_LOG, "remote candidate download failed", {
       uid: params.uid,
       candidateId: params.candidateId,
       errorMessage: error instanceof Error ? error.message : String(error),
@@ -961,7 +969,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
   const { uid, candidates, prompt, mode, localPhotosByCandidateId = {} } = params;
   const created: { itemId: string; imageCount: number; candidateId: string }[] = [];
 
-  console.log(AURA_DRAFT_LOG, "creating item drafts from AURA candidates", {
+  debugAuraAttachmentLog(AURA_DRAFT_LOG, "creating item drafts from AURA candidates", {
     uid,
     mode,
     candidateCount: candidates.length,
@@ -970,7 +978,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
   for (const candidate of candidates) {
     const normalizedLinkFields =
       candidate.sourceType === "link" ? normalizeLinkBrandAndTitle(candidate) : null;
-    console.log("[LINK_IMAGE_SOURCE]", {
+    debugAuraAttachmentLog("[LINK_IMAGE_SOURCE]", {
       sourceUrl: candidate.sourceUrl ?? null,
       candidateId: candidate.candidateId,
       primaryImageUrl: candidate.primaryImageUrl ?? null,
@@ -1039,7 +1047,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
       createdAt: now,
       updatedAt: now,
     };
-    console.log(AURA_DRAFT_LOG, "confirming AURA candidate item", {
+    debugAuraAttachmentLog(AURA_DRAFT_LOG, "confirming AURA candidate item", {
       uid,
       path: `users/${uid}/items/{new}`,
       mode,
@@ -1054,7 +1062,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
     });
     await setDoc(docRef, payload);
     if (candidate.sourceType === "link") {
-      console.log("[LINK_IMAGE_CLEANUP]", {
+      debugAuraAttachmentLog("[LINK_IMAGE_CLEANUP]", {
         uid,
         candidateId: candidate.candidateId,
         selectedPrimaryImage: primaryUrl,
@@ -1062,7 +1070,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
         cleanedOutputUrl: null,
         finalPrimaryUrl: primaryUrl,
       });
-      console.log("[LINK_IMAGE_SAVE]", {
+      debugAuraAttachmentLog("[LINK_IMAGE_SAVE]", {
         uid,
         candidateId: candidate.candidateId,
         primaryUrl,
@@ -1074,7 +1082,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
           cleanedImageUrl: null,
         },
       });
-      console.log("[LINK_IMAGE_SAVE_SET]", {
+      debugAuraAttachmentLog("[LINK_IMAGE_SAVE_SET]", {
         uid,
         candidateId: candidate.candidateId,
         rawCandidateImageCount: [
@@ -1085,7 +1093,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
         finalImageCount: uniqueUrls.length,
         finalImageUrls: uniqueUrls,
       });
-      console.log("[LINK_SAVE_FIELDS]", {
+      debugAuraAttachmentLog("[LINK_SAVE_FIELDS]", {
         uid,
         candidateId: candidate.candidateId,
         brand: payload.brand,
@@ -1110,7 +1118,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
         subCategory: candidate.subCategory,
         localPhoto,
       }).catch((error) => {
-        console.log("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
+        debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
           uid,
           itemId: docRef.id,
           candidateId: candidate.candidateId,
@@ -1130,7 +1138,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
     throw new Error("No wardrobe drafts were created from these item previews.");
   }
 
-  console.log(AURA_DRAFT_LOG, "candidate draft creation finished", {
+  debugAuraAttachmentLog(AURA_DRAFT_LOG, "candidate draft creation finished", {
     uid,
     created,
   });

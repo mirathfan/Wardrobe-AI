@@ -49,6 +49,8 @@ const SWIPE_Y_THRESHOLD = -110;
 const DOMINANT_AXIS_RATIO = 1.15;
 const NON_DOMINANT_DAMPING = 0.14;
 const palette = Colors.dark;
+const DEBUG_AURA_SWIPE_SCREEN =
+  __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 
 function createEmptyItemsMap(items: ClothingItem[]) {
   return new Map(items.map((item) => [item.id, item]));
@@ -131,13 +133,17 @@ export default function AuraSwipeScreen() {
     setError(null);
     try {
       const result = await generateAuraSwipeBatch({ items, numOutfits: 8 });
-      console.log("[AURA_SWIPE] normalized response", result);
+      if (DEBUG_AURA_SWIPE_SCREEN) {
+        console.log("[AURA_SWIPE] normalized response", result);
+      }
       setBatch(result.lookOptions);
       setBatchId(result.batchId);
       setCurrentIndex(0);
       pan.setValue({ x: 0, y: 0 });
     } catch (loadError) {
-      console.log("[AURA_SWIPE] loadBatch failed", loadError);
+      if (DEBUG_AURA_SWIPE_SCREEN) {
+        console.log("[AURA_SWIPE] loadBatch failed", loadError);
+      }
       setError(loadError instanceof Error ? loadError.message : "Unable to load swipe looks.");
     } finally {
       setLoading(false);
@@ -158,7 +164,9 @@ export default function AuraSwipeScreen() {
   const persistSwipe = React.useCallback(
     async (lookEntry: AuraSwipeBatchLook, direction: AuraSwipeDirectionLabel) => {
       if (!uid) {
-        console.warn("No user auth, skipping remote save");
+        if (DEBUG_AURA_SWIPE_SCREEN) {
+          console.warn("No user auth, skipping remote save");
+        }
         return;
       }
       const feedbackType = feedbackTypeForSwipe(direction);
@@ -187,7 +195,9 @@ export default function AuraSwipeScreen() {
           Toast.saved();
         }
       } catch (e) {
-        console.error("SAVE LOOK ERROR:", e);
+        if (DEBUG_AURA_SWIPE_SCREEN) {
+          console.error("SAVE LOOK ERROR:", e);
+        }
         throw e;
       }
     },

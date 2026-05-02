@@ -122,11 +122,15 @@ export async function saveAuraFavoriteOutfit(
   const id = buildStableAuraLookId("saved", look);
   const authUid = auth.currentUser?.uid ?? null;
   if (!authUid) {
-    console.warn("No user auth, skipping remote save");
+    if (__DEV__) {
+      console.warn("No user auth, skipping remote save");
+    }
     return null;
   }
   if (authUid !== uid) {
-    console.warn("Auth UID mismatch, skipping remote save", { authUid, uid });
+    if (__DEV__) {
+      console.warn("Auth UID mismatch, skipping remote save");
+    }
     return null;
   }
 
@@ -149,11 +153,12 @@ export async function saveAuraFavoriteOutfit(
     outfitSnapshot: buildAuraLookSnapshot(savedLook),
     look: savedLook,
   };
-  console.log("Saving look for uid:", uid, "look:", id, "path:", `users/${uid}/savedLooks/${id}`);
   try {
     await setDoc(ref, payload, { merge: true });
   } catch (e) {
-    console.error("SAVE LOOK ERROR:", e);
+    if (__DEV__) {
+      console.error("SAVE LOOK ERROR:", e);
+    }
     throw e;
   }
   void logAuraLookStyleEvent(uid, "outfit_saved", savedLook, {

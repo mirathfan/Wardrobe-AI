@@ -115,10 +115,11 @@ export async function ensureLocalImageUri(uri: string): Promise<string> {
     }
     return localUri;
   } catch (error) {
-    console.warn("[BgRemoval] failed to cache remote image", {
-      uri: normalized,
-      message: getErrorMessage(error),
-    });
+    if (__DEV__) {
+      console.warn("[BgRemoval] failed to cache remote image", {
+        message: getErrorMessage(error),
+      });
+    }
     throw new Error(LOCAL_IMAGE_PREP_ERROR);
   }
 }
@@ -245,10 +246,12 @@ async function removeBackgroundAndroid(
       lastError = new Error("Android background removal returned the original image.");
     } catch (error) {
       lastError = error;
-      console.warn("[BgRemoval] Android attempt failed", {
-        attempt,
-        message: getErrorMessage(error),
-      });
+      if (__DEV__) {
+        console.warn("[BgRemoval] Android attempt failed", {
+          attempt,
+          message: getErrorMessage(error),
+        });
+      }
     }
 
     if (attempt < maxAttempts && isAndroidModelWarmupError(lastError)) {
@@ -279,7 +282,9 @@ export async function removeBackground(
     try {
       return await removeBackgroundAndroid(inputUri);
     } catch (e) {
-      console.warn("[BgRemoval] Android native failed:", e);
+      if (__DEV__) {
+        console.warn("[BgRemoval] Android native failed:", e);
+      }
       throw e instanceof Error ? e : new Error("Android background removal failed.");
     }
   }
@@ -386,10 +391,9 @@ export async function removeBackground(
     }
 
     if (outputUri === normalizeFileUri(inputUri)) {
-      console.warn("[VisionBG] native returned original URI; treating as no-op", {
-        input: normalizeFileUri(inputUri),
-        output: outputUri,
-      });
+      if (__DEV__) {
+        console.warn("[VisionBG] native returned original URI; treating as no-op");
+      }
     }
 
     if (__DEV__) {
@@ -397,7 +401,9 @@ export async function removeBackground(
     }
     return originalResult(inputUri);
   } catch (error) {
-    console.warn("[VisionBG] FAILED; returning original uri", error);
+    if (__DEV__) {
+      console.warn("[VisionBG] FAILED; returning original uri", error);
+    }
     if (__DEV__) {
       console.log("[BgRemoval] Falling back to server-side");
     }

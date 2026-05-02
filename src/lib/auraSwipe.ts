@@ -282,10 +282,12 @@ export async function generateAuraSwipeBatch(
     }
   } catch (error) {
     const code = cleanString((error as { code?: unknown })?.code);
-    if (code.includes("not-found")) {
-      console.log("[AURA_SWIPE] generateAuraSwipeBatch not deployed; using generateOutfitsV1 fallback");
-    } else {
-      console.log("[AURA_SWIPE] generateAuraSwipeBatch failed; using fallback");
+    if (DEBUG_AURA_SWIPE) {
+      if (code.includes("not-found")) {
+        console.log("[AURA_SWIPE] generateAuraSwipeBatch not deployed; using generateOutfitsV1 fallback");
+      } else {
+        console.log("[AURA_SWIPE] generateAuraSwipeBatch failed; using fallback");
+      }
     }
     if (code && !code.includes("not-found")) {
       const localBatch = localSwipeBatchFromCloset({ ...request, items: localItems });
@@ -302,7 +304,9 @@ export async function generateAuraSwipeBatch(
   if (lookOptions.length === 0) {
     const localBatch = localSwipeBatchFromCloset({ ...request, items: localItems });
     if (localBatch) return localBatch;
-    console.log("[AURA_SWIPE] no lookOptions after fallback");
+    if (DEBUG_AURA_SWIPE) {
+      console.log("[AURA_SWIPE] no lookOptions after fallback");
+    }
     throw new Error("Unable to load swipe looks – empty lookOptions");
   }
   return {

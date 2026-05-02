@@ -134,11 +134,15 @@ export async function saveAuraOutfitFeedback(
 ) {
   const authUid = auth.currentUser?.uid ?? null;
   if (!authUid) {
-    console.warn("No user auth, skipping remote save");
+    if (__DEV__) {
+      console.warn("No user auth, skipping remote save");
+    }
     return null;
   }
   if (authUid !== uid) {
-    console.warn("Auth UID mismatch, skipping remote save", { authUid, uid });
+    if (__DEV__) {
+      console.warn("Auth UID mismatch, skipping remote save");
+    }
     return null;
   }
 
@@ -185,11 +189,12 @@ export async function saveAuraOutfitFeedback(
     personalizationNote: cleanAuraString(input.look.personalizationNote),
     outfitSnapshot: snapshot,
   };
-  console.log("Saving outfit feedback for uid:", uid, "feedback:", id, "path:", `users/${uid}/outfitFeedback/${id}`);
   try {
     await setDoc(ref, payload, { merge: true });
   } catch (e) {
-    console.error("SAVE LOOK ERROR:", e);
+    if (__DEV__) {
+      console.error("SAVE OUTFIT FEEDBACK ERROR:", e);
+    }
     throw e;
   }
   return {

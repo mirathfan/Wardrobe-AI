@@ -2,6 +2,8 @@ import * as ImageManipulator from "expo-image-manipulator";
 
 const TRIM_GUARD_PIXELS = 2;
 const CUTOUT_NORMALIZE_LOG = "[CUTOUT_NORMALIZE]";
+const DEBUG_CUTOUT_NORMALIZE =
+  __DEV__ && process.env.EXPO_PUBLIC_CUTOUT_NORMALIZE_DEBUG === "1";
 const MIN_CANVAS_EDGE = 640;
 const MAX_CANVAS_EDGE = 1400;
 
@@ -45,6 +47,12 @@ function normalizeToken(value?: string | null) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function debugCutoutNormalizeLog(...args: Parameters<typeof console.log>) {
+  if (DEBUG_CUTOUT_NORMALIZE) {
+    console.log(...args);
+  }
 }
 
 function getCutoutNormalizationProfile(input: {
@@ -183,7 +191,7 @@ export async function normalizeCutoutImage(
 ): Promise<CutoutNormalizationResult> {
   const { cutoutUri, contentBounds, imageWidth, imageHeight } = input;
   const profile = getCutoutNormalizationProfile(input);
-  console.log(CUTOUT_NORMALIZE_LOG, "start", {
+  debugCutoutNormalizeLog(CUTOUT_NORMALIZE_LOG, "start", {
     cutoutUri,
     originalCleanedDimensions:
       imageWidth && imageHeight ? `${Math.round(imageWidth)}x${Math.round(imageHeight)}` : null,
@@ -191,7 +199,7 @@ export async function normalizeCutoutImage(
   });
 
   if (!contentBounds || !imageWidth || !imageHeight) {
-    console.log(CUTOUT_NORMALIZE_LOG, "fallback", {
+    debugCutoutNormalizeLog(CUTOUT_NORMALIZE_LOG, "fallback", {
       reason: "missing_content_bounds_or_dimensions",
     });
     return {
@@ -213,7 +221,7 @@ export async function normalizeCutoutImage(
   const trimWidth = Math.min(sourceWidth - trimOriginX, rawWidth + TRIM_GUARD_PIXELS * 2);
   const trimHeight = Math.min(sourceHeight - trimOriginY, rawHeight + TRIM_GUARD_PIXELS * 2);
 
-  console.log(CUTOUT_NORMALIZE_LOG, "bbox", {
+  debugCutoutNormalizeLog(CUTOUT_NORMALIZE_LOG, "bbox", {
     x: rawX,
     y: rawY,
     width: rawWidth,
@@ -221,7 +229,7 @@ export async function normalizeCutoutImage(
   });
 
   if (trimWidth <= 0 || trimHeight <= 0) {
-    console.log(CUTOUT_NORMALIZE_LOG, "fallback", {
+    debugCutoutNormalizeLog(CUTOUT_NORMALIZE_LOG, "fallback", {
       reason: "invalid_trim_size",
       trimWidth,
       trimHeight,
@@ -298,7 +306,7 @@ export async function normalizeCutoutImage(
     { compress: 1, format: ImageManipulator.SaveFormat.PNG }
   );
 
-  console.log(CUTOUT_NORMALIZE_LOG, "output", {
+  debugCutoutNormalizeLog(CUTOUT_NORMALIZE_LOG, "output", {
     normalizedOutputDimensions: `${canvasWidth}x${canvasHeight}`,
     scaleRatioUsed: scaleRatio,
   });

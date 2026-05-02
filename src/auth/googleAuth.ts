@@ -46,6 +46,8 @@ export async function signOutGoogle(): Promise<void> {
       await GoogleSignin.signOut();
     }
   } catch (error) {
-    console.log("[GoogleAuth] Sign out error:", error instanceof Error ? error.message : String(error));
+    if (__DEV__) {
+      console.log("[GoogleAuth] Sign out error:", error instanceof Error ? error.message : String(error));
+    }
   }
 }

@@ -1,6 +1,22 @@
 import OpenAI from "openai";
 import type { ProductExtraction } from "./productLinkExtractor";
 
+const DEBUG_AURA_CANDIDATE_LOGS =
+  process.env.DEBUG_AURA_CANDIDATE_LOGS === "1" ||
+  process.env.DEBUG_AURA_CANDIDATE_LOGS === "true";
+
+function debugAuraCandidateInfo(...args: Parameters<typeof console.info>) {
+  if (DEBUG_AURA_CANDIDATE_LOGS) {
+    console.info(...args);
+  }
+}
+
+function debugAuraCandidateWarn(...args: Parameters<typeof console.warn>) {
+  if (DEBUG_AURA_CANDIDATE_LOGS) {
+    console.warn(...args);
+  }
+}
+
 export type AuraCandidateItem = {
   candidateId: string;
   imageUrls: string[];
@@ -83,7 +99,7 @@ export function candidatePreviewResponse(candidates: AuraCandidateItem[]) {
     candidateItems: candidates,
     candidates,
   };
-  console.info("[AURA_CANDIDATE_BACKEND] preview payload created", {
+  debugAuraCandidateInfo("[AURA_CANDIDATE_BACKEND] preview payload created", {
     candidateCount: candidates.length,
     candidateIds: candidates.map((candidate) => candidate.candidateId),
     sourceTypes: candidates.map((candidate) => candidate.sourceType),
@@ -384,7 +400,7 @@ function logProductImageBuckets(params: {
   for (const item of params.items) {
     buckets[item.bucket ?? "unknown"].push(item.url);
   }
-  console.info("[LINK_PRIMARY_BUCKETS]", {
+  debugAuraCandidateInfo("[LINK_PRIMARY_BUCKETS]", {
     sourceUrl: params.sourceUrl ?? null,
     garmentOnlyCount: buckets.garment_only.length,
     modelEditorialCount: buckets.model_editorial.length,
@@ -395,7 +411,7 @@ function logProductImageBuckets(params: {
     detailOrCropUrls: buckets.detail_or_crop,
     unknownUrls: buckets.unknown,
   });
-  console.info("[LINK_IMAGE_BUCKETS]", {
+  debugAuraCandidateInfo("[LINK_IMAGE_BUCKETS]", {
     sourceUrl: params.sourceUrl ?? null,
     garmentOnlyCount: buckets.garment_only.length,
     modelEditorialCount: buckets.model_editorial.length,
@@ -443,7 +459,7 @@ function logRankedProductImages(params: {
   items: RankedProductImage[];
   selected: RankedProductImage | undefined;
 }) {
-  console.info("[LINK_IMAGE_RANKING_SUMMARY]", {
+  debugAuraCandidateInfo("[LINK_IMAGE_RANKING_SUMMARY]", {
     sourceUrl: params.sourceUrl ?? null,
     selectedPrimaryImageUrl: params.selected?.url ?? null,
     selectedScore: params.selected?.score ?? null,
@@ -475,7 +491,7 @@ export async function rankProductLinkImages(params: {
   sourceUrl?: string | null;
 }): Promise<RankedProductImage[]> {
   const imageUrls = stableUniqueUrls(params.imageUrls).slice(0, 24);
-  console.info("[LINK_IMAGE_CANDIDATES]", {
+  debugAuraCandidateInfo("[LINK_IMAGE_CANDIDATES]", {
     sourceUrl: params.sourceUrl ?? null,
     candidateCount: imageUrls.length,
     urls: imageUrls,
@@ -493,7 +509,7 @@ export async function rankProductLinkImages(params: {
       items: ranked,
       selected: ranked[0],
     });
-    console.info("[LINK_PRIMARY_CHOSEN]", {
+    debugAuraCandidateInfo("[LINK_PRIMARY_CHOSEN]", {
       sourceUrl: params.sourceUrl ?? null,
       primaryImageUrl: ranked[0]?.url ?? null,
       bucket: ranked[0]?.bucket ?? null,
@@ -501,13 +517,13 @@ export async function rankProductLinkImages(params: {
       reasons: ranked[0]?.reasons ?? [],
       garmentOnlyAvailable: ranked.some((item) => item.bucket === "garment_only"),
     });
-    console.info("[LINK_IMAGE_PRIMARY]", {
+    debugAuraCandidateInfo("[LINK_IMAGE_PRIMARY]", {
       sourceUrl: params.sourceUrl ?? null,
       primaryImageUrl: ranked[0]?.url ?? null,
       primaryReasons: ranked[0]?.reasons ?? [],
       primaryIsGarmentOnly: ranked[0]?.isGarmentOnly ?? false,
     });
-    console.info("[LINK_IMAGE_SECONDARY]", {
+    debugAuraCandidateInfo("[LINK_IMAGE_SECONDARY]", {
       sourceUrl: params.sourceUrl ?? null,
       secondaryImageUrls: ranked.slice(1).map((item) => item.url),
     });
@@ -644,7 +660,7 @@ export async function rankProductLinkImages(params: {
         isLifestyleOrBanner: !!result?.isLifestyleOrBanner || signals.socialPenalty,
         bucket,
       };
-      console.info("[LINK_PRIMARY_SCORE]", {
+      debugAuraCandidateInfo("[LINK_PRIMARY_SCORE]", {
         sourceUrl: params.sourceUrl ?? null,
         index,
         url,
@@ -663,7 +679,7 @@ export async function rankProductLinkImages(params: {
         containsMultipleGarments: !!result?.containsMultipleGarments,
         reasons: item.reasons,
       });
-      console.info("[LINK_IMAGE_SCORE]", {
+      debugAuraCandidateInfo("[LINK_IMAGE_SCORE]", {
         sourceUrl: params.sourceUrl ?? null,
         index,
         url,
@@ -688,7 +704,7 @@ export async function rankProductLinkImages(params: {
       items: ranked,
       selected: ranked[0],
     });
-    console.info("[LINK_PRIMARY_CHOSEN]", {
+    debugAuraCandidateInfo("[LINK_PRIMARY_CHOSEN]", {
       sourceUrl: params.sourceUrl ?? null,
       primaryImageUrl: ranked[0]?.url ?? null,
       bucket: ranked[0]?.bucket ?? null,
@@ -696,19 +712,19 @@ export async function rankProductLinkImages(params: {
       reasons: ranked[0]?.reasons ?? [],
       garmentOnlyAvailable: scored.some((item) => item.bucket === "garment_only"),
     });
-    console.info("[LINK_IMAGE_PRIMARY]", {
+    debugAuraCandidateInfo("[LINK_IMAGE_PRIMARY]", {
       sourceUrl: params.sourceUrl ?? null,
       primaryImageUrl: ranked[0]?.url ?? null,
       primaryReasons: ranked[0]?.reasons ?? [],
       primaryIsGarmentOnly: ranked[0]?.isGarmentOnly ?? false,
     });
-    console.info("[LINK_IMAGE_SECONDARY]", {
+    debugAuraCandidateInfo("[LINK_IMAGE_SECONDARY]", {
       sourceUrl: params.sourceUrl ?? null,
       secondaryImageUrls: ranked.slice(1).map((item) => item.url),
     });
     return ranked;
   } catch (error) {
-    console.warn("[LINK_IMAGE_SCORE]", "visual ranking failed; using deterministic URL ranking", {
+    debugAuraCandidateWarn("[LINK_IMAGE_SCORE]", "visual ranking failed; using deterministic URL ranking", {
       sourceUrl: params.sourceUrl ?? null,
       error,
     });
@@ -716,7 +732,7 @@ export async function rankProductLinkImages(params: {
     const ranked = orderProductImageBuckets(scored);
     logProductImageBuckets({ sourceUrl: params.sourceUrl, items: ranked });
     for (const item of ranked) {
-      console.info("[LINK_IMAGE_SCORE]", {
+      debugAuraCandidateInfo("[LINK_IMAGE_SCORE]", {
         sourceUrl: params.sourceUrl ?? null,
         index: item.sourceIndex,
         url: item.url,
@@ -731,7 +747,7 @@ export async function rankProductLinkImages(params: {
       items: ranked,
       selected: ranked[0],
     });
-    console.info("[LINK_PRIMARY_CHOSEN]", {
+    debugAuraCandidateInfo("[LINK_PRIMARY_CHOSEN]", {
       sourceUrl: params.sourceUrl ?? null,
       primaryImageUrl: ranked[0]?.url ?? null,
       bucket: ranked[0]?.bucket ?? null,
@@ -739,13 +755,13 @@ export async function rankProductLinkImages(params: {
       reasons: ranked[0]?.reasons ?? [],
       garmentOnlyAvailable: false,
     });
-    console.info("[LINK_IMAGE_PRIMARY]", {
+    debugAuraCandidateInfo("[LINK_IMAGE_PRIMARY]", {
       sourceUrl: params.sourceUrl ?? null,
       primaryImageUrl: ranked[0]?.url ?? null,
       primaryReasons: ranked[0]?.reasons ?? [],
       primaryIsGarmentOnly: ranked[0]?.isGarmentOnly ?? false,
     });
-    console.info("[LINK_IMAGE_SECONDARY]", {
+    debugAuraCandidateInfo("[LINK_IMAGE_SECONDARY]", {
       sourceUrl: params.sourceUrl ?? null,
       secondaryImageUrls: ranked.slice(1).map((item) => item.url),
     });
@@ -765,7 +781,7 @@ export async function rankProductExtractionImages(params: {
     sourceUrl: params.extraction.metadata.sourceUrl,
   });
   const imageUrls = rankedImages.map((image) => image.url);
-  console.info("[LINK_IMAGE_EXTRACTION_RANKED]", {
+  debugAuraCandidateInfo("[LINK_IMAGE_EXTRACTION_RANKED]", {
     sourceUrl: params.extraction.metadata.sourceUrl,
     primaryImageUrl: imageUrls[0] ?? null,
     imageUrls,

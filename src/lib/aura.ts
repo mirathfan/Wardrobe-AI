@@ -142,7 +142,7 @@ function getAskAuraStreamUrl() {
 
 function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
   const attachmentCount = args.attachments?.length ?? 0;
-  if (!DEBUG_AURA_CLIENT && attachmentCount === 0) return;
+  if (!DEBUG_AURA_CLIENT) return;
   console.log("[AURA_STREAM_REQUEST]", label, {
     url: url ?? null,
     projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? null,
