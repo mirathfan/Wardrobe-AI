@@ -1,9 +1,11 @@
 import OpenAI from "openai";
 import type { ProductExtraction } from "./productLinkExtractor";
+import { redactUrlForLogs } from "./safeFetch";
 
 const DEBUG_AURA_CANDIDATE_LOGS =
   process.env.DEBUG_AURA_CANDIDATE_LOGS === "1" ||
   process.env.DEBUG_AURA_CANDIDATE_LOGS === "true";
+const PRODUCT_IMAGE_VISION_RANK_LIMIT = 3;
 
 function debugAuraCandidateInfo(...args: Parameters<typeof console.info>) {
   if (DEBUG_AURA_CANDIDATE_LOGS) {
@@ -366,6 +368,32 @@ function sortProductImages(items: RankedProductImage[]) {
   );
 }
 
+function selectVisionRankCandidates(items: RankedProductImage[]) {
+  return orderProductImageBuckets(items)
+    .filter((item) => item.bucket !== "detail_or_crop" && !item.isThumbnail && !item.isLifestyleOrBanner)
+    .slice(0, PRODUCT_IMAGE_VISION_RANK_LIMIT);
+}
+
+function logProductImageRankingMetrics(params: {
+  sourceUrl?: string | null;
+  extractedImageCount: number;
+  dedupedImageCount: number;
+  visionRankedImageCount: number;
+  selected: RankedProductImage | undefined;
+  selectedReason: string;
+}) {
+  console.info("[LINK_IMAGE_RANKING_METRICS]", {
+    sourceUrl: redactUrlForLogs(params.sourceUrl),
+    extractedImageCount: params.extractedImageCount,
+    dedupedImageCount: params.dedupedImageCount,
+    visionRankedImageCount: params.visionRankedImageCount,
+    selectedPrimaryImageUrl: redactUrlForLogs(params.selected?.url),
+    selectedPrimaryBucket: params.selected?.bucket ?? null,
+    selectedPrimaryScore: params.selected?.score ?? null,
+    selectedPrimaryReason: params.selectedReason,
+  });
+}
+
 function orderProductImageBuckets(items: RankedProductImage[]) {
   const garmentOnly = items.filter((item) => item.bucket === "garment_only");
   const modelEditorial = items.filter((item) => item.bucket === "model_editorial");
@@ -490,7 +518,10 @@ export async function rankProductLinkImages(params: {
   description?: string | null;
   sourceUrl?: string | null;
 }): Promise<RankedProductImage[]> {
+  const extractedImageCount = params.imageUrls.length;
   const imageUrls = stableUniqueUrls(params.imageUrls).slice(0, 24);
+  const urlOnlyRanked = imageUrls.map((url, index) => rankedImageFromUrlOnly(url, index));
+  const visionRankCandidates = selectVisionRankCandidates(urlOnlyRanked);
   debugAuraCandidateInfo("[LINK_IMAGE_CANDIDATES]", {
     sourceUrl: params.sourceUrl ?? null,
     candidateCount: imageUrls.length,
@@ -509,6 +540,14 @@ export async function rankProductLinkImages(params: {
       items: ranked,
       selected: ranked[0],
     });
+    logProductImageRankingMetrics({
+      sourceUrl: params.sourceUrl,
+      extractedImageCount,
+      dedupedImageCount: imageUrls.length,
+      visionRankedImageCount: 0,
+      selected: ranked[0],
+      selectedReason: ranked[0]?.reasons[0] ?? "only image candidate",
+    });
     debugAuraCandidateInfo("[LINK_PRIMARY_CHOSEN]", {
       sourceUrl: params.sourceUrl ?? null,
       primaryImageUrl: ranked[0]?.url ?? null,
@@ -526,6 +565,25 @@ export async function rankProductLinkImages(params: {
     debugAuraCandidateInfo("[LINK_IMAGE_SECONDARY]", {
       sourceUrl: params.sourceUrl ?? null,
       secondaryImageUrls: ranked.slice(1).map((item) => item.url),
+    });
+    return ranked;
+  }
+
+  if (!visionRankCandidates.length) {
+    const ranked = orderProductImageBuckets(urlOnlyRanked);
+    logProductImageBuckets({ sourceUrl: params.sourceUrl, items: ranked });
+    logRankedProductImages({
+      sourceUrl: params.sourceUrl,
+      items: ranked,
+      selected: ranked[0],
+    });
+    logProductImageRankingMetrics({
+      sourceUrl: params.sourceUrl,
+      extractedImageCount,
+      dedupedImageCount: imageUrls.length,
+      visionRankedImageCount: 0,
+      selected: ranked[0],
+      selectedReason: ranked[0]?.reasons[0] ?? "URL heuristic only",
     });
     return ranked;
   }
@@ -549,15 +607,15 @@ export async function rankProductLinkImages(params: {
                 `Description: ${params.description ?? "unknown"}\n` +
                 "For each image index, score 0-100 for usefulness as the primary wardrobe item image and classify whether it is garment-only/product-only, model/editorial, front-facing/canonical, whether the full target product is visible, whether it is a detail close-up, cropped/partial, thumbnail, social/banner/lifestyle image, and whether it contains multiple visible garments. Return JSON only.",
             },
-            ...imageUrls.flatMap((url, index) => [
+            ...visionRankCandidates.flatMap((item) => [
               {
                 type: "input_text" as const,
-                text: `Image index ${index}: ${url}`,
+                text: `Image index ${item.sourceIndex}: ${redactUrlForLogs(item.url)}`,
               },
               {
                 type: "input_image" as const,
-                image_url: url,
-                detail: "high" as const,
+                image_url: item.url,
+                detail: "low" as const,
               },
             ]),
           ],
@@ -632,8 +690,16 @@ export async function rankProductLinkImages(params: {
       }[];
     };
     const byIndex = new Map((parsed.rankings ?? []).map((entry) => [Math.trunc(entry.index), entry]));
+    const urlOnlyByIndex = new Map(urlOnlyRanked.map((entry) => [entry.sourceIndex, entry]));
     const scored = imageUrls.map((url, index) => {
       const result = byIndex.get(index);
+      if (!result) {
+        const fallback = urlOnlyByIndex.get(index) ?? rankedImageFromUrlOnly(url, index);
+        return {
+          ...fallback,
+          reasons: Array.from(new Set(["URL pre-rank only", ...fallback.reasons])),
+        };
+      }
       const signals = urlImageSignals(url);
       const bucket =
         signals.detailPenalty || signals.thumbnailPenalty || signals.socialPenalty
@@ -704,6 +770,14 @@ export async function rankProductLinkImages(params: {
       items: ranked,
       selected: ranked[0],
     });
+    logProductImageRankingMetrics({
+      sourceUrl: params.sourceUrl,
+      extractedImageCount,
+      dedupedImageCount: imageUrls.length,
+      visionRankedImageCount: visionRankCandidates.length,
+      selected: ranked[0],
+      selectedReason: ranked[0]?.reasons[0] ?? "vision and URL ranking",
+    });
     debugAuraCandidateInfo("[LINK_PRIMARY_CHOSEN]", {
       sourceUrl: params.sourceUrl ?? null,
       primaryImageUrl: ranked[0]?.url ?? null,
@@ -728,8 +802,7 @@ export async function rankProductLinkImages(params: {
       sourceUrl: params.sourceUrl ?? null,
       error,
     });
-    const scored = imageUrls.map((url, index) => rankedImageFromUrlOnly(url, index));
-    const ranked = orderProductImageBuckets(scored);
+    const ranked = orderProductImageBuckets(urlOnlyRanked);
     logProductImageBuckets({ sourceUrl: params.sourceUrl, items: ranked });
     for (const item of ranked) {
       debugAuraCandidateInfo("[LINK_IMAGE_SCORE]", {
@@ -746,6 +819,14 @@ export async function rankProductLinkImages(params: {
       sourceUrl: params.sourceUrl,
       items: ranked,
       selected: ranked[0],
+    });
+    logProductImageRankingMetrics({
+      sourceUrl: params.sourceUrl,
+      extractedImageCount,
+      dedupedImageCount: imageUrls.length,
+      visionRankedImageCount: visionRankCandidates.length,
+      selected: ranked[0],
+      selectedReason: ranked[0]?.reasons[0] ?? "deterministic URL fallback",
     });
     debugAuraCandidateInfo("[LINK_PRIMARY_CHOSEN]", {
       sourceUrl: params.sourceUrl ?? null,

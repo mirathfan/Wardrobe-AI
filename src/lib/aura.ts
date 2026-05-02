@@ -41,6 +41,7 @@ type AskAuraArgs = {
 
 const URL_RE = /https?:\/\/[^\s<>"']+/i;
 const LINK_PREVIEW_TIMEOUT_MS = 9000;
+const ENABLE_CLIENT_LINK_PREVIEW = process.env.EXPO_PUBLIC_AURA_CLIENT_LINK_PREVIEW === "1";
 const DEBUG_AURA_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const AURA_STREAM_TIMEOUT_MS = 30_000;
 const AURA_STREAM_WITH_IMAGE_TIMEOUT_MS = 90_000;
@@ -518,6 +519,15 @@ async function withClientLinkPreview(args: AskAuraArgs): Promise<AskAuraArgs> {
   if (args.linkPreview) return args;
   const sourceUrl = firstUrlFromText(args.message);
   if (!sourceUrl) return args;
+  if (!ENABLE_CLIENT_LINK_PREVIEW) {
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_LINK_PREVIEW]", "client preview skipped; backend extraction is source of truth", {
+        host: new URL(sourceUrl).host,
+        clientIntent: args.clientIntent ?? null,
+      });
+    }
+    return args;
+  }
   const linkPreview = await buildClientLinkPreview(sourceUrl);
   return linkPreview ? { ...args, linkPreview } : args;
 }

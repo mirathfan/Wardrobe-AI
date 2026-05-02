@@ -1052,9 +1052,9 @@ async function emitUrlCandidatePreview(params: {
   ].filter((url): url is string => !!url);
   logger.info("[LINK_IMAGE_SOURCE] URL metadata image source", {
     uid: params.uid,
-    sourceUrl: params.metadata.sourceUrl,
+    sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
     rawImageCount: rawImageUrls.length,
-    rawImageUrls,
+    rawImageUrls: rawImageUrls.slice(0, 6).map((url) => redactUrlForLogs(url)),
   });
   const rankedImages = await rankProductLinkImages({
     client: params.client,
@@ -1068,12 +1068,12 @@ async function emitUrlCandidatePreview(params: {
   const titleHints = productCategoryHintsFromText(params.metadata.title, params.metadata.description);
   logger.info("[LINK_EXTRACTION_TARGET]", {
     uid: params.uid,
-    sourceUrl: params.metadata.sourceUrl,
+    sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
     title: params.metadata.title,
     description: params.metadata.description,
     hintedCategory: titleHints.category,
     hintedSubCategory: titleHints.subCategory,
-    chosenImage: primaryImageUrl,
+    chosenImage: redactUrlForLogs(primaryImageUrl),
     chosenImageReasons: rankedImages[0]?.reasons ?? [],
     rawImageCount: rawImageUrls.length,
     rankedImageCount: rankedImageUrls.length,
@@ -1115,11 +1115,11 @@ async function emitUrlCandidatePreview(params: {
   candidate.secondaryImageUrls = candidate.imageUrls.slice(1);
   logger.info("[LINK_IMAGE_REVIEW_SET]", {
     uid: params.uid,
-    sourceUrl: params.metadata.sourceUrl,
+    sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
     candidateId: candidate.candidateId,
-    primaryImageUrl: candidate.primaryImageUrl,
-    imageUrls: candidate.imageUrls,
-    secondaryImageUrls: candidate.secondaryImageUrls,
+    primaryImageUrl: redactUrlForLogs(candidate.primaryImageUrl),
+    imageUrls: candidate.imageUrls.slice(0, 8).map((url) => redactUrlForLogs(url)),
+    secondaryImageUrls: candidate.secondaryImageUrls.slice(0, 8).map((url) => redactUrlForLogs(url)),
   });
   if (!needsReview) {
     candidate.category = titleHints.category ?? candidate.category;
