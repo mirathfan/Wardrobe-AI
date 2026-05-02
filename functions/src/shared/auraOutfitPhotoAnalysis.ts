@@ -27,7 +27,7 @@ export type AuraOutfitPhotoAnalysis = {
 
 const OUTFIT_PHOTO_INTENTS = new Set(["outfit_analysis", "worn_outfit_photo"]);
 const WORN_OUTFIT_PHOTO_RE =
-  /\b(outfit photo|mirror|selfie|wearing|worn outfit|my outfit|this outfit|this fit|fit check|what am i wearing|what are you seeing|improve this outfit|fix this outfit|rate this outfit)\b/i;
+  /\b(outfit photo|mirror|selfie|wearing|worn outfit|my outfit|this outfit|this fit|fit check|what am i wearing|what are you seeing|analy[sz]e this outfit|how does this look|how do i look|what should i improve|what can i improve|improve this outfit|fix this outfit|rate this outfit)\b/i;
 
 export function isOutfitPhotoIntent(clientIntent?: string | null) {
   return OUTFIT_PHOTO_INTENTS.has(String(clientIntent ?? ""));
@@ -191,8 +191,10 @@ export async function analyzeOutfitPhoto(params: {
   if (!images.length) return outfitPhotoAnalysisResponse(normalizeOutfitPhotoAnalysis({}));
   logger.info("[AURA_OUTFIT_PHOTO] vision request built", {
     imageCount: images.length,
+    visionPayloadBuilt: true,
     images: images.slice(0, 2).map((image) => ({
       ...safeImageRef(image.uri),
+      validatedMediaSource: image.storagePath ? "owned_storage_download_url" : "validated_remote_url",
       mimeType: image.mimeType ?? null,
       storagePathTail: image.storagePath?.split("/").slice(-2).join("/") ?? null,
       width: image.width ?? null,

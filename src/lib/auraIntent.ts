@@ -25,7 +25,7 @@ const BATCH_RE = /\b(these|all|each|separate|multiple|items)\b/i;
 const COMPARE_RE = /\b(compare|which one|better|pick between|versus|vs\.?)\b/i;
 const OUTFIT_RE = /\b(outfit|look|style me|wear|fit|build)\b/i;
 const WORN_OUTFIT_PHOTO_RE =
-  /\b(outfit photo|mirror|selfie|wearing|worn outfit|my outfit|this outfit|this fit|fit check|what am i wearing|improve this outfit|fix this outfit|rate this outfit)\b/i;
+  /\b(outfit photo|mirror|selfie|wearing|worn outfit|my outfit|this outfit|this fit|fit check|what am i wearing|what are you seeing|analy[sz]e this outfit|how does this look|how do i look|what should i improve|what can i improve|improve this outfit|fix this outfit|rate this outfit)\b/i;
 const IDENTIFY_RE = /\b(what is this|identify|brand|material|what item|what are these)\b/i;
 const URL_RE = /\bhttps?:\/\/[^\s<>"')\]]+/gi;
 const TRAILING_PUNCTUATION_RE = /[.,!?;:]+$/;

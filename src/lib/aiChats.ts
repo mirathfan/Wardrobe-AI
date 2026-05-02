@@ -366,6 +366,8 @@ function parseChatAttachments(value: unknown): ChatAttachment[] | undefined {
           type,
           uri,
           localUri: typeof candidate.localUri === "string" ? candidate.localUri : null,
+          mimeType: typeof candidate.mimeType === "string" ? candidate.mimeType : null,
+          storagePath: typeof candidate.storagePath === "string" ? candidate.storagePath : null,
           groupId: typeof candidate.groupId === "string" ? candidate.groupId : null,
           role:
             candidate.role === "same_item" ||
@@ -399,6 +401,7 @@ function isAuraResponse(value: unknown): value is AuraResponse {
       candidate.presentation === "chat" ||
       candidate.presentation === "card" ||
       candidate.presentation === "candidate_preview" ||
+      candidate.presentation === "outfit_analysis" ||
       candidate.presentation === "laundry_confirmation") &&
     typeof candidate.title === "string" &&
     typeof candidate.reply === "string" &&

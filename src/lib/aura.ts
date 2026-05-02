@@ -42,6 +42,8 @@ type AskAuraArgs = {
 const URL_RE = /https?:\/\/[^\s<>"']+/i;
 const LINK_PREVIEW_TIMEOUT_MS = 9000;
 const DEBUG_AURA_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
+const AURA_STREAM_TIMEOUT_MS = 30_000;
+const AURA_STREAM_WITH_IMAGE_TIMEOUT_MS = 90_000;
 
 function sanitizeUserInput(input: string): string {
   return input
@@ -139,16 +141,19 @@ function getAskAuraStreamUrl() {
 }
 
 function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
-  if (!DEBUG_AURA_CLIENT) return;
+  const attachmentCount = args.attachments?.length ?? 0;
+  if (!DEBUG_AURA_CLIENT && attachmentCount === 0) return;
   console.log("[AURA_STREAM_REQUEST]", label, {
     url: url ?? null,
     projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? null,
     requestKeys: Object.keys(args),
     promptLength: args.message.length,
-    attachmentCount: args.attachments?.length ?? 0,
+    attachmentCount,
+    streamTimeoutMs: auraStreamTimeoutMs(args),
     attachments: args.attachments?.map((attachment) => ({
       type: attachment.type,
       hasUri: !!attachment.uri,
+      hasDownloadURL: /^https?:\/\//i.test(String(attachment.uri ?? "")),
       uriHost: (() => {
         try {
           return new URL(attachment.uri).hostname;
@@ -157,6 +162,7 @@ function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
         }
       })(),
       mimeType: attachment.mimeType ?? null,
+      hasStoragePath: !!attachment.storagePath,
       storagePath: attachment.storagePath ?? null,
       role: attachment.type === "image" ? attachment.role ?? null : null,
       groupId: attachment.type === "image" ? attachment.groupId ?? null : null,
@@ -175,6 +181,12 @@ function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
         }
       : null,
   });
+}
+
+function auraStreamTimeoutMs(args: AskAuraArgs) {
+  return args.attachments?.some((attachment) => attachment.type === "image")
+    ? AURA_STREAM_WITH_IMAGE_TIMEOUT_MS
+    : AURA_STREAM_TIMEOUT_MS;
 }
 
 function firstUrlFromText(text: string) {
@@ -573,7 +585,7 @@ async function askAuraStreamWithXhr(
 ) {
   return new Promise<AuraResponse>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.timeout = 30000;
+    xhr.timeout = auraStreamTimeoutMs(args);
     const signal = callbacks.signal;
     let processedLength = 0;
     let pendingBuffer = "";
