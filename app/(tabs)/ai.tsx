@@ -28,6 +28,17 @@ import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { askAuraStream, isAuraStreamAbortError, transcribeAuraAudio } from "@/src/lib/aura";
 import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
+import {
+  buildChatSeedText,
+  buildShareTranscript,
+  buildStructuredOutfitBatchPrompt,
+  createMessageId,
+  createUserMessage,
+  latestAuraLookCount,
+  nextLocalMessageSequence,
+  resolveStructuredBatchLookCount,
+  wantsStructuredOutfitBatch,
+} from "@/src/lib/auraChatHelpers";
 import { updateAuraSessionContextFromPrompt } from "@/src/lib/auraMemory";
 import {
   type AuraCandidateLocalPhoto,
@@ -91,8 +102,6 @@ const AURA_ATTACHMENT_FAILURE_MESSAGE = "I couldn't upload that attachment. Plea
 const RECENT_CHAT_LIMIT = 24;
 const DEBUG_AURA_CLIENT =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
-const MULTI_OUTFIT_REQUEST_RE =
-  /\b((?:2|3|4|two|three|four)\s+(?:outfits?|looks?|options?|directions?)|multiple\s+(?:outfits?|looks?|options?)|few\s+outfits?)\b/i;
 const OUTERWEAR_REQUEST_RE =
   /\b(with jacket|with jackets|jackets?|outerwear|coat|blazer|hoodie|cardigan|overshirt|layered|layers)\b/i;
 const AURA_EMPTY_STATE_CHIPS = [
@@ -111,17 +120,6 @@ type OptionalAudioRecorder = {
   record: () => void;
   stop: () => Promise<void>;
 };
-
-function createMessageId() {
-  return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-let localMessageSequence = 0;
-
-function nextLocalMessageSequence() {
-  localMessageSequence += 1;
-  return localMessageSequence;
-}
 
 function logAuraChatState(event: string, payload?: Record<string, unknown>) {
   if (!DEBUG_AURA_CLIENT) return;
@@ -281,35 +279,11 @@ function AuraChatLoadingState() {
   );
 }
 
-function createUserMessage(text: string): AIMessage {
-  const createdAt = Date.now();
-  return {
-    id: createMessageId(),
-    type: "user",
-    kind: "user_text",
-    text,
-    createdAt,
-    clientCreatedAt: createdAt,
-    localSequence: nextLocalMessageSequence(),
-  };
-}
-
 function createUserMessageWithAttachments(text: string, attachments: ChatAttachment[]): AIMessage {
   return {
     ...createUserMessage(text),
     attachments,
   };
-}
-
-function buildChatSeedText(prompt: string, attachments: ChatAttachment[]) {
-  if (prompt.trim()) return prompt.trim();
-  if (attachments.some((attachment) => attachment.type === "image")) {
-    return "Analyze this outfit photo";
-  }
-  if (attachments.some((attachment) => attachment.type === "audio")) {
-    return "Voice styling request";
-  }
-  return "New stylist chat";
 }
 
 function deriveAssistantChatTitle(prompt: string, message: AIMessage) {
@@ -396,28 +370,6 @@ function buildAssistantCardIntro(data: AuraResponse, userRequest?: string) {
   }
 
   return "Got you — here’s what I’d do.";
-}
-
-function buildShareTranscript(thread: AIChatThread, messages: AIMessage[]) {
-  const lines = messages
-    .filter((entry) => entry.type === "user" || entry.type === "assistant")
-    .slice(-12)
-    .map((entry) => {
-      const speaker = entry.type === "user" ? "You" : "AURA";
-      const body =
-        String(entry.assistantIntroText ?? entry.text ?? "").trim() ||
-        (entry.aura?.lookOptions?.length
-          ? `${entry.aura.lookOptions.length} outfit options`
-          : entry.aura?.look
-            ? entry.aura.look.lookTitle
-            : entry.outfits?.length
-              ? `${entry.outfits.length} outfit suggestions`
-              : "");
-      return body ? `${speaker}: ${body}` : null;
-    })
-    .filter(Boolean);
-
-  return [`${summarizeChatTitle({ userText: thread.title, assistantText: thread.lastMessagePreview })}`, "", ...lines].join("\n");
 }
 
 function resolveLocalPhotosForAuraCandidates(
@@ -536,86 +488,6 @@ function createAssistantMessage(
     localSequence: overrides?.localSequence,
     replyToMessageId: overrides?.replyToMessageId ?? null,
   };
-}
-
-function requestedOutfitCount(prompt: string) {
-  const normalized = prompt.toLowerCase();
-  if (/\b(4|four)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 4;
-  if (/\b(3|three)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 3;
-  if (/\b(2|two)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 2;
-  return 3;
-}
-
-function explicitRequestedOutfitCount(prompt: string) {
-  const normalized = String(prompt ?? "").toLowerCase();
-  if (/\b(4|four)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 4;
-  if (/\b(3|three)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 3;
-  if (/\b(2|two)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 2;
-  if (/\bmultiple\s+(?:outfits?|looks?|options?)\b/.test(normalized)) return 3;
-  if (/\bmore\s+options\b/.test(normalized)) return 3;
-  if (/\bfew\s+outfits?\b/.test(normalized)) return 3;
-  return null;
-}
-
-const OUTFIT_REFINEMENT_RE =
-  /\b(with|without|more|less|make|push|safer|balanced|bold|dressier|casual|formal|streetwear|jackets?|outerwear|bags?|glasses|watch|accessor(?:y|ies)|heels?|boots?|sneakers?|loafers?)\b/i;
-
-function latestAuraLookCount(messages: AIMessage[]) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    const count = message.aura?.lookOptions?.length ?? (message.aura?.look ? 1 : 0);
-    if (count > 0) return count;
-  }
-  return 0;
-}
-
-function previousUserPrompt(messages: AIMessage[]) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.type !== "user") continue;
-    const text = String(message.text ?? "").trim();
-    if (text) return text;
-  }
-  return "";
-}
-
-function buildStructuredOutfitBatchPrompt(prompt: string, messages: AIMessage[]) {
-  const current = String(prompt ?? "").trim();
-  if (!current) return current;
-  if (MULTI_OUTFIT_REQUEST_RE.test(current)) return current;
-  if (!OUTFIT_REFINEMENT_RE.test(current)) return current;
-  const prior = previousUserPrompt(messages);
-  if (!prior || prior === current) {
-    return `Give me ${requestedOutfitCount(current)} outfits. ${current}`;
-  }
-  return `${prior}. Refine those outfit options: ${current}`;
-}
-
-function wantsStructuredOutfitBatch(
-  prompt: string,
-  attachmentCount: number,
-  messages: AIMessage[],
-) {
-  if (attachmentCount !== 0) return false;
-  if (MULTI_OUTFIT_REQUEST_RE.test(prompt)) return true;
-  return latestAuraLookCount(messages) > 0 && OUTFIT_REFINEMENT_RE.test(prompt);
-}
-
-function resolveStructuredBatchLookCount(
-  prompt: string,
-  structuredBatchPrompt: string,
-  messages: AIMessage[],
-) {
-  const explicitCurrentCount = explicitRequestedOutfitCount(prompt);
-  if (explicitCurrentCount) return explicitCurrentCount;
-
-  const explicitStructuredCount = explicitRequestedOutfitCount(structuredBatchPrompt);
-  if (explicitStructuredCount) return explicitStructuredCount;
-
-  const latestLookCount = latestAuraLookCount(messages);
-  if (latestLookCount > 0) return latestLookCount;
-
-  return requestedOutfitCount(structuredBatchPrompt || prompt);
 }
 
 function promptRequestsOuterwear(prompt: string) {

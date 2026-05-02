@@ -33,169 +33,29 @@ import {
   saveUserAccountProfile,
   saveUserProfilePreferences,
 } from "@/src/lib/userProfile";
+import {
+  FIT_OPTIONS,
+  OCCASION_OPTIONS,
+  SHOE_SIZES_EU,
+  STEPS,
+  STYLE_OPTIONS,
+  WARDROBE_MODE_CARDS,
+} from "@/src/onboarding/onboardingOptions";
+import {
+  euShoeConversion,
+  formatHeight,
+  getLocaleParts,
+  humanize,
+  messageForOnboardingSaveError,
+  shoeValueFromDraft,
+  toggleValue,
+  unitsForPreference,
+} from "@/src/onboarding/onboardingFormat";
 import type {
   UnitsPreference,
   UserProfilePreferences,
   WardrobeMode,
 } from "@/src/types/UserProfilePreferences";
-
-const WARDROBE_MODE_CARDS: {
-  value: Exclude<WardrobeMode, "custom">;
-  icon: string;
-  label: string;
-  description: string;
-}[] = [
-  {
-    value: "masculine",
-    icon: "M",
-    label: "Masculine",
-    description: "Menswear cuts and silhouettes",
-  },
-  {
-    value: "feminine",
-    icon: "F",
-    label: "Feminine",
-    description: "Womenswear cuts and silhouettes",
-  },
-  {
-    value: "neutral",
-    icon: "N",
-    label: "Neutral",
-    description: "Unisex and gender-neutral pieces",
-  },
-  {
-    value: "mixed",
-    icon: "A",
-    label: "Mixed",
-    description: "Across all categories freely",
-  },
-];
-
-const STYLE_OPTIONS = [
-  "streetwear",
-  "casual",
-  "smart_casual",
-  "formal",
-  "minimal",
-  "sporty",
-  "luxury",
-  "modest",
-  "vintage",
-  "edgy",
-] as const;
-
-const OCCASION_OPTIONS = [
-  "daily",
-  "work",
-  "college",
-  "gym",
-  "party",
-  "date_night",
-  "travel",
-  "formal_events",
-] as const;
-
-const FIT_OPTIONS = ["slim", "regular", "relaxed", "oversized"] as const;
-const SHOE_SIZES_EU = Array.from({ length: 14 }, (_, index) => 35 + index);
-const IMPERIAL_REGIONS = new Set(["US", "LR", "MM"]);
-
-type StepKey = "wardrobeMode" | "style" | "categories" | "profile";
-
-type Step = {
-  key: StepKey;
-  title: string;
-  subtitle: string;
-};
-
-const STEPS: Step[] = [
-  {
-    key: "wardrobeMode",
-    title: "How do you dress?",
-    subtitle: "Choose the wardrobe language AURA should use for silhouettes and styling.",
-  },
-  {
-    key: "style",
-    title: "What's your style?",
-    subtitle: "Pick up to three aesthetics, then add where you usually dress up.",
-  },
-  {
-    key: "categories",
-    title: "What's in your wardrobe?",
-    subtitle: "AURA will only suggest items in these categories.",
-  },
-  {
-    key: "profile",
-    title: "Quick profile",
-    subtitle: "A few fit basics so AURA can personalize recommendations without the long form.",
-  },
-];
-
-function toggleValue(list: string[], value: string) {
-  return list.includes(value)
-    ? list.filter((entry) => entry !== value)
-    : [...list, value];
-}
-
-function humanize(value: string) {
-  return value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function getLocaleParts() {
-  const locale =
-    Intl.DateTimeFormat().resolvedOptions().locale ||
-    (typeof navigator !== "undefined" ? navigator.language : "") ||
-    "en-US";
-  const region = locale.split("-").find((part) => part.length === 2)?.toUpperCase() ?? "US";
-  const unitsPreference: UnitsPreference = IMPERIAL_REGIONS.has(region) ? "imperial" : "metric";
-  return { locale, region, unitsPreference };
-}
-
-function unitsForPreference(unitsPreference: UnitsPreference) {
-  if (unitsPreference === "imperial") {
-    return { length: "in", weight: "lb", shoeRegion: "US", clothingRegion: "US" } as const;
-  }
-  return { length: "cm", weight: "kg", shoeRegion: "EU", clothingRegion: "INTL" } as const;
-}
-
-function formatHeight(value: number, unitsPreference: UnitsPreference) {
-  if (unitsPreference === "imperial") {
-    const feet = Math.floor(value / 12);
-    const inches = value % 12;
-    return `${feet}'${inches}"`;
-  }
-  return `${value} cm`;
-}
-
-function euShoeConversion(euSize: number) {
-  const usMen = Math.max(1, euSize - 33.5);
-  const usWomen = Math.max(1, euSize - 31);
-  const uk = Math.max(1, euSize - 34);
-  return `US M ${formatShoeHalf(usMen)} / US W ${formatShoeHalf(usWomen)} / UK ${formatShoeHalf(uk)}`;
-}
-
-function formatShoeHalf(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-function messageForOnboardingSaveError(error: unknown) {
-  const code =
-    typeof error === "object" && error && "code" in error
-      ? String((error as { code?: unknown }).code)
-      : "";
-  if (code === "permission-denied" || code === "unauthenticated") {
-    return "We couldn't save your setup because your session expired. Please sign in again and retry.";
-  }
-  if (code === "unavailable" || code === "deadline-exceeded") {
-    return "We couldn't save your setup because the network is unavailable. Check your connection and try again.";
-  }
-  return "We couldn't save your setup. Please try again.";
-}
-
-function shoeValueFromDraft(draft: UserProfilePreferences) {
-  const raw = String(draft.defaultSizes.shoes ?? "").match(/\d+/)?.[0];
-  const next = raw ? Number(raw) : 42;
-  return SHOE_SIZES_EU.includes(next) ? next : 42;
-}
 
 export default function OnboardingScreen() {
   const { user } = useAuth();
