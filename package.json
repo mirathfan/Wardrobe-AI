@@ -13,7 +13,6 @@
   "dependencies": {
     "@d11/react-native-fast-image": "^8.13.0",
     "@expo/vector-icons": "^15.0.3",
-    "@lottiefiles/dotlottie-react": "^0.13.5",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/slider": "^5.0.1",
     "@react-native-google-signin/google-signin": "^16.1.2",
@@ -46,10 +45,8 @@
     "expo-router": "~6.0.21",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
-    "expo-symbols": "~1.0.8",
     "expo-system-ui": "~6.0.9",
     "expo-vision-bg": "file:modules/expo-vision-bg",
-    "expo-web-browser": "~15.0.10",
     "firebase": "^12.9.0",
     "lottie-react-native": "~7.3.1",
     "react": "19.1.0",
