@@ -35,6 +35,7 @@ type IngestionStatus =
 type ItemDoc = {
   images?: {
     originalUrl?: string | null;
+    aiUrl?: string | null;
     cleanedUrl?: string | null;
     isPrimary?: boolean;
   }[] | null;
@@ -74,12 +75,14 @@ type ItemDoc = {
     urls?: string[];
     images?: {
       originalUrl?: string | null;
+      aiUrl?: string | null;
       cleanedUrl?: string | null;
       isPrimary?: boolean;
     }[];
     cleanedUrl?: string | null;
     cleanedPhotoUrl?: string | null;
     normalizedUrl?: string | null;
+    aiUrl?: string | null;
     croppedUrl?: string;
     thumbUrl?: string;
   };
@@ -396,11 +399,12 @@ function stringSet(value: unknown): Set<string> {
 function extractPhotoUrls(item: ItemDoc): string[] {
   const values = [
     ...(Array.isArray(item.images)
-      ? item.images.flatMap((image) => [image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      ? item.images.flatMap((image) => [image?.aiUrl ?? "", image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
       : []),
     ...(Array.isArray(item.photos?.images)
-      ? item.photos.images.flatMap((image) => [image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      ? item.photos.images.flatMap((image) => [image?.aiUrl ?? "", image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
       : []),
+    item.photos?.aiUrl ?? "",
     item.photos?.cleanedUrl ?? "",
     item.photos?.cleanedPhotoUrl ?? "",
     item.photos?.originalUrl ?? "",
@@ -428,11 +432,12 @@ function getIngestionStatus(item: ItemDoc | undefined): IngestionStatus | "" {
 function extractIngestionSourceUrls(item: ItemDoc): string[] {
   const values = [
     ...(Array.isArray(item.images)
-      ? item.images.flatMap((image) => [image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      ? item.images.flatMap((image) => [image?.aiUrl ?? "", image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
       : []),
     ...(Array.isArray(item.photos?.images)
-      ? item.photos.images.flatMap((image) => [image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      ? item.photos.images.flatMap((image) => [image?.aiUrl ?? "", image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
       : []),
+    item.photos?.aiUrl ?? "",
     item.photos?.cleanedUrl ?? "",
     item.photos?.cleanedPhotoUrl ?? "",
     item.photos?.normalizedUrl ?? "",
@@ -1344,6 +1349,12 @@ async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not configured");
   }
+  const visionPhotoUrls = photoUrls.slice(0, 3);
+  logger.info("[INGEST_VISION_PAYLOAD] prepared image payload", {
+    inputImageCount: photoUrls.length,
+    visionImageCount: visionPhotoUrls.length,
+    detail: "high",
+  });
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -1419,9 +1430,9 @@ async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
                 "If a piece has multiple visible garment colors, include them and choose the main one as primaryColor.",
               ].join(" "),
             },
-            ...photoUrls.map((photoUrl) => ({
+            ...visionPhotoUrls.map((photoUrl) => ({
               type: "image_url" as const,
-              image_url: { url: photoUrl },
+              image_url: { url: photoUrl, detail: "high" },
             })),
           ],
         },
@@ -1774,6 +1785,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       let warning: string | null = null;
       const storedImageCandidates: {
         originalUrl?: string | null;
+        aiUrl?: string | null;
         cleanedUrl?: string | null;
         isPrimary?: boolean;
       }[] = Array.isArray(after.images)
@@ -1788,6 +1800,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const storedImages = storedImageCandidates
         .map((image) => ({
           originalUrl: String(image?.originalUrl ?? "").trim(),
+          ...(String(image?.aiUrl ?? "").trim()
+            ? { aiUrl: String(image?.aiUrl ?? "").trim() }
+            : {}),
           ...(String(image?.cleanedUrl ?? "").trim()
             ? { cleanedUrl: String(image?.cleanedUrl ?? "").trim() }
             : {}),
@@ -2230,6 +2245,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
 
       const latestImageCandidates: {
         originalUrl?: string | null;
+        aiUrl?: string | null;
         cleanedUrl?: string | null;
         isPrimary?: boolean;
       }[] = Array.isArray(latestBeforeDone.get("images"))
@@ -2240,6 +2256,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const latestImages = latestImageCandidates
         .map((image) => ({
           originalUrl: String(image?.originalUrl ?? "").trim(),
+          ...(String(image?.aiUrl ?? "").trim()
+            ? { aiUrl: String(image?.aiUrl ?? "").trim() }
+            : {}),
           ...(String(image?.cleanedUrl ?? "").trim()
             ? { cleanedUrl: String(image?.cleanedUrl ?? "").trim() }
             : {}),
@@ -2277,6 +2296,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
                 : image.cleanedUrl
                   ? { cleanedUrl: image.cleanedUrl }
                   : {}),
+              ...(image.aiUrl ? { aiUrl: image.aiUrl } : {}),
               isPrimary: image.isPrimary,
             }));
       const preservedPrimaryDisplayUrl =

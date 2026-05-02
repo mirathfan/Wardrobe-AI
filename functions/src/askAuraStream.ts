@@ -1736,10 +1736,11 @@ export const askAuraStream = onRequest(
               },
               ...attachments
                 .filter((attachment) => attachment.type === "image")
+                .slice(0, 2)
                 .map((attachment) => ({
                   type: "input_image" as const,
                   image_url: attachment.uri ?? "",
-                  detail: "auto" as const,
+                  detail: "low" as const,
                 })),
             ],
           },
@@ -1785,10 +1786,11 @@ export const askAuraStream = onRequest(
               },
               ...attachments
                 .filter((attachment) => attachment.type === "image")
+                .slice(0, 2)
                 .map((attachment) => ({
                   type: "input_image" as const,
                   image_url: attachment.uri ?? "",
-                  detail: "auto" as const,
+                  detail: "low" as const,
                 })),
             ],
           },

@@ -224,7 +224,7 @@ export async function analyzeOutfitPhoto(params: {
           ...images.slice(0, 2).map((image) => ({
             type: "input_image" as const,
             image_url: image.uri,
-            detail: "auto" as const,
+            detail: "high" as const,
           })),
         ],
       },

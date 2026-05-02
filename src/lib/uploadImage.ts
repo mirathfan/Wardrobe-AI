@@ -1,6 +1,6 @@
-import * as ImageManipulator from "expo-image-manipulator";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { storage } from "./firebase";
+import { optimizeImageForUpload } from "./imageOptimization";
 
 type UploadItemPhotoParams = {
   uid: string;
@@ -11,30 +11,10 @@ type UploadItemPhotoParams = {
   normalizedLocalUri?: string | null;
   saveNormalizedAsCleaned?: boolean;
   originalWidth?: number | null;
+  originalHeight?: number | null;
   maxWidth?: number;
   quality?: number;
 };
-
-async function processImageToJpegUri(params: {
-  localUri: string;
-  originalWidth?: number | null;
-  maxWidth: number;
-  quality: number;
-}) {
-  const { localUri, originalWidth, maxWidth, quality } = params;
-
-  const actions =
-    originalWidth && originalWidth > maxWidth
-      ? [{ resize: { width: maxWidth } }]
-      : [];
-
-  const result = await ImageManipulator.manipulateAsync(localUri, actions, {
-    compress: quality,
-    format: ImageManipulator.SaveFormat.JPEG,
-  });
-
-  return result.uri;
-}
 
 function normalizeFileUri(uri: string) {
   const value = String(uri ?? "").trim();
@@ -69,17 +49,21 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     normalizedLocalUri = null,
     saveNormalizedAsCleaned = false,
     originalWidth = null,
-    maxWidth = 1000,
-    quality = 0.7,
-  } = params;
-
-  const processedUri = await processImageToJpegUri({
-    localUri,
-    originalWidth,
+    originalHeight = null,
     maxWidth,
     quality,
+  } = params;
+
+  void maxWidth;
+  void quality;
+
+  const displayImage = await optimizeImageForUpload({
+    uri: localUri,
+    width: originalWidth,
+    height: originalHeight,
+    preset: "item_display",
   });
-  const primaryBlob = await blobFromFileUri(processedUri);
+  const primaryBlob = await blobFromFileUri(displayImage.uri);
 
   const suffix = imageId ? `/${imageId}` : "";
   const storagePath = `users/${uid}/items/${itemId}${suffix}.jpg`;
@@ -88,6 +72,23 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     contentType: "image/jpeg",
   });
   const primaryUrl = await getDownloadURL(fileRef);
+
+  const aiImage = await optimizeImageForUpload({
+    uri: localUri,
+    width: originalWidth,
+    height: originalHeight,
+    preset: "item_ingestion",
+  });
+  let aiUrl = primaryUrl;
+  if (aiImage.uri !== displayImage.uri) {
+    const aiBlob = await blobFromFileUri(aiImage.uri);
+    const aiPath = `users/${uid}/items/${itemId}${suffix}.ai.jpg`;
+    const aiRef = ref(storage, aiPath);
+    await uploadBytes(aiRef, aiBlob, {
+      contentType: "image/jpeg",
+    });
+    aiUrl = await getDownloadURL(aiRef);
+  }
 
   const cleanedCandidateUri =
     (saveNormalizedAsCleaned ? normalizedLocalUri : null) ||
@@ -118,6 +119,7 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
   return {
     originalUrl: primaryUrl,
     primaryUrl,
+    aiUrl,
     cleanedUrl,
     normalizedUrl,
     cleanedSource: cleanedUrl ? "vision" : null,
@@ -125,6 +127,7 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
     images: [
       {
         originalUrl: primaryUrl,
+        aiUrl,
         ...(cleanedUrl ? { cleanedUrl } : {}),
         isPrimary: true,
       },

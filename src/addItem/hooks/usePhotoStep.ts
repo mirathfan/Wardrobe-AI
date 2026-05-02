@@ -31,6 +31,7 @@ type UploadedPhotoRecord = {
   photoHash: string;
   originalUrl: string;
   primaryUrl: string;
+  aiUrl: string | null;
   cleanedUrl: string | null;
   normalizedUrl: string | null;
   cleanedSource: "vision" | null;
@@ -74,6 +75,7 @@ type ResolvedPhotoFields = {
   cleanedImageUrls: string[];
   images: {
     originalUrl: string;
+    aiUrl?: string | null;
     cleanedUrl?: string | null;
     isPrimary: boolean;
   }[];
@@ -91,13 +93,16 @@ function makeSelectedPhotoId() {
 
 function sanitizePhotoImageRecord(input: {
   originalUrl?: string | null;
+  aiUrl?: string | null;
   cleanedUrl?: string | null;
   isPrimary: boolean;
 }) {
   const originalUrl = String(input.originalUrl ?? "").trim();
+  const aiUrl = String(input.aiUrl ?? "").trim();
   const cleanedUrl = String(input.cleanedUrl ?? "").trim();
   return {
     originalUrl,
+    ...(aiUrl ? { aiUrl } : {}),
     ...(cleanedUrl ? { cleanedUrl } : {}),
     isPrimary: input.isPrimary,
   };
@@ -1081,7 +1086,7 @@ export function usePhotoStep({
         imageUrls: photoUrl ? [photoUrl] : [],
         cleanedImageUrls: serverCleanedUrl ? [serverCleanedUrl] : [],
         images: photoUrl
-          ? [sanitizePhotoImageRecord({ originalUrl: photoUrl, cleanedUrl: serverCleanedUrl, isPrimary: true })]
+          ? [sanitizePhotoImageRecord({ originalUrl: photoUrl, aiUrl: null, cleanedUrl: serverCleanedUrl, isPrimary: true })]
           : [],
       };
     }
@@ -1118,6 +1123,7 @@ export function usePhotoStep({
                 normalizedLocalUri: entry.normalizedLocalUri,
                 saveNormalizedAsCleaned: entry.id === primaryId,
                 originalWidth: entry.originalWidth,
+                originalHeight: entry.originalHeight,
               }),
               UPLOAD_TIMEOUT_MS,
               "Photo upload"
@@ -1130,6 +1136,7 @@ export function usePhotoStep({
                 photoHash: entry.photoHash,
                 originalUrl: uploadedUrl.originalUrl,
                 primaryUrl: uploadedUrl.primaryUrl,
+                aiUrl: uploadedUrl.aiUrl,
                 cleanedUrl: uploadedUrl.cleanedUrl,
                 normalizedUrl: uploadedUrl.normalizedUrl,
                 cleanedSource: uploadedUrl.cleanedUrl ? "vision" : null,
@@ -1184,6 +1191,7 @@ export function usePhotoStep({
         .map((entry) =>
           sanitizePhotoImageRecord({
             originalUrl: entry.uploaded?.primaryUrl ?? "",
+            aiUrl: entry.uploaded?.aiUrl ?? null,
             cleanedUrl: entry.uploaded?.cleanedUrl ?? null,
             isPrimary: entry.id === (primaryEntry?.id ?? ""),
           })
@@ -1247,6 +1255,7 @@ export function usePhotoStep({
           images: [
             sanitizePhotoImageRecord({
               originalUrl: uploaded.primaryUrl,
+              aiUrl: uploaded.aiUrl,
               cleanedUrl: uploaded.cleanedUrl,
               isPrimary: true,
             }),
@@ -1254,10 +1263,12 @@ export function usePhotoStep({
           updatedAt: Date.now(),
           "photos.originalUrl": uploaded.originalUrl,
           "photos.primaryUrl": uploaded.primaryUrl,
+          "photos.aiUrl": uploaded.aiUrl,
           "photos.urls": [uploaded.primaryUrl],
           "photos.images": [
             sanitizePhotoImageRecord({
               originalUrl: uploaded.primaryUrl,
+              aiUrl: uploaded.aiUrl,
               cleanedUrl: uploaded.cleanedUrl,
               isPrimary: true,
             }),
@@ -1297,6 +1308,7 @@ export function usePhotoStep({
             photoHash: pendingPhotoHash,
             originalUrl: uploaded.originalUrl,
             primaryUrl: uploaded.primaryUrl,
+            aiUrl: uploaded.aiUrl,
             cleanedUrl: uploaded.cleanedUrl,
             normalizedUrl: uploaded.normalizedUrl,
             cleanedSource: uploaded.cleanedUrl ? "vision" : null,
@@ -1397,6 +1409,7 @@ export function usePhotoStep({
             photoHash: String(image?.photoHash ?? originalUrl),
             originalUrl,
             primaryUrl: originalUrl,
+            aiUrl: String(image?.aiUrl ?? "").trim() || null,
             cleanedUrl: String(image?.cleanedUrl ?? "").trim() || null,
             normalizedUrl: null,
             cleanedSource: image?.cleanedUrl ? "vision" : null,

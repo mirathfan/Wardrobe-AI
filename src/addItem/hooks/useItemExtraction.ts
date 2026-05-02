@@ -967,6 +967,7 @@ export function useItemExtraction({
           photos: {
             originalUrl: uploaded.originalUrl,
             primaryUrl: uploaded.primaryUrl,
+            aiUrl: uploaded.aiUrl,
             urls: uploaded.imageUrls,
             images: uploaded.images,
             ...(nextCleanedPhotoUrl
@@ -1009,6 +1010,7 @@ export function useItemExtraction({
           photoHash,
           originalUrl: uploaded.originalUrl,
           primaryUrl: uploaded.primaryUrl,
+          aiUrl: uploaded.aiUrl,
           cleanedUrl: nextCleanedPhotoUrl,
           normalizedUrl: nextNormalizedPhotoUrl,
           cleanedSource: uploaded.cleanedSource,

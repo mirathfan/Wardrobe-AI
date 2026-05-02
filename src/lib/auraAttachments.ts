@@ -1,5 +1,4 @@
 import * as FileSystem from "expo-file-system/legacy";
-import * as ImageManipulator from "expo-image-manipulator";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { addDoc, collection, doc, setDoc, updateDoc } from "firebase/firestore";
 
@@ -7,6 +6,7 @@ import type { ChatAttachment, ChatAudioAttachment, ChatImageAttachment } from "@
 import { removeBackground } from "@/src/bg/removeBackground";
 import { normalizeCutoutImage } from "@/src/lib/cutoutNormalize";
 import { db, storage } from "@/src/lib/firebase";
+import { optimizeImageForUpload } from "@/src/lib/imageOptimization";
 import { uploadItemPhoto } from "@/src/lib/uploadImage";
 import { analyzeCutoutVisualNormalization } from "@/src/lib/visualNormalization";
 import type { AuraCandidateItem, AuraDetectedOutfitPiece } from "@/src/types/aura";
@@ -87,27 +87,33 @@ async function jpegUploadSourceForAttachment(attachment: ChatAttachment) {
   }
 
   try {
-    const normalized = await ImageManipulator.manipulateAsync(sourceUri, [], {
-      compress: 0.92,
-      format: ImageManipulator.SaveFormat.JPEG,
+    const optimized = await optimizeImageForUpload({
+      uri: sourceUri,
+      width: attachment.type === "image" ? attachment.width ?? null : null,
+      height: attachment.type === "image" ? attachment.height ?? null : null,
+      mimeType: attachment.mimeType ?? null,
+      preset: "aura_chat",
     });
     debugAuraAttachmentLog(AURA_UPLOAD_LOG, "normalized image attachment for upload", {
       attachmentId: attachment.id,
       sourceMimeType: attachment.mimeType ?? null,
-      sourceWidth: attachment.width ?? null,
-      sourceHeight: attachment.height ?? null,
-      normalizedWidth: normalized.width ?? null,
-      normalizedHeight: normalized.height ?? null,
+      sourceWidth: optimized.original.width,
+      sourceHeight: optimized.original.height,
+      sourceBytes: optimized.original.sizeBytes,
+      normalizedWidth: optimized.width,
+      normalizedHeight: optimized.height,
+      normalizedBytes: optimized.sizeBytes,
       outputMimeType: "image/jpeg",
+      optimized: optimized.optimized,
     });
     return {
       sourceUri,
-      uploadUri: normalized.uri,
-      contentType: "image/jpeg",
-      extension: "jpg",
-      normalized: true,
-      width: normalized.width ?? attachment.width ?? null,
-      height: normalized.height ?? attachment.height ?? null,
+      uploadUri: optimized.uri,
+      contentType: optimized.contentType,
+      extension: optimized.extension,
+      normalized: optimized.optimized,
+      width: optimized.width ?? attachment.width ?? null,
+      height: optimized.height ?? attachment.height ?? null,
     };
   } catch (error) {
     debugAuraAttachmentLog(AURA_UPLOAD_LOG, "image normalization failed", {
@@ -486,6 +492,7 @@ async function runPostSavePrimaryImageCutout(params: {
     const nextImages = [
       {
         originalUrl: uploaded.primaryUrl,
+        aiUrl: uploaded.aiUrl,
         ...(uploaded.cleanedUrl ? { cleanedUrl: uploaded.cleanedUrl } : {}),
         isPrimary: true,
         sourceOriginalUrl: primaryUrl,
@@ -503,6 +510,7 @@ async function runPostSavePrimaryImageCutout(params: {
       cleanedSource: uploaded.cleanedUrl ? "vision" : null,
       "photos.originalUrl": uploaded.originalUrl,
       "photos.primaryUrl": primaryDisplayUrl,
+      "photos.aiUrl": uploaded.aiUrl,
       "photos.urls": nextImageUrls,
       "photos.images": nextImages,
       "photos.cleanedUrl": uploaded.cleanedUrl ?? null,

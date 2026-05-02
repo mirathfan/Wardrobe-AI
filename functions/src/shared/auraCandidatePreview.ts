@@ -942,6 +942,7 @@ export async function extractImageCandidates(params: {
   for (let index = 0; index < params.imageGroups.length; index += 1) {
     const imageUrls = params.imageGroups[index] ?? [];
     if (!imageUrls.length) continue;
+    const visionImageUrls = imageUrls.slice(0, 3);
     const response = await params.client.responses.create({
       model: "gpt-5.4-mini",
       input: [
@@ -958,10 +959,10 @@ export async function extractImageCandidates(params: {
               text:
                 "Return JSON with keys: title, category, subCategory, color, brand, material, fit, pattern, confidence. Use null for unknown values.",
             },
-            ...imageUrls.map((url) => ({
+            ...visionImageUrls.map((url) => ({
               type: "input_image" as const,
               image_url: url,
-              detail: "auto" as const,
+              detail: "high" as const,
             })),
           ],
         },
