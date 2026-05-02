@@ -25,7 +25,7 @@ import {
 } from "./shared/auraOutfitPhotoAnalysis";
 import { dedupeAuraLookAccessories } from "./shared/auraAccessorySelection";
 import { type WardrobeGapSuggestion } from "./shared/detectWardrobeGaps";
-import { loadAuraUserProfile } from "./shared/loadAuraUserProfile";
+import { loadAuraUserProfile, type AuraUserProfile } from "./shared/loadAuraUserProfile";
 import { handleLaundryIntent } from "./shared/laundryIntent";
 import { extractProductUrlMetadata } from "./shared/productUrlMetadata";
 import {
@@ -188,6 +188,99 @@ function buildMultiLookRequestNote(userMessage: string) {
 const ADD_IMAGE_RE =
   /\b(add|save|store|put|upload|log)\b[\s\S]{0,80}\b(closet|wardrobe|item|items|these|this|all)\b|\b(add|save)\s+(this|these|all|item|items)\b/i;
 const BATCH_IMAGE_RE = /\b(these|all|each|separate|multiple|items)\b/i;
+const SIMPLE_CHAT_NEEDS_STRUCTURED_RE =
+  /\b(add|accessor(?:y|ies)|analy[sz]e|buy|card|closet|complete|date|dinner|dressier|event|fit|formal|image|improve|item|jacket|laundry|link|look|missing|outfit|photo|picture|plan|planner|product|rate|recommend|save|shop|shopping|smart\s+buys?|style|swap|tonight|tomorrow|trip|use\s+only|wardrobe|wear|wearing|weather|wedding|work)\b/i;
+
+function isGeneralChatIntent(value: string | null) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return !normalized || normalized === "general_chat";
+}
+
+function shouldUseSimpleChatPath(args: {
+  userMessage: string;
+  attachments: AuraAttachment[];
+  detectedUrls: { normalized: string }[];
+  clientIntent: string | null;
+  effectiveClientIntent: string | null;
+  linkIntent: string;
+}) {
+  if (!args.userMessage.trim()) return false;
+  if (args.attachments.length > 0) return false;
+  if (args.detectedUrls.length > 0) return false;
+  if (args.linkIntent !== "none") return false;
+  if (!isGeneralChatIntent(args.clientIntent)) return false;
+  if (!isGeneralChatIntent(args.effectiveClientIntent)) return false;
+  if (wantsMultipleLooks(args.userMessage)) return false;
+  return !SIMPLE_CHAT_NEEDS_STRUCTURED_RE.test(args.userMessage);
+}
+
+function compactText(value: unknown, maxLength = 160) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
+function compactAuraUserProfile(userProfile: AuraUserProfile) {
+  return {
+    firstName: compactText(userProfile.firstName),
+    region: compactText(userProfile.region),
+    wardrobeMode: compactText(userProfile.wardrobeMode),
+    selectedCategories: uniqueTrimmed(userProfile.selectedCategories, 6),
+    styleAesthetics: uniqueTrimmed(userProfile.styleAesthetics, 6),
+    favoriteColors: uniqueTrimmed(userProfile.favoriteColors, 6),
+    avoidedColors: uniqueTrimmed(userProfile.avoidedColors, 6),
+    accessoryPreferences: uniqueTrimmed(userProfile.accessoryPreferences, 6),
+    occasionPriority: uniqueTrimmed(userProfile.occasionPriority, 6),
+    goals: uniqueTrimmed(userProfile.goals, 6),
+    preferredFit: compactText(userProfile.preferredFit),
+    preferredBrands: uniqueTrimmed(userProfile.stylePreferences?.preferredBrands, 6),
+    closetPreferences: userProfile.closetPreferences
+      ? {
+          prioritizeUnderused: userProfile.closetPreferences.prioritizeUnderused === true,
+          hideLaundryByDefault: userProfile.closetPreferences.hideLaundryByDefault === true,
+          defaultSort: compactText(userProfile.closetPreferences.defaultSort),
+        }
+      : null,
+  };
+}
+
+function compactMinimumClosetFromClientContext(value: unknown) {
+  const requestContext = value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+  const minimumCloset = requestContext.minimumCloset && typeof requestContext.minimumCloset === "object"
+    ? (requestContext.minimumCloset as Record<string, unknown>)
+    : null;
+  if (!minimumCloset) return null;
+
+  const itemCount = Number(minimumCloset.itemCount ?? 0);
+  const outfitRange = Number(minimumCloset.outfitRange ?? 0);
+  const nextBestAdd = compactText(minimumCloset.nextBestAdd, 120);
+
+  return {
+    itemCount: Number.isFinite(itemCount) ? itemCount : 0,
+    styleCoreProgress: compactText(minimumCloset.styleCoreProgress, 120),
+    nextBestAdd,
+    missingCategoryHints: nextBestAdd ? [nextBestAdd] : [],
+    outfitRange: Number.isFinite(outfitRange) ? outfitRange : 0,
+    tone: compactText(minimumCloset.tone, 80),
+  };
+}
+
+function buildCompactAuraContextForSimpleChat(args: {
+  memory: unknown;
+  userProfile: AuraUserProfile;
+  clientContext: unknown;
+  styleCoreNote: string;
+}) {
+  return {
+    mode: "compact_simple_chat",
+    contextPolicy: "Full closet item list and image URLs omitted for simple chat.",
+    closetSummary: compactMinimumClosetFromClientContext(args.clientContext),
+    userProfile: compactAuraUserProfile(args.userProfile),
+    preferenceContext: args.memory,
+    styleCoreNote: args.styleCoreNote || null,
+  };
+}
 
 function shortenLookReply(text: string) {
   const trimmed = String(text ?? "").trim();
@@ -1457,6 +1550,99 @@ export const askAuraStream = onRequest(
         }
       }
 
+      const useSimpleChatPath = shouldUseSimpleChatPath({
+        userMessage,
+        attachments,
+        detectedUrls,
+        clientIntent,
+        effectiveClientIntent,
+        linkIntent,
+      });
+
+      logger.info("[AURA_ROUTE] selected model path", {
+        uid,
+        path: useSimpleChatPath ? "simple_chat" : "structured",
+        contextMode: useSimpleChatPath ? "compact" : "full",
+        attachmentCount: attachments.length,
+        detectedUrlCount: detectedUrls.length,
+        clientIntent,
+        effectiveClientIntent,
+      });
+
+      if (useSimpleChatPath) {
+        const [auraMemory, userProfile] = await Promise.all([
+          loadCompactAuraMemoryContext(
+            db,
+            uid,
+            typeof req.body?.chatId === "string" ? req.body.chatId : null
+          ),
+          loadAuraUserProfile(uid),
+        ]);
+        const compactAuraContext = buildCompactAuraContextForSimpleChat({
+          memory: auraMemory,
+          userProfile,
+          clientContext: req.body?.clientContext,
+          styleCoreNote,
+        });
+        const requestText =
+          `User profile:\n${JSON.stringify(compactAuraContext.userProfile, null, 2)}\n\n` +
+          `Aura context:\n${JSON.stringify(compactAuraContext, null, 2)}\n\n` +
+          "Stylist brief:\nPersonalize lightly.\n\n" +
+          `Style core note:\n${styleCoreNote || "None."}\n\n` +
+          `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
+          "Product link context:\nNo product links.\n\n" +
+          "Attachments:\nNone.\n\n" +
+          `User request:\n${userMessage}`;
+
+        writeEvent(res, { type: "status", status: "responding" });
+        logger.info("[AURA_ROUTE] simple chat stream starting", {
+          uid,
+          path: "simple_chat",
+          contextMode: "compact",
+          secondModelCall: "skipped",
+        });
+
+        let streamedText = "";
+        const stream = client.responses.stream({
+          model: "gpt-5.4",
+          input: [
+            {
+              role: "developer",
+              content: AURA_STREAM_INSTRUCTIONS,
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: requestText,
+                },
+              ],
+            },
+          ],
+        });
+
+        for await (const event of stream) {
+          if (event.type === "response.output_text.delta" && event.delta) {
+            streamedText += event.delta;
+            writeEvent(res, { type: "delta", delta: event.delta });
+          }
+        }
+
+        const finalReply = streamedText.trim();
+        const data = fallbackAuraResponse(finalReply || "I'm here - what are we styling?");
+        logger.info("[AURA_ROUTE] simple chat stream finished", {
+          uid,
+          path: "simple_chat",
+          contextMode: "compact",
+          secondModelCall: "skipped",
+          textLength: data.reply.length,
+        });
+        writeEvent(res, { type: "final", data });
+        res.end();
+        return;
+      }
+
       const itemsSnap = await db.collection("users").doc(uid).collection("items").get();
       const items = itemsSnap.docs.map((doc) => ({
         id: doc.id,
@@ -1573,6 +1759,13 @@ export const askAuraStream = onRequest(
         textLength: finalReply.length,
       });
 
+      logger.info("[AURA_ROUTE] structured finalizer starting", {
+        uid,
+        path: "structured",
+        contextMode: "full",
+        secondModelCall: "used",
+        textLength: finalReply.length,
+      });
       const structured = await client.responses.create({
         model: "gpt-5.4",
         input: [

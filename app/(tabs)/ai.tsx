@@ -43,6 +43,7 @@ import { getItemImageUrl } from "@/src/lib/itemImage";
 import { listenToItems, updateLaundryStatus } from "@/src/lib/items";
 import { buildMinimumClosetSummary } from "@/src/lib/minimumCloset";
 import { Toast } from "@/src/lib/toast";
+import { Colors } from "@/constants/theme";
 import {
   appendMessageToChat,
   createChatThread,
@@ -82,7 +83,7 @@ const DEFAULT_CHIPS = AURA_TOP_CHIPS.filter((chip) => chip !== TRAIN_AURA_CHIP_L
 const DEFAULT_COMPOSER_HEIGHT = 56;
 const CHAT_COMPOSER_TAB_GAP = 8;
 const CHAT_BOTTOM_BREATHING_ROOM = 18;
-const STREAM_FLUSH_INTERVAL_MS = 24;
+const STREAM_FLUSH_INTERVAL_MS = 32;
 const AURA_REPLY_START_HAPTIC = "light" as const;
 const AURA_REPLY_FINISH_HAPTIC = "selection" as const;
 const AURA_OFFLINE_MESSAGE = "AURA couldn't finish that. Check your connection and try again.";
@@ -173,15 +174,15 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
         borderRadius: 24,
         overflow: "hidden",
         borderWidth: 0.75,
-        borderColor: "rgba(255,255,255,0.075)",
-        backgroundColor: "rgba(12,13,19,0.74)",
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceGlass,
         padding: layout.screenSize === "compact" ? 14 : 16,
         gap: 13,
       }}
     >
       <LinearGradient
         pointerEvents="none"
-        colors={["rgba(124,92,255,0.12)", "rgba(255,255,255,0.022)", "transparent"]}
+        colors={[colors.purpleSurface, "rgba(251,228,216,0.022)", "transparent"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{ position: "absolute", inset: 0 }}
@@ -239,12 +240,12 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
               borderRadius: 999,
               paddingHorizontal: 10,
               paddingVertical: 7,
-              backgroundColor: "rgba(255,255,255,0.035)",
+              backgroundColor: colors.chipBackground,
               borderWidth: 0.75,
-              borderColor: "rgba(255,255,255,0.075)",
+              borderColor: colors.border,
             }}
           >
-            <Text style={{ color: colors.text, fontSize: 11.5, fontWeight: "800" }}>{chip}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "800" }}>{chip}</Text>
           </AuraPressable>
         ))}
       </View>
@@ -2133,11 +2134,11 @@ export default function AIScreen() {
   }, [handleAsk, isBooting, routePrompt, routePromptKey, uid]);
 
   const chatBackgroundColors = useMemo(
-    () => ["#07070B", "#0A0A0F", "#10121B"] as const,
+    () => [Colors.dark.backgroundDeep, "#140016", Colors.dark.backgroundDark] as const,
     [],
   );
   const chatBottomGlowColors = useMemo(
-    () => ["rgba(167,139,250,0.045)", "rgba(255,255,255,0.016)", "transparent"] as const,
+    () => ["rgba(223,182,178,0.035)", "rgba(43,18,76,0.08)", "transparent"] as const,
     [],
   );
   const restingComposerBottom =

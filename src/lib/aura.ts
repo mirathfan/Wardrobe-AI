@@ -100,6 +100,25 @@ function normalizeAuraCandidatePayload(data: AuraResponse): AuraResponse {
   return normalized;
 }
 
+function chatOnlyAuraResponse(reply: string): AuraResponse {
+  return {
+    presentation: "chat",
+    title: "AURA",
+    reply,
+    reason: "",
+    outfitItems: [],
+    ownedPieces: [],
+    recommendedAdditions: [],
+    swapSuggestion: "",
+    missingPieces: [],
+    upgradeSuggestions: [],
+    upgradeSuggestionItems: [],
+    chips: [],
+    look: null,
+    lookOptions: [],
+  };
+}
+
 export async function askAura(args: AskAuraArgs): Promise<AuraResponse> {
   const safeArgs = sanitizeAuraArgs(args);
   const functions = getFunctions(app);
@@ -590,18 +609,22 @@ async function askAuraStreamWithXhr(
     let processedLength = 0;
     let pendingBuffer = "";
     let finalData: AuraResponse | null = null;
+    let streamedText = "";
     let isSettled = false;
     let processingQueue = Promise.resolve();
+    const trackedCallbacks: AskAuraStreamCallbacks = {
+      ...callbacks,
+      onDelta: (delta) => {
+        streamedText += delta;
+        callbacks.onDelta?.(delta);
+      },
+      onFinal: (data) => {
+        callbacks.onFinal?.(data);
+      },
+    };
 
     const cleanupAbortListener = () => {
       signal?.removeEventListener("abort", handleAbort);
-    };
-
-    const settleError = (error: unknown) => {
-      if (isSettled) return;
-      isSettled = true;
-      cleanupAbortListener();
-      reject(error instanceof Error ? error : new Error("AURA stream failed."));
     };
 
     const settleSuccess = (data: AuraResponse) => {
@@ -609,6 +632,27 @@ async function askAuraStreamWithXhr(
       isSettled = true;
       cleanupAbortListener();
       resolve(data);
+    };
+
+    const settlePartialIfUseful = () => {
+      if (finalData) {
+        settleSuccess(finalData);
+        return true;
+      }
+      const reply = streamedText.trim();
+      if (!reply) return false;
+      const data = chatOnlyAuraResponse(reply);
+      callbacks.onFinal?.(data);
+      settleSuccess(data);
+      return true;
+    };
+
+    const settleError = (error: unknown) => {
+      if (isSettled) return;
+      if (!isAuraStreamAbortError(error) && settlePartialIfUseful()) return;
+      isSettled = true;
+      cleanupAbortListener();
+      reject(error instanceof Error ? error : new Error("AURA stream failed."));
     };
 
     const handleAbort = () => {
@@ -639,7 +683,7 @@ async function askAuraStreamWithXhr(
         pendingBuffer += nextChunk;
         const segments = pendingBuffer.split("\n");
         pendingBuffer = segments.pop() ?? "";
-        await processEventLines(segments.join("\n"), callbacks, (data) => {
+        await processEventLines(segments.join("\n"), trackedCallbacks, (data) => {
           finalData = data;
         });
       });
@@ -660,7 +704,7 @@ async function askAuraStreamWithXhr(
           .then(async () => {
             await processingQueue;
             if (pendingBuffer.trim()) {
-              await processEventLines(pendingBuffer, callbacks, (data) => {
+              await processEventLines(pendingBuffer, trackedCallbacks, (data) => {
                 finalData = data;
               });
               pendingBuffer = "";
@@ -675,6 +719,7 @@ async function askAuraStreamWithXhr(
               return;
             }
 
+            if (settlePartialIfUseful()) return;
             const fallback = await askAura(args);
             callbacks.onFinal?.(fallback);
             settleSuccess(fallback);
@@ -775,21 +820,59 @@ export async function askAuraStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let finalData: AuraResponse | null = null;
+  let streamedText = "";
+  const trackedCallbacks: AskAuraStreamCallbacks = {
+    ...callbacks,
+    onDelta: (delta) => {
+      streamedText += delta;
+      callbacks.onDelta?.(delta);
+    },
+    onFinal: (data) => {
+      callbacks.onFinal?.(data);
+    },
+  };
+  const partialStreamResponse = () => {
+    const reply = streamedText.trim();
+    return reply ? chatOnlyAuraResponse(reply) : null;
+  };
 
-  while (true) {
-    if (callbacks.signal?.aborted) throw createAuraStreamAbortError();
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      if (callbacks.signal?.aborted) throw createAuraStreamAbortError();
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    await processEventLines(lines.join("\n"), callbacks, (data) => {
-      finalData = data;
-    });
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      await processEventLines(lines.join("\n"), trackedCallbacks, (data) => {
+        finalData = data;
+      });
+    }
+
+    if (buffer.trim()) {
+      await processEventLines(buffer, trackedCallbacks, (data) => {
+        finalData = data;
+      });
+    }
+  } catch (error) {
+    if (isAuraStreamAbortError(error)) throw error;
+    if (finalData) return finalData;
+    const partial = partialStreamResponse();
+    if (partial) {
+      callbacks.onFinal?.(partial);
+      return partial;
+    }
+    throw error;
   }
 
   if (finalData) return finalData;
+
+  const partial = partialStreamResponse();
+  if (partial) {
+    callbacks.onFinal?.(partial);
+    return partial;
+  }
 
   const fallback = await askAura(enrichedArgs);
   callbacks.onFinal?.(fallback);
