@@ -560,8 +560,8 @@ export async function startNewChat(uid: string) {
   return createChatThread(uid);
 }
 
-export async function loadLatestChatThread(uid: string) {
-  const threads = await loadRecentChatThreads(uid, 24);
+export async function loadLatestChatThread(uid: string, recentThreads?: AIChatThread[]) {
+  const threads = recentThreads ? sortChatThreads(recentThreads).filter((thread) => !thread.archived) : await loadRecentChatThreads(uid, 24);
   return threads[0] ?? null;
 }
 
@@ -603,8 +603,9 @@ export async function appendMessageToChat(
   const now = Date.now();
   const sanitizedAura = message.aura ? stripUndefinedDeep(message.aura) : undefined;
   const persistedAttachments = message.attachments?.filter((attachment) => attachment.type === "image") ?? [];
-  const threadSnap = await getDoc(chatRef);
-  const existingThread = threadSnap.exists() ? toChatThread(threadSnap) : null;
+  const shouldUpdateGeneratedTitle = message.type === "user" && !!options?.titleFromUserText;
+  const threadSnap = shouldUpdateGeneratedTitle ? await getDoc(chatRef) : null;
+  const existingThread = threadSnap?.exists() ? toChatThread(threadSnap) : null;
   const batch = writeBatch(db);
   batch.set(messageRef, {
     type: message.type,
@@ -650,8 +651,7 @@ export async function appendMessageToChat(
       lastMessagePreview: sanitizeMessagePreview(message),
       messageCount: increment(1),
       ...(typeof options?.threadId === "string" || options?.threadId === null ? { threadId: options.threadId } : {}),
-      ...(message.type === "user" &&
-      options?.titleFromUserText &&
+      ...(shouldUpdateGeneratedTitle &&
       !existingThread?.titleEdited
         ? { title: summarizeChatTitle({ userText: options.titleFromUserText }) }
         : {}),

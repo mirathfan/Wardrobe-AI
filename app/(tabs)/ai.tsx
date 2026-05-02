@@ -49,7 +49,6 @@ import {
   createChatThread,
   deleteChatThread,
   loadChatMessages,
-  loadLatestChatThread,
   loadRecentChatThreads,
   renameChatThread,
   setChatArchived,
@@ -1146,8 +1145,8 @@ export default function AIScreen() {
           return;
         }
 
-        const latestThread = await loadLatestChatThread(uid);
         const recent = await loadRecentChatThreads(uid, RECENT_CHAT_LIMIT);
+        const latestThread = recent[0] ?? null;
         if (!cancelled && latestThread?.chatId) {
           const threadMessages = await loadChatMessages(uid, latestThread.chatId);
           setMessages(orderChatMessages(threadMessages));
@@ -2134,11 +2133,11 @@ export default function AIScreen() {
   }, [handleAsk, isBooting, routePrompt, routePromptKey, uid]);
 
   const chatBackgroundColors = useMemo(
-    () => [Colors.dark.backgroundDeep, "#140016", Colors.dark.backgroundDark] as const,
+    () => ["#120014", Colors.dark.backgroundDeep, Colors.dark.backgroundDark] as const,
     [],
   );
   const chatBottomGlowColors = useMemo(
-    () => ["rgba(223,182,178,0.035)", "rgba(43,18,76,0.08)", "transparent"] as const,
+    () => ["rgba(223,182,178,0.018)", "rgba(9,0,11,0.12)", "transparent"] as const,
     [],
   );
   const restingComposerBottom =

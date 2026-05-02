@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Animated, FlatList, Image, NativeScrollEvent, NativeSyntheticEvent, Pressable, Text, View, useWindowDimensions } from "react-native";
+import { Animated, FlatList, NativeScrollEvent, NativeSyntheticEvent, Pressable, Text, View, useWindowDimensions } from "react-native";
 
 import { Fonts } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
+import AppImage from "@/src/components/common/AppImage";
 import {
   ACTION_GAP,
   CHIP_BORDER_WIDTH,
@@ -123,8 +124,8 @@ function AuraReplyCard({
           width: "100%",
           borderRadius: 18,
           borderWidth: 1,
-          borderColor: "rgba(237,233,227,0.16)",
-          backgroundColor: "rgba(255,255,255,0.045)",
+          borderColor: colors.border,
+          backgroundColor: colors.surfaceGlass,
           padding: 14,
           gap: 10,
         }}
@@ -147,9 +148,9 @@ function AuraReplyCard({
               style={{
                 borderRadius: 14,
                 padding: 12,
-                backgroundColor: "rgba(255,255,255,0.055)",
+                backgroundColor: colors.chipBackground,
                 borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.08)",
+                borderColor: colors.border,
                 gap: 3,
               }}
             >
@@ -177,12 +178,12 @@ function AuraReplyCard({
               borderRadius: 999,
               paddingHorizontal: 10,
               paddingVertical: 5,
-              backgroundColor: pressed ? auraTheme.accentTintStrong : auraTheme.accentTint,
+              backgroundColor: pressed ? colors.ctaCream : colors.primaryCta,
               borderWidth: CHIP_BORDER_WIDTH,
-              borderColor: auraTheme.borderAccent,
+              borderColor: colors.borderWarm,
             })}
           >
-            <Text style={{ color: colors.text, fontSize: 11.5, fontWeight: "800", fontFamily: Fonts.sans }}>
+            <Text style={{ color: colors.ctaText, fontSize: 11.5, fontWeight: "800", fontFamily: Fonts.sans }}>
               Add All
             </Text>
           </Pressable>
@@ -390,8 +391,8 @@ function AuraReplyCard({
       style={{
         borderRadius: Math.max(20, layout.mediumRadius + 2),
         borderWidth: CHIP_BORDER_WIDTH,
-        borderColor: "rgba(255,255,255,0.075)",
-        backgroundColor: "rgba(12,13,19,0.86)",
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceGlass,
         paddingHorizontal: Math.max(13, layout.cardPadding - 5),
         paddingVertical: layout.screenSize === "compact" ? 13 : 15,
         gap: 14,
@@ -495,9 +496,9 @@ function LevelThisUpSection({
         gap: 10,
         padding: 11,
         borderRadius: CARD_SECTION_RADIUS,
-        backgroundColor: "rgba(255,255,255,0.028)",
+        backgroundColor: colors.chipBackground,
         borderWidth: CHIP_BORDER_WIDTH,
-        borderColor: "rgba(255,255,255,0.055)",
+        borderColor: colors.border,
       }}
     >
       <View style={{ gap: 2 }}>
@@ -534,16 +535,16 @@ function LevelThisUpSection({
               minHeight: SMART_BUY_CHIP_HEIGHT,
               paddingHorizontal: 9,
               paddingVertical: 0,
-              backgroundColor: "rgba(255,255,255,0.035)",
+              backgroundColor: colors.surfaceSoft,
               borderWidth: CHIP_BORDER_WIDTH,
-              borderColor: "rgba(255,255,255,0.075)",
+              borderColor: colors.border,
               justifyContent: "center",
               maxWidth: "100%",
             }}
           >
             <Text
               style={{
-                color: "rgba(245,248,251,0.9)",
+                color: colors.textSecondary,
                 fontSize: 11.25,
                 lineHeight: 14,
                 fontWeight: "700",
@@ -683,21 +684,21 @@ function FeedbackChip({
           backgroundColor: active
             ? label === "Not it"
               ? "rgba(255,77,79,0.075)"
-              : "rgba(124,92,255,0.095)"
-            : "rgba(255,255,255,0.025)",
+              : colors.purpleSurface
+            : colors.chipBackground,
           borderWidth: CHIP_BORDER_WIDTH,
-          borderColor: active ? (label === "Not it" ? "rgba(255,77,79,0.18)" : "rgba(167,139,250,0.18)") : "rgba(255,255,255,0.055)",
+          borderColor: active ? (label === "Not it" ? "rgba(255,77,79,0.18)" : colors.purpleBorder) : colors.border,
           opacity: pressed ? 0.88 : 1,
         })}
       >
         <Ionicons
           name={icon}
           size={13}
-          color={active ? (label === "Not it" ? colors.danger : colors.text) : auraTheme.textMuted}
+          color={active ? (label === "Not it" ? colors.danger : colors.ctaCream) : auraTheme.textMuted}
         />
         <Text
           style={{
-            color: active ? (label === "Not it" ? colors.danger : colors.text) : auraTheme.textMuted,
+            color: active ? (label === "Not it" ? colors.danger : colors.ctaCream) : auraTheme.textMuted,
             fontSize: 10.5,
             fontWeight: "700",
             fontFamily: Fonts.sans,
@@ -768,8 +769,8 @@ function OutfitAnalysisCard({
       style={{
         borderRadius: 20,
         borderWidth: CHIP_BORDER_WIDTH,
-        borderColor: "rgba(255,255,255,0.075)",
-        backgroundColor: "rgba(12,13,19,0.86)",
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceGlass,
         padding: 14,
         gap: 12,
         width: "100%",
@@ -795,9 +796,9 @@ function OutfitAnalysisCard({
               borderRadius: 14,
               paddingHorizontal: 9,
               paddingVertical: 7,
-              backgroundColor: "rgba(255,255,255,0.032)",
+              backgroundColor: colors.chipBackground,
               borderWidth: CHIP_BORDER_WIDTH,
-              borderColor: "rgba(255,255,255,0.07)",
+              borderColor: colors.border,
               maxWidth: "100%",
             }}
           >
@@ -835,21 +836,21 @@ function OutfitAnalysisCard({
         <View style={{ flexDirection: "row", gap: ACTION_GAP }}>
           <ActionButton
             onPress={() => onAction?.({ type: "save_worn_outfit" })}
-            pressedBackground={auraTheme.accentTintStrong}
-            backgroundColor={auraTheme.accentTint}
-            borderColor="rgba(255,255,255,0.12)"
+            pressedBackground={colors.ctaCream}
+            backgroundColor={colors.ctaCream}
+            borderColor={colors.borderWarm}
           >
-            <Text style={{ color: "#F5F8FB", fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
+            <Text style={{ color: colors.ctaText, fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
               Save as worn
             </Text>
           </ActionButton>
           <ActionButton
             onPress={() => onAction?.({ type: "add_pieces_to_closet" })}
-            pressedBackground="rgba(255,255,255,0.08)"
+            pressedBackground={colors.surfaceElevated}
             backgroundColor={auraTheme.surfaceStrong}
             borderColor={auraTheme.borderSoft}
           >
-            <Text style={{ color: "#E7EDF5", fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
+            <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
               Add pieces
             </Text>
           </ActionButton>
@@ -930,9 +931,9 @@ function Group({
   tone: "owned" | "suggested";
   children: React.ReactNode;
 }) {
-  const titleColor = tone === "owned" ? "rgba(214,198,255,0.92)" : "rgba(255,255,255,0.68)";
-  const sectionBackground = tone === "owned" ? "rgba(124,92,255,0.07)" : "rgba(255,255,255,0.028)";
-  const sectionBorder = tone === "owned" ? "rgba(167,139,250,0.13)" : "rgba(255,255,255,0.055)";
+  const titleColor = tone === "owned" ? "rgba(223,182,178,0.92)" : "rgba(251,228,216,0.68)";
+  const sectionBackground = tone === "owned" ? "rgba(223,182,178,0.12)" : "rgba(43,18,76,0.42)";
+  const sectionBorder = tone === "owned" ? "rgba(223,182,178,0.22)" : "rgba(251,228,216,0.10)";
 
   return (
     <View
@@ -1025,8 +1026,8 @@ function CandidateCard({
       style={{
         borderRadius: 20,
         borderWidth: CHIP_BORDER_WIDTH,
-        borderColor: "rgba(255,255,255,0.075)",
-        backgroundColor: "rgba(12,13,19,0.86)",
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceGlass,
         padding: 12,
         gap: 10,
         width: "100%",
@@ -1034,14 +1035,16 @@ function CandidateCard({
       }}
     >
       <View style={{ flexDirection: "row", gap: 10 }}>
-        <Image
+        <AppImage
           source={{ uri: previewImageUrl }}
-            style={{
-              width: 76,
-              height: 94,
-              borderRadius: 12,
-              backgroundColor: auraTheme.surfaceSoft,
-            }}
+          style={{
+            width: 76,
+            height: 94,
+            borderRadius: 12,
+            backgroundColor: colors.boardLight,
+            borderWidth: CHIP_BORDER_WIDTH,
+            borderColor: colors.borderWarm,
+          }}
           resizeMode="cover"
         />
         <View style={{ flex: 1, gap: 6, minWidth: 0 }}>
@@ -1096,7 +1099,7 @@ function CandidateCard({
                   borderRadius: 9,
                   paddingHorizontal: 6,
                   paddingVertical: 3,
-                  backgroundColor: auraTheme.surfaceSoft,
+                  backgroundColor: colors.chipBackground,
                 }}
               >
                 <Text style={{ color: colors.textSecondary, fontSize: 10.5, fontWeight: "700" }}>
@@ -1161,10 +1164,12 @@ function CandidateButton({
   disabled?: boolean;
   onPress: () => void;
 }) {
+  const { colors } = useAppTheme();
   const backgroundColor =
-    tone === "primary" ? auraTheme.accentTint : tone === "secondary" ? auraTheme.surfaceSoft : "transparent";
+    tone === "primary" ? colors.ctaCream : tone === "secondary" ? colors.secondaryCta : "transparent";
   const borderColor =
-    tone === "primary" ? auraTheme.borderAccent : tone === "secondary" ? auraTheme.border : auraTheme.borderSoft;
+    tone === "primary" ? colors.borderWarm : tone === "secondary" ? colors.border : colors.border;
+  const textColor = tone === "primary" ? colors.ctaText : colors.textSecondary;
   const scale = React.useRef(new Animated.Value(1)).current;
 
   function animateTo(value: number) {
@@ -1188,7 +1193,7 @@ function CandidateButton({
           borderRadius: PILL_RADIUS,
           paddingHorizontal: CHIP_HORIZONTAL_PADDING,
           paddingVertical: 0,
-          backgroundColor: pressed ? "rgba(255,255,255,0.12)" : backgroundColor,
+          backgroundColor: pressed ? (tone === "primary" ? colors.ctaCream : colors.surfaceElevated) : backgroundColor,
           borderWidth: CHIP_BORDER_WIDTH,
           borderColor,
           alignItems: "center",
@@ -1196,7 +1201,7 @@ function CandidateButton({
           opacity: disabled ? 0.42 : pressed ? 0.94 : 1,
         })}
       >
-        <Text style={{ color: "white", fontSize: 11.25, fontWeight: "800", fontFamily: Fonts.sans }}>{label}</Text>
+        <Text style={{ color: textColor, fontSize: 11.25, fontWeight: "800", fontFamily: Fonts.sans }}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -1213,15 +1218,15 @@ function Tag({
 }) {
   const backgroundColor =
     tone === "owned"
-      ? "rgba(124,92,255,0.095)"
+      ? colors.purpleSurface
       : tone === "suggested"
-        ? "rgba(255,255,255,0.028)"
+        ? colors.chipBackground
         : auraTheme.surfaceSofter;
   const borderColor =
     tone === "owned"
-      ? "rgba(167,139,250,0.16)"
-      : "rgba(255,255,255,0.07)";
-  const textColor = tone === "owned" ? "rgba(232,225,255,0.95)" : "rgba(245,248,251,0.9)";
+      ? colors.purpleBorder
+      : colors.border;
+  const textColor = tone === "owned" ? colors.ctaCream : colors.textSecondary;
 
   return (
     <View

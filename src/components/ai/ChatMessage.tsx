@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, Easing, Image, Text, View } from "react-native";
+import { Animated, Easing, Text, View } from "react-native";
 import Reanimated, {
   Easing as ReanimatedEasing,
   useAnimatedStyle,
@@ -11,6 +11,7 @@ import Reanimated, {
 import { Fonts, type AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import AppImage from "@/src/components/common/AppImage";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { formatUrlForDisplay, isUrlOnlyMessage } from "@/src/lib/formatChatText";
 import { sanitizeDisplayText } from "@/src/lib/text";
@@ -410,12 +411,12 @@ function ChatMessage({
             paddingHorizontal: isSuggestion || isError ? 13 : 14,
             paddingVertical: isSuggestion || isError ? 12 : 8,
             backgroundColor: isError
-              ? "rgba(255,255,255,0.035)"
+              ? colors.surfaceGlass
               : isSuggestion
                 ? assistantSurface
                 : colors.surfaceSoft,
             borderWidth: isSuggestion || isError ? 0.75 : 0,
-            borderColor: isError ? "rgba(255,255,255,0.075)" : isSuggestion ? assistantBorder : "transparent",
+            borderColor: isError ? colors.border : isSuggestion ? assistantBorder : "transparent",
             marginLeft: isSuggestion || isError ? 0 : 10,
             maxWidth: isSuggestion || isError ? "94%" : "74%",
           }}
@@ -443,9 +444,9 @@ function ChatMessage({
                     borderRadius: 999,
                     paddingHorizontal: 10,
                     paddingVertical: 0,
-                    backgroundColor: "rgba(255,255,255,0.045)",
+                    backgroundColor: colors.chipBackground,
                     borderWidth: 0.75,
-                    borderColor: "rgba(255,255,255,0.09)",
+                    borderColor: colors.border,
                     flexDirection: "row",
                     alignItems: "center",
                     gap: 6,
@@ -749,7 +750,7 @@ function UserImageAttachmentMedia({
           ...auraShadow(0.2),
         }}
       >
-        <Image
+        <AppImage
           source={{ uri: attachment.localUri ?? attachment.uri }}
           style={{ width: "100%", height: "100%" }}
           resizeMode="cover"
@@ -789,7 +790,7 @@ function UserImageAttachmentMedia({
               borderColor: colors.border,
             }}
           >
-            <Image
+            <AppImage
               source={{ uri: attachment.localUri ?? attachment.uri }}
               style={{ width: "100%", height: "100%" }}
               resizeMode="cover"
@@ -839,7 +840,7 @@ function AttachmentPreviews({
           }}
         >
           {attachment.type === "image" ? (
-            <Image
+            <AppImage
               source={{ uri: attachment.localUri ?? attachment.uri }}
               style={{ width: "100%", height: "100%" }}
               resizeMode="cover"
