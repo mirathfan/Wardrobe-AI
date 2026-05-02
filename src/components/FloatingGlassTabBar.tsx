@@ -3,7 +3,7 @@ import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useMemo } from "react";
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -36,6 +36,7 @@ const TAB_META: Record<
 const ROW_HORIZONTAL_PADDING = 7;
 const ACTIVE_BUBBLE_WIDTH = 64;
 const ACTIVE_BUBBLE_HEIGHT = 52;
+const AURA_TAB_MARK = require("../../assets/images/aura-tab-mark.png");
 
 type ExpoRouterTabOptions = {
   href?: string | null;
@@ -54,7 +55,7 @@ export default function FloatingGlassTabBar({
   descriptors,
   navigation,
 }: BottomTabBarProps) {
-  const { colors, isDark } = useAppTheme();
+  const { isDark } = useAppTheme();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const dockBottom = floatingTabBarBottomInset(insets.bottom);
@@ -96,14 +97,19 @@ export default function FloatingGlassTabBar({
     ? availableDockWidth / visibleRoutes.length
     : 0;
   const scrimColors = useMemo(
-    () => [colors.scrimTop, colors.scrimMid, colors.scrimBottom] as const,
-    [colors.scrimBottom, colors.scrimMid, colors.scrimTop],
+    () =>
+      [
+        "rgba(10,10,15,0)",
+        isDark ? "rgba(10,10,15,0.10)" : "rgba(255,255,255,0.10)",
+        isDark ? "rgba(10,10,15,0.24)" : "rgba(255,255,255,0.26)",
+      ] as const,
+    [isDark],
   );
   const materialFillStyle = useMemo(
     () => ({
       backgroundColor: isDark
-        ? "rgba(10, 10, 16, 0.48)"
-        : "rgba(255, 255, 255, 0.46)",
+        ? "rgba(10, 10, 16, 0.52)"
+        : "rgba(255, 255, 255, 0.50)",
     }),
     [isDark],
   );
@@ -159,7 +165,7 @@ export default function FloatingGlassTabBar({
 
       <View style={[styles.container, { bottom: dockBottom }]}>
         <BlurView
-          intensity={58}
+          intensity={46}
           tint={isDark ? "dark" : "light"}
           style={StyleSheet.absoluteFill}
         />
@@ -338,7 +344,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    height: DOCK_HEIGHT + 16,
+    height: DOCK_HEIGHT + 8,
   },
   container: {
     position: "absolute",
@@ -349,10 +355,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: "rgba(10,10,16,0.44)",
     shadowColor: "#000",
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
+    shadowOpacity: 0.09,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 5,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.06)",
   },
   materialFill: {
     ...StyleSheet.absoluteFillObject,
@@ -375,8 +383,8 @@ const styles = StyleSheet.create({
     left: 10,
     right: 10,
     bottom: 0,
-    height: 18,
-    backgroundColor: "rgba(0,0,0,0.12)",
+    height: 12,
+    backgroundColor: "rgba(0,0,0,0.08)",
     borderBottomLeftRadius: DOCK_RADIUS,
     borderBottomRightRadius: DOCK_RADIUS,
   },
@@ -407,8 +415,8 @@ const styles = StyleSheet.create({
     zIndex: 0,
   },
   iconWrap: {
-    width: 25,
-    height: 24,
+    width: 30,
+    height: 28,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
@@ -419,66 +427,24 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   auraMarkWrap: {
-    width: 26,
-    height: 26,
+    width: 30,
+    height: 30,
     alignItems: "center",
     justifyContent: "center",
   },
-  auraTabRing: {
-    position: "absolute",
-    borderWidth: 1.3,
-    borderRadius: 999,
-  },
-  auraTabLeg: {
-    position: "absolute",
-    borderRadius: 999,
+  auraTabImage: {
+    width: 30,
+    height: 30,
   },
 });
 
 const AuraTabMark = React.memo(function AuraTabMark({ active }: { active: boolean }) {
-  const color = active ? "#FFFFFF" : "rgba(235,235,245,0.56)";
-  const size = 24;
-  const ringSize = 22;
-  const legHeight = 11;
-  const legWidth = 2.6;
-
   return (
     <View style={styles.auraMarkWrap}>
-      <View
-        style={[
-          styles.auraTabRing,
-          {
-            width: ringSize,
-            height: ringSize,
-            borderColor: color,
-          },
-        ]}
-      />
-      <View
-        style={[
-          styles.auraTabLeg,
-          {
-            width: legWidth,
-            height: legHeight,
-            backgroundColor: color,
-            top: size * 0.31,
-            left: size * 0.39,
-            transform: [{ rotate: "27deg" }, { translateX: -size * 0.085 }],
-          },
-        ]}
-      />
-      <View
-        style={[
-          styles.auraTabLeg,
-          {
-            width: legWidth,
-            height: legHeight,
-            backgroundColor: color,
-            top: size * 0.31,
-            left: size * 0.5,
-            transform: [{ rotate: "-27deg" }, { translateX: size * 0.085 }],
-          },
-        ]}
+      <Image
+        source={AURA_TAB_MARK}
+        resizeMode="contain"
+        style={[styles.auraTabImage, { opacity: active ? 1 : 0.62 }]}
       />
     </View>
   );
