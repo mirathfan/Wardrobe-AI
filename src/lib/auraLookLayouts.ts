@@ -1188,7 +1188,12 @@ export function resolveOutfitLayout(
     },
   ] satisfies ZoneSpec[];
   pieces
-    .filter((piece) => !placedKeys.has(piece.key) && !isSmallAccessory(piece))
+    .filter(
+      (piece) =>
+        !placedKeys.has(piece.key) &&
+        !isSmallAccessory(piece) &&
+        (piece.role === "accessory" || piece.role === "unknown"),
+    )
     .forEach((piece, index) => {
       addPlaced(
         placedItems,

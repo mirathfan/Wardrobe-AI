@@ -299,23 +299,27 @@ export default function ItemDetailsScreen() {
       : baseUri.endsWith(".jpg") || baseUri.endsWith(".jpeg")
         ? "jpg"
         : "unknown";
-    console.log("[ItemScreen] displaying image URI:", itemImageUri);
-    console.log("[ItemScreen] displayed image suffix:", kind);
+    if (__DEV__) {
+      console.log("[ItemScreen] displaying image URI:", itemImageUri);
+      console.log("[ItemScreen] displayed image suffix:", kind);
+    }
   }, [itemImageUri]);
 
   useEffect(() => {
     if (!item) return;
     setPatternDraft(item.pattern ?? "");
     setMaterialDraft(item.material ?? "");
-    console.log("[ItemScreen] image fields:", {
-      itemId: item.id,
-      photos: item.photos ?? null,
-      photoUrl: item.photoUrl ?? null,
-      photoUri: item.photoUri ?? null,
-      cleanedUrl: (item as any).cleanedUrl ?? null,
-      cleanedPhotoUrl: (item as any).cleanedPhotoUrl ?? null,
-      selectedImageUri: itemImageUri,
-    });
+    if (__DEV__) {
+      console.log("[ItemScreen] image fields:", {
+        itemId: item.id,
+        photos: item.photos ?? null,
+        photoUrl: item.photoUrl ?? null,
+        photoUri: item.photoUri ?? null,
+        cleanedUrl: (item as any).cleanedUrl ?? null,
+        cleanedPhotoUrl: (item as any).cleanedPhotoUrl ?? null,
+        selectedImageUri: itemImageUri,
+      });
+    }
   }, [item, itemImageUri]);
 
   useEffect(() => {
@@ -337,7 +341,9 @@ export default function ItemDetailsScreen() {
         setLoading(false);
       },
       (err) => {
-        console.log(err);
+        if (__DEV__) {
+          console.log(err);
+        }
         Alert.alert("Error", err.message);
         setLoading(false);
       }
@@ -356,7 +362,9 @@ export default function ItemDetailsScreen() {
       void runHaptic("light");
       Toast.success("Marked worn", "Wear count updated.");
     } catch (e: any) {
-      console.log(e);
+      if (__DEV__) {
+        console.log(e);
+      }
       Toast.error("Update failed", e?.message ?? "Failed to mark item as worn");
     } finally {
       setActionLoading(false);
@@ -372,7 +380,9 @@ export default function ItemDetailsScreen() {
       void runHaptic("light");
       Toast.laundryUpdated("Piece moved to laundry.");
     } catch (e: any) {
-      console.log(e);
+      if (__DEV__) {
+        console.log(e);
+      }
       Toast.error("Laundry update failed", e?.message ?? "Failed to send item to laundry");
     } finally {
       setActionLoading(false);
@@ -387,7 +397,9 @@ export default function ItemDetailsScreen() {
       void runHaptic("light");
       Toast.laundryUpdated("Piece marked needs wash.");
     } catch (e: any) {
-      console.log(e);
+      if (__DEV__) {
+        console.log(e);
+      }
       Toast.error("Laundry update failed", e?.message ?? "Failed to mark item as needs wash");
     } finally {
       setActionLoading(false);
@@ -418,7 +430,9 @@ export default function ItemDetailsScreen() {
             void runHaptic("light");
             Toast.laundryUpdated("Piece is clean and ready.");
           } catch (e: any) {
-            console.log(e);
+            if (__DEV__) {
+              console.log(e);
+            }
             Toast.error("Laundry update failed", e?.message ?? "Failed to mark item as washed");
           } finally {
             setActionLoading(false);
@@ -444,7 +458,9 @@ export default function ItemDetailsScreen() {
               await deleteDoc(doc(db, "users", uid, "items", itemId));
               navigateBackToSource();
             } catch (e: any) {
-              console.log(e);
+              if (__DEV__) {
+                console.log(e);
+              }
               Alert.alert("Error", e?.message ?? "Failed to delete");
             }
           },
@@ -483,7 +499,9 @@ export default function ItemDetailsScreen() {
       });
       setColorSavedAt(Date.now());
     } catch (e: any) {
-      console.log(e);
+      if (__DEV__) {
+        console.log(e);
+      }
       Alert.alert("Error", e?.message ?? "Failed to save color");
     } finally {
       setColorSaving(false);
@@ -507,7 +525,9 @@ export default function ItemDetailsScreen() {
       });
       setColorSavedAt(Date.now());
     } catch (e: any) {
-      console.log(e);
+      if (__DEV__) {
+        console.log(e);
+      }
       Alert.alert("Error", e?.message ?? "Failed to reset AI color");
     } finally {
       setColorSaving(false);
@@ -521,7 +541,9 @@ export default function ItemDetailsScreen() {
         [field]: value,
       });
     } catch (e: any) {
-      console.log(e);
+      if (__DEV__) {
+        console.log(e);
+      }
       Alert.alert("Error", e?.message ?? `Failed to update ${field}`);
     }
   }

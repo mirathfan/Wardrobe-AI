@@ -4,6 +4,7 @@ import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle 
 
 import { Fonts, ThemeTokens } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import { CTA_HEIGHT, PILL_RADIUS } from "@/src/constants/auraControls";
 
 const palette = ThemeTokens.dark;
 
@@ -69,8 +70,8 @@ export default function AuraGradientButton({
 
 const styles = StyleSheet.create({
   pressable: {
-    minHeight: 58,
-    borderRadius: palette.radii.button,
+    minHeight: CTA_HEIGHT,
+    borderRadius: PILL_RADIUS,
     overflow: "hidden",
     shadowColor: palette.colors.auraLavender,
     shadowOpacity: 0.24,
@@ -83,7 +84,7 @@ const styles = StyleSheet.create({
   inner: {
     flex: 1,
     margin: 1,
-    borderRadius: palette.radii.button - 1,
+    borderRadius: PILL_RADIUS,
     backgroundColor: "rgba(16,18,24,0.86)",
     alignItems: "center",
     justifyContent: "center",

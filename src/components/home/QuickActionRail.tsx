@@ -6,6 +6,7 @@ import { Text, View } from "react-native";
 import type { AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { homeTypography } from "@/src/components/home/homeTypography";
+import { ACTION_GAP, CHIP_BORDER_WIDTH, CHIP_HEIGHT, CHIP_HORIZONTAL_PADDING, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 export type QuickActionItem = {
@@ -77,7 +78,7 @@ export default function QuickActionRail({
       </AuraPressable>
 
       {secondaryActions.length ? (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: ACTION_GAP }}>
           {secondaryActions.map((action) => (
             <AuraPressable
               key={action.key}
@@ -87,13 +88,15 @@ export default function QuickActionRail({
               pressedScale={0.96}
               pressedOpacity={0.88}
               style={{
-                borderRadius: layout.pillRadius,
-                minHeight: 42,
+                borderRadius: PILL_RADIUS,
+                height: CHIP_HEIGHT,
+                minHeight: CHIP_HEIGHT,
+                alignItems: "center",
                 justifyContent: "center",
-                paddingHorizontal: 15,
-                paddingVertical: 10,
+                paddingHorizontal: CHIP_HORIZONTAL_PADDING,
+                paddingVertical: 0,
                 backgroundColor: colors.chipBackground,
-                borderWidth: 1,
+                borderWidth: CHIP_BORDER_WIDTH,
                 borderColor: "rgba(255,255,255,0.055)",
               }}
             >

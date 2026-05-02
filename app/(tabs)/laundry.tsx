@@ -463,7 +463,7 @@ const LaundryRow = React.memo(function LaundryRow({
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
         <RowAction label="Needs wash" disabled={disabled || activeStatus === "needs_wash"} onPress={() => onStatus(item.id, "needs_wash")} />
         <RowAction label="Move to laundry" disabled={disabled || activeStatus === "in_laundry"} onPress={() => onStatus(item.id, "in_laundry")} />
-        <RowAction label="Mark clean" disabled={disabled || activeStatus === "clean"} primary onPress={() => onStatus(item.id, "clean")} />
+        <RowAction label="Mark as washed" disabled={disabled || activeStatus === "clean"} primary onPress={() => onStatus(item.id, "clean")} />
       </View>
     </View>
   );

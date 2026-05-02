@@ -22,6 +22,7 @@ import SmartToolsGrid, { type SmartTool } from "@/src/components/home/SmartTools
 import { HOME_DEFERRED_FEATURES } from "@/src/components/home/homeDeferredFeatures";
 import { homeTypography } from "@/src/components/home/homeTypography";
 import AuraTrainingCard from "@/src/components/aura/AuraTrainingCard";
+import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useLocalWeather } from "@/src/hooks/useLocalWeather";
@@ -769,6 +770,13 @@ export default function HomeScreen() {
         onPress: () => router.push("/(tabs)/ai"),
       },
       {
+        key: "aura-training",
+        title: "AURA Training",
+        subtitle: "Swipe outfit edits so AURA learns your taste",
+        icon: "gesture-swipe-horizontal",
+        onPress: () => router.push(AURA_TRAINING_ROUTE),
+      },
+      {
         key: "closet",
         title: "Closet",
         subtitle: `${availableCount} clean pieces ready`,
@@ -946,7 +954,7 @@ export default function HomeScreen() {
               <AuraTrainingCard
                 colors={colors}
                 variant="home"
-                onPress={() => router.push("/aura/swipe")}
+                onPress={() => router.push(AURA_TRAINING_ROUTE)}
               />
             </RevealSection>
 

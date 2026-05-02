@@ -17,6 +17,7 @@ import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { homeTypography } from "@/src/components/home/homeTypography";
+import { ACTION_GAP, CTA_HEIGHT, CTA_HORIZONTAL_PADDING, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -375,8 +376,8 @@ export default function HomeHero({
             ) : null}
           </View>
 
-          <View style={{ flexDirection: "row", gap: 12, alignItems: "stretch" }}>
-            <View style={{ flex: 1.08 }}>
+          <View style={{ flexDirection: "row", gap: ACTION_GAP, alignItems: "stretch" }}>
+            <View style={{ flex: 1 }}>
               <AuraGradientButton
                 label={primaryLabel}
                 onPress={onPrimaryAction}
@@ -385,7 +386,7 @@ export default function HomeHero({
                 innerBackgroundColor={colors.ctaCream}
                 innerOverlayColors={["rgba(255,255,255,0.14)", "rgba(255,255,255,0.04)"]}
                 labelStyle={{ fontSize: 16.5, lineHeight: 21, fontWeight: "900" }}
-                style={{ minHeight: 54, borderRadius: layout.mediumRadius }}
+                style={{ minHeight: CTA_HEIGHT, borderRadius: PILL_RADIUS }}
               />
             </View>
             <AuraPressable
@@ -396,9 +397,9 @@ export default function HomeHero({
               pressedOpacity={0.9}
               containerStyle={{ flex: 1 }}
               style={{
-                borderRadius: layout.mediumRadius,
-                minHeight: 54,
-                paddingHorizontal: 16,
+                borderRadius: PILL_RADIUS,
+                minHeight: CTA_HEIGHT,
+                paddingHorizontal: CTA_HORIZONTAL_PADDING,
                 alignItems: "center",
                 justifyContent: "center",
                 backgroundColor: colors.surfaceSoft,

@@ -25,6 +25,15 @@ import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { ItemDetailSheet } from "@/src/components/aura/ItemDetailSheet";
 import { AccessoryStrip } from "@/src/components/outfit/AccessoryStrip";
+import {
+  ACTION_GAP,
+  CHIP_BORDER_WIDTH,
+  CHIP_HEIGHT,
+  CHIP_HORIZONTAL_PADDING,
+  CTA_HEIGHT,
+  CTA_HORIZONTAL_PADDING,
+  PILL_RADIUS,
+} from "@/src/constants/auraControls";
 import { buildRenderPlan, type AuraLayoutItem, type AuraLayoutVariant } from "@/src/lib/auraLookLayouts";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook, AuraLookAction, AuraLookOptionMeta } from "@/src/types/aura";
@@ -996,24 +1005,25 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: "row",
-    gap: 12,
+    gap: ACTION_GAP,
     paddingTop: 2,
   },
   actionsHome: {
-    gap: 10,
+    gap: ACTION_GAP,
     paddingTop: 0,
   },
   actionButton: {
     flex: 1,
-    minHeight: 50,
-    borderRadius: 18,
+    minHeight: CTA_HEIGHT,
+    borderRadius: PILL_RADIUS,
+    paddingHorizontal: CTA_HORIZONTAL_PADDING,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
   },
   actionButtonHome: {
-    minHeight: 46,
-    borderRadius: 16,
+    minHeight: CTA_HEIGHT,
+    borderRadius: PILL_RADIUS,
   },
   primaryButton: {
     backgroundColor: "#EDE9E3",
@@ -1037,22 +1047,26 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: ACTION_GAP,
   },
   tertiaryActionsHome: {
-    gap: 8,
+    gap: ACTION_GAP,
   },
   tertiaryAction: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
+    height: CHIP_HEIGHT,
+    minHeight: CHIP_HEIGHT,
+    paddingHorizontal: CHIP_HORIZONTAL_PADDING,
+    paddingVertical: 0,
+    borderRadius: PILL_RADIUS,
+    borderWidth: CHIP_BORDER_WIDTH,
     borderColor: "rgba(255,255,255,0.1)",
     backgroundColor: "rgba(255,255,255,0.04)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   tertiaryActionHome: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: CHIP_HORIZONTAL_PADDING,
+    paddingVertical: 0,
   },
   tertiaryActionText: {
     color: "rgba(235,240,248,0.86)",

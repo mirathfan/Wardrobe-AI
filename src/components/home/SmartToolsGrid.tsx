@@ -33,6 +33,10 @@ export default function SmartToolsGrid({
   const maxColumns = Math.max(1, Math.floor((availableWidth + gap) / (minTileWidth + gap)));
   const gridColumns = Math.min(preferredColumns, maxColumns);
   const tileWidth = (availableWidth - gap * (gridColumns - 1)) / gridColumns;
+  const tileHeight =
+    layout.smartToolHeight +
+    (layout.screenSize === "compact" ? 40 : layout.screenSize === "large" ? 44 : 38);
+
   return (
     <View style={{ gap: 12 }}>
       <View style={{ gap: 3 }}>
@@ -57,14 +61,14 @@ export default function SmartToolsGrid({
               pressedOpacity={isSoon ? 0.92 : 0.86}
               style={{
                 width: tileWidth,
-                minHeight: layout.smartToolHeight + (layout.screenSize === "large" ? 10 : 0),
+                height: tileHeight,
                 borderRadius: layout.mediumRadius,
                 padding: layout.cardPadding,
                 backgroundColor: isSoon ? colors.surfaceSoft : colors.surface,
                 borderWidth: 1,
                 borderColor: colors.border,
                 opacity: isSoon ? 0.9 : 1,
-                gap: 12,
+                justifyContent: "space-between",
               }}
             >
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -99,7 +103,7 @@ export default function SmartToolsGrid({
                 <Text style={[homeTypography.titleSmall, { color: isSoon ? colors.textSecondary : colors.text, fontSize: 16, lineHeight: 21 }]} numberOfLines={1} ellipsizeMode="tail">
                   {tool.title}
                 </Text>
-                <Text style={[homeTypography.caption, { color: colors.textSecondary, opacity: 0.68 }]} numberOfLines={3} ellipsizeMode="tail">
+                <Text style={[homeTypography.caption, { color: colors.textSecondary, opacity: 0.68 }]} numberOfLines={2} ellipsizeMode="tail">
                   {tool.subtitle}
                 </Text>
                 <Text style={[homeTypography.caption, { color: isSoon ? colors.textSecondary : colors.text, fontWeight: "600", marginTop: 2 }]} numberOfLines={1}>

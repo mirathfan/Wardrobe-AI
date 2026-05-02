@@ -7,6 +7,7 @@ import { Colors } from "@/constants/theme";
 import { SafeScreen } from "@/src/components/SafeScreen";
 import { LookDetailModal } from "@/src/components/profile/LookDetailModal";
 import { MyLookSkeleton, MyLookThumbnail } from "@/src/components/profile/MyLookThumbnail";
+import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import {
@@ -77,7 +78,7 @@ function EmptyState({ tab }: { tab: TabKey }) {
       title: "No favourites yet",
       subtext: "Save looks from AURA chat or swipe up in training mode",
       button: "Train AURA →",
-      onPress: () => router.push("/aura/swipe"),
+      onPress: () => router.push(AURA_TRAINING_ROUTE),
     },
   }[tab];
 

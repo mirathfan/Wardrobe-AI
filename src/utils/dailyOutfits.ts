@@ -206,33 +206,37 @@ export async function savePlannedOutfit(
   };
   const payload = removeUndefinedFields(rawPayload);
 
-  console.log("[OutfitSave] savePlannedOutfit:raw", {
-    path: ref.path,
-    uid,
-    dateKey: key,
-    itemIds,
-    rawPayload,
-  });
-  console.log("[OutfitSave] savePlannedOutfit:clean", {
-    path: ref.path,
-    uid,
-    dateKey: key,
-    itemIds: Array.isArray(payload.itemIds) ? payload.itemIds : [],
-    payload,
-  });
-
-  try {
-    await setDoc(ref, payload, { merge: true });
-  } catch (error) {
-    console.log("[OutfitSave] savePlannedOutfit:error", {
+  if (__DEV__) {
+    console.log("[OutfitSave] savePlannedOutfit:raw", {
       path: ref.path,
       uid,
       dateKey: key,
       itemIds,
       rawPayload,
-      payload,
-      error,
     });
+    console.log("[OutfitSave] savePlannedOutfit:clean", {
+      path: ref.path,
+      uid,
+      dateKey: key,
+      itemIds: Array.isArray(payload.itemIds) ? payload.itemIds : [],
+      payload,
+    });
+  }
+
+  try {
+    await setDoc(ref, payload, { merge: true });
+  } catch (error) {
+    if (__DEV__) {
+      console.log("[OutfitSave] savePlannedOutfit:error", {
+        path: ref.path,
+        uid,
+        dateKey: key,
+        itemIds,
+        rawPayload,
+        payload,
+        error,
+      });
+    }
     throw error;
   }
   return getOutfitByDate(uid, key);
