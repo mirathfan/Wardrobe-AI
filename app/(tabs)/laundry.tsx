@@ -1,7 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { router } from "expo-router";
-import { doc, serverTimestamp, writeBatch } from "firebase/firestore";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 
@@ -10,20 +9,19 @@ import AppImage from "@/src/components/common/AppImage";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { db } from "@/src/lib/firebase";
 import { runHaptic } from "@/src/lib/haptics";
 import { getBestThumbnailImageSource } from "@/src/lib/itemImage";
 import {
-  legacyStatusForLaundryStatus,
   listenToItems,
   normalizeLaundryStatus,
+  updateLaundryStatuses,
   updateLaundryStatus,
 } from "@/src/lib/items";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import { Toast } from "@/src/lib/toast";
-import type { ClothingItem, LaundryStatus } from "@/src/types/ClothingItem";
+import type { ClosetItem, LaundryStatus } from "@/src/lib/items";
 
-type LaundryTab = "needs_wash" | "in_laundry" | "clean";
+type LaundryTab = LaundryStatus;
 
 const TABS: { key: LaundryTab; label: string; helper: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: "needs_wash", label: "Needs wash", helper: "Ready for care", icon: "alert-circle-outline" },
@@ -31,7 +29,7 @@ const TABS: { key: LaundryTab; label: string; helper: string; icon: keyof typeof
   { key: "clean", label: "Clean", helper: "Ready to wear", icon: "checkmark-circle-outline" },
 ];
 
-function itemTitle(item: ClothingItem) {
+function itemTitle(item: ClosetItem) {
   return (
     sanitizeDisplayText(item.name) ||
     [sanitizeDisplayText(item.primaryColor), sanitizeDisplayText(item.subCategory || item.category)].filter(Boolean).join(" ") ||
@@ -44,7 +42,7 @@ export default function LaundryScreen() {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const uid = user?.uid ?? null;
-  const [allItems, setAllItems] = useState<ClothingItem[]>([]);
+  const [allItems, setAllItems] = useState<ClosetItem[]>([]);
   const [tab, setTab] = useState<LaundryTab>("in_laundry");
   const [loading, setLoading] = useState(true);
   const [savingStatus, setSavingStatus] = useState<string | null>(null);
@@ -62,7 +60,7 @@ export default function LaundryScreen() {
     return listenToItems(
       uid,
       (next) => {
-        setAllItems(next as ClothingItem[]);
+        setAllItems(next);
         setLoading(false);
       },
       {
@@ -74,7 +72,7 @@ export default function LaundryScreen() {
   }, [uid]);
 
   const buckets = useMemo(() => {
-    const next: Record<LaundryTab, ClothingItem[]> = {
+    const next: Record<LaundryTab, ClosetItem[]> = {
       needs_wash: [],
       in_laundry: [],
       clean: [],
@@ -115,22 +113,7 @@ export default function LaundryScreen() {
     if (!source.length) return;
     try {
       setSavingStatus(`bulk:${from}:${to}`);
-      const batch = writeBatch(db);
-      source.forEach((item) => {
-        batch.update(doc(db, "users", uid, "items", item.id), {
-          status: legacyStatusForLaundryStatus(to),
-          laundryStatus: to,
-          ...(to === "clean"
-            ? {
-                wearCountSinceWash: 0,
-                lastWashedDate: serverTimestamp(),
-                lastWashedAt: serverTimestamp(),
-              }
-            : {}),
-          laundryUpdatedAt: serverTimestamp(),
-        });
-      });
-      await batch.commit();
+      await updateLaundryStatuses(uid, source.map((item) => item.id), to);
       if (to === "in_laundry") setTab("in_laundry");
       if (to === "clean") setTab("clean");
       void runHaptic("light");
@@ -145,7 +128,7 @@ export default function LaundryScreen() {
   }, [buckets, uid]);
 
   const renderLaundryItem = useCallback(
-    ({ item }: { item: ClothingItem }) => (
+    ({ item }: { item: ClosetItem }) => (
       <LaundryRow
         item={item}
         disabled={!!savingStatus}
@@ -262,7 +245,7 @@ export default function LaundryScreen() {
 }
 
 function GlassBackButton({ onPress }: { onPress: () => void }) {
-  const { colors } = useAppTheme();
+  const { colors, isDark } = useAppTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -278,15 +261,15 @@ function GlassBackButton({ onPress }: { onPress: () => void }) {
         opacity: pressed ? 0.8 : 1,
       })}
     >
-      <BlurView intensity={26} tint="dark" style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+      <BlurView intensity={26} tint={isDark ? "dark" : "light"} style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
         <View
           style={{
             position: "absolute",
             inset: 0,
             borderWidth: 1,
-            borderColor: "rgba(237,233,227,0.18)",
+            borderColor: colors.border,
             borderRadius: 999,
-            backgroundColor: "rgba(255,255,255,0.05)",
+            backgroundColor: colors.surfaceGlass,
           }}
         />
         <Ionicons name="chevron-back" size={22} color={colors.text} />
@@ -317,13 +300,13 @@ function StatusCard(props: {
         borderRadius: 18,
         padding: 12,
         gap: 8,
-        backgroundColor: props.active ? "rgba(237,233,227,0.12)" : "rgba(255,255,255,0.045)",
+        backgroundColor: props.active ? colors.purpleSurface : colors.surfaceSoft,
         borderWidth: 1,
-        borderColor: props.active ? "rgba(237,233,227,0.34)" : "rgba(255,255,255,0.08)",
+        borderColor: props.active ? colors.purpleBorder : colors.border,
       }}
     >
-      <View style={{ width: 30, height: 30, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(237,233,227,0.1)" }}>
-        <Ionicons name={props.icon} size={17} color={colors.ctaCream} />
+      <View style={{ width: 30, height: 30, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: props.active ? colors.purpleSurfaceStrong : colors.chipBackground }}>
+        <Ionicons name={props.icon} size={17} color={props.active ? colors.lightPurple : colors.textSecondary} />
       </View>
       <Text style={{ color: colors.text, fontSize: 23, fontWeight: "900" }}>{props.count}</Text>
       <View style={{ gap: 2 }}>
@@ -363,9 +346,9 @@ function ActionButton(props: {
         justifyContent: "center",
         flexDirection: "row",
         gap: 7,
-        backgroundColor: props.primary ? colors.ctaCream : "rgba(255,255,255,0.055)",
+        backgroundColor: props.primary ? colors.ctaCream : colors.surfaceSoft,
         borderWidth: props.primary ? 0 : 1,
-        borderColor: "rgba(255,255,255,0.1)",
+        borderColor: colors.border,
       }}
     >
       <Ionicons name={props.icon} size={16} color={props.primary ? colors.ctaText : colors.text} />
@@ -385,9 +368,9 @@ function PremiumEmptyState() {
         borderRadius: 22,
         padding: 18,
         gap: 14,
-        backgroundColor: "rgba(255,255,255,0.045)",
+        backgroundColor: colors.surfaceGlass,
         borderWidth: 1,
-        borderColor: "rgba(237,233,227,0.15)",
+        borderColor: colors.border,
       }}
     >
       <View style={{ gap: 6 }}>
@@ -410,7 +393,7 @@ const LaundryRow = React.memo(function LaundryRow({
   disabled,
   onStatus,
 }: {
-  item: ClothingItem;
+  item: ClosetItem;
   activeStatus: LaundryStatus;
   disabled?: boolean;
   onStatus: (itemId: string, status: LaundryStatus) => void;
@@ -423,9 +406,9 @@ const LaundryRow = React.memo(function LaundryRow({
       style={{
         borderRadius: 18,
         padding: 12,
-        backgroundColor: "rgba(255,255,255,0.045)",
+        backgroundColor: colors.surfaceGlass,
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.08)",
+        borderColor: colors.border,
         gap: 12,
       }}
     >
@@ -436,7 +419,7 @@ const LaundryRow = React.memo(function LaundryRow({
             height: 58,
             borderRadius: 16,
             overflow: "hidden",
-            backgroundColor: "rgba(237,233,227,0.08)",
+            backgroundColor: colors.surfaceSoft,
             alignItems: "center",
             justifyContent: "center",
           }}
@@ -457,7 +440,7 @@ const LaundryRow = React.memo(function LaundryRow({
           <Text style={{ color: colors.textSecondary, fontSize: 12.5 }} numberOfLines={1}>
             {[sanitizeDisplayText(item.brand), sanitizeDisplayText(item.primaryColor)].filter(Boolean).join(" · ") || "No brand"}
           </Text>
-          <Text style={{ color: colors.ctaCream, fontSize: 11.5, fontWeight: "800" }}>{statusLabel}</Text>
+          <Text style={{ color: colors.lightPurple, fontSize: 11.5, fontWeight: "800" }}>{statusLabel}</Text>
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
@@ -484,9 +467,9 @@ function RowAction({ label, disabled, primary, onPress }: { label: string; disab
         borderRadius: 999,
         paddingHorizontal: 11,
         paddingVertical: 8,
-        backgroundColor: primary ? colors.ctaCream : "rgba(255,255,255,0.055)",
+        backgroundColor: primary ? colors.ctaCream : colors.surfaceSoft,
         borderWidth: primary ? 0 : 1,
-        borderColor: "rgba(255,255,255,0.1)",
+        borderColor: colors.border,
       }}
     >
       <Text style={{ color: primary ? colors.ctaText : colors.text, fontSize: 12, fontWeight: "900" }}>

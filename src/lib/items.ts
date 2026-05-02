@@ -10,14 +10,17 @@ import {
   serverTimestamp,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 
 import { db } from "./firebase";
 import { logItemStyleEvent } from "./auraMemory";
 import { buildSignalFromItem, updateAssistantMemoryFromAction } from "./assistantMemory";
 import { getCachedClosetItems, setCachedClosetItems } from "./localCache";
-import { ClothingItem, ClothingStatus, LaundryStatus } from "../types/ClothingItem";
+import type { ClothingItem, ClothingStatus, LaundryStatus } from "../types/ClothingItem";
 import { Category } from "../shared/wardrobeTaxonomy";
+
+export type { ClothingItem, ClothingStatus, LaundryStatus } from "../types/ClothingItem";
 
 export type ClosetItem = ClothingItem;
 export type ItemSort = "NEWEST" | "MOST_WORN";
@@ -508,9 +511,8 @@ export async function markNeedsWash(uid: string, itemId: string) {
   });
 }
 
-export async function updateLaundryStatus(uid: string, itemId: string, laundryStatus: LaundryStatus) {
-  const ref = doc(db, "users", uid, "items", itemId);
-  await updateDoc(ref, {
+function laundryStatusUpdatePayload(laundryStatus: LaundryStatus) {
+  return {
     status: legacyStatusForLaundryStatus(laundryStatus),
     laundryStatus,
     ...(laundryStatus === "clean"
@@ -521,5 +523,21 @@ export async function updateLaundryStatus(uid: string, itemId: string, laundrySt
         }
       : {}),
     laundryUpdatedAt: serverTimestamp(),
+  };
+}
+
+export async function updateLaundryStatus(uid: string, itemId: string, laundryStatus: LaundryStatus) {
+  const ref = doc(db, "users", uid, "items", itemId);
+  await updateDoc(ref, laundryStatusUpdatePayload(laundryStatus));
+}
+
+export async function updateLaundryStatuses(uid: string, itemIds: string[], laundryStatus: LaundryStatus) {
+  const uniqueItemIds = Array.from(new Set(itemIds.filter(Boolean)));
+  if (!uniqueItemIds.length) return;
+
+  const batch = writeBatch(db);
+  uniqueItemIds.forEach((itemId) => {
+    batch.update(doc(db, "users", uid, "items", itemId), laundryStatusUpdatePayload(laundryStatus));
   });
+  await batch.commit();
 }
