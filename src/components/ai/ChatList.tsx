@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
-import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, View } from "react-native";
+import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -19,6 +19,46 @@ const FOCUS_ANCHOR_LOCK_MS = 520;
 const ChatItemSeparator = React.memo(function ChatItemSeparator() {
   return <View style={{ height: 12 }} />;
 });
+
+class ChatErrorBoundary extends React.Component<
+  { children: React.ReactNode; colors: AppColors; resetKey: string },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    const { colors } = this.props;
+    return (
+      <View style={{ alignItems: "flex-start", paddingHorizontal: 8 }}>
+        <View
+          style={{
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surfaceGlass,
+            paddingHorizontal: 14,
+            paddingVertical: 11,
+          }}
+        >
+          <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "700" }}>
+            Couldn't render this message.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+}
 
 function TypingBubble({ colors }: { colors: AppColors }) {
   const pulse = useRef(new Animated.Value(0.4)).current;
@@ -329,22 +369,24 @@ export default function ChatList({
   const renderItem = useCallback(
     ({ item }: { item: AIMessage }) => {
       return (
-        <View>
-          <ChatMessage
-            colors={colors}
-            message={item}
-            itemsById={itemsById}
-            savingId={savingId}
-            memoryHint={memoryHint}
-            onSaveOutfit={onSaveOutfit}
-            onMoreLikeThis={onMoreLikeThis}
-            onSwapOutfit={onSwapOutfit}
-            onAuraAction={onAuraAction}
-            onAuraCandidateAction={onAuraCandidateAction}
-            onAuraOutfitPhotoAction={onAuraOutfitPhotoAction}
-            onAuraLaundryAction={onAuraLaundryAction}
-          />
-        </View>
+        <ChatErrorBoundary colors={colors} resetKey={`${item.id}:${item.createdAt ?? ""}:${item.streaming ? "streaming" : "done"}`}>
+          <View>
+            <ChatMessage
+              colors={colors}
+              message={item}
+              itemsById={itemsById}
+              savingId={savingId}
+              memoryHint={memoryHint}
+              onSaveOutfit={onSaveOutfit}
+              onMoreLikeThis={onMoreLikeThis}
+              onSwapOutfit={onSwapOutfit}
+              onAuraAction={onAuraAction}
+              onAuraCandidateAction={onAuraCandidateAction}
+              onAuraOutfitPhotoAction={onAuraOutfitPhotoAction}
+              onAuraLaundryAction={onAuraLaundryAction}
+            />
+          </View>
+        </ChatErrorBoundary>
       );
     },
     [

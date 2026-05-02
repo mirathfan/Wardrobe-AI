@@ -100,9 +100,6 @@ const AURA_EMPTY_STATE_CHIPS = [
   "Help me pick an outfit",
   "What should I wear tonight?",
 ];
-const AURA_CHAT_BACKGROUND_COLORS = ["#050507", "#07070B", "#0B0B12"] as const;
-const AURA_CHAT_BOTTOM_GLOW_COLORS = ["rgba(124,92,255,0.035)", "rgba(167,139,250,0.012)", "transparent"] as const;
-
 type OptionalAudioRecorder = {
   uri: string | null;
   prepareToRecordAsync: () => Promise<void>;
@@ -171,15 +168,15 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
         borderRadius: 28,
         overflow: "hidden",
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.1)",
-        backgroundColor: "rgba(12,15,22,0.76)",
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceGlass,
         padding: layout.screenSize === "compact" ? 18 : 22,
         gap: 18,
       }}
     >
       <LinearGradient
         pointerEvents="none"
-        colors={["rgba(167,139,250,0.18)", "rgba(243,190,221,0.06)", "rgba(255,255,255,0.018)"]}
+        colors={[colors.purpleSurfaceStrong, colors.warmGlow, colors.surfaceGlass]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{ position: "absolute", inset: 0 }}
@@ -214,7 +211,7 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
           </Text>
           <Text
             style={{
-              color: auraTheme.textMuted,
+              color: colors.textSecondary,
               fontSize: 14,
               lineHeight: 21,
               fontWeight: "600",
@@ -239,9 +236,9 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
               borderRadius: 999,
               paddingHorizontal: 12,
               paddingVertical: 9,
-              backgroundColor: "rgba(255,255,255,0.055)",
+              backgroundColor: colors.chipBackground,
               borderWidth: 1,
-              borderColor: auraTheme.borderSoft,
+              borderColor: colors.border,
             }}
           >
             <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "800" }}>{chip}</Text>
@@ -262,8 +259,8 @@ function AuraChatLoadingState() {
         marginBottom: 12,
         borderRadius: 24,
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.09)",
-        backgroundColor: "rgba(12,15,22,0.68)",
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceGlass,
         padding: 18,
         flexDirection: "row",
         alignItems: "center",
@@ -273,7 +270,7 @@ function AuraChatLoadingState() {
       <AnimatedAuraRing size={44} stroke={2} rotationDuration={4200} />
       <View style={{ flex: 1, gap: 4 }}>
         <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900" }}>AURA is getting ready</Text>
-        <Text style={{ color: auraTheme.textMuted, fontSize: 12.5, lineHeight: 18 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 18 }}>
           Pulling in your latest closet context.
         </Text>
       </View>
@@ -2177,6 +2174,14 @@ export default function AIScreen() {
     inputRange: [0, 1],
     outputRange: [0.02, 0.12],
   });
+  const chatBackgroundColors = useMemo(
+    () => [colors.background, colors.surface, colors.surfaceSoft] as const,
+    [colors.background, colors.surface, colors.surfaceSoft],
+  );
+  const chatBottomGlowColors = useMemo(
+    () => [colors.purpleSurface, colors.surfaceGlass, "transparent"] as const,
+    [colors.purpleSurface, colors.surfaceGlass],
+  );
   const restingComposerBottom = layout.composerOffset;
   const isComposerActive = isComposerFocused || keyboardHeight > 0;
   const keyboardComposerBottom =
@@ -2217,14 +2222,14 @@ export default function AIScreen() {
   return (
     <AuraGlowBackground>
       <LinearGradient
-        colors={AURA_CHAT_BACKGROUND_COLORS}
+        colors={chatBackgroundColors}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{ flex: 1, paddingTop: Math.max(insets.top + 4, layout.topContentInset - 12) }}
       >
         <LinearGradient
           pointerEvents="none"
-          colors={AURA_CHAT_BOTTOM_GLOW_COLORS}
+          colors={chatBottomGlowColors}
         start={{ x: 0.5, y: 1 }}
         end={{ x: 0.5, y: 0 }}
         style={{

@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Fonts, type AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { summarizeThreadDisplayTitle, type AIChatThread } from "@/src/lib/aiChats";
+import { runHaptic } from "@/src/lib/haptics";
 
 import { auraTheme } from "./aiTheme";
 
@@ -75,10 +76,14 @@ export default function AuraChatDrawer({
   const [renameVisible, setRenameVisible] = React.useState(false);
   const [renameValue, setRenameValue] = React.useState("");
   const [busyAction, setBusyAction] = React.useState<string | null>(null);
-  const drawerWidth = 320;
-  const menuWidth = Math.min(drawerWidth - 32, 292);
+  const sheetHeight = Math.max(
+    360,
+    Math.min(screenHeight - Math.max(insets.top + 44, 96), 640),
+  );
+  const closedOffset = sheetHeight + Math.max(insets.bottom, 24) + 40;
+  const menuWidth = Math.min(screenWidth - 32, 292);
   const menuHeightEstimate = 360;
-  const translateX = React.useRef(new Animated.Value(-drawerWidth)).current;
+  const translateY = React.useRef(new Animated.Value(closedOffset)).current;
   const rowRefs = React.useRef<Record<string, View | null>>({});
 
   const filteredThreads = React.useMemo(() => {
@@ -92,9 +97,9 @@ export default function AuraChatDrawer({
 
   const sections = React.useMemo(() => buildSections(filteredThreads), [filteredThreads]);
 
-  const overlayOpacity = translateX.interpolate({
-    inputRange: [-drawerWidth, 0],
-    outputRange: [0, 0.45],
+  const overlayOpacity = translateY.interpolate({
+    inputRange: [0, closedOffset],
+    outputRange: [0.45, 0],
     extrapolate: "clamp",
   });
 
@@ -102,8 +107,8 @@ export default function AuraChatDrawer({
     setMenuThread(null);
     setMenuAnchor(null);
     setRenameVisible(false);
-    Animated.timing(translateX, {
-      toValue: -drawerWidth,
+    Animated.timing(translateY, {
+      toValue: closedOffset,
       duration: 260,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
@@ -113,12 +118,12 @@ export default function AuraChatDrawer({
         onClose();
       }
     });
-  }, [drawerWidth, onClose, translateX]);
+  }, [closedOffset, onClose, translateY]);
 
   React.useEffect(() => {
     if (visible) {
       setMounted(true);
-      Animated.timing(translateX, {
+      Animated.timing(translateY, {
         toValue: 0,
         duration: 260,
         easing: Easing.out(Easing.cubic),
@@ -129,7 +134,7 @@ export default function AuraChatDrawer({
     if (mounted) {
       closeDrawer();
     }
-  }, [closeDrawer, mounted, translateX, visible]);
+  }, [closeDrawer, mounted, translateY, visible]);
 
   React.useEffect(() => {
     if (!menuThread) return;
@@ -141,16 +146,16 @@ export default function AuraChatDrawer({
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, gestureState) =>
-          Math.abs(gestureState.dx) > Math.abs(gestureState.dy) && gestureState.dx < -6,
+          Math.abs(gestureState.dy) > Math.abs(gestureState.dx) && gestureState.dy > 8,
         onPanResponderMove: (_, gestureState) => {
-          translateX.setValue(Math.max(-drawerWidth, Math.min(0, gestureState.dx)));
+          translateY.setValue(Math.max(0, Math.min(closedOffset, gestureState.dy)));
         },
         onPanResponderRelease: (_, gestureState) => {
-          if (gestureState.dx < -drawerWidth * 0.18 || gestureState.vx < -0.65) {
+          if (gestureState.dy > sheetHeight * 0.16 || gestureState.vy > 0.65) {
             closeDrawer();
             return;
           }
-          Animated.timing(translateX, {
+          Animated.timing(translateY, {
             toValue: 0,
             duration: 180,
             easing: Easing.out(Easing.cubic),
@@ -158,7 +163,7 @@ export default function AuraChatDrawer({
           }).start();
         },
         onPanResponderTerminate: () => {
-          Animated.timing(translateX, {
+          Animated.timing(translateY, {
             toValue: 0,
             duration: 180,
             easing: Easing.out(Easing.cubic),
@@ -166,7 +171,7 @@ export default function AuraChatDrawer({
           }).start();
         },
       }),
-    [closeDrawer, drawerWidth, translateX],
+    [closeDrawer, closedOffset, sheetHeight, translateY],
   );
 
   const closeContextMenu = React.useCallback(() => {
@@ -182,6 +187,7 @@ export default function AuraChatDrawer({
 
   const openContextMenuForThread = React.useCallback(
     (thread: AIChatThread) => {
+      void runHaptic("selection");
       const row = rowRefs.current[thread.chatId];
       if (!row?.measureInWindow) {
         setMenuAnchor(null);
@@ -245,21 +251,53 @@ export default function AuraChatDrawer({
           style={[
             styles.drawer,
             {
-              width: drawerWidth,
-              paddingTop: insets.top + 10,
+              height: sheetHeight,
+              paddingTop: 12,
               paddingBottom: Math.max(insets.bottom + 16, 24),
-              transform: [{ translateX }],
+              backgroundColor: colors.surfaceGlass,
+              borderColor: colors.border,
+              transform: [{ translateY }],
             },
           ]}
         >
           <BlurView intensity={60} tint="dark" style={StyleSheet.absoluteFill} />
-          <View style={styles.drawerOverlay} />
+          <View style={[styles.drawerOverlay, { backgroundColor: colors.overlay }]} />
+
+          <View style={styles.grabberWrap}>
+            <View style={[styles.grabber, { backgroundColor: colors.borderStrong }]} />
+          </View>
 
           <View style={styles.header}>
             <Text style={[styles.title, { color: colors.text, letterSpacing: 0 }]}>Chats</Text>
+            <AuraPressable
+              onPress={closeDrawer}
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.94}
+              pressedOpacity={0.82}
+              accessibilityRole="button"
+              accessibilityLabel="Close chats"
+              style={[
+                styles.closeButton,
+                {
+                  backgroundColor: colors.surfaceSoft,
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <Ionicons name="close" size={16} color={colors.textSecondary} />
+            </AuraPressable>
           </View>
 
-          <View style={styles.searchShell}>
+          <View
+            style={[
+              styles.searchShell,
+              {
+                backgroundColor: colors.surfaceSoft,
+                borderColor: colors.border,
+              },
+            ]}
+          >
             <Ionicons name="search-outline" size={16} color={colors.textSecondary} />
             <TextInput
               value={query}
@@ -292,7 +330,7 @@ export default function AuraChatDrawer({
                         onLongPress={() => openContextMenuForThread(thread)}
                         delayLongPress={220}
                         haptic="selection"
-                        hapticTrigger="longPress"
+                        hapticTrigger="press"
                         pressedScale={0.985}
                         pressedOpacity={0.9}
                         onPress={() => {
@@ -330,12 +368,14 @@ export default function AuraChatDrawer({
                               </View>
                             ) : null}
                           </View>
-                          <Text style={styles.chatPreview} numberOfLines={1}>
+                          <Text style={[styles.chatPreview, { color: colors.textSecondary }]} numberOfLines={1}>
                             {thread.lastMessagePreview || "New stylist chat"}
                           </Text>
                         </View>
                         <View style={styles.metaColumn}>
-                          <Text style={styles.chatTime}>{formatTimestamp(thread.updatedAt)}</Text>
+                          <Text style={[styles.chatTime, { color: colors.textMuted }]}>
+                            {formatTimestamp(thread.updatedAt)}
+                          </Text>
                         </View>
                       </AuraPressable>
                     </View>
@@ -353,6 +393,10 @@ export default function AuraChatDrawer({
             <View
               style={[
                 styles.menuShell,
+                {
+                  backgroundColor: colors.surfaceGlass,
+                  borderColor: colors.border,
+                },
                 menuPosition
                   ? {
                       width: menuWidth,
@@ -367,7 +411,7 @@ export default function AuraChatDrawer({
               ]}
             >
               <BlurView intensity={58} tint="dark" style={StyleSheet.absoluteFill} />
-              <View style={styles.menuBackdrop} />
+              <View style={[styles.menuBackdrop, { backgroundColor: colors.overlay }]} />
               <View style={styles.menuHeader}>
                 <Text style={[styles.menuTitle, { color: colors.text }]} numberOfLines={1}>
                   {summarizeThreadDisplayTitle(menuThread)}
@@ -447,9 +491,18 @@ export default function AuraChatDrawer({
         >
           <View style={styles.renameRoot}>
             <Pressable style={StyleSheet.absoluteFill} onPress={() => setRenameVisible(false)} />
-            <View style={[styles.renameCard, { marginTop: insets.top + 96 }]}>
+            <View
+              style={[
+                styles.renameCard,
+                {
+                  marginTop: insets.top + 96,
+                  backgroundColor: colors.surfaceGlass,
+                  borderColor: colors.border,
+                },
+              ]}
+            >
               <BlurView intensity={58} tint="dark" style={StyleSheet.absoluteFill} />
-              <View style={styles.menuBackdrop} />
+              <View style={[styles.menuBackdrop, { backgroundColor: colors.overlay }]} />
               <Text style={[styles.renameTitle, { color: colors.text }]}>Rename chat</Text>
               <TextInput
                 value={renameValue}
@@ -570,7 +623,14 @@ function MenuActionRow({
 }) {
   return (
     <Pressable
-      onPress={busy ? undefined : onPress}
+      onPress={
+        busy
+          ? undefined
+          : () => {
+              void runHaptic(danger ? "warning" : "selection");
+              onPress();
+            }
+      }
       style={({ pressed }) => [
         styles.menuRow,
         {
@@ -611,25 +671,51 @@ function formatTimestamp(value: number) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    justifyContent: "flex-start",
+    justifyContent: "flex-end",
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "#000",
   },
   drawer: {
-    flex: 1,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: auraTheme.surface,
-    borderRightWidth: 1,
-    borderRightColor: auraTheme.borderSoft,
+    borderTopWidth: 1,
+    borderColor: auraTheme.borderSoft,
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    overflow: "hidden",
   },
   drawerOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(10,10,15,0.82)",
   },
   header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 18,
     paddingBottom: 14,
+  },
+  grabberWrap: {
+    alignItems: "center",
+    paddingBottom: 12,
+  },
+  grabber: {
+    width: 42,
+    height: 4,
+    borderRadius: 999,
+  },
+  closeButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   title: {
     fontFamily: Fonts.sans,

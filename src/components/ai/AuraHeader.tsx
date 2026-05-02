@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Animated, Pressable, Text, View } from "react-native";
+import { Animated, Text, View } from "react-native";
 
 import { Fonts, type AppColors } from "@/constants/theme";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 import AuraOrb from "./AuraOrb";
@@ -100,8 +101,12 @@ function HeaderAction({
   onPress: () => void;
 }) {
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.96}
+      pressedOpacity={0.88}
       style={({ pressed }) => ({
         flexDirection: "row",
         alignItems: "center",
@@ -109,15 +114,15 @@ function HeaderAction({
         borderRadius: 999,
         paddingHorizontal: 9,
         paddingVertical: 6,
-        backgroundColor: pressed ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.015)",
+        backgroundColor: pressed ? colors.surfaceSoft : colors.surfaceGlass,
         borderWidth: 1,
-        borderColor: auraTheme.borderSoft,
+        borderColor: colors.border,
       })}
     >
       <Ionicons name={icon} size={13} color={colors.textSecondary} />
       <Text
         style={{
-          color: auraTheme.textMuted,
+          color: colors.textSecondary,
           fontSize: 11,
           fontWeight: "600",
           fontFamily: Fonts.sans,
@@ -125,6 +130,6 @@ function HeaderAction({
       >
         {label}
       </Text>
-    </Pressable>
+    </AuraPressable>
   );
 }

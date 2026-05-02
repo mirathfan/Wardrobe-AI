@@ -18,7 +18,7 @@ import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLook, Aura
 import AuraReplyCard from "./AuraReplyCard";
 import OutfitMessage from "./OutfitMessage";
 import type { AIMessage, ChatAttachment, ChatImageAttachment } from "./chatTypes";
-import { auraShadow, auraTheme } from "./aiTheme";
+import { auraShadow } from "./aiTheme";
 
 const USER_SINGLE_IMAGE_MIN_WIDTH = 180;
 const USER_SINGLE_IMAGE_MAX_WIDTH = 240;
@@ -124,6 +124,11 @@ function ChatMessage({
   const isUserUrlOnly = isUser && isUrlOnlyMessage(displayText);
   const formattedUserText = isUserUrlOnly ? formatUrlForDisplay(String(displayText ?? "")) : displayText;
   const messageAttachments = message.attachments ?? [];
+  const labelTextColor = colors.textMuted;
+  const assistantSurface = colors.surfaceGlass;
+  const assistantBorder = colors.border;
+  const userBubbleSurface = colors.purpleSurface;
+  const userBubbleBorder = colors.purpleBorder;
   const imageAttachments = messageAttachments.filter(
     (attachment): attachment is ChatImageAttachment => attachment.type === "image",
   );
@@ -312,19 +317,19 @@ function ChatMessage({
             paddingHorizontal: isSuggestion || isError ? 16 : 14,
             paddingVertical: isSuggestion || isError ? 14 : 8,
             backgroundColor: isError
-              ? "rgba(241,153,153,0.08)"
+              ? colors.surfaceElevated
               : isSuggestion
-                ? auraTheme.surface
-                : auraTheme.surfaceSoft,
+                ? assistantSurface
+                : colors.surfaceSoft,
             borderWidth: isSuggestion || isError ? 1 : 0,
-            borderColor: isError ? "rgba(241,153,153,0.22)" : isSuggestion ? auraTheme.borderSoft : "transparent",
+            borderColor: isError ? colors.danger : isSuggestion ? assistantBorder : "transparent",
             marginLeft: isSuggestion || isError ? 0 : 10,
             maxWidth: isSuggestion || isError ? "100%" : "74%",
           }}
         >
           {isSuggestion || isError ? (
             <View style={{ gap: 6 }}>
-              <Text style={{ color: isError ? "#F1A4A4" : auraTheme.textFaint, fontSize: 11, fontWeight: "800", letterSpacing: 0.8 }}>
+              <Text style={{ color: isError ? colors.danger : labelTextColor, fontSize: 11, fontWeight: "800", letterSpacing: 0.8 }}>
                 {isError ? "AURA PAUSED" : "AURA NOTE"}
               </Text>
               <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20, fontWeight: "600" }}>
@@ -374,7 +379,7 @@ function ChatMessage({
           />
           <Text
             style={{
-              color: auraTheme.textFaint,
+              color: labelTextColor,
               fontSize: 10,
               fontWeight: "700",
               letterSpacing: 0.75,
@@ -394,7 +399,7 @@ function ChatMessage({
                   width: 7,
                   height: 7,
                   borderRadius: 999,
-                  backgroundColor: "rgba(255,255,255,0.52)",
+                  backgroundColor: colors.textSecondary,
                   opacity:
                     index === 0
                       ? pulse
@@ -447,9 +452,9 @@ function ChatMessage({
               borderRadius: 22,
               paddingHorizontal: 13,
               paddingVertical: 8,
-              backgroundColor: "rgba(245,232,216,0.12)",
+              backgroundColor: userBubbleSurface,
               borderWidth: 1,
-              borderColor: "rgba(243,223,195,0.16)",
+              borderColor: userBubbleBorder,
               marginLeft: 74,
               marginRight: 6,
               ...auraShadow(0.18),
@@ -465,9 +470,9 @@ function ChatMessage({
               borderRadius: 22,
               paddingHorizontal: 13,
               paddingVertical: isUserUrlOnly ? 7 : 8,
-              backgroundColor: "rgba(245,232,216,0.12)",
+              backgroundColor: userBubbleSurface,
               borderWidth: 1,
-              borderColor: "rgba(243,223,195,0.16)",
+              borderColor: userBubbleBorder,
               marginLeft: 74,
               marginRight: 6,
               ...auraShadow(0.18),
@@ -511,8 +516,8 @@ function ChatMessage({
               width: 7,
               height: 7,
               borderRadius: 999,
-              backgroundColor: auraTheme.accent,
-              shadowColor: auraTheme.accent,
+              backgroundColor: colors.auraLavender,
+              shadowColor: colors.auraLavender,
               shadowOpacity: 0.24,
               shadowRadius: 4,
               shadowOffset: { width: 0, height: 0 },
@@ -520,7 +525,7 @@ function ChatMessage({
           />
           <Text
             style={{
-              color: auraTheme.textFaint,
+              color: labelTextColor,
               fontSize: 10,
               fontWeight: "700",
               letterSpacing: 0.75,
@@ -538,9 +543,9 @@ function ChatMessage({
             borderRadius: 22,
             paddingHorizontal: isUser ? 13 : 15,
             paddingVertical: isUserUrlOnly ? 7 : isUser ? 8 : 10,
-            backgroundColor: isUser ? "rgba(245,232,216,0.12)" : "rgba(17,20,26,0.86)",
+            backgroundColor: isUser ? userBubbleSurface : assistantSurface,
             borderWidth: 1,
-            borderColor: isUser ? "rgba(243,223,195,0.16)" : auraTheme.borderSoft,
+            borderColor: isUser ? userBubbleBorder : assistantBorder,
             marginLeft: isUser ? 74 : layout.screenSize === "compact" ? 6 : 8,
             marginRight: isUser ? 6 : 28,
             ...auraShadow(isUser ? 0.18 : 0.14),
@@ -555,7 +560,7 @@ function ChatMessage({
                   width: 7,
                   height: 7,
                   borderRadius: 999,
-                  backgroundColor: "rgba(255,255,255,0.52)",
+                  backgroundColor: colors.textSecondary,
                   opacity: fade,
                 }}
               />
@@ -611,9 +616,9 @@ function UserImageAttachmentMedia({
           aspectRatio: getImageAspectRatio(attachment),
           borderRadius: USER_IMAGE_RADIUS,
           overflow: "hidden",
-          backgroundColor: "rgba(255,255,255,0.055)",
+          backgroundColor: colors.chipBackground,
           borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.10)",
+          borderColor: colors.border,
           marginRight: 6,
           ...auraShadow(0.2),
         }}
@@ -653,9 +658,9 @@ function UserImageAttachmentMedia({
               height: tileSize,
               borderRadius: 18,
               overflow: "hidden",
-              backgroundColor: "rgba(255,255,255,0.055)",
+              backgroundColor: colors.chipBackground,
               borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.10)",
+              borderColor: colors.border,
             }}
           >
             <Image
@@ -670,7 +675,7 @@ function UserImageAttachmentMedia({
                   inset: 0,
                   alignItems: "center",
                   justifyContent: "center",
-                  backgroundColor: "rgba(5,5,7,0.48)",
+                  backgroundColor: colors.overlay,
                 }}
               >
                 <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900", fontFamily: Fonts.sans }}>
@@ -704,7 +709,7 @@ function AttachmentPreviews({
             height: 92,
             borderRadius: 16,
             overflow: "hidden",
-            backgroundColor: isUser ? "rgba(12,20,30,0.16)" : "rgba(255,255,255,0.06)",
+            backgroundColor: isUser ? colors.purpleSurface : colors.chipBackground,
           }}
         >
           {attachment.type === "image" ? (
@@ -808,7 +813,7 @@ function StructuredAuraIntro({
         />
         <Text
           style={{
-            color: auraTheme.textFaint,
+            color: colors.textMuted,
             fontSize: 10,
             fontWeight: "700",
             letterSpacing: 0.75,

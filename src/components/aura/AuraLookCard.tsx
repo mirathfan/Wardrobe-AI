@@ -474,6 +474,7 @@ export const AuraLookCard = memo(function AuraLookCard({
               compact ? styles.titleCompact : null,
               isHome ? styles.titleHome : null,
               swipeVariant ? styles.titleSwipe : null,
+              { color: colors.textPrimary },
             ]}
           >
             {displayTitle}
@@ -488,6 +489,7 @@ export const AuraLookCard = memo(function AuraLookCard({
               compact ? styles.subtitleCompact : null,
               isHome ? styles.subtitleHome : null,
               swipeVariant ? styles.subtitleSwipe : null,
+              { color: colors.textSecondary },
             ]}
           >
             {displayReason}

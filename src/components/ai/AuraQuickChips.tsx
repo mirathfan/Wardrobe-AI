@@ -5,8 +5,6 @@ import { Fonts } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
-import { auraTheme } from "./aiTheme";
-
 const TOP_CHIP_HEIGHT = 34;
 const TOP_CHIP_RADIUS = 17;
 const TOP_CHIP_GAP = 8;
@@ -93,9 +91,9 @@ function ChipCard({
           width: 164,
           minHeight: 46,
           borderRadius: 15,
-          backgroundColor: "rgba(255,255,255,0.018)",
+          backgroundColor: colors.surfaceSoft,
           borderWidth: 1,
-          borderColor: auraTheme.borderSoft,
+          borderColor: colors.border,
           paddingHorizontal: 10,
           paddingVertical: 7,
           justifyContent: "center",
@@ -106,7 +104,7 @@ function ChipCard({
         </Text>
         <Text
           style={{
-            color: auraTheme.textMuted,
+            color: colors.textSecondary,
             fontSize: 10.5,
             lineHeight: 13,
             marginTop: 1,
@@ -169,9 +167,9 @@ function Chip({
           paddingHorizontal: TOP_CHIP_HORIZONTAL_PADDING,
           paddingVertical: 0,
           borderRadius: TOP_CHIP_RADIUS,
-          backgroundColor: isTrainingChip ? "rgba(124,92,255,0.08)" : "rgba(255,255,255,0.026)",
+          backgroundColor: isTrainingChip ? colors.purpleSurface : colors.surfaceSoft,
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: isTrainingChip ? "rgba(124,92,255,0.18)" : "rgba(255,255,255,0.055)",
+          borderColor: isTrainingChip ? colors.purpleBorder : colors.border,
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -193,7 +191,7 @@ function Chip({
             numberOfLines={1}
             ellipsizeMode="tail"
             style={{
-              color: isTrainingChip ? colors.lightPurple : auraTheme.textMuted,
+              color: isTrainingChip ? colors.lightPurple : colors.textSecondary,
               fontSize: 11.5,
               fontWeight: "700",
               fontFamily: Fonts.sans,
