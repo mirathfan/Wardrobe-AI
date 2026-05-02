@@ -650,6 +650,18 @@ async function parseAuraAttachments(uid: string, input: unknown): Promise<AuraAt
       });
       continue;
     }
+    logger.info("[AURA_STREAM_ATTACHMENTS] accepted image attachment", {
+      uid,
+      kind: "image",
+      mimeType: typeof candidate.mimeType === "string" ? candidate.mimeType : null,
+      hasStoragePath: !!storagePath,
+      storagePath,
+      hasDownloadURL: /^https?:\/\//i.test(uri),
+      uriHost: safeUrlHost(uri),
+      validatedMediaSource: storagePath ? "owned_storage_download_url" : "validated_remote_url",
+      width: typeof candidate.width === "number" ? candidate.width : null,
+      height: typeof candidate.height === "number" ? candidate.height : null,
+    });
     out.push({
       type: "image",
       uri,
@@ -1065,7 +1077,7 @@ async function emitUrlCandidatePreview(params: {
 }
 
 export const askAuraStream = onRequest(
-  { cors: true, secrets: ["OPENAI_API_KEY"] },
+  { cors: true, secrets: ["OPENAI_API_KEY"], timeoutSeconds: 120 },
   async (req, res) => {
     res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -1185,8 +1197,28 @@ export const askAuraStream = onRequest(
         apiKey: process.env.OPENAI_API_KEY,
       });
       const imageCandidateGroups = imageGroupsForAddIntent(userMessage, attachments, effectiveClientIntent);
+      const shouldAnalyzeOutfitPhoto = isOutfitPhotoRequest({
+        clientIntent: effectiveClientIntent,
+        userMessage,
+        attachments,
+      });
+      logger.info("[AURA_STREAM_INTENT] selected intent", {
+        uid,
+        selectedIntent: shouldAnalyzeOutfitPhoto
+          ? "outfit_photo_analysis"
+          : imageCandidateGroups.length > 0
+            ? "image_candidate_preview"
+            : firstDetectedUrl
+              ? "product_link"
+              : "general_chat",
+        clientIntent,
+        effectiveClientIntent,
+        attachmentCount: attachments.length,
+        imageAttachmentCount: attachments.filter((attachment) => attachment.type === "image").length,
+        hasVisionPayload: attachments.some((attachment) => attachment.type === "image" && !!attachment.uri),
+      });
 
-      if (isOutfitPhotoRequest({ clientIntent: effectiveClientIntent, userMessage, attachments })) {
+      if (shouldAnalyzeOutfitPhoto) {
         writeEvent(res, {
           type: "status",
           status: "analyzing_outfit",
@@ -1439,17 +1471,21 @@ export const askAuraStream = onRequest(
         return;
       }
 
-      const auraMemory = await loadCompactAuraMemoryContext(
-        db,
-        uid,
-        typeof req.body?.chatId === "string" ? req.body.chatId : null
-      );
+      const [auraMemory, userProfile] = await Promise.all([
+        loadCompactAuraMemoryContext(
+          db,
+          uid,
+          typeof req.body?.chatId === "string" ? req.body.chatId : null
+        ),
+        loadAuraUserProfile(uid),
+      ]);
       const auraContext = buildAuraContext({
         items,
         weather: req.body?.weather || null,
         occasion: req.body?.occasion || null,
         selectedDate: req.body?.selectedDate || null,
         memory: auraMemory,
+        userProfile,
       });
       logger.info("AURA stream closet context", {
         counts: auraContext.counts,
@@ -1459,7 +1495,6 @@ export const askAuraStream = onRequest(
         footwearAvailable: auraContext.wardrobeDebug?.footwearAvailable ?? [],
         excludedFootwear: auraContext.wardrobeDebug?.excludedFootwear ?? [],
       });
-      const userProfile = await loadAuraUserProfile(uid);
       let linkProductContext = "No product links.";
       if (linkIntent === "analyze_link" && detectedUrls.length > 0) {
         logger.info("[AURA_LINK] analyze intent classified", {

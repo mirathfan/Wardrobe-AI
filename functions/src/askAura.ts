@@ -628,6 +628,18 @@ async function parseAuraAttachments(uid: string, input: unknown): Promise<AuraAt
       });
       continue;
     }
+    logger.info("[AURA_ATTACHMENTS] accepted image attachment", {
+      uid,
+      kind: "image",
+      mimeType: typeof candidate.mimeType === "string" ? candidate.mimeType : null,
+      hasStoragePath: !!storagePath,
+      storagePath,
+      hasDownloadURL: /^https?:\/\//i.test(uri),
+      uriHost: safeUrlHost(uri),
+      validatedMediaSource: storagePath ? "owned_storage_download_url" : "validated_remote_url",
+      width: typeof candidate.width === "number" ? candidate.width : null,
+      height: typeof candidate.height === "number" ? candidate.height : null,
+    });
     out.push({
       type: "image",
       uri,
@@ -752,7 +764,7 @@ function logCallableCandidatePayload(
 }
 
 export const askAura = onCall(
-  { secrets: ["OPENAI_API_KEY"] },
+  { secrets: ["OPENAI_API_KEY"], timeoutSeconds: 120 },
   async (request) => {
     logger.info("[AURA_BACKEND_VERSION] askAura callable entry", {
       version: AURA_BACKEND_VERSION,
@@ -819,8 +831,23 @@ export const askAura = onCall(
       apiKey: process.env.OPENAI_API_KEY,
     });
     const imageCandidateGroups = imageGroupsForAddIntent(userMessage, attachments, clientIntent);
+    const shouldAnalyzeOutfitPhoto = isOutfitPhotoRequest({ clientIntent, userMessage, attachments });
+    logger.info("[AURA_INTENT] callable selected intent", {
+      uid,
+      selectedIntent: shouldAnalyzeOutfitPhoto
+        ? "outfit_photo_analysis"
+        : imageCandidateGroups.length > 0
+          ? "image_candidate_preview"
+          : detectedUrls.length > 0
+            ? "product_link"
+            : "general_chat",
+      clientIntent,
+      attachmentCount: attachments.length,
+      imageAttachmentCount: attachments.filter((attachment) => attachment.type === "image").length,
+      hasVisionPayload: attachments.some((attachment) => attachment.type === "image" && !!attachment.uri),
+    });
 
-    if (isOutfitPhotoRequest({ clientIntent, userMessage, attachments })) {
+    if (shouldAnalyzeOutfitPhoto) {
       logger.info("[AURA_OUTFIT_PHOTO] callable outfit analysis intent classified", {
         uid,
         clientIntent,
@@ -956,17 +983,21 @@ export const askAura = onCall(
       return { ok: true, data: laundryResponse };
     }
 
-    const auraMemory = await loadCompactAuraMemoryContext(
-      db,
-      uid,
-      typeof request.data?.chatId === "string" ? request.data.chatId : null
-    );
+    const [auraMemory, userProfile] = await Promise.all([
+      loadCompactAuraMemoryContext(
+        db,
+        uid,
+        typeof request.data?.chatId === "string" ? request.data.chatId : null
+      ),
+      loadAuraUserProfile(uid),
+    ]);
     const auraContext = buildAuraContext({
       items,
       weather: request.data?.weather || null,
       occasion,
       selectedDate,
       memory: auraMemory,
+      userProfile,
     });
     logger.info("AURA closet context", {
       counts: auraContext.counts,
@@ -976,7 +1007,6 @@ export const askAura = onCall(
       footwearAvailable: auraContext.wardrobeDebug?.footwearAvailable ?? [],
       excludedFootwear: auraContext.wardrobeDebug?.excludedFootwear ?? [],
     });
-    const userProfile = await loadAuraUserProfile(uid);
     let linkProductContext = "No product links.";
     if (linkIntent === "analyze_link" && detectedUrls.length > 0) {
       logger.info("[AURA_LINK] analyze intent classified", {

@@ -3,6 +3,7 @@ import {
   detectWardrobeGaps,
   type WardrobeCategoryCounts,
 } from "./detectWardrobeGaps";
+import type {AuraUserProfile} from "./loadAuraUserProfile";
 
 type WardrobeItem = {
   id: string;
@@ -35,6 +36,7 @@ type AuraContextArgs = {
   occasion?: string | null;
   selectedDate?: string | null;
   memory?: CompactAuraMemoryContext | null;
+  userProfile?: AuraUserProfile | null;
 };
 
 type AuraCategory =
@@ -65,6 +67,56 @@ function pickColor(item: WardrobeItem): string {
     String(item.colors?.[0] ?? "").trim() ||
     String(item.color ?? "").trim()
   );
+}
+
+function nonEmptyList(value?: string[]) {
+  return Array.isArray(value) && value.length ? value : null;
+}
+
+function nonEmptyRecord<T extends object>(value?: T | null) {
+  return value && Object.keys(value).length ? value : null;
+}
+
+function compactUserPreferences(userProfile?: AuraUserProfile | null) {
+  if (!userProfile) return null;
+
+  const userPreferences = {
+    ...(userProfile.wardrobeMode ? {wardrobeMode: userProfile.wardrobeMode} : {}),
+    ...(nonEmptyList(userProfile.selectedCategories)
+      ? {selectedCategories: userProfile.selectedCategories}
+      : {}),
+    ...(nonEmptyList(userProfile.styleAesthetics)
+      ? {styleAesthetics: userProfile.styleAesthetics}
+      : {}),
+    ...(nonEmptyList(userProfile.favoriteColors)
+      ? {favoriteColors: userProfile.favoriteColors}
+      : {}),
+    ...(nonEmptyList(userProfile.avoidedColors)
+      ? {avoidedColors: userProfile.avoidedColors}
+      : {}),
+    ...(userProfile.preferredFit ? {preferredFit: userProfile.preferredFit} : {}),
+    ...(nonEmptyRecord(userProfile.fitPreferences)
+      ? {fitPreferences: userProfile.fitPreferences}
+      : {}),
+    ...(nonEmptyRecord(userProfile.defaultSizes)
+      ? {defaultSizes: userProfile.defaultSizes}
+      : {}),
+    ...(nonEmptyRecord(userProfile.stylePreferences)
+      ? {stylePreferences: userProfile.stylePreferences}
+      : {}),
+    ...(nonEmptyList(userProfile.accessoryPreferences)
+      ? {accessoryPreferences: userProfile.accessoryPreferences}
+      : {}),
+    ...(nonEmptyList(userProfile.occasionPriority)
+      ? {occasionPriority: userProfile.occasionPriority}
+      : {}),
+    ...(nonEmptyList(userProfile.goals) ? {goals: userProfile.goals} : {}),
+    ...(nonEmptyRecord(userProfile.closetPreferences)
+      ? {closetPreferences: userProfile.closetPreferences}
+      : {}),
+  };
+
+  return Object.keys(userPreferences).length ? userPreferences : null;
 }
 
 export function mapCategory(raw?: string | null): AuraCategory {
@@ -167,6 +219,7 @@ export function buildAuraContext({
   occasion,
   selectedDate,
   memory,
+  userProfile,
 }: AuraContextArgs) {
   const DEBUG_AURA_SPARSE =
     process.env.FUNCTIONS_EMULATOR === "true" || process.env.NODE_ENV !== "production";
@@ -300,6 +353,7 @@ export function buildAuraContext({
       preferOwnedBottoms: true,
       suggestMissingPiecesOnlyWhenNoReasonableOwnedOptionExists: true,
     },
+    userPreferences: compactUserPreferences(userProfile),
     preferenceContext: memory ?? null,
     stylistBrief: memory?.stylistBrief ?? "",
   };
