@@ -34,12 +34,12 @@ export default function AuraHeader({
       style={{
         paddingHorizontal: layout.horizontalPadding,
         paddingTop: 0,
-        paddingBottom: 2,
+        paddingBottom: 0,
       }}
     >
       <View
         style={{
-          minHeight: 38,
+          minHeight: 32,
           flexDirection: "row",
           justifyContent: "space-between",
           alignItems: "center",
@@ -64,23 +64,17 @@ export default function AuraHeader({
             style={{
               flexDirection: "row",
               alignItems: "center",
-              gap: 8,
-              paddingHorizontal: 12,
-              paddingVertical: 7,
-              borderRadius: 999,
-              backgroundColor: "rgba(255,255,255,0.02)",
-              borderWidth: 1,
-              borderColor: auraTheme.borderSoft,
+              gap: 6,
             }}
           >
             <AuraOrb scale={orbScale} glow={orbGlow} activityGlow={activityGlow} />
             <Text
               style={{
                 color: streaming ? auraTheme.accentStrong : colors.text,
-                fontSize: 13.5 * layout.titleScale,
-                lineHeight: 16 * layout.titleScale,
+                fontSize: 12.5 * layout.titleScale,
+                lineHeight: 15 * layout.titleScale,
                 fontWeight: "600",
-                letterSpacing: 2.8,
+                letterSpacing: 2.4,
                 fontFamily: Fonts.sans,
               }}
             >

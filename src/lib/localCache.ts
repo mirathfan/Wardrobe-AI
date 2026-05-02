@@ -1,5 +1,6 @@
 import { Storage } from "@/src/lib/storage";
 import type { AIMessage } from "@/src/components/ai/chatTypes";
+import { orderChatMessages, toMessageMillis } from "@/src/lib/chatMessageOrder";
 import type { AIChatThread } from "@/src/lib/aiChats";
 import type { MinimumClosetProgress } from "@/src/lib/minimumCloset";
 import type { SavedAuraLookRecord } from "@/src/lib/auraLooks";
@@ -277,7 +278,19 @@ function sanitizeChatMessageForCache(message: AIMessage): AIMessage | null {
     attachments: attachments?.length ? attachments : undefined,
     outfits: message.outfits,
     aura: message.aura ? sanitizeDeep(message.aura) : undefined,
-    createdAt: toMillis(message.createdAt) ?? Date.now(),
+    createdAt:
+      toMessageMillis(message.createdAt) ??
+      toMessageMillis(message.clientCreatedAt) ??
+      Date.now(),
+    clientCreatedAt:
+      toMessageMillis(message.clientCreatedAt) ??
+      toMessageMillis(message.createdAt) ??
+      undefined,
+    localSequence:
+      typeof message.localSequence === "number" && Number.isFinite(message.localSequence)
+        ? message.localSequence
+        : undefined,
+    replyToMessageId: message.replyToMessageId ?? undefined,
   }) as AIMessage;
 }
 
@@ -389,10 +402,11 @@ export function setCachedRecentMessages(uid: string, chatId: string, messages: A
   return writeCache(
     uid,
     `chat-messages:${chatId}`,
-    (Array.isArray(messages) ? messages : [])
-      .map(sanitizeChatMessageForCache)
-      .filter((message): message is AIMessage => !!message)
-      .slice(-MAX_CACHED_CHAT_MESSAGES)
+    orderChatMessages(
+      (Array.isArray(messages) ? messages : [])
+        .map(sanitizeChatMessageForCache)
+        .filter((message): message is AIMessage => !!message),
+    ).slice(-MAX_CACHED_CHAT_MESSAGES)
   );
 }
 

@@ -11,15 +11,44 @@ import { Fonts, type AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { formatUrlForDisplay, isUrlOnlyMessage } from "@/src/lib/formatChatText";
-import { runHaptic } from "@/src/lib/haptics";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLook, AuraLookAction, AuraLookOptionMeta, AuraOutfitPhotoAction } from "@/src/types/aura";
 
 import AuraReplyCard from "./AuraReplyCard";
 import OutfitMessage from "./OutfitMessage";
-import type { AIMessage } from "./chatTypes";
+import type { AIMessage, ChatAttachment, ChatImageAttachment } from "./chatTypes";
 import { auraShadow, auraTheme } from "./aiTheme";
+
+const USER_SINGLE_IMAGE_MIN_WIDTH = 180;
+const USER_SINGLE_IMAGE_MAX_WIDTH = 240;
+const USER_IMAGE_GRID_GAP = 7;
+const USER_MULTI_IMAGE_MAX_GRID_WIDTH = 248;
+const USER_MULTI_IMAGE_MIN_GRID_WIDTH = 196;
+const USER_IMAGE_RADIUS = 20;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getImageAspectRatio(attachment: ChatImageAttachment) {
+  const width = Number(attachment.width ?? 0);
+  const height = Number(attachment.height ?? 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return 0.78;
+  }
+  return clamp(width / height, 0.68, 1.45);
+}
+
+function getSingleImageWidth(layoutWidth: number, screenSize: string) {
+  const maxWidth = screenSize === "compact" ? 220 : USER_SINGLE_IMAGE_MAX_WIDTH;
+  return clamp(layoutWidth * 0.58, USER_SINGLE_IMAGE_MIN_WIDTH, maxWidth);
+}
+
+function getMultiImageGridWidth(layoutWidth: number, screenSize: string) {
+  const maxWidth = screenSize === "compact" ? 224 : USER_MULTI_IMAGE_MAX_GRID_WIDTH;
+  return clamp(layoutWidth * 0.62, USER_MULTI_IMAGE_MIN_GRID_WIDTH, maxWidth);
+}
 
 function cleanIntroText(value?: string | null) {
   return sanitizeDisplayText(value)?.replace(/\s+/g, " ").trim() ?? "";
@@ -94,6 +123,12 @@ function ChatMessage({
   const isStreamingPlaceholder = !isUser && !!message.streaming && !displayText;
   const isUserUrlOnly = isUser && isUrlOnlyMessage(displayText);
   const formattedUserText = isUserUrlOnly ? formatUrlForDisplay(String(displayText ?? "")) : displayText;
+  const messageAttachments = message.attachments ?? [];
+  const imageAttachments = messageAttachments.filter(
+    (attachment): attachment is ChatImageAttachment => attachment.type === "image",
+  );
+  const nonImageAttachments = messageAttachments.filter((attachment) => attachment.type !== "image");
+  const hasUserImageAttachments = isUser && imageAttachments.length > 0;
 
   useEffect(() => {
     if (isStructuredCard) {
@@ -389,6 +424,74 @@ function ChatMessage({
     );
   }
 
+  if (hasUserImageAttachments) {
+    return (
+      <Animated.View
+        style={{
+          opacity: fade,
+          transform: [{ translateY: rise }, { scale }],
+          alignItems: "flex-end",
+          gap: 6,
+        }}
+      >
+        <UserImageAttachmentMedia
+          attachments={imageAttachments}
+          layoutWidth={layout.width}
+          screenSize={layout.screenSize}
+          colors={colors}
+        />
+        {nonImageAttachments.length ? (
+          <View
+            style={{
+              maxWidth: "74%",
+              borderRadius: 22,
+              paddingHorizontal: 13,
+              paddingVertical: 8,
+              backgroundColor: "rgba(245,232,216,0.12)",
+              borderWidth: 1,
+              borderColor: "rgba(243,223,195,0.16)",
+              marginLeft: 74,
+              marginRight: 6,
+              ...auraShadow(0.18),
+            }}
+          >
+            <AttachmentPreviews attachments={nonImageAttachments} colors={colors} isUser />
+          </View>
+        ) : null}
+        {formattedUserText ? (
+          <View
+            style={{
+              maxWidth: isUserUrlOnly ? "68%" : "74%",
+              borderRadius: 22,
+              paddingHorizontal: 13,
+              paddingVertical: isUserUrlOnly ? 7 : 8,
+              backgroundColor: "rgba(245,232,216,0.12)",
+              borderWidth: 1,
+              borderColor: "rgba(243,223,195,0.16)",
+              marginLeft: 74,
+              marginRight: 6,
+              ...auraShadow(0.18),
+            }}
+          >
+            <Text
+              numberOfLines={isUserUrlOnly ? 2 : undefined}
+              ellipsizeMode={isUserUrlOnly ? "tail" : undefined}
+              style={{
+                color: colors.text,
+                fontSize: 14.5,
+                lineHeight: 21,
+                fontWeight: "700",
+                fontFamily: Fonts.sans,
+              }}
+            >
+              {formattedUserText}
+            </Text>
+          </View>
+        ) : null}
+      </Animated.View>
+    );
+  }
+
   return (
     <Animated.View
       style={{ opacity: fade, transform: [{ translateY: rise }, { scale }], alignItems: isUser ? "flex-end" : "flex-start" }}
@@ -460,34 +563,9 @@ function ChatMessage({
           </View>
         ) : (
           <>
-            {message.attachments?.length ? (
+            {messageAttachments.length ? (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: displayText ? 8 : 0 }}>
-                {message.attachments.map((attachment) => (
-                  <View
-                    key={attachment.id}
-                    style={{
-                      width: 92,
-                      height: 92,
-                      borderRadius: 16,
-                      overflow: "hidden",
-                      backgroundColor: isUser ? "rgba(12,20,30,0.16)" : "rgba(255,255,255,0.06)",
-                    }}
-                  >
-                    {attachment.type === "image" ? (
-                      <Image
-                        source={{ uri: attachment.localUri ?? attachment.uri }}
-                        style={{ width: "100%", height: "100%" }}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-                        <Text style={{ color: isUser ? colors.text : colors.text, fontWeight: "800" }}>
-                          Voice note
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                ))}
+                <AttachmentPreviews attachments={messageAttachments} colors={colors} isUser={isUser} />
               </View>
             ) : null}
             {formattedUserText ? (
@@ -509,6 +587,140 @@ function ChatMessage({
         )}
       </View>
     </Animated.View>
+  );
+}
+
+function UserImageAttachmentMedia({
+  attachments,
+  layoutWidth,
+  screenSize,
+  colors,
+}: {
+  attachments: ChatImageAttachment[];
+  layoutWidth: number;
+  screenSize: string;
+  colors: AppColors;
+}) {
+  if (attachments.length === 1) {
+    const attachment = attachments[0];
+    const width = getSingleImageWidth(layoutWidth, screenSize);
+    return (
+      <View
+        style={{
+          width,
+          aspectRatio: getImageAspectRatio(attachment),
+          borderRadius: USER_IMAGE_RADIUS,
+          overflow: "hidden",
+          backgroundColor: "rgba(255,255,255,0.055)",
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.10)",
+          marginRight: 6,
+          ...auraShadow(0.2),
+        }}
+      >
+        <Image
+          source={{ uri: attachment.localUri ?? attachment.uri }}
+          style={{ width: "100%", height: "100%" }}
+          resizeMode="cover"
+        />
+      </View>
+    );
+  }
+
+  const gridWidth = getMultiImageGridWidth(layoutWidth, screenSize);
+  const tileSize = (gridWidth - USER_IMAGE_GRID_GAP) / 2;
+  const visibleAttachments = attachments.slice(0, 4);
+  const remainingCount = Math.max(0, attachments.length - visibleAttachments.length);
+
+  return (
+    <View
+      style={{
+        width: gridWidth,
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: USER_IMAGE_GRID_GAP,
+        justifyContent: "flex-end",
+        marginRight: 6,
+      }}
+    >
+      {visibleAttachments.map((attachment, index) => {
+        const showOverflow = index === visibleAttachments.length - 1 && remainingCount > 0;
+        return (
+          <View
+            key={attachment.id}
+            style={{
+              width: tileSize,
+              height: tileSize,
+              borderRadius: 18,
+              overflow: "hidden",
+              backgroundColor: "rgba(255,255,255,0.055)",
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.10)",
+            }}
+          >
+            <Image
+              source={{ uri: attachment.localUri ?? attachment.uri }}
+              style={{ width: "100%", height: "100%" }}
+              resizeMode="cover"
+            />
+            {showOverflow ? (
+              <View
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: "rgba(5,5,7,0.48)",
+                }}
+              >
+                <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900", fontFamily: Fonts.sans }}>
+                  +{remainingCount}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function AttachmentPreviews({
+  attachments,
+  colors,
+  isUser,
+}: {
+  attachments: ChatAttachment[];
+  colors: AppColors;
+  isUser: boolean;
+}) {
+  return (
+    <>
+      {attachments.map((attachment) => (
+        <View
+          key={attachment.id}
+          style={{
+            width: 92,
+            height: 92,
+            borderRadius: 16,
+            overflow: "hidden",
+            backgroundColor: isUser ? "rgba(12,20,30,0.16)" : "rgba(255,255,255,0.06)",
+          }}
+        >
+          {attachment.type === "image" ? (
+            <Image
+              source={{ uri: attachment.localUri ?? attachment.uri }}
+              style={{ width: "100%", height: "100%" }}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ color: colors.text, fontWeight: "800" }}>Voice note</Text>
+            </View>
+          )}
+        </View>
+      ))}
+    </>
   );
 }
 
@@ -539,7 +751,6 @@ function OutfitCardEntry({
   const translateY = useSharedValue(reduceMotion ? 0 : 16);
 
   useEffect(() => {
-    void runHaptic("light");
     if (reduceMotion) {
       opacity.value = 1;
       translateY.value = 0;

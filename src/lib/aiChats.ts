@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
+import { orderChatMessages, toMessageMillis } from "@/src/lib/chatMessageOrder";
 import { setCachedChatList, setCachedRecentMessages } from "@/src/lib/localCache";
 import type { AIMessage, ChatAttachment } from "@/src/components/ai/chatTypes";
 import type {
@@ -255,8 +256,11 @@ function toChatThread(snapshot: { id: string; data: () => Record<string, unknown
       lastMessagePreview: rawPreview,
       titleEdited: data.titleEdited === true,
     }),
-    createdAt: typeof data.createdAt === "number" ? data.createdAt : Date.now(),
-    updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : Date.now(),
+    createdAt:
+      toMessageMillis(data.createdAt) ??
+      toMessageMillis(data.clientCreatedAt) ??
+      Date.now(),
+    updatedAt: toMessageMillis(data.updatedAt) ?? Date.now(),
     lastMessagePreview: sanitizeStoredPreview(rawPreview),
     messageCount: typeof data.messageCount === "number" ? data.messageCount : 0,
     threadId: typeof data.threadId === "string" ? data.threadId : null,
@@ -305,7 +309,19 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
     streaming: typeof data.streaming === "boolean" ? data.streaming : undefined,
     outfits: Array.isArray(data.outfits) ? (data.outfits as AIMessage["outfits"]) : undefined,
     aura,
-    createdAt: typeof data.createdAt === "number" ? data.createdAt : Date.now(),
+    createdAt:
+      toMessageMillis(data.createdAt) ??
+      toMessageMillis(data.clientCreatedAt) ??
+      Date.now(),
+    clientCreatedAt:
+      toMessageMillis(data.clientCreatedAt) ??
+      toMessageMillis(data.createdAt) ??
+      undefined,
+    localSequence:
+      typeof data.localSequence === "number" && Number.isFinite(data.localSequence)
+        ? data.localSequence
+        : undefined,
+    replyToMessageId: typeof data.replyToMessageId === "string" ? data.replyToMessageId : null,
   };
 }
 
@@ -569,7 +585,9 @@ export async function loadChatThread(uid: string, chatId: string) {
 
 export async function loadChatMessages(uid: string, chatId: string) {
   const snap = await getDocs(query(messageCollectionRef(uid, chatId), orderBy("createdAt", "asc")));
-  const messages = snap.docs.map((entry) => toChatMessage(entry)).filter((entry): entry is AIMessage => !!entry);
+  const messages = orderChatMessages(
+    snap.docs.map((entry) => toChatMessage(entry)).filter((entry): entry is AIMessage => !!entry),
+  );
   void setCachedRecentMessages(uid, chatId, messages);
   return messages;
 }
@@ -584,6 +602,7 @@ export async function appendMessageToChat(
   const messageRef = doc(messageCollectionRef(uid, chatId), message.id);
   const now = Date.now();
   const sanitizedAura = message.aura ? stripUndefinedDeep(message.aura) : undefined;
+  const persistedAttachments = message.attachments?.filter((attachment) => attachment.type === "image") ?? [];
   const threadSnap = await getDoc(chatRef);
   const existingThread = threadSnap.exists() ? toChatThread(threadSnap) : null;
   const batch = writeBatch(db);
@@ -592,11 +611,20 @@ export async function appendMessageToChat(
     ...(message.kind ? { kind: message.kind } : {}),
     ...(message.text ? { text: message.text } : {}),
     ...(message.assistantIntroText ? { assistantIntroText: message.assistantIntroText } : {}),
-    ...(message.attachments?.length ? { attachments: message.attachments } : {}),
+    ...(persistedAttachments.length ? { attachments: persistedAttachments } : {}),
     ...(typeof message.streaming === "boolean" ? { streaming: message.streaming } : {}),
     ...(message.outfits ? { outfits: message.outfits } : {}),
     ...(sanitizedAura ? { aura: sanitizedAura } : {}),
-    createdAt: typeof message.createdAt === "number" ? message.createdAt : now,
+    createdAt:
+      toMessageMillis(message.createdAt) ??
+      toMessageMillis(message.clientCreatedAt) ??
+      now,
+    clientCreatedAt:
+      toMessageMillis(message.clientCreatedAt) ??
+      toMessageMillis(message.createdAt) ??
+      now,
+    ...(typeof message.localSequence === "number" ? { localSequence: message.localSequence } : {}),
+    ...(message.replyToMessageId ? { replyToMessageId: message.replyToMessageId } : {}),
   });
   if (DEBUG_AURA_CLIENT && sanitizedAura?.lookOptions?.length) {
     console.log("[AURA_MULTI]", "storing multi-look chat message", {

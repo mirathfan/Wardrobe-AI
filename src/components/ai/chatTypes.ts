@@ -7,6 +7,8 @@ export type ChatImageAttachment = {
   type: "image";
   uri: string;
   localUri?: string | null;
+  mimeType?: string | null;
+  storagePath?: string | null;
   groupId?: string | null;
   role?: ChatAttachmentGroupRole;
   width?: number | null;
@@ -18,6 +20,8 @@ export type ChatAudioAttachment = {
   type: "audio";
   uri: string;
   localUri?: string | null;
+  mimeType?: string | null;
+  storagePath?: string | null;
   durationMs?: number | null;
   transcript?: string | null;
 };
@@ -42,4 +46,7 @@ export type AIMessage = {
   outfits?: ChatOutfit[];
   aura?: AuraResponse;
   createdAt: number;
+  clientCreatedAt?: number;
+  localSequence?: number;
+  replyToMessageId?: string | null;
 };

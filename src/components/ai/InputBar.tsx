@@ -1,13 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import React from "react";
+import Reanimated, {
+  useAnimatedKeyboard,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 import {
   Animated,
   Easing,
   Image,
+  LayoutChangeEvent,
   NativeSyntheticEvent,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -21,14 +28,36 @@ import { getAttachmentGroupingLabel } from "@/src/lib/auraIntent";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 import type { ChatAttachment, ChatAttachmentGroupRole } from "./chatTypes";
-import { auraTheme } from "./aiTheme";
 
-const BASE_COMPOSER_HEIGHT = 50;
-const BASE_INPUT_HEIGHT = 30;
-const MAX_INPUT_LINES = 4;
-const INPUT_LINE_HEIGHT = 20;
-const MAX_INPUT_HEIGHT = INPUT_LINE_HEIGHT * MAX_INPUT_LINES;
+const BASE_COMPOSER_HEIGHT = 48;
+const BASE_INPUT_HEIGHT = 32;
+const MAX_INPUT_LINES = 6;
+const INPUT_LINE_HEIGHT = 19;
+const INPUT_PADDING_TOP = Platform.OS === "ios" ? 8 : 5;
+const INPUT_PADDING_BOTTOM = Platform.OS === "ios" ? 4 : 3;
+const INPUT_VERTICAL_PADDING = INPUT_PADDING_TOP + INPUT_PADDING_BOTTOM;
+const MAX_INPUT_HEIGHT = INPUT_LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_TOP + INPUT_PADDING_BOTTOM;
 const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
+const ATTACHMENT_THUMB_SIZE = 60;
+const ATTACHMENT_COMPOSER_RADIUS = 28;
+const ATTACHMENT_MENU_WIDTH = 248;
+const ATTACHMENT_MENU_LEFT = 8;
+const ATTACHMENT_MENU_GAP = 10;
+const ATTACHMENT_MENU_CARET_LEFT = 14;
+
+function clampInputHeight(height: number) {
+  return Math.max(BASE_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, height));
+}
+
+function heightFromContentSize(contentHeight: number) {
+  const rawHeight = Math.max(0, Math.ceil(contentHeight));
+  if (rawHeight <= BASE_INPUT_HEIGHT + 2) return BASE_INPUT_HEIGHT;
+  const lineCount = Math.min(
+    MAX_INPUT_LINES,
+    Math.max(2, Math.ceil((rawHeight - INPUT_VERTICAL_PADDING) / INPUT_LINE_HEIGHT)),
+  );
+  return clampInputHeight(lineCount * INPUT_LINE_HEIGHT + INPUT_VERTICAL_PADDING);
+}
 
 export default function InputBar({
   colors,
@@ -36,11 +65,13 @@ export default function InputBar({
   loading,
   active,
   bottom,
+  restingBottom,
   placeholder = "Ask AURA about a look, piece, or plan.",
   onChangeText,
   onFocusChange,
   onHeightChange,
   onSend,
+  onStop,
   onPickImages,
   onTakePhoto,
   onRemoveAttachment,
@@ -55,11 +86,13 @@ export default function InputBar({
   loading: boolean;
   active: boolean;
   bottom: number;
+  restingBottom?: number;
   placeholder?: string;
   onChangeText: (next: string) => void;
   onFocusChange: (focused: boolean) => void;
   onHeightChange?: (height: number) => void;
   onSend: () => void;
+  onStop?: () => void;
   onPickImages: () => void;
   onTakePhoto: () => void;
   onRemoveAttachment: (id: string) => void;
@@ -71,10 +104,14 @@ export default function InputBar({
 }) {
   const layout = useResponsiveLayout();
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !loading;
+  const canStop = loading && !!onStop;
+  const composerSideInset = layout.screenSize === "compact" ? 12 : 16;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [inputHeight, setInputHeight] = React.useState(BASE_INPUT_HEIGHT);
+  const [composerHeight, setComposerHeight] = React.useState(BASE_COMPOSER_HEIGHT);
   const focusAnim = React.useRef(new Animated.Value(active ? 1 : 0)).current;
-  const bottomAnim = React.useRef(new Animated.Value(bottom)).current;
+  const liveKeyboard = useAnimatedKeyboard();
+  const restingBottomValue = useSharedValue(restingBottom ?? bottom);
   const menuAnim = React.useRef(new Animated.Value(0)).current;
   const inputHeightAnim = React.useRef(new Animated.Value(BASE_INPUT_HEIGHT)).current;
   const sendVisibilityAnim = React.useRef(new Animated.Value(canSend ? 1 : 0)).current;
@@ -89,21 +126,28 @@ export default function InputBar({
     }).start();
   }, [active, focusAnim]);
 
+  const keyboardTrackingGap = Platform.OS === "ios" ? 8 : 4;
+
   React.useEffect(() => {
-    Animated.timing(bottomAnim, {
-      toValue: bottom,
-      duration: Platform.OS === "ios" ? 220 : 160,
-      easing: Easing.bezier(0.22, 1, 0.36, 1),
-      useNativeDriver: false,
-    }).start();
-  }, [bottom, bottomAnim]);
+    restingBottomValue.value = restingBottom ?? bottom;
+  }, [bottom, restingBottom, restingBottomValue]);
+
+  const liveBottomStyle = useAnimatedStyle(() => {
+    const keyboardHeight = Math.max(0, liveKeyboard.height.value);
+    return {
+      bottom:
+        keyboardHeight > 1
+          ? Math.max(12, keyboardHeight + keyboardTrackingGap)
+          : restingBottomValue.value,
+    };
+  }, [keyboardTrackingGap]);
 
   React.useEffect(() => {
     Animated.timing(menuAnim, {
       toValue: menuOpen ? 1 : 0,
       duration: 180,
       easing: Easing.bezier(0.22, 1, 0.36, 1),
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
   }, [menuAnim, menuOpen]);
 
@@ -127,10 +171,36 @@ export default function InputBar({
     ]).start();
   }, [canSend, sendVisibilityAnim]);
 
-  const attachmentRailHeight = attachments.length > 0 ? 58 : 0;
-  const menuHeight = menuOpen ? 70 : 0;
+  const hasAttachments = attachments.length > 0;
+  const imageAttachmentCount = attachments.filter((attachment) => attachment.type === "image").length;
+  const hasSingleImageAttachment = attachments.length === 1 && attachments[0]?.type === "image";
+  const showAutoDetectAttachmentMode = imageAttachmentCount > 1;
+  const [attachmentModeSelectorOpen, setAttachmentModeSelectorOpen] = React.useState(false);
+  const [hasAttachmentModeOverride, setHasAttachmentModeOverride] = React.useState(false);
+  const showAttachmentModeSelector = showAutoDetectAttachmentMode && attachmentModeSelectorOpen;
+  const isInputExpanded = inputHeight > BASE_INPUT_HEIGHT + 2;
+  const shellRadius = hasAttachments ? ATTACHMENT_COMPOSER_RADIUS : isInputExpanded ? 24 : 999;
+  const attachmentRailHeight = hasAttachments
+    ? showAttachmentModeSelector
+      ? 122
+      : showAutoDetectAttachmentMode
+        ? 88
+        : 65
+    : 0;
   const rowHeightDelta = Math.max(0, inputHeight - BASE_INPUT_HEIGHT);
-  const estimatedComposerHeight = BASE_COMPOSER_HEIGHT + attachmentRailHeight + menuHeight + rowHeightDelta;
+  const estimatedComposerHeight = BASE_COMPOSER_HEIGHT + attachmentRailHeight + rowHeightDelta;
+  const lastReportedHeightRef = React.useRef(0);
+
+  const reportComposerHeight = React.useCallback(
+    (height: number) => {
+      const nextHeight = Math.max(BASE_COMPOSER_HEIGHT, Math.ceil(height));
+      if (Math.abs(nextHeight - lastReportedHeightRef.current) <= 1) return;
+      lastReportedHeightRef.current = nextHeight;
+      setComposerHeight(nextHeight);
+      onHeightChange?.(nextHeight);
+    },
+    [onHeightChange],
+  );
 
   React.useEffect(() => {
     if (!value) {
@@ -139,68 +209,92 @@ export default function InputBar({
   }, [value]);
 
   React.useEffect(() => {
-    onHeightChange?.(estimatedComposerHeight);
-  }, [estimatedComposerHeight, onHeightChange]);
+    reportComposerHeight(estimatedComposerHeight);
+  }, [estimatedComposerHeight, reportComposerHeight]);
+
+  React.useEffect(() => {
+    if (imageAttachmentCount <= 1) {
+      setAttachmentModeSelectorOpen(false);
+      setHasAttachmentModeOverride(false);
+    }
+    if (hasSingleImageAttachment && attachmentRole !== "reference") {
+      onAttachmentRoleChange("reference");
+    }
+  }, [attachmentRole, hasSingleImageAttachment, imageAttachmentCount, onAttachmentRoleChange]);
+
+  React.useEffect(() => {
+    if (!showAutoDetectAttachmentMode || hasAttachmentModeOverride || attachmentRole === "reference") return;
+    onAttachmentRoleChange("reference");
+  }, [attachmentRole, hasAttachmentModeOverride, onAttachmentRoleChange, showAutoDetectAttachmentMode]);
+
+  function handleAttachmentRoleOverride(role: ChatAttachmentGroupRole) {
+    setHasAttachmentModeOverride(true);
+    onAttachmentRoleChange(role);
+  }
 
   const shellStyle = {
-    bottom: bottomAnim,
-    borderRadius: focusAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [22, 20],
-    }),
+    borderRadius: shellRadius,
     borderColor: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: ["rgba(255,245,234,0.09)", "rgba(167,139,250,0.34)"],
+      outputRange: ["rgba(255,255,255,0.08)", "rgba(167,139,250,0.24)"],
     }),
     backgroundColor: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: ["rgba(14,17,24,0.9)", "rgba(18,21,28,0.96)"],
+      outputRange: ["rgba(255,255,255,0.06)", "rgba(255,255,255,0.075)"],
     }),
     shadowOpacity: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [0.14, 0.22],
+      outputRange: [0.16, 0.24],
     }),
     shadowRadius: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [12, 18],
+      outputRange: [18, 26],
     }),
-    transform: [
-      {
-        scale: focusAnim.interpolate({
-          inputRange: [0, 1],
-          outputRange: [1, 1.015],
-        }),
-      },
-      {
-        translateY: focusAnim.interpolate({
-          inputRange: [0, 1],
-          outputRange: [0, -1],
-        }),
-      },
-    ],
+  } as const;
+
+  const glassTintStyle = {
+    backgroundColor: focusAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: ["rgba(255,255,255,0.015)", "rgba(167,139,250,0.045)"],
+    }),
+  } as const;
+
+  const focusRimStyle = {
+    borderColor: focusAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: ["rgba(255,255,255,0.08)", "rgba(167,139,250,0.28)"],
+    }),
+    opacity: focusAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.58, 1],
+    }),
   } as const;
 
   const menuTrayStyle = {
-    maxHeight: menuAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, 78],
-    }),
     opacity: menuAnim,
     transform: [
       {
         translateY: menuAnim.interpolate({
           inputRange: [0, 1],
-          outputRange: [6, 0],
+          outputRange: [8, 0],
+        }),
+      },
+      {
+        scale: menuAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.97, 1],
         }),
       },
     ],
   } as const;
 
   const sendOpacity = sendVisibilityAnim;
-const sendScale = sendVisibilityAnim.interpolate({
-  inputRange: [0, 1],
-  outputRange: [0.85, 1],
-});
+  const sendScale = sendVisibilityAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.85, 1],
+  });
+  const sendIconColor = canSend ? "#10131A" : "#EAF6FF";
+  const showPlaceholder = !value;
   const micOpacity = sendVisibilityAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [1, 0],
@@ -213,10 +307,7 @@ const sendScale = sendVisibilityAnim.interpolate({
   function handleContentSizeChange(
     event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
   ) {
-    const nextHeight = Math.max(
-      BASE_INPUT_HEIGHT,
-      Math.min(MAX_INPUT_HEIGHT, Math.ceil(event.nativeEvent.contentSize.height)),
-    );
+    const nextHeight = heightFromContentSize(event.nativeEvent.contentSize.height);
     if (Math.abs(nextHeight - inputHeight) > 1) {
       setInputHeight(nextHeight);
     }
@@ -249,72 +340,122 @@ const sendScale = sendVisibilityAnim.interpolate({
         useNativeDriver: true,
       }),
     ]).start();
+    setMenuOpen(false);
     setInputHeight(BASE_INPUT_HEIGHT);
     onSend();
   }
 
+  function handleShellLayout(event: LayoutChangeEvent) {
+    reportComposerHeight(event.nativeEvent.layout.height);
+  }
+
   return (
-    <Animated.View
+    <Reanimated.View
+      onLayout={handleShellLayout}
       pointerEvents="box-none"
       style={[
         styles.shell,
         {
-          left: layout.horizontalPadding,
-          right: layout.horizontalPadding,
+          left: composerSideInset,
+          right: composerSideInset,
         },
-        shellStyle,
+        liveBottomStyle,
       ]}
     >
-      <BlurView intensity={54} tint="dark" style={StyleSheet.absoluteFill} />
+      {menuOpen ? (
+        <Pressable
+          accessibilityLabel="Close attachment menu"
+          accessibilityRole="button"
+          onPress={() => setMenuOpen(false)}
+          style={[
+            styles.menuDismissLayer,
+            {
+              left: -composerSideInset - 16,
+              right: -composerSideInset - 16,
+            },
+          ]}
+        />
+      ) : null}
+      <Animated.View
+        pointerEvents={menuOpen ? "auto" : "none"}
+        style={[
+          styles.menuPopover,
+          {
+            left: ATTACHMENT_MENU_LEFT,
+            bottom: composerHeight + ATTACHMENT_MENU_GAP,
+          },
+          menuTrayStyle,
+        ]}
+      >
+        <View style={styles.menuPopoverCard}>
+          <BlurView intensity={Platform.OS === "ios" ? 72 : 54} tint="dark" style={StyleSheet.absoluteFill} />
+          <View pointerEvents="none" style={styles.menuPopoverTint} />
+          <AttachmentOption
+            label="Photo Library"
+            icon="images-outline"
+            onPress={() => {
+              setMenuOpen(false);
+              onPickImages();
+            }}
+            colors={colors}
+          />
+          <View style={styles.menuDivider} />
+          <AttachmentOption
+            label="Camera"
+            icon="camera-outline"
+            onPress={() => {
+              setMenuOpen(false);
+              onTakePhoto();
+            }}
+            colors={colors}
+          />
+        </View>
+        <View pointerEvents="none" style={styles.menuCaret} />
+      </Animated.View>
+      <Animated.View style={[styles.shellSurface, { borderRadius: shellRadius }, shellStyle]}>
+      <BlurView intensity={Platform.OS === "ios" ? 76 : 58} tint="dark" style={StyleSheet.absoluteFill} />
       <Animated.View
         pointerEvents="none"
         style={[
           StyleSheet.absoluteFill,
-          {
-            borderRadius: 22,
-            borderWidth: 1,
-            borderColor: "rgba(167,139,250,0.42)",
-            opacity: focusAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0, 1],
-            }),
-          },
+          styles.glassTint,
+          { borderRadius: shellRadius },
+          glassTintStyle,
         ]}
       />
-      <Pressable onPress={handleComposerPress} style={styles.chrome}>
-        {attachments.length ? (
+      <View pointerEvents="none" style={styles.topHighlight} />
+      <View pointerEvents="none" style={styles.bottomShade} />
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          styles.focusRim,
+          {
+            borderRadius: shellRadius,
+          },
+          focusRimStyle,
+        ]}
+      />
+      <Pressable
+        onPress={handleComposerPress}
+        style={[styles.chrome, hasAttachments ? styles.chromeWithAttachments : null]}
+      >
+        {hasAttachments ? (
           <View style={styles.attachmentRail}>
-            <View style={styles.attachmentHeader}>
-              <Text style={styles.attachmentLabel}>ATTACHMENTS</Text>
-              {(["same_item", "separate_items", "reference"] as const).map((role) => (
-                <AuraPressable
-                  key={role}
-                  onPress={() => onAttachmentRoleChange(role)}
-                  haptic="selection"
-                  hapticTrigger="press"
-                  pressedScale={0.96}
-                  pressedOpacity={0.88}
-                  style={[
-                    styles.attachmentRoleChip,
-                    attachmentRole === role ? styles.attachmentRoleChipActive : null,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.attachmentRoleText,
-                      attachmentRole === role ? styles.attachmentRoleTextActive : null,
-                    ]}
-                  >
-                    {getAttachmentGroupingLabel(role)}
-                  </Text>
-                </AuraPressable>
-              ))}
-            </View>
-            <View style={styles.attachmentItems}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.attachmentItems}
+            >
               {attachments.map((attachment) => (
                 <View key={attachment.id} style={styles.attachmentThumb}>
                   {attachment.type === "image" ? (
-                    <Image source={{ uri: attachment.localUri ?? attachment.uri }} style={StyleSheet.absoluteFill} />
+                    <Image
+                      source={{ uri: attachment.localUri ?? attachment.uri }}
+                      resizeMode="cover"
+                      style={StyleSheet.absoluteFill}
+                    />
                   ) : (
                     <View style={styles.attachmentFallback}>
                       <Ionicons name="mic" size={16} color={colors.text} />
@@ -330,38 +471,107 @@ const sendScale = sendVisibilityAnim.interpolate({
                   </AuraPressable>
                 </View>
               ))}
-            </View>
+            </ScrollView>
+            {showAutoDetectAttachmentMode ? (
+              <View style={styles.attachmentModeRow}>
+                <AuraPressable
+                  onPress={() => setAttachmentModeSelectorOpen((current) => !current)}
+                  haptic="selection"
+                  hapticTrigger="press"
+                  pressedScale={0.97}
+                  pressedOpacity={0.88}
+                  accessibilityRole="button"
+                  accessibilityLabel="Auto-detect attachment grouping"
+                  style={[
+                    styles.autoDetectChip,
+                    !hasAttachmentModeOverride ? styles.autoDetectChipActive : null,
+                  ]}
+                >
+                  <Ionicons
+                    name={attachmentModeSelectorOpen ? "chevron-up" : "sparkles-outline"}
+                    size={12}
+                    color={hasAttachmentModeOverride ? "rgba(244,248,255,0.68)" : "#F4FBFF"}
+                  />
+                  <Text
+                    style={[
+                      styles.autoDetectText,
+                      !hasAttachmentModeOverride ? styles.autoDetectTextActive : null,
+                    ]}
+                  >
+                    Auto-detect
+                  </Text>
+                </AuraPressable>
+              </View>
+            ) : null}
+            {showAttachmentModeSelector ? (
+              <View style={styles.attachmentOverrideRow}>
+                <AuraPressable
+                  onPress={() => {
+                    setHasAttachmentModeOverride(false);
+                    onAttachmentRoleChange("reference");
+                  }}
+                  haptic="selection"
+                  hapticTrigger="press"
+                  pressedScale={0.97}
+                  pressedOpacity={0.88}
+                  style={[
+                    styles.attachmentRoleChip,
+                    !hasAttachmentModeOverride ? styles.attachmentRoleChipActive : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.attachmentRoleText,
+                      !hasAttachmentModeOverride ? styles.attachmentRoleTextActive : null,
+                    ]}
+                  >
+                    Auto
+                  </Text>
+                </AuraPressable>
+                {(["same_item", "separate_items", "reference"] as const).map((role) => (
+                  <AuraPressable
+                    key={role}
+                    onPress={() => handleAttachmentRoleOverride(role)}
+                    haptic="selection"
+                    hapticTrigger="press"
+                    pressedScale={0.97}
+                    pressedOpacity={0.88}
+                    style={[
+                      styles.attachmentRoleChip,
+                      hasAttachmentModeOverride && attachmentRole === role ? styles.attachmentRoleChipActive : null,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.attachmentRoleText,
+                        hasAttachmentModeOverride && attachmentRole === role ? styles.attachmentRoleTextActive : null,
+                      ]}
+                    >
+                      {getAttachmentGroupingLabel(role)}
+                    </Text>
+                  </AuraPressable>
+                ))}
+              </View>
+            ) : null}
           </View>
         ) : null}
 
-        <Animated.View pointerEvents={menuOpen ? "auto" : "none"} style={[styles.menuTray, menuTrayStyle]}>
-          <AttachmentOption
-            label="Photo Library"
-            icon="images-outline"
-            onPress={() => {
-              setMenuOpen(false);
-              onPickImages();
-            }}
-            colors={colors}
-          />
-          <AttachmentOption
-            label="Camera"
-            icon="camera-outline"
-            onPress={() => {
-              setMenuOpen(false);
-              onTakePhoto();
-            }}
-            colors={colors}
-          />
-        </Animated.View>
-
-        <Animated.View style={[styles.row, { minHeight: BASE_COMPOSER_HEIGHT - 8 }]}>
+        <Animated.View
+          style={[
+            styles.row,
+            {
+              minHeight: BASE_COMPOSER_HEIGHT - 14,
+              alignItems: isInputExpanded ? "flex-end" : "center",
+            },
+          ]}
+        >
           <View style={styles.iconLane}>
             <AuraPressable
               onPress={() => setMenuOpen((prev) => !prev)}
+              hitSlop={10}
               haptic="selection"
               hapticTrigger="press"
-              pressedScale={0.94}
+              pressedScale={0.95}
               pressedOpacity={0.9}
               style={[
                 styles.sideButton,
@@ -372,8 +582,16 @@ const sendScale = sendVisibilityAnim.interpolate({
             </AuraPressable>
           </View>
 
-          <Animated.View style={[styles.inputSlot, { minHeight: inputHeightAnim }]}>
-            {!value ? (
+          <Animated.View
+            style={[
+              styles.inputSlot,
+              {
+                height: inputHeightAnim,
+                justifyContent: isInputExpanded ? "flex-start" : "center",
+              },
+            ]}
+          >
+            {showPlaceholder ? (
               <View pointerEvents="none" style={styles.placeholderLayer}>
                 <Text numberOfLines={1} style={[styles.placeholderText, { color: colors.textSecondary }]}>
                   {placeholder}
@@ -397,15 +615,18 @@ const sendScale = sendVisibilityAnim.interpolate({
               spellCheck
               returnKeyType="send"
               keyboardAppearance="dark"
-              scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT}
+              scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT - 1}
               selectionColor={colors.aiAccent}
               cursorColor={colors.aiAccent}
               maxLength={600}
+              textAlignVertical="top"
               style={[
                 styles.input,
                 {
                   color: colors.text,
                   height: inputHeight,
+                  maxHeight: MAX_INPUT_HEIGHT,
+                  minHeight: BASE_INPUT_HEIGHT,
                 },
               ]}
             />
@@ -413,46 +634,56 @@ const sendScale = sendVisibilityAnim.interpolate({
 
           <View style={styles.iconLane}>
             <AuraPressable
-              onPress={canSend ? handleSendPress : onMicPress}
-              disabled={loading}
-              haptic={canSend ? "light" : "selection"}
+              onPress={canStop ? onStop : canSend ? handleSendPress : onMicPress}
+              disabled={loading && !canStop}
+              hitSlop={10}
+              haptic={canStop ? "selection" : canSend ? "light" : "selection"}
               hapticTrigger="press"
-              pressedScale={0.94}
+              pressedScale={0.95}
               pressedOpacity={0.9}
+              accessibilityRole="button"
+              accessibilityLabel={canStop ? "Stop generating" : canSend ? "Send message" : "Dictate message"}
               style={[
                 styles.sideButton,
                 styles.trailingButton,
-                canSend ? styles.trailingButtonSend : null,
+                canStop ? styles.trailingButtonStop : canSend ? styles.trailingButtonSend : null,
                 recording && !canSend ? styles.trailingButtonRecording : null,
-                loading ? styles.sideButtonDisabled : null,
+                loading && !canStop ? styles.sideButtonDisabled : null,
               ]}
             >
-              <Animated.View
-                style={{
-                  position: "absolute",
-                  opacity: micOpacity,
-                  transform: [{ scale: micScale }],
-                }}
-              >
-                <Ionicons
-                  name={recording && !canSend ? "stop" : "mic-outline"}
-                  size={17}
-                  color={recording && !canSend ? "#ff8f8f" : colors.text}
-                />
-              </Animated.View>
-              <Animated.View
-                style={{
-                  opacity: sendOpacity,
-                  transform: [{ scale: sendScale }, { translateY: sendMotionAnim }],
-                }}
-              >
-                <Ionicons name="arrow-up" size={16} color="#EAF6FF" />
-              </Animated.View>
+              {canStop ? (
+                <Ionicons name="square" size={13} color={colors.text} />
+              ) : (
+                <>
+                  <Animated.View
+                    style={{
+                      position: "absolute",
+                      opacity: micOpacity,
+                      transform: [{ scale: micScale }],
+                    }}
+                  >
+                    <Ionicons
+                      name={recording && !canSend ? "stop" : "mic-outline"}
+                      size={17}
+                      color={recording && !canSend ? "#ff8f8f" : colors.text}
+                    />
+                  </Animated.View>
+                  <Animated.View
+                    style={{
+                      opacity: sendOpacity,
+                      transform: [{ scale: sendScale }, { translateY: sendMotionAnim }],
+                    }}
+                  >
+                    <Ionicons name="arrow-up" size={17} color={sendIconColor} />
+                  </Animated.View>
+                </>
+              )}
             </AuraPressable>
           </View>
         </Animated.View>
       </Pressable>
-    </Animated.View>
+      </Animated.View>
+    </Reanimated.View>
   );
 }
 
@@ -485,45 +716,68 @@ function AttachmentOption({
 const styles = StyleSheet.create({
   shell: {
     position: "absolute",
+    zIndex: 30,
+    shadowColor: "#8B7CF6",
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 18,
+  },
+  shellSurface: {
     overflow: "hidden",
     borderWidth: 1,
-    zIndex: 30,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 16,
+    borderRadius: 999,
+    zIndex: 2,
+  },
+  glassTint: {
+    borderRadius: 999,
+  },
+  topHighlight: {
+    position: "absolute",
+    left: 24,
+    right: 24,
+    top: 0,
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.22)",
+  },
+  bottomShade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 14,
+    backgroundColor: "rgba(0,0,0,0.12)",
+  },
+  focusRim: {
+    borderWidth: 1,
   },
   chrome: {
+    paddingHorizontal: 10,
+    paddingTop: 6,
+    paddingBottom: 6,
+  },
+  chromeWithAttachments: {
     paddingHorizontal: 11,
-    paddingTop: 5,
-    paddingBottom: 5,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
   attachmentRail: {
-    gap: 4,
+    gap: 6,
     paddingHorizontal: 1,
-    paddingBottom: 3,
-  },
-  attachmentHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  attachmentLabel: {
-    color: auraTheme.textFaint,
-    fontSize: 9.5,
-    fontWeight: "800",
-    letterSpacing: 0.7,
+    paddingBottom: 5,
   },
   attachmentRoleChip: {
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 3,
+    backgroundColor: "rgba(255,255,255,0.038)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.065)",
   },
   attachmentRoleChipActive: {
-    backgroundColor: "rgba(243,190,221,0.14)",
+    backgroundColor: "rgba(167,139,250,0.14)",
+    borderColor: "rgba(167,139,250,0.24)",
   },
   attachmentRoleText: {
-    color: auraTheme.textMuted,
+    color: "rgba(244,248,255,0.62)",
     fontSize: 10,
     fontWeight: "800",
   },
@@ -532,16 +786,17 @@ const styles = StyleSheet.create({
   },
   attachmentItems: {
     flexDirection: "row",
-    gap: 7,
+    gap: 8,
+    paddingRight: 4,
   },
   attachmentThumb: {
-    width: 36,
-    height: 36,
-    borderRadius: 9,
+    width: ATTACHMENT_THUMB_SIZE,
+    height: ATTACHMENT_THUMB_SIZE,
+    borderRadius: 16,
     overflow: "hidden",
-    backgroundColor: auraTheme.surfaceSoft,
+    backgroundColor: "rgba(255,255,255,0.055)",
     borderWidth: 1,
-    borderColor: auraTheme.borderSoft,
+    borderColor: "rgba(255,255,255,0.12)",
   },
   attachmentFallback: {
     flex: 1,
@@ -550,31 +805,108 @@ const styles = StyleSheet.create({
   },
   removeAttachmentButton: {
     position: "absolute",
-    top: 3,
-    right: 3,
-    width: 18,
-    height: 18,
+    top: 4,
+    right: 4,
+    width: 22,
+    height: 22,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.56)",
+    backgroundColor: "rgba(4,5,9,0.68)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
   },
-  menuTray: {
+  attachmentModeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    flexWrap: "wrap",
+  },
+  autoDetectChip: {
+    minHeight: 28,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.035)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  autoDetectChipActive: {
+    backgroundColor: "rgba(167,139,250,0.10)",
+    borderColor: "rgba(167,139,250,0.18)",
+  },
+  autoDetectText: {
+    color: "rgba(244,248,255,0.68)",
+    fontSize: 10.5,
+    fontWeight: "800",
+  },
+  autoDetectTextActive: {
+    color: "#F4FBFF",
+  },
+  attachmentOverrideRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  menuDismissLayer: {
+    position: "absolute",
+    top: -2000,
+    bottom: -300,
+    zIndex: 1,
+  },
+  menuPopover: {
+    position: "absolute",
+    width: ATTACHMENT_MENU_WIDTH,
+    zIndex: 3,
+    shadowColor: "#000",
+    shadowOpacity: 0.24,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 24,
+  },
+  menuPopoverCard: {
     overflow: "hidden",
-    paddingHorizontal: 2,
-    gap: 3,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(18,18,27,0.78)",
+    padding: 6,
+  },
+  menuPopoverTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(167,139,250,0.045)",
+  },
+  menuCaret: {
+    position: "absolute",
+    left: ATTACHMENT_MENU_CARET_LEFT,
+    bottom: -5,
+    width: 12,
+    height: 12,
+    borderRadius: 2,
+    backgroundColor: "rgba(24,24,33,0.92)",
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    transform: [{ rotate: "45deg" }],
+  },
+  menuDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 10,
+    backgroundColor: "rgba(255,255,255,0.08)",
   },
   attachmentOption: {
-    borderRadius: 14,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    backgroundColor: "rgba(255,255,255,0.03)",
-    borderWidth: 1,
-    borderColor: auraTheme.borderSoft,
+    minHeight: 44,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "transparent",
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 3,
   },
   attachmentOptionText: {
     color: "#F0F6FB",
@@ -584,33 +916,45 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 5,
+    borderRadius: 999,
+    borderWidth: 0,
+    paddingHorizontal: 0,
   },
   iconLane: {
-    width: 38,
+    width: 36,
     alignItems: "center",
     justifyContent: "center",
   },
   sideButton: {
     width: 34,
     height: 34,
-    borderRadius: 13,
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.025)",
+    backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(255,245,234,0.07)",
+    borderColor: "rgba(255,255,255,0.08)",
   },
   sideButtonActive: {
-    backgroundColor: "rgba(243,190,221,0.14)",
-    borderColor: "rgba(243,190,221,0.18)",
+    backgroundColor: "rgba(167,139,250,0.14)",
+    borderColor: "rgba(167,139,250,0.22)",
   },
   trailingButton: {
     position: "relative",
   },
   trailingButtonSend: {
-    backgroundColor: "rgba(222,211,248,0.18)",
-    borderColor: "rgba(222,211,248,0.28)",
+    backgroundColor: "rgba(244,240,255,0.94)",
+    borderColor: "rgba(255,255,255,0.72)",
+    shadowColor: "#DED3F8",
+    shadowOpacity: 0.34,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 8,
+  },
+  trailingButtonStop: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(255,255,255,0.16)",
   },
   trailingButtonRecording: {
     backgroundColor: "rgba(255,99,99,0.18)",
@@ -624,38 +968,44 @@ const styles = StyleSheet.create({
   inputSlot: {
     flex: 1,
     minWidth: 0,
-    borderRadius: 0,
+    borderRadius: 999,
     backgroundColor: "transparent",
+    borderWidth: 0,
+    borderColor: "transparent",
     justifyContent: "center",
-    minHeight: 30,
+    minHeight: 32,
     position: "relative",
   },
   placeholderLayer: {
     position: "absolute",
-    left: 4,
-    right: 4,
-    top: 0,
+    left: 10,
+    right: 10,
+    top: 1,
     bottom: 0,
     justifyContent: "center",
   },
   placeholderText: {
     fontFamily: Fonts.sans,
-    fontSize: 14,
+    fontSize: 14.5,
     lineHeight: INPUT_LINE_HEIGHT,
     includeFontPadding: false,
   },
   input: {
-    borderRadius: 0,
-    paddingHorizontal: 4,
-    paddingTop: Platform.OS === "ios" ? 2 : 1,
-    paddingBottom: Platform.OS === "ios" ? 2 : 1,
+    width: "100%",
+    minWidth: 0,
+    flexShrink: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingTop: INPUT_PADDING_TOP,
+    paddingBottom: INPUT_PADDING_BOTTOM,
     marginTop: 0,
     fontFamily: Fonts.sans,
-    fontSize: 14,
+    fontSize: 14.5,
     lineHeight: INPUT_LINE_HEIGHT,
     letterSpacing: 0.1,
     backgroundColor: "transparent",
     includeFontPadding: false,
-    textAlignVertical: Platform.OS === "android" ? "center" : "top",
+    overflow: "hidden",
+    textAlignVertical: "top",
   },
 });

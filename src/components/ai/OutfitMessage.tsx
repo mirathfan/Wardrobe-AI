@@ -4,6 +4,7 @@ import React from "react";
 import { Pressable, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import { ACTION_GAP, CHIP_BORDER_WIDTH, CHIP_HEIGHT, CHIP_HORIZONTAL_PADDING, PILL_RADIUS } from "@/src/constants/auraControls";
 import { getItemImageDecoration, getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -182,17 +183,21 @@ function OutfitMessage({
         })}
       </View>
 
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: ACTION_GAP }}>
         <Pressable
           onPress={onSave}
           disabled={saving}
           style={({ pressed }) => ({
-            paddingHorizontal: 14,
-            paddingVertical: 10,
-            borderRadius: 999,
+            height: CHIP_HEIGHT,
+            minHeight: CHIP_HEIGHT,
+            paddingHorizontal: CHIP_HORIZONTAL_PADDING,
+            paddingVertical: 0,
+            borderRadius: PILL_RADIUS,
             backgroundColor: "rgba(243,223,195,0.16)",
-            borderWidth: 1,
+            borderWidth: CHIP_BORDER_WIDTH,
             borderColor: "rgba(243,223,195,0.24)",
+            alignItems: "center",
+            justifyContent: "center",
             opacity: pressed ? 0.86 : 1,
           })}
         >
@@ -201,12 +206,16 @@ function OutfitMessage({
         <Pressable
           onPress={() => onSwap(outfit)}
           style={({ pressed }) => ({
-            paddingHorizontal: 14,
-            paddingVertical: 10,
-            borderRadius: 999,
+            height: CHIP_HEIGHT,
+            minHeight: CHIP_HEIGHT,
+            paddingHorizontal: CHIP_HORIZONTAL_PADDING,
+            paddingVertical: 0,
+            borderRadius: PILL_RADIUS,
             backgroundColor: auraTheme.surfaceSoft,
-            borderWidth: 1,
+            borderWidth: CHIP_BORDER_WIDTH,
             borderColor: auraTheme.borderSoft,
+            alignItems: "center",
+            justifyContent: "center",
             opacity: pressed ? 0.82 : 1,
           })}
         >
@@ -215,11 +224,15 @@ function OutfitMessage({
         <Pressable
           onPress={() => onMoreLikeThis(outfit)}
           style={({ pressed }) => ({
-            paddingHorizontal: 14,
-            paddingVertical: 10,
-            borderRadius: 999,
-            borderWidth: 1,
+            height: CHIP_HEIGHT,
+            minHeight: CHIP_HEIGHT,
+            paddingHorizontal: CHIP_HORIZONTAL_PADDING,
+            paddingVertical: 0,
+            borderRadius: PILL_RADIUS,
+            borderWidth: CHIP_BORDER_WIDTH,
             borderColor: "rgba(255,255,255,0.04)",
+            alignItems: "center",
+            justifyContent: "center",
             opacity: pressed ? 0.82 : 1,
           })}
         >

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
-import { Animated, FlatList, NativeScrollEvent, NativeSyntheticEvent, View } from "react-native";
+import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -8,6 +8,13 @@ import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLookAction
 import ChatMessage from "./ChatMessage";
 import type { AIMessage } from "./chatTypes";
 import { auraTheme } from "./aiTheme";
+
+const FOLLOW_DISTANCE_THRESHOLD = 96;
+const FOCUS_MESSAGE_VIEW_POSITION = 0.05;
+const FOCUS_MESSAGE_VIEW_OFFSET = 10;
+const FOCUS_ANCHOR_SPACER_RATIO = 1.04;
+const FOCUS_ANCHOR_MIN_SPACER = 520;
+const FOCUS_ANCHOR_LOCK_MS = 520;
 
 const ChatItemSeparator = React.memo(function ChatItemSeparator() {
   return <View style={{ height: 12 }} />;
@@ -67,6 +74,7 @@ export default function ChatList({
   memoryHint,
   contentBottomPadding,
   autoScrollSignal = 0,
+  focusMessageId,
   emptyState,
   onSaveOutfit,
   onMoreLikeThis,
@@ -84,6 +92,7 @@ export default function ChatList({
   memoryHint?: string | null;
   contentBottomPadding: number;
   autoScrollSignal?: number;
+  focusMessageId?: string | null;
   emptyState?: React.ReactElement;
   onSaveOutfit: (outfitId: string) => void;
   onMoreLikeThis: (outfit: import("./chatTypes").ChatOutfit) => void;
@@ -101,24 +110,92 @@ export default function ChatList({
   const listRef = useRef<FlatList<AIMessage>>(null);
   const previousCountRef = useRef(messages.length);
   const hasStreamingMessage = useMemo(() => messages.some((message) => message.streaming), [messages]);
-  const shouldPinToBottomRef = useRef(true);
-  const previousBottomPaddingRef = useRef(contentBottomPadding);
+  const shouldFollowRef = useRef(true);
+  const focusAnchorActiveRef = useRef(false);
+  const userInteractingRef = useRef(false);
   const streamingScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollToIndexRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusAnchorReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [listViewportHeight, setListViewportHeight] = React.useState(0);
+  const [activeFocusAnchorId, setActiveFocusAnchorId] = React.useState<string | null>(null);
   const messageCount = messages.length;
   const lastMessage = messages[messages.length - 1];
   const lastMessageId = lastMessage?.id ?? null;
   const showTypingBubble = loading && !hasStreamingMessage && !!lastMessage && lastMessage.type === "user";
+  const focusedMessageIndex = useMemo(
+    () => (focusMessageId ? messages.findIndex((message) => message.id === focusMessageId) : -1),
+    [focusMessageId, messages],
+  );
+  const isFocusAnchoring =
+    !!focusMessageId &&
+    activeFocusAnchorId === focusMessageId &&
+    focusedMessageIndex >= 0 &&
+    loading;
+  const focusAnchorSpacer = isFocusAnchoring
+    ? Math.max(contentBottomPadding, listViewportHeight * FOCUS_ANCHOR_SPACER_RATIO, FOCUS_ANCHOR_MIN_SPACER)
+    : 0;
 
-  const scrollToLatest = useCallback((animated: boolean) => {
+  const scrollToBottom = useCallback((animated: boolean) => {
     requestAnimationFrame(() => {
       listRef.current?.scrollToEnd({ animated });
+    });
+  }, []);
+
+  const scrollToBottomIfFollowing = useCallback(
+    (animated: boolean) => {
+      if (!shouldFollowRef.current) return;
+      scrollToBottom(animated);
+    },
+    [scrollToBottom],
+  );
+
+  const scrollToFocusedMessage = useCallback((index: number, animated: boolean) => {
+    if (index < 0) return;
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToIndex({
+        index,
+        animated,
+        viewPosition: FOCUS_MESSAGE_VIEW_POSITION,
+        viewOffset: FOCUS_MESSAGE_VIEW_OFFSET,
+      });
     });
   }, []);
 
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height);
-    shouldPinToBottomRef.current = distanceFromBottom < 72;
+    const nearBottom = distanceFromBottom < FOLLOW_DISTANCE_THRESHOLD;
+    if (userInteractingRef.current || nearBottom) {
+      shouldFollowRef.current = nearBottom;
+    }
+  }, []);
+
+  const handleScrollBeginDrag = useCallback(() => {
+    userInteractingRef.current = true;
+    focusAnchorActiveRef.current = false;
+    if (focusAnchorReleaseTimerRef.current) {
+      clearTimeout(focusAnchorReleaseTimerRef.current);
+      focusAnchorReleaseTimerRef.current = null;
+    }
+    setActiveFocusAnchorId(null);
+  }, []);
+
+  const handleScrollEndDrag = useCallback(() => {
+    userInteractingRef.current = false;
+  }, []);
+
+  const handleMomentumScrollBegin = useCallback(() => {
+    userInteractingRef.current = true;
+    focusAnchorActiveRef.current = false;
+    if (focusAnchorReleaseTimerRef.current) {
+      clearTimeout(focusAnchorReleaseTimerRef.current);
+      focusAnchorReleaseTimerRef.current = null;
+    }
+    setActiveFocusAnchorId(null);
+  }, []);
+
+  const handleMomentumScrollEnd = useCallback(() => {
+    userInteractingRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -126,39 +203,73 @@ export default function ChatList({
       if (streamingScrollTimerRef.current) {
         clearTimeout(streamingScrollTimerRef.current);
       }
+      if (scrollToIndexRetryRef.current) {
+        clearTimeout(scrollToIndexRetryRef.current);
+      }
+      if (focusAnchorReleaseTimerRef.current) {
+        clearTimeout(focusAnchorReleaseTimerRef.current);
+      }
     };
   }, []);
 
   useEffect(() => {
     const shouldAnimate = messageCount >= previousCountRef.current;
     previousCountRef.current = messageCount;
+    if (isFocusAnchoring) {
+      const timer = setTimeout(() => scrollToFocusedMessage(focusedMessageIndex, false), 30);
+      return () => clearTimeout(timer);
+    }
+    if (focusMessageId && focusedMessageIndex >= 0 && lastMessageId === focusMessageId) {
+      return;
+    }
     const timer = setTimeout(() => {
-      if (shouldPinToBottomRef.current || hasStreamingMessage) {
-        scrollToLatest(shouldAnimate && !hasStreamingMessage);
-      }
+      scrollToBottomIfFollowing(shouldAnimate && !hasStreamingMessage);
     }, 30);
     return () => clearTimeout(timer);
-  }, [hasStreamingMessage, lastMessageId, loading, messageCount, scrollToLatest]);
+  }, [
+    focusMessageId,
+    focusedMessageIndex,
+    hasStreamingMessage,
+    isFocusAnchoring,
+    lastMessageId,
+    loading,
+    messageCount,
+    scrollToBottomIfFollowing,
+    scrollToFocusedMessage,
+  ]);
 
   useEffect(() => {
-    const paddingDelta = Math.abs(contentBottomPadding - previousBottomPaddingRef.current);
-    previousBottomPaddingRef.current = contentBottomPadding;
-    if (!messageCount || paddingDelta < 8) return;
+    if (!focusMessageId || focusedMessageIndex < 0) return;
+    focusAnchorActiveRef.current = true;
+    shouldFollowRef.current = false;
+    setActiveFocusAnchorId(focusMessageId);
+    if (focusAnchorReleaseTimerRef.current) {
+      clearTimeout(focusAnchorReleaseTimerRef.current);
+    }
+    const focusTimer = setTimeout(() => scrollToFocusedMessage(focusedMessageIndex, true), 50);
+    focusAnchorReleaseTimerRef.current = setTimeout(() => {
+      focusAnchorActiveRef.current = false;
+      focusAnchorReleaseTimerRef.current = null;
+    }, FOCUS_ANCHOR_LOCK_MS);
+    return () => clearTimeout(focusTimer);
+  }, [focusMessageId, focusedMessageIndex, scrollToFocusedMessage]);
 
-    shouldPinToBottomRef.current = true;
-    const timer = setTimeout(() => scrollToLatest(false), 90);
-    return () => clearTimeout(timer);
-  }, [contentBottomPadding, messageCount, scrollToLatest]);
+  useEffect(() => {
+    if (loading || !activeFocusAnchorId) return;
+    focusAnchorActiveRef.current = false;
+    if (focusAnchorReleaseTimerRef.current) {
+      clearTimeout(focusAnchorReleaseTimerRef.current);
+      focusAnchorReleaseTimerRef.current = null;
+    }
+    shouldFollowRef.current = false;
+    setActiveFocusAnchorId(null);
+  }, [activeFocusAnchorId, loading]);
 
   useEffect(() => {
     if (!messageCount) return;
-    shouldPinToBottomRef.current = true;
-    const timers = [
-      setTimeout(() => scrollToLatest(false), 140),
-      setTimeout(() => scrollToLatest(false), 420),
-    ];
-    return () => timers.forEach(clearTimeout);
-  }, [autoScrollSignal, messageCount, scrollToLatest]);
+    const timer = setTimeout(() => scrollToBottomIfFollowing(false), 140);
+    return () => clearTimeout(timer);
+  }, [autoScrollSignal, messageCount, scrollToBottomIfFollowing]);
 
   const contentContainerStyle = useMemo(
     () => ({
@@ -171,49 +282,54 @@ export default function ChatList({
     [contentBottomPadding, messageCount],
   );
 
-  const contentInset = useMemo(
-    () => ({ bottom: Math.max(4, contentBottomPadding * 0.18) }),
-    [contentBottomPadding],
-  );
-
   const scrollIndicatorInsets = useMemo(
-    () => ({ bottom: contentBottomPadding + 6 }),
+    () => ({ bottom: Math.max(8, contentBottomPadding - 8) }),
     [contentBottomPadding],
   );
 
   const handleContentSizeChange = useCallback(() => {
-    if (shouldPinToBottomRef.current || hasStreamingMessage) {
+    if (isFocusAnchoring) {
+      return;
+    }
+    if (shouldFollowRef.current) {
       if (hasStreamingMessage) {
         if (streamingScrollTimerRef.current) return;
         streamingScrollTimerRef.current = setTimeout(() => {
           streamingScrollTimerRef.current = null;
-          scrollToLatest(false);
+          scrollToBottomIfFollowing(false);
         }, 80);
         return;
       }
-      scrollToLatest(false);
+      scrollToBottomIfFollowing(false);
     }
-  }, [hasStreamingMessage, scrollToLatest]);
+  }, [hasStreamingMessage, isFocusAnchoring, scrollToBottomIfFollowing]);
 
-  const handleLayout = useCallback(() => {
-    if (messageCount && (shouldPinToBottomRef.current || hasStreamingMessage)) {
-      scrollToLatest(false);
-    }
-  }, [hasStreamingMessage, messageCount, scrollToLatest]);
+  const handleListLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+    setListViewportHeight((current) => (Math.abs(current - nextHeight) > 1 ? nextHeight : current));
+  }, []);
+
+  const handleScrollToIndexFailed = useCallback(
+    (info: { averageItemLength: number; index: number }) => {
+      if (scrollToIndexRetryRef.current) {
+        clearTimeout(scrollToIndexRetryRef.current);
+      }
+      const offset = Math.max(0, info.averageItemLength * info.index - FOCUS_MESSAGE_VIEW_OFFSET);
+      listRef.current?.scrollToOffset({ offset, animated: true });
+      scrollToIndexRetryRef.current = setTimeout(() => {
+        scrollToIndexRetryRef.current = null;
+        scrollToFocusedMessage(info.index, true);
+      }, 120);
+    },
+    [scrollToFocusedMessage],
+  );
 
   const keyExtractor = useCallback((item: AIMessage) => item.id, []);
 
   const renderItem = useCallback(
-    ({ item, index }: { item: AIMessage; index: number }) => {
-      const isLastMessage = index === messageCount - 1;
-      const hasOutfitActions =
-        (item.kind === "aura_card" && !!(item.aura?.look || item.aura?.lookOptions?.length)) ||
-        (item.type === "outfit" && !!item.outfits?.length);
-      const finalOutfitSpacer =
-        isLastMessage && hasOutfitActions ? Math.max(148, contentBottomPadding * 0.5) : 0;
-
+    ({ item }: { item: AIMessage }) => {
       return (
-        <View style={{ paddingBottom: finalOutfitSpacer }}>
+        <View>
           <ChatMessage
             colors={colors}
             message={item}
@@ -233,10 +349,8 @@ export default function ChatList({
     },
     [
       colors,
-      contentBottomPadding,
       itemsById,
       memoryHint,
-      messageCount,
       onAuraAction,
       onAuraCandidateAction,
       onAuraLaundryAction,
@@ -249,16 +363,20 @@ export default function ChatList({
   );
 
   const listFooter = useMemo(
-    () =>
-      showTypingBubble ? (
-        <View style={{ marginTop: 10, marginLeft: 10, gap: 8 }}>
-          <TypingBubble colors={colors} />
-          <View style={{ height: Math.max(96, contentBottomPadding * 0.58) }} />
+    () => {
+      if (!showTypingBubble && !focusAnchorSpacer) return null;
+      return (
+        <View>
+          {showTypingBubble ? (
+            <View style={{ marginTop: 10, marginLeft: 10, marginBottom: 8 }}>
+              <TypingBubble colors={colors} />
+            </View>
+          ) : null}
+          {focusAnchorSpacer ? <View style={{ height: focusAnchorSpacer }} /> : null}
         </View>
-      ) : (
-        <View style={{ height: Math.max(112, contentBottomPadding * 0.5) }} />
-      ),
-    [colors, contentBottomPadding, showTypingBubble],
+      );
+    },
+    [colors, focusAnchorSpacer, showTypingBubble],
   );
 
   return (
@@ -270,17 +388,21 @@ export default function ChatList({
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
       onScroll={handleScroll}
+      onScrollBeginDrag={handleScrollBeginDrag}
+      onScrollEndDrag={handleScrollEndDrag}
+      onMomentumScrollBegin={handleMomentumScrollBegin}
+      onMomentumScrollEnd={handleMomentumScrollEnd}
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
-      onLayout={handleLayout}
+      onLayout={handleListLayout}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
       contentContainerStyle={contentContainerStyle}
-      contentInset={contentInset}
       scrollIndicatorInsets={scrollIndicatorInsets}
       ListEmptyComponent={emptyState ?? null}
       renderItem={renderItem}
       ItemSeparatorComponent={ChatItemSeparator}
       ListFooterComponent={listFooter}
-      removeClippedSubviews
+      removeClippedSubviews={false}
       initialNumToRender={12}
       maxToRenderPerBatch={8}
       updateCellsBatchingPeriod={40}

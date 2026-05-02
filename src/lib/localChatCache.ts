@@ -6,8 +6,9 @@ const MAX_SESSIONS = 6;
 const DEBUG_LOCAL_CHAT_CACHE = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 
 function logSession(event: string, data: Record<string, unknown>) {
-  if (!DEBUG_LOCAL_CHAT_CACHE) return;
-  console.log(`[AIChatSession] ${event}`, data);
+  if (__DEV__ && DEBUG_LOCAL_CHAT_CACHE) {
+    console.log(`[AIChatSession] ${event}`, data);
+  }
 }
 
 export type LocalChatSession<T> = {

@@ -1,11 +1,16 @@
 import React from "react";
-import { Animated, ScrollView, Text } from "react-native";
+import { Animated, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Fonts } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 import { auraTheme } from "./aiTheme";
+
+const TOP_CHIP_HEIGHT = 34;
+const TOP_CHIP_RADIUS = 17;
+const TOP_CHIP_GAP = 8;
+const TOP_CHIP_HORIZONTAL_PADDING = 12;
 
 const DEFAULT_CHIPS = [
   "What should I wear today?",
@@ -32,7 +37,7 @@ export default function AuraQuickChips({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ gap: 6, paddingHorizontal: 20, paddingRight: 22 }}
+      contentContainerStyle={{ gap: TOP_CHIP_GAP, paddingHorizontal: 20, paddingRight: 22 }}
     >
       {source.map((item, index) =>
         typeof item === "string" ? (
@@ -128,6 +133,7 @@ function Chip({
 }) {
   const opacity = React.useRef(new Animated.Value(0)).current;
   const translateY = React.useRef(new Animated.Value(6)).current;
+  const isTrainingChip = label === "Train AURA faster";
 
   React.useEffect(() => {
     Animated.parallel([
@@ -156,23 +162,46 @@ function Chip({
         pressedOpacity={0.9}
         style={{
           maxWidth: 210,
-          minHeight: 34,
+          height: TOP_CHIP_HEIGHT,
+          minHeight: TOP_CHIP_HEIGHT,
+          alignItems: "center",
           justifyContent: "center",
-          paddingHorizontal: 12,
-          paddingVertical: 7,
-          borderRadius: 999,
-          backgroundColor: "rgba(255,255,255,0.035)",
-          borderWidth: 1,
-          borderColor: auraTheme.borderSoft,
+          paddingHorizontal: TOP_CHIP_HORIZONTAL_PADDING,
+          paddingVertical: 0,
+          borderRadius: TOP_CHIP_RADIUS,
+          backgroundColor: isTrainingChip ? "rgba(124,92,255,0.08)" : "rgba(255,255,255,0.026)",
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: isTrainingChip ? "rgba(124,92,255,0.18)" : "rgba(255,255,255,0.055)",
         }}
       >
-        <Text
-          numberOfLines={1}
-          ellipsizeMode="tail"
-          style={{ color: auraTheme.textMuted, fontSize: 12, fontWeight: "700", fontFamily: Fonts.sans }}
-        >
-          {label}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          {isTrainingChip ? (
+            <View
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 999,
+                backgroundColor: colors.lightPurple,
+                shadowColor: colors.softPurple,
+                shadowOpacity: 0.45,
+                shadowRadius: 6,
+                shadowOffset: { width: 0, height: 0 },
+              }}
+            />
+          ) : null}
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={{
+              color: isTrainingChip ? colors.lightPurple : auraTheme.textMuted,
+              fontSize: 11.5,
+              fontWeight: "700",
+              fontFamily: Fonts.sans,
+            }}
+          >
+            {label}
+          </Text>
+        </View>
       </AuraPressable>
     </Animated.View>
   );

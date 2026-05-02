@@ -5,6 +5,15 @@ import { Animated, FlatList, Image, NativeScrollEvent, NativeSyntheticEvent, Pre
 import { Fonts } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
+import {
+  ACTION_GAP,
+  CHIP_BORDER_WIDTH,
+  CHIP_HEIGHT,
+  CHIP_HORIZONTAL_PADDING,
+  CTA_HEIGHT,
+  CTA_HORIZONTAL_PADDING,
+  PILL_RADIUS,
+} from "@/src/constants/auraControls";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { sanitizeDisplayText } from "@/src/lib/text";
@@ -214,8 +223,9 @@ function AuraReplyCard({
     );
     const railGap = 10;
     const railStride = railWidth + railGap;
-    const selectedLook = looks[selectedLookIndex] ?? looks[0];
-    const selectedMeta = getLookOptionMeta(selectedLookIndex, selectedLook);
+    const effectiveLookIndex = looks[selectedLookIndex] ? selectedLookIndex : 0;
+    const selectedLook = looks[effectiveLookIndex] ?? looks[0];
+    const selectedMeta = getLookOptionMeta(effectiveLookIndex, selectedLook);
     const horizontalInset = Math.max(0, (windowWidth - railWidth) / 2 - layout.horizontalPadding - sidePeek);
     const feedbackKey = String(selectedMeta.optionId ?? `look-option-${selectedLookIndex + 1}`);
     const selectedFeedback = feedbackState[feedbackKey] ?? null;
@@ -248,15 +258,6 @@ function AuraReplyCard({
       <View style={{ gap: 8, width: "100%" }}>
         {looks.length > 1 ? (
           <View style={{ gap: 10 }}>
-            {selectedLook ? (
-              <FeedbackRail
-                colors={colors}
-                selected={selectedFeedback}
-                onDislike={() => handleFeedback("dislike")}
-                onTryAgain={handleTryAgain}
-                onLike={() => handleFeedback("like")}
-              />
-            ) : null}
             <AnimatedFlatList
               data={looks}
               keyExtractor={getAuraLookStableKey}
@@ -347,29 +348,6 @@ function AuraReplyCard({
           </View>
         ) : (
           <View style={{ gap: 10 }}>
-            <FeedbackRail
-              colors={colors}
-              selected={feedbackState[String(getLookOptionMeta(0, looks[0]).optionId ?? "look-option-1")] ?? null}
-              onDislike={() => {
-                const option = getLookOptionMeta(0, looks[0]);
-                const key = String(option.optionId ?? "look-option-1");
-                setFeedbackState((prev) => ({
-                  ...prev,
-                  [key]: prev[key] === "dislike" ? null : "dislike",
-                }));
-                onAction?.("notMyVibe", looks[0], option);
-              }}
-              onTryAgain={() => onAction?.("showMoreLikeThis", looks[0], getLookOptionMeta(0, looks[0]))}
-              onLike={() => {
-                const option = getLookOptionMeta(0, looks[0]);
-                const key = String(option.optionId ?? "look-option-1");
-                setFeedbackState((prev) => ({
-                  ...prev,
-                  [key]: prev[key] === "like" ? null : "like",
-                }));
-                onAction?.("likeLook", looks[0], option);
-              }}
-            />
             <AuraLookCard
               colors={colors}
               look={looks[0]}
@@ -389,6 +367,15 @@ function AuraReplyCard({
           </View>
         )}
         <LevelThisUpSection suggestions={levelUpSuggestions} colors={colors} />
+        {selectedLook ? (
+          <FeedbackRail
+            colors={colors}
+            selected={selectedFeedback}
+            onDislike={() => handleFeedback("dislike")}
+            onTryAgain={handleTryAgain}
+            onLike={() => handleFeedback("like")}
+          />
+        ) : null}
       </View>
     );
   }
@@ -398,44 +385,22 @@ function AuraReplyCard({
         style={{
           borderRadius: layout.mediumRadius + 4,
           borderWidth: 1,
-          borderColor: auraTheme.borderSoft,
-          backgroundColor: auraTheme.surface,
-          paddingHorizontal: layout.cardPadding - 5,
-          paddingVertical: layout.screenSize === "compact" ? 9 : 10,
-          gap: 7,
+          borderColor: "rgba(255,255,255,0.105)",
+          backgroundColor: "rgba(255,255,255,0.045)",
+          paddingHorizontal: layout.cardPadding - 4,
+          paddingVertical: layout.screenSize === "compact" ? 12 : 14,
+          gap: 12,
           width: "100%",
-          ...auraShadow(0.08),
+          ...auraShadow(0.1),
         }}
       >
-      <View
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 16,
-          right: 16,
-          height: 1,
-          backgroundColor: auraTheme.borderAccent,
-        }}
-      />
-
-      <View style={{ gap: 4 }}>
-        <Text
-          style={{
-            color: auraTheme.textFaint,
-            fontSize: 10.5,
-            fontWeight: "700",
-            letterSpacing: 0.95,
-            fontFamily: Fonts.sans,
-          }}
-        >
-          AURA
-        </Text>
+      <View style={{ gap: 5 }}>
         <Text
           style={{
             color: colors.text,
-            fontSize: 16,
-            lineHeight: 20,
-            fontWeight: "700",
+            fontSize: 16.5,
+            lineHeight: 21,
+            fontWeight: "800",
             letterSpacing: 0,
             fontFamily: Fonts.sans,
           }}
@@ -445,7 +410,7 @@ function AuraReplyCard({
       </View>
 
       {!!ownedPieces.length && !data.look ? (
-        <Group title="FROM YOUR CLOSET" titleColor={colors.softPurple}>
+        <Group title="From your closet" tone="owned">
           {ownedPieces.slice(0, 5).map((item) => (
             <Tag key={`owned-${item}`} label={sanitizeDisplayText(item)} colors={colors} tone="owned" />
           ))}
@@ -453,7 +418,7 @@ function AuraReplyCard({
       ) : null}
 
       {!!recommendedAdditions.length && !data.look ? (
-        <Group title="ADD TO COMPLETE IT" titleColor={auraTheme.textMuted}>
+        <Group title="Add to complete it" tone="suggested">
           {recommendedAdditions.slice(0, 5).map((item) => (
             <Tag key={`add-${item}`} label={sanitizeDisplayText(item)} colors={colors} tone="suggested" />
           ))}
@@ -469,11 +434,11 @@ function AuraReplyCard({
       ) : null}
 
       {!!data.reason ? (
-        <MetaRow label="WHY" value={data.reason} colors={colors} />
+        <MetaRow label="Why it works" value={data.reason} colors={colors} />
       ) : null}
 
       {!!data.swapSuggestion && !data.look ? (
-        <MetaRow label="SWAP" value={data.swapSuggestion} colors={colors} emphasis />
+        <MetaRow label="Swap idea" value={data.swapSuggestion} colors={colors} emphasis />
       ) : null}
 
       <LevelThisUpSection suggestions={levelUpSuggestions} colors={colors} />
@@ -522,42 +487,60 @@ function LevelThisUpSection({
   return (
     <View
       style={{
-        gap: 8,
-        marginTop: 4,
-        paddingTop: 10,
+        gap: 9,
+        marginTop: 2,
+        paddingTop: 12,
         borderTopWidth: 1,
-        borderTopColor: colors.border,
+        borderTopColor: "rgba(255,255,255,0.08)",
       }}
     >
-      <Text
-        style={{
-          color: auraTheme.textMuted,
-          fontSize: 11,
-          fontWeight: "800",
-          letterSpacing: 0.4,
-          fontFamily: Fonts.sans,
-        }}
-      >
-        Level this up
-      </Text>
+      <View style={{ gap: 2 }}>
+        <Text
+          style={{
+            color: colors.text,
+            fontSize: 13,
+            lineHeight: 17,
+            fontWeight: "800",
+            letterSpacing: 0,
+            fontFamily: Fonts.sans,
+          }}
+        >
+          Smart buys
+        </Text>
+        <Text
+          style={{
+            color: auraTheme.textFaint,
+            fontSize: 11.5,
+            lineHeight: 15,
+            fontWeight: "600",
+            fontFamily: Fonts.sans,
+          }}
+        >
+          Small additions that make this easier to finish.
+        </Text>
+      </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
         {suggestions.map((item) => (
           <View
             key={`level-up-${item.label}`}
             style={{
               borderRadius: 999,
-              paddingHorizontal: 11,
-              paddingVertical: 7,
-              backgroundColor: colors.surfaceSoft,
+              minHeight: 34,
+              paddingHorizontal: 12,
+              paddingVertical: 0,
+              backgroundColor: "rgba(255,255,255,0.045)",
               borderWidth: 1,
-              borderColor: colors.border,
+              borderColor: "rgba(255,255,255,0.1)",
+              justifyContent: "center",
+              maxWidth: "100%",
             }}
           >
             <Text
               style={{
-                color: colors.text,
-                fontSize: 12.5,
-                fontWeight: "600",
+                color: "rgba(245,248,251,0.9)",
+                fontSize: 12,
+                lineHeight: 15,
+                fontWeight: "700",
                 fontFamily: Fonts.sans,
               }}
             >
@@ -614,12 +597,11 @@ function FeedbackRail({
         alignItems: "center",
         justifyContent: "space-between",
         gap: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        borderRadius: 999,
-        backgroundColor: colors.surfaceSoft,
-        borderWidth: 1,
-        borderColor: colors.border,
+        paddingTop: 2,
+        paddingHorizontal: 0,
+        paddingBottom: 0,
+        borderRadius: PILL_RADIUS,
+        backgroundColor: "transparent",
       }}
     >
       <FeedbackChip
@@ -678,21 +660,22 @@ function FeedbackChip({
         onPressOut={() => animateTo(1)}
         style={({ pressed }) => ({
           flex: 1,
+          height: 34,
           minHeight: 34,
-          borderRadius: 999,
+          borderRadius: PILL_RADIUS,
           paddingHorizontal: 10,
-          paddingVertical: 7,
+          paddingVertical: 0,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
           gap: 6,
           backgroundColor: active
             ? label === "Not it"
-              ? "rgba(255,77,79,0.16)"
-              : colors.purpleSurface
-            : colors.chipBackground,
-          borderWidth: 1,
-          borderColor: active ? (label === "Not it" ? "rgba(255,77,79,0.26)" : colors.purpleBorder) : colors.border,
+              ? "rgba(255,77,79,0.1)"
+              : "rgba(124,92,255,0.12)"
+            : "rgba(255,255,255,0.035)",
+          borderWidth: CHIP_BORDER_WIDTH,
+          borderColor: active ? (label === "Not it" ? "rgba(255,77,79,0.22)" : "rgba(167,139,250,0.22)") : "rgba(255,255,255,0.075)",
           opacity: pressed ? 0.88 : 1,
         })}
       >
@@ -704,7 +687,7 @@ function FeedbackChip({
         <Text
           style={{
             color: active ? (label === "Not it" ? colors.danger : colors.text) : auraTheme.textMuted,
-            fontSize: 11.5,
+            fontSize: 11,
             fontWeight: "700",
             fontFamily: Fonts.sans,
           }}
@@ -730,7 +713,7 @@ function LookActionRow({
   if (!onAction) return null;
 
   return (
-    <View style={{ flexDirection: "row", gap: 10 }}>
+    <View style={{ flexDirection: "row", gap: ACTION_GAP }}>
       <ActionButton
         onPress={() => onAction("saveLook", look, option)}
         pressedBackground={colors.ctaCream}
@@ -838,7 +821,7 @@ function OutfitAnalysisCard({
       ) : null}
 
       <View style={{ gap: 8 }}>
-        <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flexDirection: "row", gap: ACTION_GAP }}>
           <ActionButton
             onPress={() => onAction?.({ type: "save_worn_outfit" })}
             pressedBackground={auraTheme.accentTintStrong}
@@ -910,8 +893,9 @@ function ActionButton({
         pressedScale={0.97}
         pressedOpacity={0.96}
         style={({ pressed }) => ({
-          minHeight: 52,
-          borderRadius: 18,
+          minHeight: CTA_HEIGHT,
+          borderRadius: PILL_RADIUS,
+          paddingHorizontal: CTA_HORIZONTAL_PADDING,
           alignItems: "center",
           justifyContent: "center",
           borderWidth: 1,
@@ -928,21 +912,31 @@ function ActionButton({
 
 function Group({
   title,
-  titleColor,
+  tone,
   children,
 }: {
   title: string;
-  titleColor: string;
+  tone: "owned" | "suggested";
   children: React.ReactNode;
 }) {
+  const titleColor = tone === "owned" ? "rgba(214,198,255,0.92)" : "rgba(255,255,255,0.68)";
+
   return (
-    <View style={{ gap: 6 }}>
+    <View
+      style={{
+        gap: 8,
+        paddingTop: tone === "suggested" ? 10 : 0,
+        borderTopWidth: tone === "suggested" ? 1 : 0,
+        borderTopColor: "rgba(255,255,255,0.07)",
+      }}
+    >
       <Text
         style={{
           color: titleColor,
-          fontSize: 10.5,
-          fontWeight: "700",
-          letterSpacing: 0.8,
+          fontSize: 12,
+          lineHeight: 15,
+          fontWeight: "800",
+          letterSpacing: 0,
           fontFamily: Fonts.sans,
         }}
       >
@@ -965,17 +959,16 @@ function MetaRow({
   emphasis?: boolean;
 }) {
   return (
-    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6 }}>
-      <Text style={{ color: auraTheme.textFaint, fontSize: 10.5, fontWeight: "700", letterSpacing: 0.6 }}>
+    <View style={{ gap: 5, paddingTop: 2 }}>
+      <Text style={{ color: auraTheme.textMuted, fontSize: 12, lineHeight: 15, fontWeight: "800", letterSpacing: 0, fontFamily: Fonts.sans }}>
         {label}
       </Text>
       <Text
         style={{
           color: emphasis ? colors.text : colors.textSecondary,
-          fontSize: 12,
-          lineHeight: 17,
-          fontWeight: emphasis ? "500" : "400",
-          flex: 1,
+          fontSize: 13,
+          lineHeight: 19,
+          fontWeight: emphasis ? "700" : "500",
           fontFamily: Fonts.sans,
         }}
       >
@@ -1175,12 +1168,15 @@ function CandidateButton({
         onPressIn={() => animateTo(0.97)}
         onPressOut={() => animateTo(1)}
         style={({ pressed }) => ({
-          borderRadius: 999,
-          paddingHorizontal: 10,
-          paddingVertical: 6,
+          minHeight: CHIP_HEIGHT,
+          borderRadius: PILL_RADIUS,
+          paddingHorizontal: CHIP_HORIZONTAL_PADDING,
+          paddingVertical: 0,
           backgroundColor: pressed ? "rgba(255,255,255,0.12)" : backgroundColor,
-          borderWidth: 1,
+          borderWidth: CHIP_BORDER_WIDTH,
           borderColor,
+          alignItems: "center",
+          justifyContent: "center",
           opacity: disabled ? 0.42 : pressed ? 0.94 : 1,
         })}
       >
@@ -1200,26 +1196,37 @@ function Tag({
   tone: "owned" | "suggested" | "default";
 }) {
   const backgroundColor =
-    tone === "owned" ? auraTheme.accentTint : tone === "suggested" ? auraTheme.surfaceSoft : auraTheme.surfaceSofter;
-  const borderColor = tone === "owned" ? auraTheme.borderAccent : auraTheme.borderSoft;
-  const textColor = tone === "owned" ? "#d7f2ff" : colors.text;
+    tone === "owned"
+      ? "rgba(124,92,255,0.13)"
+      : tone === "suggested"
+        ? "rgba(255,255,255,0.04)"
+        : auraTheme.surfaceSofter;
+  const borderColor =
+    tone === "owned"
+      ? "rgba(167,139,250,0.2)"
+      : "rgba(255,255,255,0.095)";
+  const textColor = tone === "owned" ? "rgba(232,225,255,0.95)" : "rgba(245,248,251,0.9)";
 
   return (
     <View
       style={{
-        paddingHorizontal: 8,
-        paddingVertical: 4,
+        minHeight: 32,
+        paddingHorizontal: 11,
+        paddingVertical: 0,
         borderRadius: 999,
         backgroundColor,
         borderWidth: 1,
         borderColor,
+        justifyContent: "center",
+        maxWidth: "100%",
       }}
     >
       <Text
         style={{
           color: textColor,
-          fontSize: 10,
-          fontWeight: "600",
+          fontSize: 11.5,
+          lineHeight: 15,
+          fontWeight: "700",
           fontFamily: Fonts.sans,
         }}
       >

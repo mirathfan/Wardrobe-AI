@@ -1,8 +1,9 @@
 import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from "expo-image-manipulator";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { addDoc, collection, doc, setDoc, updateDoc } from "firebase/firestore";
 
-import type { ChatAttachment, ChatImageAttachment } from "@/src/components/ai/chatTypes";
+import type { ChatAttachment, ChatAudioAttachment, ChatImageAttachment } from "@/src/components/ai/chatTypes";
 import { removeBackground } from "@/src/bg/removeBackground";
 import { normalizeCutoutImage } from "@/src/lib/cutoutNormalize";
 import { db, storage } from "@/src/lib/firebase";
@@ -15,6 +16,7 @@ const AURA_DRAFT_LOG = "[AURA_DRAFT]";
 const AURA_CUTOUT_LOG = "[AURA_CUTOUT]";
 const MIN_USABLE_CUTOUT_TRANSPARENCY = 0.05;
 const AURA_CUTOUT_TIMEOUT_MS = 25_000;
+const MAX_TRANSCRIPTION_AUDIO_BYTES = 10 * 1024 * 1024;
 const fileSystem = FileSystem as unknown as {
   cacheDirectory?: string | null;
   downloadAsync?: (uri: string, fileUri: string) => Promise<{ uri: string }>;
@@ -61,34 +63,104 @@ function contentTypeForAttachment(attachment: ChatAttachment) {
   return "image/jpeg";
 }
 
-export async function uploadAuraAttachment(uid: string, attachment: ChatAttachment) {
+async function jpegUploadSourceForAttachment(attachment: ChatAttachment) {
   const sourceUri = attachment.localUri || attachment.uri;
   if (!sourceUri) throw new Error("Missing attachment URI.");
+  if (attachment.type !== "image" || /^https?:\/\//i.test(sourceUri)) {
+    return {
+      sourceUri,
+      uploadUri: sourceUri,
+      contentType: contentTypeForAttachment(attachment),
+      extension: extensionForAttachment(attachment),
+      normalized: false,
+      width: attachment.type === "image" ? attachment.width ?? null : null,
+      height: attachment.type === "image" ? attachment.height ?? null : null,
+    };
+  }
+
+  try {
+    const normalized = await ImageManipulator.manipulateAsync(sourceUri, [], {
+      compress: 0.92,
+      format: ImageManipulator.SaveFormat.JPEG,
+    });
+    console.log(AURA_UPLOAD_LOG, "normalized image attachment for upload", {
+      attachmentId: attachment.id,
+      sourceMimeType: attachment.mimeType ?? null,
+      sourceWidth: attachment.width ?? null,
+      sourceHeight: attachment.height ?? null,
+      normalizedWidth: normalized.width ?? null,
+      normalizedHeight: normalized.height ?? null,
+      outputMimeType: "image/jpeg",
+    });
+    return {
+      sourceUri,
+      uploadUri: normalized.uri,
+      contentType: "image/jpeg",
+      extension: "jpg",
+      normalized: true,
+      width: normalized.width ?? attachment.width ?? null,
+      height: normalized.height ?? attachment.height ?? null,
+    };
+  } catch (error) {
+    console.log(AURA_UPLOAD_LOG, "image normalization failed", {
+      attachmentId: attachment.id,
+      sourceMimeType: attachment.mimeType ?? null,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    throw new Error("Unable to prepare that image for AURA. Try a JPEG or PNG photo.");
+  }
+}
+
+export async function uploadAuraAttachment(uid: string, attachment: ChatAttachment) {
+  if (attachment.type === "audio") {
+    throw new Error("Voice input is transcribed as text before sending.");
+  }
+  const uploadSource = await jpegUploadSourceForAttachment(attachment);
+  const sourceUri = uploadSource.sourceUri;
   if (/^https?:\/\//i.test(sourceUri)) return attachment;
 
   console.log(AURA_UPLOAD_LOG, "starting attachment upload", {
     uid,
     attachmentId: attachment.id,
     type: attachment.type,
+    sourceMimeType: attachment.mimeType ?? null,
+    uploadContentType: uploadSource.contentType,
+    normalized: uploadSource.normalized,
   });
-  const blob = await blobFromFileUri(sourceUri);
-  const storagePath = `users/${uid}/auraAttachments/${Date.now()}-${attachment.id}.${extensionForAttachment(attachment)}`;
+  const blob = await blobFromFileUri(uploadSource.uploadUri);
+  const storagePath = `users/${uid}/auraAttachments/${Date.now()}-${attachment.id}.${uploadSource.extension}`;
   const fileRef = ref(storage, storagePath);
   await uploadBytes(fileRef, blob, {
-    contentType: contentTypeForAttachment(attachment),
+    contentType: uploadSource.contentType,
   });
   const uri = await getDownloadURL(fileRef);
   console.log(AURA_UPLOAD_LOG, "attachment upload complete", {
     uid,
     attachmentId: attachment.id,
     type: attachment.type,
+    uploadContentType: uploadSource.contentType,
+    uploadedBytes: typeof blob.size === "number" ? blob.size : null,
     storagePath,
-    uri,
+    uriHost: (() => {
+      try {
+        return new URL(uri).hostname;
+      } catch {
+        return null;
+      }
+    })(),
   });
   return {
     ...attachment,
     uri,
     localUri: attachment.localUri ?? sourceUri,
+    mimeType: uploadSource.contentType,
+    storagePath,
+    ...(attachment.type === "image"
+      ? {
+          width: uploadSource.width,
+          height: uploadSource.height,
+        }
+      : {}),
   };
 }
 
@@ -99,6 +171,38 @@ export async function uploadAuraAttachments(uid: string, attachments: ChatAttach
     types: attachments.map((attachment) => attachment.type),
   });
   return Promise.all(attachments.map((attachment) => uploadAuraAttachment(uid, attachment)));
+}
+
+export async function uploadAuraTranscriptionAudio(
+  uid: string,
+  attachment: Pick<ChatAudioAttachment, "id" | "uri" | "localUri" | "mimeType" | "durationMs">,
+) {
+  const sourceUri = attachment.localUri || attachment.uri;
+  if (!sourceUri) throw new Error("Missing voice recording.");
+  const contentType =
+    attachment.mimeType && (/^audio\//i.test(attachment.mimeType) || attachment.mimeType === "video/mp4")
+      ? attachment.mimeType
+      : "audio/mp4";
+  const blob = await blobFromFileUri(sourceUri);
+  if (typeof blob.size === "number" && blob.size > MAX_TRANSCRIPTION_AUDIO_BYTES) {
+    throw new Error("That voice recording is too large. Try a shorter note.");
+  }
+  const recordingId = String(attachment.id ?? `${Date.now()}`).replace(/[^A-Za-z0-9._-]/g, "-");
+  const storagePath = `users/${uid}/tmp/transcription/${Date.now()}-${recordingId}.m4a`;
+  const fileRef = ref(storage, storagePath);
+  await uploadBytes(fileRef, blob, { contentType });
+  console.log(AURA_UPLOAD_LOG, "temporary transcription audio uploaded", {
+    uid,
+    storagePath,
+    contentType,
+    uploadedBytes: typeof blob.size === "number" ? blob.size : null,
+    durationMs: attachment.durationMs ?? null,
+  });
+  return {
+    storagePath,
+    mimeType: contentType,
+    durationMs: attachment.durationMs ?? null,
+  };
 }
 
 function imageRecordForAttachment(attachment: ChatImageAttachment, isPrimary: boolean) {

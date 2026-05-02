@@ -114,10 +114,24 @@ type AskAuraStreamCallbacks = {
   onStatus?: (status: string) => void;
   onDelta?: (delta: string) => void;
   onFinal?: (data: AuraResponse) => void;
+  signal?: AbortSignal | null;
 };
 
 const STREAM_CHUNK_DELAY_MS = 34;
 const MAX_STREAM_SEGMENT_LENGTH = 12;
+
+function createAuraStreamAbortError() {
+  const error = new Error("AURA stream stopped.");
+  error.name = "AbortError";
+  return error;
+}
+
+export function isAuraStreamAbortError(error: unknown) {
+  const candidate = error as { name?: unknown; message?: unknown };
+  const name = String(candidate?.name ?? "");
+  const message = String(candidate?.message ?? "").toLowerCase();
+  return name === "AbortError" || message.includes("aura stream stopped") || message.includes("aborted");
+}
 
 function getAskAuraStreamUrl() {
   const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
@@ -135,8 +149,19 @@ function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
     attachments: args.attachments?.map((attachment) => ({
       type: attachment.type,
       hasUri: !!attachment.uri,
+      uriHost: (() => {
+        try {
+          return new URL(attachment.uri).hostname;
+        } catch {
+          return null;
+        }
+      })(),
+      mimeType: attachment.mimeType ?? null,
+      storagePath: attachment.storagePath ?? null,
       role: attachment.type === "image" ? attachment.role ?? null : null,
       groupId: attachment.type === "image" ? attachment.groupId ?? null : null,
+      width: attachment.type === "image" ? attachment.width ?? null : null,
+      height: attachment.type === "image" ? attachment.height ?? null : null,
     })),
     clientIntent: args.clientIntent ?? null,
     hasLinkPreview: !!args.linkPreview,
@@ -482,10 +507,11 @@ function splitDeltaForDisplay(delta: string) {
   });
 }
 
-async function emitDeltaSmoothly(delta: string, onDelta?: (delta: string) => void) {
+async function emitDeltaSmoothly(delta: string, onDelta?: (delta: string) => void, signal?: AbortSignal | null) {
   if (!onDelta || !delta) return;
   const parts = splitDeltaForDisplay(delta);
   for (let index = 0; index < parts.length; index += 1) {
+    if (signal?.aborted) throw createAuraStreamAbortError();
     onDelta(parts[index]);
     if (index < parts.length - 1) {
       await sleep(STREAM_CHUNK_DELAY_MS);
@@ -501,6 +527,7 @@ function processEventLines(
   const lines = chunk.split("\n");
   return lines.reduce<Promise<void>>(async (previous, line) => {
     await previous;
+    if (callbacks.signal?.aborted) throw createAuraStreamAbortError();
     const trimmed = line.trim();
     if (!trimmed) return;
     const event = JSON.parse(trimmed) as
@@ -511,7 +538,7 @@ function processEventLines(
 
     if (event.type === "status") callbacks.onStatus?.(event.status);
     if (event.type === "delta") {
-      await emitDeltaSmoothly(event.delta, callbacks.onDelta);
+      await emitDeltaSmoothly(event.delta, callbacks.onDelta, callbacks.signal);
     }
     if (event.type === "final") {
       if (DEBUG_AURA_CLIENT) {
@@ -546,20 +573,53 @@ async function askAuraStreamWithXhr(
 ) {
   return new Promise<AuraResponse>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    xhr.timeout = 30000;
+    const signal = callbacks.signal;
     let processedLength = 0;
     let pendingBuffer = "";
     let finalData: AuraResponse | null = null;
     let isSettled = false;
     let processingQueue = Promise.resolve();
 
+    const cleanupAbortListener = () => {
+      signal?.removeEventListener("abort", handleAbort);
+    };
+
     const settleError = (error: unknown) => {
       if (isSettled) return;
       isSettled = true;
+      cleanupAbortListener();
       reject(error instanceof Error ? error : new Error("AURA stream failed."));
     };
 
+    const settleSuccess = (data: AuraResponse) => {
+      if (isSettled) return;
+      isSettled = true;
+      cleanupAbortListener();
+      resolve(data);
+    };
+
+    const handleAbort = () => {
+      if (isSettled) return;
+      isSettled = true;
+      cleanupAbortListener();
+      try {
+        xhr.abort();
+      } catch {
+        // Ignore platform-specific abort cleanup failures.
+      }
+      reject(createAuraStreamAbortError());
+    };
+
+    if (signal?.aborted) {
+      settleError(createAuraStreamAbortError());
+      return;
+    }
+    signal?.addEventListener("abort", handleAbort, { once: true });
+
     const flushResponseText = () => {
       processingQueue = processingQueue.then(async () => {
+        if (signal?.aborted) throw createAuraStreamAbortError();
         const responseText = xhr.responseText ?? "";
         if (responseText.length <= processedLength) return;
         const nextChunk = responseText.slice(processedLength);
@@ -599,19 +659,13 @@ async function askAuraStreamWithXhr(
             }
 
             if (finalData) {
-              if (!isSettled) {
-                isSettled = true;
-                resolve(finalData);
-              }
+              settleSuccess(finalData);
               return;
             }
 
             const fallback = await askAura(args);
             callbacks.onFinal?.(fallback);
-            if (!isSettled) {
-              isSettled = true;
-              resolve(fallback);
-            }
+            settleSuccess(fallback);
           })
           .catch(settleError);
       }
@@ -632,10 +686,12 @@ export async function askAuraStream(
   callbacks: AskAuraStreamCallbacks = {}
 ): Promise<AuraResponse> {
   const enrichedArgs = sanitizeAuraArgs(await withClientLinkPreview(args));
+  if (callbacks.signal?.aborted) throw createAuraStreamAbortError();
   const currentUser = auth.currentUser;
   const token = await currentUser?.getIdToken();
 
   if (!token) {
+    if (callbacks.signal?.aborted) throw createAuraStreamAbortError();
     logAuraRequest("callable_fallback_no_token", enrichedArgs);
     return askAura(enrichedArgs);
   }
@@ -644,6 +700,7 @@ export async function askAuraStream(
     try {
       return await askAuraStreamWithXhr(enrichedArgs, token, callbacks);
     } catch (error) {
+      if (isAuraStreamAbortError(error)) throw error;
       if (DEBUG_AURA_CLIENT) {
         console.log("[AURA_STREAM_FALLBACK]", "xhr stream failed, using callable fallback", {
           error: error instanceof Error ? error.message : String(error),
@@ -660,6 +717,7 @@ export async function askAuraStream(
   const body = JSON.stringify(enrichedArgs);
   let response: Response;
   try {
+    if (callbacks.signal?.aborted) throw createAuraStreamAbortError();
     response = await fetch(url, {
       method: "POST",
       headers: {
@@ -667,8 +725,10 @@ export async function askAuraStream(
         Authorization: `Bearer ${token}`,
       },
       body,
+      signal: callbacks.signal ?? undefined,
     });
   } catch (error) {
+    if (isAuraStreamAbortError(error)) throw error;
     if (DEBUG_AURA_CLIENT) {
       console.log("[AURA_STREAM_FALLBACK]", "fetch stream failed before response, using callable fallback", {
         error: error instanceof Error ? error.message : String(error),
@@ -705,6 +765,7 @@ export async function askAuraStream(
   let finalData: AuraResponse | null = null;
 
   while (true) {
+    if (callbacks.signal?.aborted) throw createAuraStreamAbortError();
     const { done, value } = await reader.read();
     if (done) break;
 
@@ -723,13 +784,20 @@ export async function askAuraStream(
   return fallback;
 }
 
-export async function transcribeAuraAudio(audioUrl: string): Promise<string> {
+export async function transcribeAuraAudio(params: {
+  storagePath: string;
+  mimeType: string;
+  durationMs?: number | null;
+}): Promise<string> {
   const functions = getFunctions(app);
-  const callable = httpsCallable<{ audioUrl: string }, { ok: boolean; transcript: string }>(
+  const callable = httpsCallable<
+    { storagePath: string; mimeType: string; durationMs?: number | null },
+    { transcript: string }
+  >(
     functions,
     "transcribeAuraAudio"
   );
-  const result = await callable({ audioUrl });
+  const result = await callable(params);
   return result.data.transcript;
 }
 
