@@ -191,7 +191,9 @@ async function removeBackgroundAndroid(
   let lastError: unknown = null;
 
   const isSupported = await isNativeBackgroundRemovalSupported();
-  console.log("[BgRemoval] Android native supported:", isSupported);
+  if (__DEV__) {
+    console.log("[BgRemoval] Android native supported:", isSupported);
+  }
 
   if (!isSupported) {
     throw new Error("Android native background removal is not supported on this device.");
@@ -207,13 +209,15 @@ async function removeBackgroundAndroid(
       const size = changed
         ? await getImageSize(outputUri)
         : { width: null, height: null };
-      console.log("[BgRemoval] Android result", {
-        attempt,
-        outputUri,
-        changed,
-        width: size.width,
-        height: size.height,
-      });
+      if (__DEV__) {
+        console.log("[BgRemoval] Android result", {
+          attempt,
+          outputUri,
+          changed,
+          width: size.width,
+          height: size.height,
+        });
+      }
 
       if (changed) {
         return {
@@ -266,7 +270,9 @@ export async function removeBackground(
   localUri: string,
   options?: RemoveBackgroundOptions
 ): Promise<BackgroundRemovalResult> {
-  console.log("[BgRemoval] Platform:", Platform.OS);
+  if (__DEV__) {
+    console.log("[BgRemoval] Platform:", Platform.OS);
+  }
   const inputUri = await ensureLocalImageUri(localUri);
 
   if (Platform.OS === "android") {
@@ -279,31 +285,41 @@ export async function removeBackground(
   }
 
   if (Platform.OS === "ios") {
-    console.log("[BgRemoval] Skipping cross-platform native path on iOS; using VisionBG");
+    if (__DEV__) {
+      console.log("[BgRemoval] Skipping cross-platform native path on iOS; using VisionBG");
+    }
   }
 
   if (Platform.OS !== "ios") {
-    console.log("[BgRemoval] Falling back to server-side");
+    if (__DEV__) {
+      console.log("[BgRemoval] Falling back to server-side");
+    }
     return originalResult(inputUri);
   }
 
   const available = isVisionBgNativeAvailable();
   const normalizedOptions = normalizeOptions(options);
-  console.log("[VisionBG] removeBackground called", {
-    available,
-    input: inputUri,
-    originalInput: localUri,
-    options: normalizedOptions,
-  });
+  if (__DEV__) {
+    console.log("[VisionBG] removeBackground called", {
+      available,
+      input: inputUri,
+      originalInput: localUri,
+      options: normalizedOptions,
+    });
+  }
 
   if (!available) {
-    console.log("[BgRemoval] Falling back to server-side");
+    if (__DEV__) {
+      console.log("[BgRemoval] Falling back to server-side");
+    }
     return originalResult(inputUri);
   }
 
   try {
     const result = await removeBackgroundNative(inputUri, normalizedOptions);
-    console.log("[VisionBG] native result raw:", result);
+    if (__DEV__) {
+      console.log("[VisionBG] native result raw:", result);
+    }
 
     const rawOut = String((result as any)?.uri ?? "").trim();
     const width = Number((result as any)?.width ?? 0) || null;
@@ -332,19 +348,21 @@ export async function removeBackground(
       Number((result as any)?.transparentPixelCount ?? 0) || 0;
     const outputUri = normalizeFileUri(rawOut);
 
-    console.log("[VisionBG] parsed output", {
-      rawOut,
-      outputUri,
-      width,
-      height,
-      maskUri,
-      contentBounds,
-      hasAlphaChannel,
-      hasTransparency,
-      transparentPixelRatio,
-      transparentPixelCount,
-      changed: outputUri && outputUri !== normalizeFileUri(inputUri),
-    });
+    if (__DEV__) {
+      console.log("[VisionBG] parsed output", {
+        rawOut,
+        outputUri,
+        width,
+        height,
+        maskUri,
+        contentBounds,
+        hasAlphaChannel,
+        hasTransparency,
+        transparentPixelRatio,
+        transparentPixelCount,
+        changed: outputUri && outputUri !== normalizeFileUri(inputUri),
+      });
+    }
 
     if (!outputUri) {
       throw new Error(
@@ -374,11 +392,15 @@ export async function removeBackground(
       });
     }
 
-    console.log("[BgRemoval] Falling back to server-side");
+    if (__DEV__) {
+      console.log("[BgRemoval] Falling back to server-side");
+    }
     return originalResult(inputUri);
   } catch (error) {
     console.warn("[VisionBG] FAILED; returning original uri", error);
-    console.log("[BgRemoval] Falling back to server-side");
+    if (__DEV__) {
+      console.log("[BgRemoval] Falling back to server-side");
+    }
     return originalResult(inputUri);
   }
 }

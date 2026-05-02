@@ -74,8 +74,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
         style={styles.screen}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <React.Profiler id="AddItemWizard" onRender={() => {}}>
-          <View style={styles.container}>
+        <View style={styles.container}>
           <ScrollView
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
@@ -334,8 +333,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
               </View>
             </View>
           </Modal>
-          </View>
-        </React.Profiler>
+        </View>
       </KeyboardAvoidingView>
     </SafeScreen>
   );

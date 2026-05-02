@@ -16,25 +16,35 @@ export async function detectBrandLogo(
 
   if (!isVisionBgAvailable()) {
     if (!hasLoggedUnavailable) {
-      console.log("[BrandDetect] native module unavailable");
+      if (__DEV__) {
+        console.log("[BrandDetect] native module unavailable");
+      }
       hasLoggedUnavailable = true;
     }
     return null;
   }
 
   try {
-    console.log(`[BrandDetect] start uri=${inputUri}`);
+    if (__DEV__) {
+      console.log(`[BrandDetect] start uri=${inputUri}`);
+    }
     const result = await detectBrandLogoNative(inputUri);
     if (result?.brand) {
-      console.log(
-        `[BrandDetect] result brand=${result.brand} conf=${result.confidence ?? "n/a"}`
-      );
+      if (__DEV__) {
+        console.log(
+          `[BrandDetect] result brand=${result.brand} conf=${result.confidence ?? "n/a"}`
+        );
+      }
     } else {
-      console.log("[BrandDetect] no match");
+      if (__DEV__) {
+        console.log("[BrandDetect] no match");
+      }
     }
     return result;
   } catch (error) {
-    console.log("[BrandDetect] error", error);
+    if (__DEV__) {
+      console.log("[BrandDetect] error", error);
+    }
     return null;
   }
 }
