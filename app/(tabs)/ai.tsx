@@ -3,7 +3,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Alert, Keyboard, KeyboardEvent, Platform, Share, Text, View } from "react-native";
+import { Alert, Keyboard, KeyboardEvent, Platform, Share, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import AuraHeader from "@/src/components/ai/AuraHeader";
@@ -910,8 +910,6 @@ export default function AIScreen() {
   const stopStreamingRequestedRef = useRef(false);
   const consumedPromptTokens = useRef(new Set<string>());
   const consumedChatTokens = useRef(new Set<string>());
-  const auraPulse = useRef(new Animated.Value(0)).current;
-  const auraThinking = useRef(new Animated.Value(0)).current;
   const uid = user?.uid ?? null;
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const minimumClosetSummary = useMemo(() => buildMinimumClosetSummary(items), [items]);
@@ -962,40 +960,6 @@ export default function AIScreen() {
   useEffect(() => {
     latestMessagesRef.current = orderedMessages;
   }, [orderedMessages]);
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(auraPulse, {
-          toValue: 1,
-          duration: 2600,
-          useNativeDriver: true,
-        }),
-        Animated.timing(auraPulse, {
-          toValue: 0,
-          duration: 2600,
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [auraPulse]);
-
-  const triggerThinkingPulse = React.useCallback(() => {
-    Animated.sequence([
-      Animated.timing(auraThinking, {
-        toValue: 1,
-        duration: 160,
-        useNativeDriver: true,
-      }),
-      Animated.timing(auraThinking, {
-        toValue: 0,
-        duration: 420,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [auraThinking]);
 
   const addImageAssets = React.useCallback(
     (assets: ImagePicker.ImagePickerAsset[]) => {
@@ -1423,7 +1387,6 @@ export default function AIScreen() {
         setMessage("");
         setPendingAttachments([]);
       }
-      triggerThinkingPulse();
       const streamingMessageId = createMessageId();
       const streamingMessageCreatedAt = Math.max(Date.now(), messageOrderMillis(userMessage) + 1);
       const streamingMessageLocalSequence = nextLocalMessageSequence();
@@ -1826,7 +1789,7 @@ export default function AIScreen() {
         setLoading(false);
       }
     },
-    [activeChatId, items, loading, message, minimumClosetSummary, pendingAttachments, triggerThinkingPulse, uid]
+    [activeChatId, items, loading, message, minimumClosetSummary, pendingAttachments, uid]
   );
 
   const handleStopGenerating = React.useCallback(() => {
@@ -2083,21 +2046,9 @@ export default function AIScreen() {
     void handleAsk(routePrompt);
   }, [handleAsk, isBooting, routePrompt, routePromptKey, uid]);
 
-  const orbScale = auraPulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.035],
-  });
-  const orbGlow = auraPulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.08, 0.18],
-  });
-  const activityGlow = auraThinking.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.02, 0.12],
-  });
   const chatBackgroundColors = useMemo(
-    () => [colors.background, colors.surface, colors.surfaceSoft] as const,
-    [colors.background, colors.surface, colors.surfaceSoft],
+    () => ["#07070B", "#0A0A0F", "#10121B"] as const,
+    [],
   );
   const chatBottomGlowColors = useMemo(
     () => ["rgba(167,139,250,0.045)", "rgba(255,255,255,0.016)", "transparent"] as const,
@@ -2152,7 +2103,7 @@ export default function AIScreen() {
         colors={chatBackgroundColors}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={{ flex: 1, paddingTop: Math.max(insets.top + 4, layout.topContentInset - 12) }}
+        style={{ flex: 1, paddingTop: Math.max(insets.top + 2, layout.topContentInset - 14) }}
       >
         <LinearGradient
           pointerEvents="none"
@@ -2170,9 +2121,6 @@ export default function AIScreen() {
         <AuraHeader
         colors={colors}
         recentThreadsCount={recentThreads.length}
-        orbScale={orbScale}
-        orbGlow={orbGlow}
-        activityGlow={activityGlow}
         streaming={loading}
         onOpenRecent={() => setChatDrawerOpen(true)}
         onReset={() => {
@@ -2189,7 +2137,7 @@ export default function AIScreen() {
         }}
       />
 
-        <View style={{ paddingTop: 10, paddingBottom: 8 }}>
+        <View style={{ paddingTop: 6, paddingBottom: 4 }}>
           <AuraQuickChips
             variant="pills"
             chips={visibleHeroChips}

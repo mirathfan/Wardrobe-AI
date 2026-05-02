@@ -1,12 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Animated, Text, View } from "react-native";
+import { Text, View } from "react-native";
 
 import { Fonts, type AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
-import AuraOrb from "./AuraOrb";
 import { auraTheme } from "./aiTheme";
 
 export default function AuraHeader({
@@ -14,18 +13,12 @@ export default function AuraHeader({
   recentThreadsCount,
   onOpenRecent,
   onReset,
-  orbScale,
-  orbGlow,
-  activityGlow,
   streaming,
 }: {
   colors: AppColors;
   recentThreadsCount: number;
   onOpenRecent: () => void;
   onReset: () => void;
-  orbScale: Animated.AnimatedInterpolation<number>;
-  orbGlow: Animated.AnimatedInterpolation<number>;
-  activityGlow: Animated.AnimatedInterpolation<number>;
   streaming: boolean;
 }) {
   const layout = useResponsiveLayout();
@@ -40,7 +33,7 @@ export default function AuraHeader({
     >
       <View
         style={{
-          minHeight: 32,
+          minHeight: 30,
           flexDirection: "row",
           justifyContent: "space-between",
           alignItems: "center",
@@ -65,17 +58,25 @@ export default function AuraHeader({
             style={{
               flexDirection: "row",
               alignItems: "center",
-              gap: 6,
+              gap: 7,
             }}
           >
-            <AuraOrb scale={orbScale} glow={orbGlow} activityGlow={activityGlow} />
+            <View
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 999,
+                backgroundColor: streaming ? auraTheme.accentStrong : colors.textSecondary,
+                opacity: streaming ? 1 : 0.72,
+              }}
+            />
             <Text
               style={{
                 color: streaming ? auraTheme.accentStrong : colors.text,
-                fontSize: 12.5 * layout.titleScale,
-                lineHeight: 15 * layout.titleScale,
+                fontSize: 12 * layout.titleScale,
+                lineHeight: 14 * layout.titleScale,
                 fontWeight: "600",
-                letterSpacing: 2.4,
+                letterSpacing: 2.1,
                 fontFamily: Fonts.sans,
               }}
             >
@@ -112,8 +113,8 @@ function HeaderAction({
         alignItems: "center",
         gap: 6,
         borderRadius: 999,
-        paddingHorizontal: 9,
-        paddingVertical: 6,
+        paddingHorizontal: 8,
+        paddingVertical: 5,
         backgroundColor: pressed ? colors.surfaceSoft : colors.surfaceGlass,
         borderWidth: 1,
         borderColor: colors.border,
@@ -123,7 +124,7 @@ function HeaderAction({
       <Text
         style={{
           color: colors.textSecondary,
-          fontSize: 11,
+          fontSize: 10.5,
           fontWeight: "600",
           fontFamily: Fonts.sans,
         }}

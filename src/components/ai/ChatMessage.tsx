@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Animated, Easing, Image, Text, View } from "react-native";
 import Reanimated, {
   Easing as ReanimatedEasing,
@@ -26,6 +26,7 @@ const USER_IMAGE_GRID_GAP = 7;
 const USER_MULTI_IMAGE_MAX_GRID_WIDTH = 248;
 const USER_MULTI_IMAGE_MIN_GRID_WIDTH = 196;
 const USER_IMAGE_RADIUS = 20;
+const STREAM_TAIL_REVEAL_MS = 130;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -75,6 +76,93 @@ function fallbackStructuredIntro(message: AIMessage) {
     return "Got you — I built a few looks from your closet that match that direction.";
   }
   return "Got you — here’s what I’d do.";
+}
+
+function SmoothStreamingText({
+  text,
+  colors,
+}: {
+  text: string;
+  colors: AppColors;
+}) {
+  const reduceMotion = useReduceMotion();
+  const latestTextRef = useRef(text);
+  const previousTextRef = useRef(text);
+  const tailOpacity = useRef(new Animated.Value(1)).current;
+  const tailRise = useRef(new Animated.Value(0)).current;
+  const [baseText, setBaseText] = useState(text);
+  const [tailText, setTailText] = useState("");
+
+  useEffect(() => {
+    latestTextRef.current = text;
+    const previousText = previousTextRef.current;
+    previousTextRef.current = text;
+
+    if (!text) {
+      setBaseText("");
+      setTailText("");
+      return;
+    }
+
+    if (!previousText || !text.startsWith(previousText) || reduceMotion) {
+      setBaseText(text);
+      setTailText("");
+      tailOpacity.setValue(1);
+      tailRise.setValue(0);
+      return;
+    }
+
+    const nextTail = text.slice(previousText.length);
+    if (!nextTail) return;
+    setBaseText(previousText);
+    setTailText(nextTail);
+    tailOpacity.setValue(0.24);
+    tailRise.setValue(3);
+    Animated.parallel([
+      Animated.timing(tailOpacity, {
+        toValue: 1,
+        duration: STREAM_TAIL_REVEAL_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(tailRise, {
+        toValue: 0,
+        duration: STREAM_TAIL_REVEAL_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (!finished || latestTextRef.current !== text) return;
+      setBaseText(text);
+      setTailText("");
+    });
+  }, [reduceMotion, tailOpacity, tailRise, text]);
+
+  return (
+    <Text
+      style={{
+        color: colors.text,
+        fontSize: 14.5,
+        lineHeight: 21,
+        fontWeight: "500",
+        fontFamily: Fonts.sans,
+        marginLeft: 2,
+        maxWidth: "92%",
+      }}
+    >
+      {baseText}
+      {tailText ? (
+        <Animated.Text
+          style={{
+            opacity: tailOpacity,
+            transform: [{ translateY: tailRise }],
+          }}
+        >
+          {tailText}
+        </Animated.Text>
+      ) : null}
+    </Text>
+  );
 }
 
 type ChatMessageProps = {
@@ -411,19 +499,23 @@ function ChatMessage({
             ))}
           </View>
         ) : displayText ? (
-          <Text
-            style={{
-              color: colors.text,
-              fontSize: 14.5,
-              lineHeight: 21,
-              fontWeight: "500",
-              fontFamily: Fonts.sans,
-              marginLeft: 2,
-              maxWidth: "92%",
-            }}
-          >
-            {displayText}
-          </Text>
+          message.streaming ? (
+            <SmoothStreamingText text={displayText} colors={colors} />
+          ) : (
+            <Text
+              style={{
+                color: colors.text,
+                fontSize: 14.5,
+                lineHeight: 21,
+                fontWeight: "500",
+                fontFamily: Fonts.sans,
+                marginLeft: 2,
+                maxWidth: "92%",
+              }}
+            >
+              {displayText}
+            </Text>
+          )
         ) : null}
       </Animated.View>
     );

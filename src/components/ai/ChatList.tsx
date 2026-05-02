@@ -10,11 +10,11 @@ import type { AIMessage } from "./chatTypes";
 import { auraTheme } from "./aiTheme";
 
 const FOLLOW_DISTANCE_THRESHOLD = 96;
-const FOCUS_MESSAGE_VIEW_POSITION = 0.05;
-const FOCUS_MESSAGE_VIEW_OFFSET = 10;
-const FOCUS_ANCHOR_SPACER_RATIO = 1.04;
-const FOCUS_ANCHOR_MIN_SPACER = 520;
-const FOCUS_ANCHOR_LOCK_MS = 520;
+const FOCUS_MESSAGE_VIEW_POSITION = 0;
+const FOCUS_MESSAGE_VIEW_OFFSET = 8;
+const FOCUS_ANCHOR_SPACER_RATIO = 1.12;
+const FOCUS_ANCHOR_MIN_SPACER = 560;
+const FOCUS_ANCHOR_LOCK_MS = 680;
 
 const ChatItemSeparator = React.memo(function ChatItemSeparator() {
   return <View style={{ height: 12 }} />;
@@ -52,7 +52,7 @@ class ChatErrorBoundary extends React.Component<
           }}
         >
           <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "700" }}>
-            Couldn't render this message.
+            {"Couldn't render this message."}
           </Text>
         </View>
       </View>
@@ -154,8 +154,10 @@ export default function ChatList({
   const focusAnchorActiveRef = useRef(false);
   const userInteractingRef = useRef(false);
   const streamingScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollToIndexRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusAnchorReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAutoScrollKeyRef = useRef<string | null>(null);
   const [listViewportHeight, setListViewportHeight] = React.useState(0);
   const [activeFocusAnchorId, setActiveFocusAnchorId] = React.useState<string | null>(null);
   const messageCount = messages.length;
@@ -243,6 +245,9 @@ export default function ChatList({
       if (streamingScrollTimerRef.current) {
         clearTimeout(streamingScrollTimerRef.current);
       }
+      if (autoScrollTimerRef.current) {
+        clearTimeout(autoScrollTimerRef.current);
+      }
       if (scrollToIndexRetryRef.current) {
         clearTimeout(scrollToIndexRetryRef.current);
       }
@@ -306,10 +311,45 @@ export default function ChatList({
   }, [activeFocusAnchorId, loading]);
 
   useEffect(() => {
-    if (!messageCount) return;
-    const timer = setTimeout(() => scrollToBottomIfFollowing(false), 140);
-    return () => clearTimeout(timer);
-  }, [autoScrollSignal, messageCount, scrollToBottomIfFollowing]);
+    if (!autoScrollSignal || !messageCount || !lastMessageId || !listViewportHeight) return;
+    if (isFocusAnchoring) return;
+    const autoScrollKey = [
+      autoScrollSignal,
+      lastMessageId,
+      messageCount,
+      Math.round(contentBottomPadding),
+      Math.round(listViewportHeight),
+    ].join(":");
+    if (lastAutoScrollKeyRef.current === autoScrollKey) return;
+    lastAutoScrollKeyRef.current = autoScrollKey;
+    if (autoScrollTimerRef.current) {
+      clearTimeout(autoScrollTimerRef.current);
+      autoScrollTimerRef.current = null;
+    }
+    const frame = requestAnimationFrame(() => {
+      autoScrollTimerRef.current = setTimeout(() => {
+        autoScrollTimerRef.current = null;
+        if (userInteractingRef.current) return;
+        shouldFollowRef.current = true;
+        scrollToBottom(false);
+      }, 80);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (autoScrollTimerRef.current) {
+        clearTimeout(autoScrollTimerRef.current);
+        autoScrollTimerRef.current = null;
+      }
+    };
+  }, [
+    autoScrollSignal,
+    contentBottomPadding,
+    isFocusAnchoring,
+    lastMessageId,
+    listViewportHeight,
+    messageCount,
+    scrollToBottom,
+  ]);
 
   const contentContainerStyle = useMemo(
     () => ({

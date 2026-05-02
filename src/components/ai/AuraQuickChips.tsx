@@ -5,10 +5,10 @@ import { Fonts } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
-const TOP_CHIP_HEIGHT = 34;
-const TOP_CHIP_RADIUS = 17;
-const TOP_CHIP_GAP = 8;
-const TOP_CHIP_HORIZONTAL_PADDING = 12;
+const TOP_CHIP_HEIGHT = 28;
+const TOP_CHIP_RADIUS = 14;
+const TOP_CHIP_GAP = 6;
+const TOP_CHIP_HORIZONTAL_PADDING = 10;
 
 const DEFAULT_CHIPS = [
   "What should I wear today?",
@@ -35,7 +35,7 @@ export default function AuraQuickChips({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ gap: TOP_CHIP_GAP, paddingHorizontal: 20, paddingRight: 22 }}
+      contentContainerStyle={{ gap: TOP_CHIP_GAP, paddingHorizontal: 18, paddingRight: 20 }}
     >
       {source.map((item, index) =>
         typeof item === "string" ? (
@@ -159,7 +159,7 @@ function Chip({
         pressedScale={0.96}
         pressedOpacity={0.9}
         style={{
-          maxWidth: 210,
+          maxWidth: 188,
           height: TOP_CHIP_HEIGHT,
           minHeight: TOP_CHIP_HEIGHT,
           alignItems: "center",
@@ -192,7 +192,7 @@ function Chip({
             ellipsizeMode="tail"
             style={{
               color: isTrainingChip ? colors.lightPurple : colors.textSecondary,
-              fontSize: 11.5,
+              fontSize: 10.5,
               fontWeight: "700",
               fontFamily: Fonts.sans,
             }}

@@ -25,11 +25,10 @@ import {
 import { Fonts, type AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { getAttachmentGroupingLabel } from "@/src/lib/auraIntent";
-import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 import type { ChatAttachment, ChatAttachmentGroupRole } from "./chatTypes";
 
-const BASE_COMPOSER_HEIGHT = 48;
+const BASE_COMPOSER_HEIGHT = 50;
 const BASE_INPUT_HEIGHT = 32;
 const MAX_INPUT_LINES = 6;
 const INPUT_LINE_HEIGHT = 19;
@@ -38,8 +37,9 @@ const INPUT_PADDING_BOTTOM = Platform.OS === "ios" ? 4 : 3;
 const INPUT_VERTICAL_PADDING = INPUT_PADDING_TOP + INPUT_PADDING_BOTTOM;
 const MAX_INPUT_HEIGHT = INPUT_LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_TOP + INPUT_PADDING_BOTTOM;
 const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
-const ATTACHMENT_THUMB_SIZE = 60;
-const ATTACHMENT_COMPOSER_RADIUS = 28;
+const ATTACHMENT_THUMB_SIZE = 76;
+const COMPOSER_RADIUS = 24;
+const ATTACHMENT_COMPOSER_RADIUS = 24;
 const ATTACHMENT_MENU_WIDTH = 248;
 const ATTACHMENT_MENU_LEFT = 8;
 const ATTACHMENT_MENU_GAP = 10;
@@ -102,10 +102,9 @@ export default function InputBar({
   recording?: boolean;
   attachments?: ChatAttachment[];
 }) {
-  const layout = useResponsiveLayout();
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !loading;
   const canStop = loading && !!onStop;
-  const composerSideInset = layout.screenSize === "compact" ? 12 : 16;
+  const composerSideInset = 16;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [inputHeight, setInputHeight] = React.useState(BASE_INPUT_HEIGHT);
   const [composerHeight, setComposerHeight] = React.useState(BASE_COMPOSER_HEIGHT);
@@ -179,13 +178,13 @@ export default function InputBar({
   const [hasAttachmentModeOverride, setHasAttachmentModeOverride] = React.useState(false);
   const showAttachmentModeSelector = showAutoDetectAttachmentMode && attachmentModeSelectorOpen;
   const isInputExpanded = inputHeight > BASE_INPUT_HEIGHT + 2;
-  const shellRadius = hasAttachments ? ATTACHMENT_COMPOSER_RADIUS : isInputExpanded ? 24 : 999;
+  const shellRadius = hasAttachments ? ATTACHMENT_COMPOSER_RADIUS : COMPOSER_RADIUS;
   const attachmentRailHeight = hasAttachments
     ? showAttachmentModeSelector
-      ? 122
+      ? 150
       : showAutoDetectAttachmentMode
-        ? 88
-        : 65
+        ? 116
+        : 88
     : 0;
   const rowHeightDelta = Math.max(0, inputHeight - BASE_INPUT_HEIGHT);
   const estimatedComposerHeight = BASE_COMPOSER_HEIGHT + attachmentRailHeight + rowHeightDelta;
@@ -236,7 +235,7 @@ export default function InputBar({
     borderRadius: shellRadius,
     borderColor: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: ["rgba(255,255,255,0.08)", "rgba(167,139,250,0.24)"],
+      outputRange: ["rgba(255,255,255,0.08)", "rgba(167,139,250,0.18)"],
     }),
     backgroundColor: focusAnim.interpolate({
       inputRange: [0, 1],
@@ -244,11 +243,11 @@ export default function InputBar({
     }),
     shadowOpacity: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [0.16, 0.24],
+      outputRange: [0.08, 0.14],
     }),
     shadowRadius: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [18, 26],
+      outputRange: [12, 18],
     }),
   } as const;
 
@@ -262,7 +261,7 @@ export default function InputBar({
   const focusRimStyle = {
     borderColor: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: ["rgba(255,255,255,0.08)", "rgba(167,139,250,0.28)"],
+      outputRange: ["rgba(255,255,255,0.08)", "rgba(167,139,250,0.22)"],
     }),
     opacity: focusAnim.interpolate({
       inputRange: [0, 1],
@@ -718,8 +717,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     zIndex: 30,
     shadowColor: "#8B7CF6",
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
   },
   shellSurface: {
     overflow: "hidden",
@@ -760,9 +759,9 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   attachmentRail: {
-    gap: 6,
+    gap: 7,
     paddingHorizontal: 1,
-    paddingBottom: 5,
+    paddingBottom: 7,
   },
   attachmentRoleChip: {
     borderRadius: 999,
@@ -792,7 +791,7 @@ const styles = StyleSheet.create({
   attachmentThumb: {
     width: ATTACHMENT_THUMB_SIZE,
     height: ATTACHMENT_THUMB_SIZE,
-    borderRadius: 16,
+    borderRadius: 18,
     overflow: "hidden",
     backgroundColor: "rgba(255,255,255,0.055)",
     borderWidth: 1,
@@ -917,7 +916,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    borderRadius: 999,
+    borderRadius: COMPOSER_RADIUS,
     borderWidth: 0,
     paddingHorizontal: 0,
   },
@@ -968,7 +967,7 @@ const styles = StyleSheet.create({
   inputSlot: {
     flex: 1,
     minWidth: 0,
-    borderRadius: 999,
+    borderRadius: 18,
     backgroundColor: "transparent",
     borderWidth: 0,
     borderColor: "transparent",
@@ -994,7 +993,7 @@ const styles = StyleSheet.create({
     width: "100%",
     minWidth: 0,
     flexShrink: 1,
-    borderRadius: 999,
+    borderRadius: 18,
     paddingHorizontal: 10,
     paddingTop: INPUT_PADDING_TOP,
     paddingBottom: INPUT_PADDING_BOTTOM,
