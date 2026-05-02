@@ -19,7 +19,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 
-import type { AppColors } from "@/constants/theme";
+import { auraColors, type AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -59,6 +59,7 @@ const BOARD_MAX_WIDTH = 760;
 const HOME_BOARD_MAX_WIDTH = 520;
 const BOARD_ASPECT_RATIO = 1;
 const HOME_BOARD_ASPECT_RATIO = 0.72;
+const ACTION_HIT_SLOP = 6;
 
 function firstNonEmpty<T>(...values: (T | null | undefined)[]): T | undefined {
   return values.find(Boolean) as T | undefined;
@@ -141,7 +142,7 @@ function getItemLabel(item?: AuraLayoutItem | null) {
 }
 
 function getCategoryPadding(category?: string | null, subCategory?: string | null, accessoryType?: string | null) {
-  if (!category) return 8;
+  if (!category) return 10;
   const normalizedCategory = String(category).trim().toLowerCase();
   const normalizedSubCategory = String(subCategory ?? "").trim().toLowerCase();
   const normalizedAccessoryType = String(accessoryType ?? "").trim().toLowerCase();
@@ -150,26 +151,26 @@ function getCategoryPadding(category?: string | null, subCategory?: string | nul
 
   switch (normalizedCategory) {
     case "top":
-      return 8;
+      return 10;
     case "outerwear":
-      return 6;
+      return 8;
     case "bottom":
-      return 4;
+      return 6;
     case "footwear":
     case "shoes":
-      return 6;
+      return 8;
     case "one_piece":
-      return 4;
+      return 6;
     case "accessory":
-      if (matchesAccessory(["bag", "backpack", "tote_bag", "tote", "clutch", "crossbody", "shoulder_bag", "mini_bag"])) return 6;
-      if (matchesAccessory(["sunglasses", "glasses"])) return 10;
-      if (matchesAccessory(["cap", "hat", "beanie", "bucket_hat"])) return 8;
-      if (matchesAccessory(["perfume", "cologne", "fragrance"])) return 8;
-      if (matchesAccessory(["necklace", "chain", "chain_belt", "jewelry", "jewellery"])) return 12;
-      if (matchesAccessory(["belt"])) return 2;
-      return 8;
+      if (matchesAccessory(["bag", "backpack", "tote_bag", "tote", "clutch", "crossbody", "shoulder_bag", "mini_bag"])) return 10;
+      if (matchesAccessory(["sunglasses", "glasses"])) return 12;
+      if (matchesAccessory(["cap", "hat", "beanie", "bucket_hat"])) return 10;
+      if (matchesAccessory(["perfume", "cologne", "fragrance"])) return 10;
+      if (matchesAccessory(["necklace", "chain", "chain_belt", "jewelry", "jewellery"])) return 14;
+      if (matchesAccessory(["belt"])) return 4;
+      return 12;
     default:
-      return 8;
+      return 10;
   }
 }
 
@@ -378,7 +379,17 @@ export const AuraLookCard = memo(function AuraLookCard({
         isHome ? styles.boardHome : null,
         swipeVariant ? styles.boardSwipe : null,
         isStudio ? styles.boardStudio : null,
-        { width: boardWidth, height: boardHeight, backgroundColor: colors.outfitBoardBackground },
+        {
+          width: boardWidth,
+          height: boardHeight,
+          backgroundColor: colors.boardLight,
+          borderColor: colors.borderWarm,
+          shadowColor: colors.ctaCream,
+          shadowOpacity: 0.08,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 8 },
+          elevation: 2,
+        },
       ]}
     >
       <AccessoryStrip
@@ -507,7 +518,7 @@ export const AuraLookCard = memo(function AuraLookCard({
                 style={[
                   styles.closetChip,
                   isHome ? styles.closetChipHome : null,
-                  { backgroundColor: "rgba(124,92,255,0.095)", borderColor: "rgba(167,139,250,0.16)" },
+                  { backgroundColor: colors.purpleSurface, borderColor: colors.purpleBorder },
                 ]}
               >
                 <Text numberOfLines={1} style={[styles.closetChipText, { color: colors.textPrimary }]}>
@@ -541,7 +552,7 @@ export const AuraLookCard = memo(function AuraLookCard({
                 style={[
                   styles.closetChip,
                   isHome ? styles.closetChipHome : null,
-                  { backgroundColor: "rgba(255,255,255,0.028)", borderColor: "rgba(255,255,255,0.07)" },
+                  { backgroundColor: colors.chipBackground, borderColor: colors.border },
                 ]}
               >
                 <Text numberOfLines={1} style={[styles.closetChipText, { color: colors.textPrimary }]}>
@@ -556,6 +567,7 @@ export const AuraLookCard = memo(function AuraLookCard({
       {!hideActions ? (
         <View style={[styles.actions, isHome ? styles.actionsHome : null]}>
           <AuraPressable
+            hitSlop={ACTION_HIT_SLOP}
             style={[
               styles.actionButton,
               isHome ? styles.actionButtonHome : null,
@@ -574,6 +586,7 @@ export const AuraLookCard = memo(function AuraLookCard({
           </AuraPressable>
 
           <AuraPressable
+            hitSlop={ACTION_HIT_SLOP}
             style={[
               styles.actionButton,
               isHome ? styles.actionButtonHome : null,
@@ -598,6 +611,7 @@ export const AuraLookCard = memo(function AuraLookCard({
         <View style={[styles.tertiaryActions, isHome ? styles.tertiaryActionsHome : null]}>
           {canLikeLook ? (
             <AuraPressable
+              hitSlop={ACTION_HIT_SLOP}
               style={[
                 styles.tertiaryAction,
                 isHome ? styles.tertiaryActionHome : null,
@@ -614,6 +628,7 @@ export const AuraLookCard = memo(function AuraLookCard({
           ) : null}
           {canNotMyVibe ? (
             <AuraPressable
+              hitSlop={ACTION_HIT_SLOP}
               style={[
                 styles.tertiaryAction,
                 isHome ? styles.tertiaryActionHome : null,
@@ -630,6 +645,7 @@ export const AuraLookCard = memo(function AuraLookCard({
           ) : null}
           {canShowMoreLikeThis ? (
             <AuraPressable
+              hitSlop={ACTION_HIT_SLOP}
               style={[
                 styles.tertiaryAction,
                 isHome ? styles.tertiaryActionHome : null,
@@ -646,6 +662,7 @@ export const AuraLookCard = memo(function AuraLookCard({
           ) : null}
           {canLessLikeThis ? (
             <AuraPressable
+              hitSlop={ACTION_HIT_SLOP}
               style={[
                 styles.tertiaryAction,
                 isHome ? styles.tertiaryActionHome : null,
@@ -667,6 +684,7 @@ export const AuraLookCard = memo(function AuraLookCard({
         <View style={[styles.tertiaryActions, isHome ? styles.tertiaryActionsHome : null]}>
           {canUseOnlyMyCloset ? (
             <AuraPressable
+              hitSlop={ACTION_HIT_SLOP}
               style={[
                 styles.tertiaryAction,
                 isHome ? styles.tertiaryActionHome : null,
@@ -683,6 +701,7 @@ export const AuraLookCard = memo(function AuraLookCard({
           ) : null}
           {canMakeItDressier ? (
             <AuraPressable
+              hitSlop={ACTION_HIT_SLOP}
               style={[
                 styles.tertiaryAction,
                 isHome ? styles.tertiaryActionHome : null,
@@ -699,6 +718,7 @@ export const AuraLookCard = memo(function AuraLookCard({
           ) : null}
           {canShopMissingPieces ? (
             <AuraPressable
+              hitSlop={ACTION_HIT_SLOP}
               style={[
                 styles.tertiaryAction,
                 isHome ? styles.tertiaryActionHome : null,
@@ -734,14 +754,14 @@ export const AuraLookCard = memo(function AuraLookCard({
 
 const styles = StyleSheet.create({
   card: {
-    gap: 9,
-    paddingHorizontal: 13,
-    paddingTop: 13,
-    paddingBottom: 12,
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 13,
     borderRadius: 24,
-    backgroundColor: "#11131A",
+    backgroundColor: auraColors.surface,
     borderWidth: CHIP_BORDER_WIDTH,
-    borderColor: "rgba(255,255,255,0.075)",
+    borderColor: auraColors.borderDark,
   },
   cardCompact: {
     gap: 7,
@@ -770,8 +790,8 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 16,
     borderRadius: 30,
-    backgroundColor: "rgba(25,27,38,0.94)",
-    borderColor: "rgba(124,92,255,0.25)",
+    backgroundColor: "rgba(82,43,91,0.72)",
+    borderColor: "rgba(223,182,178,0.28)",
   },
   boardOnlyCard: {
     alignItems: "center",
@@ -796,9 +816,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "rgba(43,18,76,0.65)",
     borderWidth: CHIP_BORDER_WIDTH,
-    borderColor: "rgba(255,255,255,0.07)",
+    borderColor: auraColors.borderDark,
   },
   headerChipHome: {
     minHeight: 28,
@@ -807,21 +827,21 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   directionChip: {
-    backgroundColor: "rgba(124,92,255,0.12)",
-    borderColor: "rgba(124,92,255,0.25)",
+    backgroundColor: "rgba(133,79,108,0.35)",
+    borderColor: "rgba(223,182,178,0.28)",
   },
   directionDot: {
     width: 8,
     height: 8,
     borderRadius: 999,
-    backgroundColor: "#7C5CFF",
+    backgroundColor: auraColors.accentRose,
   },
   directionDotHome: {
     width: 6,
     height: 6,
   },
   directionChipText: {
-    color: "#A78BFA",
+    color: auraColors.accentRose,
     fontSize: 11,
     lineHeight: 14,
     fontWeight: "800",
@@ -838,8 +858,9 @@ const styles = StyleSheet.create({
     position: "relative",
     overflow: "hidden",
     borderRadius: 16,
-    backgroundColor: "#F5F2ED",
-    borderWidth: 0,
+    backgroundColor: auraColors.boardLight,
+    borderWidth: 1,
+    borderColor: auraColors.borderWarm,
   },
   boardCompact: {
     borderRadius: 16,
@@ -907,8 +928,8 @@ const styles = StyleSheet.create({
     height: "100%",
   },
   beltImage: {
-    height: "460%",
-    width: "22%",
+    height: "420%",
+    width: "20%",
   },
   copyBlock: {
     gap: 5,
@@ -972,7 +993,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   metaLabel: {
-    color: "#7C5CFF",
+    color: auraColors.accentRose,
     fontSize: 11.25,
     fontWeight: "800",
     letterSpacing: 0,
@@ -988,9 +1009,9 @@ const styles = StyleSheet.create({
     minHeight: 28,
     paddingHorizontal: 9,
     paddingVertical: 0,
-    backgroundColor: "rgba(245, 247, 251, 0.08)",
+    backgroundColor: "rgba(43,18,76,0.65)",
     borderWidth: CHIP_BORDER_WIDTH,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: auraColors.borderDark,
     justifyContent: "center",
   },
   closetChipHome: {
@@ -999,8 +1020,8 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
   moreChip: {
-    backgroundColor: "rgba(124,92,255,0.12)",
-    borderColor: "rgba(124,92,255,0.25)",
+    backgroundColor: "rgba(133,79,108,0.35)",
+    borderColor: "rgba(223,182,178,0.28)",
   },
   closetChipText: {
     color: "#E7EDF4",
@@ -1031,20 +1052,20 @@ const styles = StyleSheet.create({
     borderRadius: PILL_RADIUS,
   },
   primaryButton: {
-    backgroundColor: "#EDE9E3",
-    borderColor: "#EDE9E3",
+    backgroundColor: auraColors.accentRose,
+    borderColor: auraColors.accentRose,
   },
   secondaryButton: {
-    backgroundColor: "rgba(255,255,255,0.03)",
-    borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "rgba(43,18,76,0.72)",
+    borderColor: auraColors.borderDark,
   },
   primaryButtonText: {
-    color: "#F5F8FB",
+    color: auraColors.textOnLight,
     fontSize: 13.5,
     fontWeight: "800",
   },
   secondaryButtonText: {
-    color: "#E7EDF5",
+    color: auraColors.textPrimary,
     fontSize: 13.5,
     fontWeight: "800",
   },
@@ -1064,8 +1085,8 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     borderRadius: PILL_RADIUS,
     borderWidth: CHIP_BORDER_WIDTH,
-    borderColor: "rgba(255,255,255,0.1)",
-    backgroundColor: "rgba(255,255,255,0.04)",
+    borderColor: auraColors.borderDark,
+    backgroundColor: "rgba(43,18,76,0.65)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1074,9 +1095,9 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
   tertiaryActionText: {
-    color: "rgba(235,240,248,0.86)",
-    fontSize: 11.25,
-    lineHeight: 15,
+    color: auraColors.textSecondary,
+    fontSize: 11.75,
+    lineHeight: 16,
     fontWeight: "700",
   },
 });
