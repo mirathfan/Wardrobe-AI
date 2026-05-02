@@ -39,35 +39,67 @@ function millisFromMessageId(id: string) {
   return Number.isFinite(millis) ? millis : null;
 }
 
+function messageTimestamp(message: OrderableMessage) {
+  return toMessageMillis(message.clientCreatedAt) ?? toMessageMillis(message.createdAt);
+}
+
 export function messageOrderMillis(message: OrderableMessage) {
   return (
-    toMessageMillis(message.clientCreatedAt) ??
-    toMessageMillis(message.createdAt) ??
+    messageTimestamp(message) ??
     millisFromMessageId(message.id) ??
     0
   );
 }
 
-function messageSequence(message: OrderableMessage, fallbackIndex: number) {
+function messageSequence(message: OrderableMessage) {
   return typeof message.localSequence === "number" && Number.isFinite(message.localSequence)
     ? message.localSequence
-    : fallbackIndex;
+    : null;
+}
+
+function compareMaybeNumber(left: number | null, right: number | null) {
+  if (left !== null && right !== null && left !== right) return left - right;
+  if (left !== null && right === null) return -1;
+  if (left === null && right !== null) return 1;
+  return 0;
+}
+
+function ensureRepliesFollowParents<T extends OrderableMessage>(messages: T[]) {
+  const next = messages.slice();
+  let moved = true;
+  let guard = 0;
+
+  while (moved && guard < next.length) {
+    moved = false;
+    guard += 1;
+
+    for (let index = 0; index < next.length; index += 1) {
+      const message = next[index];
+      if (!message.replyToMessageId) continue;
+
+      const parentIndex = next.findIndex((entry) => entry.id === message.replyToMessageId);
+      if (parentIndex < 0 || parentIndex < index) continue;
+
+      next.splice(index, 1);
+      const adjustedParentIndex = next.findIndex((entry) => entry.id === message.replyToMessageId);
+      next.splice(adjustedParentIndex + 1, 0, message);
+      moved = true;
+      break;
+    }
+  }
+
+  return next;
 }
 
 export function orderChatMessages<T extends OrderableMessage>(messages: T[]): T[] {
-  const originalIndex = new Map(messages.map((message, index) => [message.id, index]));
-  return [...messages].sort((left, right) => {
-    if (left.replyToMessageId === right.id) return 1;
-    if (right.replyToMessageId === left.id) return -1;
+  const sorted = [...messages].sort((left, right) => {
+    const timestampCompare = compareMaybeNumber(messageTimestamp(left), messageTimestamp(right));
+    if (timestampCompare !== 0) return timestampCompare;
 
-    const leftMillis = messageOrderMillis(left);
-    const rightMillis = messageOrderMillis(right);
-    if (leftMillis !== rightMillis) return leftMillis - rightMillis;
-
-    const leftSequence = messageSequence(left, originalIndex.get(left.id) ?? 0);
-    const rightSequence = messageSequence(right, originalIndex.get(right.id) ?? 0);
-    if (leftSequence !== rightSequence) return leftSequence - rightSequence;
+    const sequenceCompare = compareMaybeNumber(messageSequence(left), messageSequence(right));
+    if (sequenceCompare !== 0) return sequenceCompare;
 
     return left.id.localeCompare(right.id);
   });
+  return ensureRepliesFollowParents(sorted);
 }

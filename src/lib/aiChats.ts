@@ -13,7 +13,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
-import { orderChatMessages, toMessageMillis } from "@/src/lib/chatMessageOrder";
+import { messageOrderMillis, orderChatMessages, toMessageMillis } from "@/src/lib/chatMessageOrder";
 import { setCachedChatList, setCachedRecentMessages } from "@/src/lib/localCache";
 import type { AIMessage, ChatAttachment } from "@/src/components/ai/chatTypes";
 import type {
@@ -283,6 +283,9 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
   if (type !== "user" && type !== "assistant" && type !== "outfit" && type !== "system/action") {
     return null;
   }
+  const createdAt = toMessageMillis(data.createdAt);
+  const clientCreatedAt = toMessageMillis(data.clientCreatedAt);
+  const stableCreatedAt = createdAt ?? clientCreatedAt ?? messageOrderMillis({ id: snapshot.id });
   const aura = isAuraResponse(data.aura) ? normalizeAuraCandidatePayload(data.aura) : undefined;
   if (DEBUG_AURA_CLIENT && aura?.lookOptions?.length) {
     console.log("[AURA_MULTI]", "loaded multi-look chat message", {
@@ -309,14 +312,8 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
     streaming: typeof data.streaming === "boolean" ? data.streaming : undefined,
     outfits: Array.isArray(data.outfits) ? (data.outfits as AIMessage["outfits"]) : undefined,
     aura,
-    createdAt:
-      toMessageMillis(data.createdAt) ??
-      toMessageMillis(data.clientCreatedAt) ??
-      Date.now(),
-    clientCreatedAt:
-      toMessageMillis(data.clientCreatedAt) ??
-      toMessageMillis(data.createdAt) ??
-      undefined,
+    createdAt: stableCreatedAt,
+    clientCreatedAt: clientCreatedAt ?? createdAt ?? stableCreatedAt,
     localSequence:
       typeof data.localSequence === "number" && Number.isFinite(data.localSequence)
         ? data.localSequence
@@ -587,7 +584,7 @@ export async function loadChatThread(uid: string, chatId: string) {
 }
 
 export async function loadChatMessages(uid: string, chatId: string) {
-  const snap = await getDocs(query(messageCollectionRef(uid, chatId), orderBy("createdAt", "asc")));
+  const snap = await getDocs(messageCollectionRef(uid, chatId));
   const messages = orderChatMessages(
     snap.docs.map((entry) => toChatMessage(entry)).filter((entry): entry is AIMessage => !!entry),
   );
