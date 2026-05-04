@@ -61,13 +61,12 @@ export default function AuraGlowBackground({
         end={{ x: 1, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
-      <GlowBlob size={220} color={palette.colors.auraChampagne} top={110} left={-30} opacity={0.14} />
-      <GlowBlob size={260} color={palette.colors.auraPink} top={180} right={-50} opacity={0.12} />
-      <GlowBlob size={220} color={palette.colors.auraLavender} bottom={160} left={10} opacity={0.13} />
-      <GlowBlob size={260} color={palette.colors.auraBlue} bottom={90} right={-60} opacity={0.1} />
+      <GlowBlob size={220} color={palette.colors.auraPink} top={110} left={-30} opacity={0.026} />
+      <GlowBlob size={260} color={palette.colors.auraBlue} top={190} right={-50} opacity={0.022} />
+      <GlowBlob size={220} color={palette.colors.auraLavender} bottom={160} left={10} opacity={0.024} />
       <LinearGradient
         pointerEvents="none"
-        colors={["rgba(255,255,255,0.04)", "transparent"]}
+        colors={["rgba(251,228,216,0.014)", "transparent"]}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 0.45 }}
         style={StyleSheet.absoluteFill}

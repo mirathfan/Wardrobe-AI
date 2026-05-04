@@ -15,6 +15,8 @@ import {
   withTiming,
 } from "react-native-reanimated";
 
+import { Colors } from "@/constants/theme";
+
 export const RING_SIZE_SM = 40;
 export const RING_SIZE_MD = 80;
 export const RING_SIZE_LG = 160;
@@ -28,7 +30,14 @@ type AuraRingProps = {
   opacity?: number;
 };
 
-const RING_COLORS = ["#F4A460", "#C084FC", "#818CF8", "#C084FC", "#F4A460"];
+const palette = Colors.dark;
+const RING_COLORS = [
+  palette.accentMauve,
+  palette.ctaCream,
+  palette.boardLight,
+  palette.ctaCream,
+  palette.accentMauve,
+];
 
 export default function AuraRing({
   size,

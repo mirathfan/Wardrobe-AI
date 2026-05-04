@@ -24,7 +24,7 @@ export function useResponsiveLayout() {
     const cardPadding = screenSize === "compact" ? 14 : layoutTokens.cardPadding;
     const largeRadius = screenSize === "compact" ? 22 : layoutTokens.radii.large;
     const mediumRadius = screenSize === "compact" ? 18 : layoutTokens.radii.medium;
-    const pillRadius = screenSize === "compact" ? 20 : layoutTokens.radii.pill;
+    const pillRadius = layoutTokens.radii.pill;
     const heroHeight = screenSize === "compact" ? 188 : screenSize === "large" ? 216 : 204;
     const smartGridColumns = screenSize === "large" ? 3 : 2;
     const smartToolHeight = screenSize === "compact" ? 108 : 120;

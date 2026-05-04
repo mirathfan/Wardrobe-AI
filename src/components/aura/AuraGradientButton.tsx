@@ -2,7 +2,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
 import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 
-import { Fonts, ThemeTokens } from "@/constants/theme";
+import { Colors, Fonts, ThemeTokens } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { CTA_HEIGHT, PILL_RADIUS } from "@/src/constants/auraControls";
 
@@ -32,9 +32,8 @@ export default function AuraGradientButton({
   const colors =
     gradientColors ??
     ([
-      "rgba(243,223,195,0.45)",
-      "rgba(243,190,221,0.28)",
-      "rgba(184,217,255,0.34)",
+      palette.colors.ctaCream,
+      palette.colors.ctaCream,
     ] as const);
   return (
     <AuraPressable
@@ -56,13 +55,13 @@ export default function AuraGradientButton({
         {innerOverlayColors === null ? null : (
           <LinearGradient
             pointerEvents="none"
-            colors={innerOverlayColors ?? ["rgba(255,255,255,0.07)", "rgba(255,255,255,0.03)"]}
+            colors={innerOverlayColors ?? ["rgba(251,228,216,0.08)", "rgba(251,228,216,0.02)"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFill}
           />
         )}
-        <Text style={[styles.label, labelColor ? { color: labelColor } : null, labelStyle]}>{label}</Text>
+        <Text style={[styles.label, disabled ? { color: Colors.dark.textMuted } : null, labelColor && !disabled ? { color: labelColor } : null, labelStyle]}>{label}</Text>
       </View>
     </AuraPressable>
   );
@@ -73,24 +72,24 @@ const styles = StyleSheet.create({
     minHeight: CTA_HEIGHT,
     borderRadius: PILL_RADIUS,
     overflow: "hidden",
-    shadowColor: palette.colors.auraLavender,
-    shadowOpacity: 0.24,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 10 },
+    shadowColor: palette.colors.ctaCream,
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 7 },
   },
   disabled: {
-    opacity: 0.5,
+    opacity: 0.58,
   },
   inner: {
     flex: 1,
     margin: 1,
     borderRadius: PILL_RADIUS,
-    backgroundColor: "rgba(16,18,24,0.86)",
+    backgroundColor: palette.colors.ctaCream,
     alignItems: "center",
     justifyContent: "center",
   },
   label: {
-    color: palette.colors.textPrimary,
+    color: Colors.dark.ctaText,
     fontSize: 16,
     fontWeight: "700",
     fontFamily: Fonts.sans,

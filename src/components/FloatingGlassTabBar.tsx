@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Reanimated, {
   useAnimatedStyle,
@@ -36,7 +36,10 @@ const TAB_META: Record<
 const ROW_HORIZONTAL_PADDING = 7;
 const ACTIVE_BUBBLE_WIDTH = 64;
 const ACTIVE_BUBBLE_HEIGHT = 52;
+const TAB_PRESS_THROTTLE_MS = 260;
 const AURA_TAB_MARK = require("../../assets/images/aura-tab-mark.png");
+const DOCK_GLASS_FILL = "rgba(9,0,11,0.48)";
+const DOCK_GLASS_BORDER = "rgba(251,228,216,0.08)";
 
 type ExpoRouterTabOptions = {
   href?: string | null;
@@ -55,7 +58,7 @@ export default function FloatingGlassTabBar({
   descriptors,
   navigation,
 }: BottomTabBarProps) {
-  const { isDark } = useAppTheme();
+  const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const dockBottom = floatingTabBarBottomInset(insets.bottom);
@@ -89,6 +92,8 @@ export default function FloatingGlassTabBar({
   const activeIndex = useSharedValue(focusedVisibleIndex);
   const bubbleScale = useSharedValue(1);
   const reduceMotion = useReduceMotion();
+  const tabPressGuardRef = useRef<{ routeKey: string; at: number } | null>(null);
+  const tabPressGuardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const availableDockWidth = Math.max(
     0,
     windowWidth - DOCK_SIDE_MARGIN * 2 - ROW_HORIZONTAL_PADDING * 2,
@@ -99,19 +104,17 @@ export default function FloatingGlassTabBar({
   const scrimColors = useMemo(
     () =>
       [
-        "rgba(10,10,15,0)",
-        isDark ? "rgba(10,10,15,0.10)" : "rgba(255,255,255,0.10)",
-        isDark ? "rgba(10,10,15,0.24)" : "rgba(255,255,255,0.26)",
+        "rgba(9,0,11,0)",
+        "rgba(9,0,11,0.03)",
+        "rgba(9,0,11,0.08)",
       ] as const,
-    [isDark],
+    [],
   );
   const materialFillStyle = useMemo(
     () => ({
-      backgroundColor: isDark
-        ? "rgba(10, 10, 16, 0.52)"
-        : "rgba(255, 255, 255, 0.50)",
+      backgroundColor: DOCK_GLASS_FILL,
     }),
-    [isDark],
+    [],
   );
 
   useEffect(() => {
@@ -137,6 +140,62 @@ export default function FloatingGlassTabBar({
       mass: 0.9,
     });
   }, [activeIndex, bubbleScale, focusedVisibleIndex, reduceMotion]);
+
+  useEffect(() => {
+    return () => {
+      if (tabPressGuardTimerRef.current) {
+        clearTimeout(tabPressGuardTimerRef.current);
+        tabPressGuardTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const clearTabPressGuardSoon = useCallback(() => {
+    if (tabPressGuardTimerRef.current) {
+      clearTimeout(tabPressGuardTimerRef.current);
+    }
+    tabPressGuardTimerRef.current = setTimeout(() => {
+      tabPressGuardRef.current = null;
+      tabPressGuardTimerRef.current = null;
+    }, TAB_PRESS_THROTTLE_MS);
+  }, []);
+
+  const handleTabPress = useCallback(
+    (
+      route: BottomTabBarProps["state"]["routes"][number],
+      isFocused: boolean,
+    ) => {
+      const now = Date.now();
+      const activeGuard = tabPressGuardRef.current;
+      if (activeGuard && now - activeGuard.at < TAB_PRESS_THROTTLE_MS) {
+        return;
+      }
+      tabPressGuardRef.current = { routeKey: route.key, at: now };
+      clearTabPressGuardSoon();
+
+      const event = navigation.emit({
+        type: "tabPress",
+        target: route.key,
+        canPreventDefault: true,
+      });
+
+      if (!isFocused && !event.defaultPrevented) {
+        void runHaptic("selection");
+        navigation.navigate(route.name, route.params);
+      }
+    },
+    [clearTabPressGuardSoon, navigation],
+  );
+
+  const handleTabLongPress = useCallback(
+    (routeKey: string) => {
+      navigation.emit({
+        type: "tabLongPress",
+        target: routeKey,
+      });
+    },
+    [navigation],
+  );
 
   const activeBubbleStyle = useAnimatedStyle(() => {
     const scale = bubbleScale.value;
@@ -165,8 +224,8 @@ export default function FloatingGlassTabBar({
 
       <View style={[styles.container, { bottom: dockBottom }]}>
         <BlurView
-          intensity={46}
-          tint={isDark ? "dark" : "light"}
+          intensity={42}
+          tint="dark"
           style={StyleSheet.absoluteFill}
         />
 
@@ -183,9 +242,7 @@ export default function FloatingGlassTabBar({
           style={[
             styles.glassBorder,
             {
-              borderColor: isDark
-                ? "rgba(255,255,255,0.11)"
-                : "rgba(255,255,255,0.58)",
+              borderColor: DOCK_GLASS_BORDER,
             },
           ]}
         />
@@ -218,27 +275,7 @@ export default function FloatingGlassTabBar({
                 : meta.icon
               : "ellipse-outline";
 
-            const color = isFocused ? "#FFFFFF" : "rgba(235,235,245,0.56)";
-
-            const onPress = () => {
-              const event = navigation.emit({
-                type: "tabPress",
-                target: route.key,
-                canPreventDefault: true,
-              });
-
-              if (!isFocused && !event.defaultPrevented) {
-                void runHaptic("selection");
-                navigation.navigate(route.name, route.params);
-              }
-            };
-
-            const onLongPress = () => {
-              navigation.emit({
-                type: "tabLongPress",
-                target: route.key,
-              });
-            };
+            const color = isFocused ? colors.tabIconSelected : colors.tabIconDefault;
 
             return (
               <TabBarItem
@@ -249,8 +286,8 @@ export default function FloatingGlassTabBar({
                 label={meta.label}
                 color={color}
                 auraMark={meta.auraMark}
-                onPress={onPress}
-                onLongPress={onLongPress}
+                onPress={() => handleTabPress(route, isFocused)}
+                onLongPress={() => handleTabLongPress(route.key)}
               />
             );
           })}
@@ -327,7 +364,7 @@ const TabBarItem = React.memo(function TabBarItem({
           styles.label,
           {
             color,
-            opacity: isFocused ? 1 : 0.62,
+            opacity: 1,
             fontWeight: isFocused ? "600" : "500",
           },
         ]}
@@ -353,14 +390,14 @@ const styles = StyleSheet.create({
     height: DOCK_HEIGHT,
     borderRadius: DOCK_RADIUS,
     overflow: "hidden",
-    backgroundColor: "rgba(10,10,16,0.44)",
+    backgroundColor: "rgba(9,0,11,0.30)",
     shadowColor: "#000",
-    shadowOpacity: 0.09,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 5,
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 3,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.06)",
+    borderTopColor: "rgba(251,228,216,0.045)",
   },
   materialFill: {
     ...StyleSheet.absoluteFillObject,
@@ -376,7 +413,7 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     height: 1,
-    backgroundColor: "rgba(255,255,255,0.24)",
+    backgroundColor: "rgba(251,228,216,0.045)",
   },
   bottomShade: {
     position: "absolute",
@@ -384,7 +421,7 @@ const styles = StyleSheet.create({
     right: 10,
     bottom: 0,
     height: 12,
-    backgroundColor: "rgba(0,0,0,0.08)",
+    backgroundColor: "rgba(0,0,0,0.07)",
     borderBottomLeftRadius: DOCK_RADIUS,
     borderBottomRightRadius: DOCK_RADIUS,
   },
@@ -409,9 +446,9 @@ const styles = StyleSheet.create({
     width: ACTIVE_BUBBLE_WIDTH,
     height: ACTIVE_BUBBLE_HEIGHT,
     borderRadius: 28,
-    backgroundColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "rgba(223,182,178,0.10)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(251,228,216,0.10)",
     zIndex: 0,
   },
   iconWrap: {
@@ -444,7 +481,7 @@ const AuraTabMark = React.memo(function AuraTabMark({ active }: { active: boolea
       <Image
         source={AURA_TAB_MARK}
         resizeMode="contain"
-        style={[styles.auraTabImage, { opacity: active ? 1 : 0.62 }]}
+        style={[styles.auraTabImage, { opacity: active ? 1 : 1 }]}
       />
     </View>
   );

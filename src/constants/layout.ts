@@ -9,8 +9,8 @@ export const layoutTokens = {
   },
   radii: {
     large: 24,
-    medium: 20,
-    pill: 22,
+    medium: 18,
+    pill: 999,
     composer: 28,
   },
   icon: {
