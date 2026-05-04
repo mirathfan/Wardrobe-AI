@@ -136,16 +136,16 @@ const styles = StyleSheet.create({
     width: 38,
   },
   morePill: {
-    backgroundColor: "rgba(17,19,26,0.08)",
+    backgroundColor: "rgba(25,0,25,0.08)",
     justifyContent: "center",
   },
   moreText: {
-    color: colors.textMuted,
+    color: colors.textOnLightSecondary,
     fontSize: 12,
     fontWeight: "800",
   },
   modalRoot: {
-    backgroundColor: "rgba(10,10,15,0.32)",
+    backgroundColor: "rgba(25,0,25,0.32)",
     flex: 1,
     justifyContent: "flex-start",
     paddingHorizontal: 24,

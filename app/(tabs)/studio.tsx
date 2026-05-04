@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -11,10 +11,11 @@ import {
   Text,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
 import { ClosetItemCard } from "@/src/components/closet/ClosetItemCard";
+import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
+import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers, auraTypography } from "@/src/components/ui/auraStylePrimitives";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
@@ -45,7 +46,6 @@ const CATEGORY_LIMITS: Record<StudioCategory, number> = {
 };
 
 const MAX_TOTAL_ITEMS = 8;
-const IRIDESCENT_PURPLE = "#C084FC";
 
 const FILTERS: {
   key: StudioFilter;
@@ -216,6 +216,7 @@ const StudioPickerItem = React.memo(function StudioPickerItem({
   index: number;
   onToggleItem: (item: ClothingItem) => void;
 }) {
+  const { colors } = useAppTheme();
   return (
     <View style={{ width: cardWidth, marginBottom: gridGap }}>
       <ClosetItemCard
@@ -236,7 +237,7 @@ const StudioPickerItem = React.memo(function StudioPickerItem({
             bottom: 0,
             borderRadius: 20,
             borderWidth: 1.5,
-            borderColor: IRIDESCENT_PURPLE,
+            borderColor: colors.purpleBorder,
           }}
         >
           <View
@@ -249,10 +250,10 @@ const StudioPickerItem = React.memo(function StudioPickerItem({
               borderRadius: 11,
               alignItems: "center",
               justifyContent: "center",
-              backgroundColor: IRIDESCENT_PURPLE,
+              backgroundColor: colors.ctaCream,
             }}
           >
-            <Ionicons name="checkmark" size={15} color="#FFFFFF" />
+            <Ionicons name="checkmark" size={15} color={colors.ctaText} />
           </View>
         </View>
       ) : null}
@@ -261,16 +262,23 @@ const StudioPickerItem = React.memo(function StudioPickerItem({
 });
 
 export default function StudioScreen() {
+  const params = useLocalSearchParams<{
+    itemId?: string | string[];
+  }>();
   const { user } = useAuth();
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
-  const insets = useSafeAreaInsets();
   const uid = user?.uid ?? null;
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<StudioFilter>("all");
   const [selection, setSelection] = useState<ClothingItem[]>([]);
   const [saving, setSaving] = useState(false);
+  const consumedRouteItemRef = React.useRef<string | null>(null);
+  const routeItemId = useMemo(() => {
+    const raw = Array.isArray(params.itemId) ? params.itemId[0] : params.itemId;
+    return typeof raw === "string" && raw.trim() ? raw.trim() : "";
+  }, [params.itemId]);
 
   React.useEffect(() => {
     if (!uid) {
@@ -348,6 +356,17 @@ export default function StudioScreen() {
   const cardWidth = Math.floor((availableWidth - gridGap * (columns - 1)) / columns);
   const todayKey = useMemo(() => toDayKey(new Date()), []);
   void resolvedStudioLayout;
+
+  React.useEffect(() => {
+    if (!routeItemId || loading || consumedRouteItemRef.current === routeItemId) return;
+    const routeItem = items.find((entry) => entry.id === routeItemId);
+    if (!routeItem) return;
+    consumedRouteItemRef.current = routeItemId;
+    setActiveFilter("all");
+    setSelection((prev) =>
+      prev.some((entry) => entry.id === routeItem.id) ? prev : [routeItem, ...prev],
+    );
+  }, [items, loading, routeItemId]);
 
   const toggleItem = React.useCallback((item: ClothingItem) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -444,15 +463,27 @@ export default function StudioScreen() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.background, alignItems: "center", justifyContent: "center", gap: 12 }}>
-        <ActivityIndicator color={colors.text} />
-        <Text style={{ color: colors.textSecondary, fontSize: 14 }}>Opening Studio…</Text>
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <AuraSubpageHeader
+          title="Build Outfit"
+          eyebrow="AURA STUDIO"
+          fallbackRoute="/"
+        />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 12 }}>
+          <ActivityIndicator color={colors.text} />
+          <Text style={{ color: colors.textSecondary, fontSize: 14 }}>Opening Studio…</Text>
+        </View>
       </View>
     );
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <AuraSubpageHeader
+        title="Build Outfit"
+        eyebrow="AURA STUDIO"
+        fallbackRoute="/"
+      />
       <FlatList
         data={filteredItems}
         key={`studio-grid-${columns}`}
@@ -461,46 +492,19 @@ export default function StudioScreen() {
         numColumns={columns}
         columnWrapperStyle={columns > 1 ? { gap: gridGap } : undefined}
         ListHeaderComponent={
-          <View style={{ gap: 18, marginBottom: 12 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <View style={{ flex: 1, gap: 4 }}>
-                <Text style={{ color: colors.iridescentStart, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 }}>
-                  AURA STUDIO
-                </Text>
-                <Text style={{ color: colors.text, fontSize: 28, lineHeight: 34, fontWeight: "900" }}>
-                  Build Outfit
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => router.back()}
-                style={({ pressed }) => ({
-                  width: 42,
-                  height: 42,
-                  borderRadius: 21,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: colors.surface2,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.08)",
-                  opacity: pressed ? 0.78 : 1,
-                })}
-              >
-                <Ionicons name="close" size={20} color={colors.text} />
-              </Pressable>
-            </View>
-
+          <View style={{ gap: 16, marginBottom: 12 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
               <View
                 style={{
                   borderRadius: layout.pillRadius,
                   paddingHorizontal: 12,
                   paddingVertical: 7,
-                  backgroundColor: "rgba(192,132,252,0.15)",
-                  borderWidth: 0.5,
-                  borderColor: IRIDESCENT_PURPLE,
+                  backgroundColor: colors.purpleSurface,
+                  borderWidth: 1,
+                  borderColor: colors.purpleBorder,
                 }}
               >
-                <Text style={{ color: IRIDESCENT_PURPLE, fontSize: 12, fontWeight: "900" }}>
+                <Text style={[auraTypography.chipLabel, { color: colors.ctaCream, fontSize: 12 }]}>
                   {selection.length} item{selection.length === 1 ? "" : "s"} selected
                 </Text>
               </View>
@@ -510,7 +514,7 @@ export default function StudioScreen() {
                   hitSlop={10}
                   style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
                 >
-                  <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, fontWeight: "800" }}>
+                  <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: "800" }}>
                     Clear all
                   </Text>
                 </Pressable>
@@ -533,20 +537,19 @@ export default function StudioScreen() {
                 onPress={handleAskAura}
                 style={({ pressed }) => ({
                   flex: 1,
+                  ...auraButtonStyle(colors, "primary", !hasSelection || saving),
                   borderRadius: layout.mediumRadius,
                   paddingVertical: 13,
                   paddingHorizontal: 12,
                   alignItems: "center",
-                  backgroundColor: hasSelection ? colors.iridescentStart : colors.surface2,
                   opacity: !hasSelection || saving ? 0.48 : pressed ? 0.84 : 1,
                 })}
               >
                 <Text
                   numberOfLines={2}
                   style={{
-                    color: hasSelection ? colors.background : colors.textSecondary,
+                    ...auraButtonTextStyle(colors, "primary", !hasSelection || saving),
                     fontSize: 13,
-                    fontWeight: "900",
                     textAlign: "center",
                   }}
                 >
@@ -558,17 +561,15 @@ export default function StudioScreen() {
                 onPress={handlePlanLook}
                 style={({ pressed }) => ({
                   flex: 1,
+                  ...auraButtonStyle(colors, "secondary", !hasSelection || saving),
                   borderRadius: layout.mediumRadius,
                   paddingVertical: 13,
                   paddingHorizontal: 12,
                   alignItems: "center",
-                  backgroundColor: colors.surface2,
-                  borderWidth: 1,
-                  borderColor: hasSelection ? colors.iridescentStart : "rgba(255,255,255,0.06)",
                   opacity: !hasSelection || saving ? 0.48 : pressed ? 0.82 : 1,
                 })}
               >
-                <Text numberOfLines={2} style={{ color: colors.text, fontSize: 13, fontWeight: "900", textAlign: "center" }}>
+                <Text numberOfLines={2} style={[auraButtonTextStyle(colors, "secondary", !hasSelection || saving), { fontSize: 13, textAlign: "center" }]}>
                   Plan this outfit
                 </Text>
               </Pressable>
@@ -591,16 +592,14 @@ export default function StudioScreen() {
                           borderRadius: layout.pillRadius,
                           paddingHorizontal: 13,
                           paddingVertical: 9,
-                          backgroundColor: active ? IRIDESCENT_PURPLE : "rgba(255,255,255,0.06)",
+                          backgroundColor: active ? colors.purpleSurface : colors.chipBackground,
+                          borderWidth: 1,
+                          borderColor: active ? colors.purpleBorder : colors.border,
                           opacity: pressed ? 0.82 : 1,
                         })}
                       >
                         <Text
-                          style={{
-                            color: active ? "#000000" : "rgba(255,255,255,0.5)",
-                            fontSize: 12.5,
-                            fontWeight: "900",
-                          }}
+                          style={[auraTypography.chipLabel, { color: active ? colors.ctaCream : colors.textSecondary }]}
                         >
                           {filter.label}
                         </Text>
@@ -612,7 +611,7 @@ export default function StudioScreen() {
 
               <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
                 <View style={{ flex: 1, gap: 3 }}>
-                  <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>
+                  <Text style={[auraTypography.cardTitle, { color: colors.text }]}>
                     Choose wardrobe items
                   </Text>
                   <Text style={{ color: colors.textSecondary, fontSize: 12.5 }}>
@@ -624,16 +623,14 @@ export default function StudioScreen() {
                     onPress={handleSaveLook}
                     disabled={saving}
                     style={({ pressed }) => ({
+                      ...auraButtonStyle(colors, "tertiary", saving),
                       borderRadius: layout.pillRadius,
                       paddingHorizontal: 12,
                       paddingVertical: 9,
-                      backgroundColor: colors.surface2,
-                      borderWidth: 1,
-                      borderColor: "rgba(255,255,255,0.08)",
                       opacity: saving ? 0.5 : pressed ? 0.82 : 1,
                     })}
                   >
-                    <Text style={{ color: colors.text, fontSize: 12, fontWeight: "900" }}>Save as look</Text>
+                    <Text style={[auraButtonTextStyle(colors, "tertiary", saving), { fontSize: 12, lineHeight: 16 }]}>Save as look</Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -645,14 +642,12 @@ export default function StudioScreen() {
             style={{
               borderRadius: layout.mediumRadius,
               padding: layout.cardPadding,
-              backgroundColor: colors.surface2,
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.07)",
+              ...auraSurfaceTiers.surfaceBase,
               gap: 6,
             }}
           >
-            <Text style={{ color: colors.text, fontSize: 16, fontWeight: "900" }}>Nothing here yet</Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
+            <Text style={[auraTypography.cardTitle, { color: colors.text, fontSize: 16, lineHeight: 21 }]}>Nothing here yet</Text>
+            <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary, fontSize: 13, lineHeight: 20 }]}>
               Add or recategorize closet items to make them available for this role.
             </Text>
           </View>
@@ -666,7 +661,7 @@ export default function StudioScreen() {
         windowSize={7}
         extraData={selectedIds}
         contentContainerStyle={{
-          paddingTop: Math.max(insets.top + 10, layout.topContentInset),
+          paddingTop: 12,
           paddingHorizontal: layout.horizontalPadding,
           paddingBottom: layout.bottomDockPadding + 112,
         }}

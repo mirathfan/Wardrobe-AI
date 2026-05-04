@@ -1,6 +1,6 @@
 import AppImage from "@/src/components/common/AppImage";
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
 import { Colors } from "@/constants/theme";
 import { getItemImageUrl } from "@/src/lib/itemImage";
@@ -23,19 +23,17 @@ function Piece({ item, slot }: { item: ClothingItem | null; slot: SlotKey }) {
   const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
   const frame = LAYOUT[slot];
 
+  if (!uri) return null;
+
   return (
     <View pointerEvents="none" style={[styles.piece, frame]}>
-      {uri ? (
-        <AppImage
-          source={{
-            uri,
-          }}
-          resizeMode="contain"
-          style={StyleSheet.absoluteFill}
-        />
-      ) : (
-        <Text style={styles.placeholder}>{slot}</Text>
-      )}
+      <AppImage
+        source={{
+          uri,
+        }}
+        resizeMode="contain"
+        style={StyleSheet.absoluteFill}
+      />
     </View>
   );
 }
@@ -59,17 +57,11 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: Colors.dark.outfitBoardBackground,
     borderWidth: 1,
-    borderColor: "rgba(17,19,26,0.08)",
+    borderColor: Colors.dark.borderWarm,
   },
   piece: {
     position: "absolute",
     alignItems: "center",
     justifyContent: "center",
-  },
-  placeholder: {
-    color: Colors.dark.textMuted,
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
   },
 });

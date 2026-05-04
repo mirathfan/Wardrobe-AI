@@ -2,8 +2,11 @@ import React from "react";
 import AppImage from "@/src/components/common/AppImage";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { Colors } from "@/constants/theme";
 import { getItemImageUrl } from "../../src/lib/itemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
+
+const colors = Colors.dark;
 
 type SlotName = "outerwear" | "top" | "bottom" | "shoes";
 
@@ -66,11 +69,12 @@ const styles = StyleSheet.create({
   card: {
     padding: 12,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: colors.border,
     borderRadius: 14,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
   },
   title: {
+    color: colors.textPrimary,
     fontSize: 16,
     fontWeight: "800",
     marginBottom: 10,
@@ -83,10 +87,10 @@ const styles = StyleSheet.create({
   tile: {
     width: "47%",
     borderWidth: 1,
-    borderColor: "#ececec",
+    borderColor: colors.borderWarm,
     borderRadius: 12,
     padding: 8,
-    backgroundColor: "#fafafa",
+    backgroundColor: colors.boardLight,
   },
   image: {
     width: "100%",
@@ -96,19 +100,19 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 64,
     borderRadius: 8,
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "rgba(25,0,25,0.06)",
   },
   slotLabel: {
     marginTop: 6,
     fontSize: 11,
-    color: "#666",
+    color: colors.textOnLightSecondary,
     fontWeight: "700",
   },
   slotValue: {
     marginTop: 2,
     fontSize: 13,
     fontWeight: "700",
-    color: "#111",
+    color: colors.textOnLight,
   },
   actions: {
     marginTop: 12,
@@ -119,23 +123,23 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 11,
     borderRadius: 12,
-    backgroundColor: "#111",
+    backgroundColor: colors.ctaCream,
     alignItems: "center",
   },
   primaryBtnText: {
-    color: "#fff",
+    color: colors.ctaText,
     fontWeight: "800",
   },
   secondaryBtn: {
     paddingHorizontal: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#111",
+    borderColor: colors.border,
     justifyContent: "center",
     alignItems: "center",
   },
   secondaryBtnText: {
-    color: "#111",
+    color: colors.textPrimary,
     fontWeight: "800",
   },
 });
