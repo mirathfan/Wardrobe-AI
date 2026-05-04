@@ -24,7 +24,9 @@
           }
         ],
         "NSLocationWhenInUseUsageDescription": "We use your location to show local weather in your wardrobe insights.",
-        "NSCalendarsUsageDescription": "We use your calendar to show today's events in your wardrobe insights."
+        "NSCalendarsUsageDescription": "We use your calendar to show today's events in your wardrobe insights.",
+        "NSMicrophoneUsageDescription": "Allow AURA to use your microphone for voice dictation.",
+        "NSSpeechRecognitionUsageDescription": "Allow AURA to turn your speech into chat text."
       }
     },
     "android": {
@@ -37,7 +39,10 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.athfan.aura"
+      "package": "com.athfan.aura",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -66,6 +71,13 @@
         }
       ],
       "expo-audio",
+      [
+        "@react-native-voice/voice",
+        {
+          "microphonePermission": "Allow AURA to use your microphone for voice dictation.",
+          "speechRecognitionPermission": "Allow AURA to turn your speech into chat text."
+        }
+      ],
       "@react-native-google-signin/google-signin",
       "expo-apple-authentication"
     ],

@@ -14,6 +14,12 @@ export type OutfitIntent = {
   includeAccessory?: boolean;
   allowRewearToday?: boolean;
   allowOverWearLimit?: boolean;
+  excludeItemIds?: string[];
+  recentItemIds?: string[];
+  previousLookItemIds?: string[];
+  previousLookSignatures?: string[];
+  maxOverlap?: number;
+  numOutfits?: number;
 };
 
 export type OutfitSuggestion = {
@@ -122,6 +128,36 @@ function wearPenalty(items: ClothingItem[]) {
     const wears = Number(item.wearCountSinceWash ?? 0);
     if (wears >= MAX_WEARS_BEFORE_WASH - 1) penalty += 2;
   }
+  return penalty;
+}
+
+function itemSignature(itemIds: string[]) {
+  return Array.from(new Set(itemIds.map((id) => String(id).trim()).filter(Boolean))).sort().join("|");
+}
+
+function requestedOutfitCount(intent: OutfitIntent, fallback = 3) {
+  const n = Number(intent.numOutfits);
+  const numeric = Number.isFinite(n) ? Math.round(n) : fallback;
+  return Math.max(1, Math.min(8, numeric));
+}
+
+function overlapCount(itemIds: string[], otherIds?: string[]) {
+  const other = new Set((otherIds ?? []).map((id) => String(id).trim()).filter(Boolean));
+  if (!other.size) return 0;
+  return itemIds.filter((id) => other.has(id)).length;
+}
+
+function diversityPenalty(itemIds: string[], intent: OutfitIntent) {
+  const previousOverlap = overlapCount(itemIds, intent.previousLookItemIds);
+  const recentOverlap = overlapCount(itemIds, intent.recentItemIds);
+  const signature = itemSignature(itemIds);
+  const previousSignatures = new Set(intent.previousLookSignatures ?? []);
+  const maxOverlap = Math.max(0, Number(intent.maxOverlap ?? 2));
+  let penalty = 0;
+  if (previousSignatures.has(signature)) penalty += 999;
+  if (previousOverlap > maxOverlap) penalty += (previousOverlap - maxOverlap) * 8;
+  penalty += previousOverlap * 2.4;
+  penalty += Math.max(0, recentOverlap - previousOverlap) * 0.8;
   return penalty;
 }
 
@@ -475,7 +511,8 @@ function generateSparseOutfits({
         comboColorScore(comboItems) +
         brandContinuityScore(comboItems) +
         colorPreferenceBonus(comboItems, intent) -
-        wearPenalty(comboItems),
+        wearPenalty(comboItems) -
+        diversityPenalty(comboItems.map((item) => item.id), intent),
       title: "",
       reason:
         missingSuggestions.length > 0
@@ -486,7 +523,7 @@ function generateSparseOutfits({
 
   candidates.sort((a, b) => b.score - a.score || b.itemIds.length - a.itemIds.length);
 
-  return candidates.slice(0, 3).map((candidate, index) => ({
+  return candidates.slice(0, requestedOutfitCount(intent)).map((candidate, index) => ({
     itemIds: candidate.itemIds,
     title: `Closest Closet Look ${index + 1}`,
     reason: candidate.reason,
@@ -497,9 +534,11 @@ function generateSparseOutfits({
 export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): OutfitSuggestion[] {
   const today = new Date();
   const allowWornStatus = !!intent.allowRewearToday || !!intent.allowOverWearLimit;
+  const excludeSet = new Set((intent.excludeItemIds ?? []).map((id) => String(id).trim()).filter(Boolean));
 
   const filtered = items.filter((item) => {
     if (!item?.id) return false;
+    if (excludeSet.has(item.id)) return false;
     const laundryStatus = normalizeLaundryStatus(item);
     if (laundryStatus === "in_laundry") return false;
     if (!allowWornStatus && laundryStatus !== "clean") return false;
@@ -552,7 +591,8 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
               comboColorScore(comboItems) +
               brandContinuityScore(comboItems) +
               colorPreferenceBonus(comboItems, intent) -
-              wearPenalty(comboItems);
+              wearPenalty(comboItems) -
+              diversityPenalty(comboItems.map((x) => x.id), intent);
 
             candidates.push({
               itemIds: comboItems.map((x) => x.id),
@@ -577,6 +617,7 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
 
   const unique: OutfitSuggestion[] = [];
   const seen = new Set<string>();
+  const targetCount = requestedOutfitCount(intent);
 
   for (const c of candidates) {
     const key = [...c.itemIds].sort().join("|");
@@ -587,7 +628,7 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
       reason: c.reason,
       title: suggestionTitle(intent, unique.length),
     });
-    if (unique.length >= 3) break;
+    if (unique.length >= targetCount) break;
   }
 
   return unique;

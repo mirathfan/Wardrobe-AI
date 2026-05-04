@@ -3,11 +3,39 @@ import type {
   ChatAttachment,
 } from "@/src/components/ai/chatTypes";
 import { summarizeChatTitle, type AIChatThread } from "@/src/lib/aiChats";
+import type { AuraLook } from "@/src/types/aura";
 
 const MULTI_OUTFIT_REQUEST_RE =
-  /\b((?:2|3|4|two|three|four)\s+(?:outfits?|looks?|options?|directions?)|multiple\s+(?:outfits?|looks?|options?)|few\s+outfits?)\b/i;
+  /\b((?:2|3|4|two|three|four)\s+(?:more\s+)?(?:outfits?|looks?|options?|directions?)|multiple\s+(?:outfits?|looks?|options?)|few\s+outfits?)\b/i;
 const OUTFIT_REFINEMENT_RE =
   /\b(with|without|more|less|make|push|safer|balanced|bold|dressier|casual|formal|streetwear|jackets?|outerwear|bags?|glasses|watch|accessor(?:y|ies)|heels?|boots?|sneakers?|loafers?)\b/i;
+const SINGLE_OUTFIT_REQUEST_RE =
+  /\b(?:give|build|make|create|pull|put together|plan|style|dress)\s+(?:me\s+)?(?:(?:an?|one|my|the)\s+)?(?:[\w'-]+\s+){0,6}(?:outfit|look)\b|\bbuild\s+(?:me\s+)?(?:from|with|using)\s+(?:my\s+)?(?:closet|wardrobe)\b|\bstyle me (?:today|now)\b|\bwhat should i wear(?: today| tonight| tomorrow)?\b/i;
+const OUTFIT_DIVERSITY_FOLLOWUP_RE =
+  /\b(try again|give me one more|one more|another one|another outfit|another look|different outfit|different look|something different|show me another|show me one more)\b/i;
+const MORE_OUTFIT_REQUEST_RE =
+  /\b(?:show me\s+|give me\s+|make\s+|create\s+|build\s+)?(?:2|3|4|two|three|four)\s+more\s+(?:outfits?|looks?|options?|directions?)\b/i;
+const STYLE_EXISTING_RE =
+  /\b(?:how\s+(?:should|do|would|can)\s+i\s+(?:style|wear|pull off)|how\s+to\s+(?:style|wear)|what\s+should\s+i\s+do\s+with|what\s+would\s+you\s+do\s+with)\b.*\b(?:this|it|that|outfit|look)\b|\b(?:style|wear)\s+(?:this|it|that|the\s+(?:outfit|look))\b/i;
+const MODIFY_EXISTING_RE =
+  /\b(?:make|fix|turn|push|adjust|change|tweak|dress)\b(?:\s+\S+){0,10}\s+\b(?:dressier|more\s+formal|more\s+casual|casual|formal|streetwear|bolder|bold|safer|balanced|cleaner|sharper|warmer|cooler|date\s+night|office|work)\b|\b(?:swap|replace|remove|add)\b(?:\s+\S+){0,8}\b(?:piece|item|top|bottom|shoes?|jacket|outerwear|accessor(?:y|ies))\b/i;
+
+export type AuraChatIntent =
+  | "GENERATE_OUTFIT"
+  | "GENERATE_MORE"
+  | "STYLE_EXISTING"
+  | "MODIFY_OUTFIT"
+  | "GENERAL_CHAT";
+
+export type AuraOutfitDiversityContext = {
+  shouldAvoidRepeats: boolean;
+  reason: "followup" | "multi_look" | "none";
+  recentItemIds: string[];
+  previousLookItemIds: string[];
+  excludedItemIds: string[];
+  previousLookSignatures: string[];
+  maxOverlap: number;
+};
 
 export function createMessageId() {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -143,6 +171,9 @@ export function requestedOutfitCount(prompt: string) {
   if (/\b(4|four)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 4;
   if (/\b(3|three)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 3;
   if (/\b(2|two)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 2;
+  if (/\b(4|four)\s+more\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 4;
+  if (/\b(3|three)\s+more\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 3;
+  if (/\b(2|two)\s+more\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 2;
   return 3;
 }
 
@@ -151,6 +182,9 @@ export function explicitRequestedOutfitCount(prompt: string) {
   if (/\b(4|four)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 4;
   if (/\b(3|three)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 3;
   if (/\b(2|two)\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 2;
+  if (/\b(4|four)\s+more\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 4;
+  if (/\b(3|three)\s+more\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 3;
+  if (/\b(2|two)\s+more\s+(?:outfits?|looks?|options?|directions?)\b/.test(normalized)) return 2;
   if (/\bmultiple\s+(?:outfits?|looks?|options?)\b/.test(normalized)) return 3;
   if (/\bmore\s+options\b/.test(normalized)) return 3;
   if (/\bfew\s+outfits?\b/.test(normalized)) return 3;
@@ -164,6 +198,108 @@ export function latestAuraLookCount(messages: AIMessage[]) {
     if (count > 0) return count;
   }
   return 0;
+}
+
+export function latestAuraLook(messages: AIMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.type !== "assistant") continue;
+    if (message.aura?.look && itemIdsForLook(message.aura.look).length > 0) {
+      return message.aura.look;
+    }
+    const option = message.aura?.lookOptions?.find((look) => itemIdsForLook(look).length > 0);
+    if (option) return option;
+  }
+  return null;
+}
+
+export function classifyAuraChatIntent(
+  prompt: string,
+  options?: { attachmentCount?: number; hasPreviousLook?: boolean },
+): AuraChatIntent {
+  const normalized = String(prompt ?? "").trim();
+  if (!normalized) return "GENERAL_CHAT";
+  if (isAuraOutfitDiversityFollowup(normalized) || MORE_OUTFIT_REQUEST_RE.test(normalized)) {
+    return "GENERATE_MORE";
+  }
+  if (STYLE_EXISTING_RE.test(normalized)) return "STYLE_EXISTING";
+  if (MODIFY_EXISTING_RE.test(normalized)) return "MODIFY_OUTFIT";
+  if (MULTI_OUTFIT_REQUEST_RE.test(normalized) || SINGLE_OUTFIT_REQUEST_RE.test(normalized)) {
+    return "GENERATE_OUTFIT";
+  }
+  if (options?.hasPreviousLook && OUTFIT_REFINEMENT_RE.test(normalized)) {
+    return "MODIFY_OUTFIT";
+  }
+  return "GENERAL_CHAT";
+}
+
+function uniqueStrings(values: (string | null | undefined)[], max = 24) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const next = String(value ?? "").trim();
+    if (!next || seen.has(next)) continue;
+    seen.add(next);
+    out.push(next);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function itemIdsForLook(look?: AuraLook | null) {
+  return uniqueStrings(
+    (look?.pieces ?? [])
+      .filter((piece) => piece.source === "closet")
+      .map((piece) => piece.itemId),
+    8,
+  );
+}
+
+function signatureForItemIds(itemIds: string[]) {
+  return uniqueStrings(itemIds, 12).sort().join("|");
+}
+
+function looksFromMessage(message: AIMessage): AuraLook[] {
+  const looks: AuraLook[] = [];
+  if (message.aura?.look) looks.push(message.aura.look);
+  if (message.aura?.lookOptions?.length) looks.push(...message.aura.lookOptions);
+  return looks.filter((look) => itemIdsForLook(look).length > 0);
+}
+
+export function isAuraOutfitDiversityFollowup(prompt: string) {
+  return OUTFIT_DIVERSITY_FOLLOWUP_RE.test(String(prompt ?? ""));
+}
+
+export function buildAuraOutfitDiversityContext(
+  prompt: string,
+  messages: AIMessage[],
+  options?: { multiLook?: boolean },
+): AuraOutfitDiversityContext {
+  const recentLooks = messages
+    .filter((message) => message.type === "assistant")
+    .flatMap(looksFromMessage)
+    .slice(-6);
+  const previousLook = recentLooks[recentLooks.length - 1] ?? null;
+  const previousLookItemIds = itemIdsForLook(previousLook);
+  const recentItemIds = uniqueStrings(recentLooks.flatMap(itemIdsForLook), 36);
+  const previousLookSignatures = uniqueStrings(
+    recentLooks
+      .map((look) => signatureForItemIds(itemIdsForLook(look)))
+      .filter(Boolean),
+    12,
+  );
+  const isFollowup = isAuraOutfitDiversityFollowup(prompt);
+  const isMultiLook = !!options?.multiLook;
+  const shouldAvoidRepeats = (isFollowup || isMultiLook) && previousLookItemIds.length > 0;
+  return {
+    shouldAvoidRepeats,
+    reason: shouldAvoidRepeats ? (isFollowup ? "followup" : "multi_look") : "none",
+    recentItemIds,
+    previousLookItemIds,
+    excludedItemIds: shouldAvoidRepeats ? previousLookItemIds : [],
+    previousLookSignatures,
+    maxOverlap: isFollowup ? 1 : 2,
+  };
 }
 
 export function previousUserPrompt(messages: AIMessage[]) {
@@ -194,8 +330,25 @@ export function wantsStructuredOutfitBatch(
   messages: AIMessage[],
 ) {
   if (attachmentCount !== 0) return false;
+  const intent = classifyAuraChatIntent(prompt, { hasPreviousLook: latestAuraLookCount(messages) > 0 });
+  if (intent === "STYLE_EXISTING" || intent === "MODIFY_OUTFIT" || intent === "GENERAL_CHAT") return false;
   if (MULTI_OUTFIT_REQUEST_RE.test(prompt)) return true;
-  return latestAuraLookCount(messages) > 0 && OUTFIT_REFINEMENT_RE.test(prompt);
+  return false;
+}
+
+export function wantsStructuredOutfitRequest(
+  prompt: string,
+  attachmentCount: number,
+  messages: AIMessage[],
+) {
+  if (attachmentCount !== 0) return false;
+  const normalized = String(prompt ?? "").trim();
+  if (!normalized) return false;
+  const intent = classifyAuraChatIntent(normalized, { hasPreviousLook: latestAuraLookCount(messages) > 0 });
+  if (intent === "STYLE_EXISTING" || intent === "MODIFY_OUTFIT" || intent === "GENERAL_CHAT") return false;
+  if (isAuraOutfitDiversityFollowup(normalized) && latestAuraLookCount(messages) > 0) return true;
+  if (wantsStructuredOutfitBatch(normalized, attachmentCount, messages)) return true;
+  return SINGLE_OUTFIT_REQUEST_RE.test(normalized);
 }
 
 export function resolveStructuredBatchLookCount(

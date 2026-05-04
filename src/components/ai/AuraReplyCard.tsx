@@ -17,6 +17,7 @@ import {
 } from "@/src/constants/auraControls";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
+import { formatMoney } from "@/src/lib/currency";
 import { runHaptic } from "@/src/lib/haptics";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -1006,18 +1007,24 @@ function CandidateCard({
   const disabled = candidate.status === "added" || candidate.status === "cancelled";
   const title =
     sanitizeDisplayText(candidate.title ?? "") ||
-    [candidate.color, candidate.subCategory ?? candidate.category].filter(Boolean).join(" ") ||
+    [candidate.displayColor ?? candidate.color, candidate.subCategory ?? candidate.category].filter(Boolean).join(" ") ||
     "Item preview";
-  const fields = [
-    ["Category", candidate.category],
-    ["Subcategory", candidate.subCategory],
-    ["Color", candidate.color],
-    ["Brand", candidate.brand],
-    ["Material", candidate.material],
-    ["Fit", candidate.fit],
-    ["Pattern", candidate.pattern],
-  ].filter((entry): entry is [string, string] => !!entry[1]);
+  const priceText =
+    candidate.priceDisplay ??
+    (typeof candidate.salePrice === "number"
+      ? formatMoney(candidate.salePrice, candidate.currency)
+      : typeof candidate.estimatedValue === "number"
+        ? formatMoney(candidate.estimatedValue, candidate.currency)
+        : null);
   const categoryLabel = displayCategory(candidate.category, candidate.subCategory);
+  const chipFields = [
+    ["Category", candidate.category ? categoryLabel : null],
+    ["Color", candidate.displayColor ?? candidate.color],
+    ["Fit", candidate.fit],
+    ["Material", candidate.material ?? candidate.materials?.[0]],
+    ["Pattern", candidate.pattern],
+    ["Price", priceText && !candidate.priceDisplay ? priceText : null],
+  ].filter((entry): entry is [string, string] => !!entry[1]).slice(0, 6);
   const needsReview = candidate.status === "needs_review";
   const previewImageUrl = candidate.primaryImageUrl ?? candidate.imageUrls[0] ?? "";
 
@@ -1035,18 +1042,35 @@ function CandidateCard({
       }}
     >
       <View style={{ flexDirection: "row", gap: 10 }}>
-        <AppImage
-          source={{ uri: previewImageUrl }}
-          style={{
-            width: 76,
-            height: 94,
-            borderRadius: 12,
-            backgroundColor: colors.boardLight,
-            borderWidth: CHIP_BORDER_WIDTH,
-            borderColor: colors.borderWarm,
-          }}
-          resizeMode="cover"
-        />
+        {previewImageUrl ? (
+          <AppImage
+            source={{ uri: previewImageUrl }}
+            style={{
+              width: 76,
+              height: 94,
+              borderRadius: 12,
+              backgroundColor: colors.boardLight,
+              borderWidth: CHIP_BORDER_WIDTH,
+              borderColor: colors.borderWarm,
+            }}
+            resizeMode="cover"
+          />
+        ) : (
+          <View
+            style={{
+              width: 76,
+              height: 94,
+              borderRadius: 12,
+              backgroundColor: colors.boardLight,
+              borderWidth: CHIP_BORDER_WIDTH,
+              borderColor: colors.borderWarm,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Ionicons name="link-outline" size={24} color={auraTheme.textMuted} />
+          </View>
+        )}
         <View style={{ flex: 1, gap: 6, minWidth: 0 }}>
           <View style={{ gap: 3 }}>
             <Text
@@ -1061,6 +1085,20 @@ function CandidateCard({
             >
               {title}
             </Text>
+            {[candidate.brand, priceText].filter(Boolean).length ? (
+              <Text
+                style={{
+                  color: colors.textSecondary,
+                  fontSize: 12,
+                  lineHeight: 16,
+                  fontWeight: "700",
+                  fontFamily: Fonts.sans,
+                }}
+                numberOfLines={1}
+              >
+                {[sanitizeDisplayText(candidate.brand ?? ""), sanitizeDisplayText(priceText ?? "")].filter(Boolean).join(" • ")}
+              </Text>
+            ) : null}
             <Text
               style={{
                 color: auraTheme.textMuted,
@@ -1092,7 +1130,7 @@ function CandidateCard({
             </Text>
           ) : null}
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
-            {fields.slice(0, 6).map(([label, value]) => (
+            {chipFields.map(([label, value]) => (
               <View
                 key={`${candidate.candidateId}-${label}`}
                 style={{
@@ -1103,7 +1141,7 @@ function CandidateCard({
                 }}
               >
                 <Text style={{ color: colors.textSecondary, fontSize: 10.5, fontWeight: "700" }}>
-                  {label}: <Text style={{ color: colors.text }}>{label === "Category" ? categoryLabel : sanitizeDisplayText(value)}</Text>
+                  {label}: <Text style={{ color: colors.text }}>{sanitizeDisplayText(value)}</Text>
                 </Text>
               </View>
             ))}

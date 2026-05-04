@@ -10,9 +10,7 @@ import {
   candidatesFromProductExtractions,
   extractImageCandidates,
   fallbackImageCandidates,
-  productCategoryHintsFromText,
   rankProductExtractionImages,
-  rankProductLinkImages,
   type AuraCandidateItem,
 } from "./shared/auraCandidatePreview";
 import { classifyAuraLinkIntent, extractUrlsFromText } from "./shared/auraLinkIntent";
@@ -32,7 +30,6 @@ import {
   ProductLinkError,
   extractProductFromUrl,
 } from "./shared/productLinkExtractor";
-import { redactUrlForLogs } from "./shared/safeFetch";
 import {
   attachmentContextText,
   buildAuraVisionImageInputs,
@@ -55,11 +52,20 @@ import {
   writeTextDelta,
   type AuraStreamWriter,
 } from "./shared/auraStreamSse";
+import {
+  buildUrlCandidatePreview,
+  isHmProductUrl,
+  type AuraLinkPreview,
+} from "./shared/auraUrlCandidatePreview";
 
 const db = getFirestore();
 const AURA_BACKEND_VERSION = "candidate-preview-url-v9-zara-product-api";
 const DEBUG_AURA_SPARSE =
   process.env.FUNCTIONS_EMULATOR === "true" || process.env.NODE_ENV !== "production";
+const DEBUG_AURA_DIVERSITY =
+  process.env.AURA_DEBUG === "1" ||
+  process.env.EXPO_PUBLIC_AURA_DEBUG === "1" ||
+  process.env.FUNCTIONS_EMULATOR === "true";
 
 function sanitizeUserInput(input: string): string {
   return input
@@ -91,6 +97,66 @@ function styleCoreNoteFromClientContext(value: unknown) {
     nudge,
     "Use this naturally; do not say minimum closet target, estimated combinations, or missing categories.",
   ].filter(Boolean).join(" ");
+}
+
+type ClientOutfitDiversityContext = {
+  shouldAvoidRepeats: boolean;
+  reason: "followup" | "multi_look" | "none";
+  recentItemIds: string[];
+  previousLookItemIds: string[];
+  excludedItemIds: string[];
+  previousLookSignatures: string[];
+  maxOverlap: number;
+};
+
+function cleanStringList(value: unknown, maxLength: number) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of value) {
+    const text = String(entry ?? "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+    if (out.length >= maxLength) break;
+  }
+  return out;
+}
+
+function outfitDiversityFromClientContext(value: unknown): ClientOutfitDiversityContext | null {
+  const context = value && typeof value === "object"
+    ? (value as Record<string, unknown>).outfitDiversity
+    : null;
+  if (!context || typeof context !== "object") return null;
+  const raw = context as Record<string, unknown>;
+  const reason =
+    raw.reason === "followup" || raw.reason === "multi_look" || raw.reason === "none"
+      ? raw.reason
+      : "none";
+  return {
+    shouldAvoidRepeats: raw.shouldAvoidRepeats === true,
+    reason,
+    recentItemIds: cleanStringList(raw.recentItemIds, 36),
+    previousLookItemIds: cleanStringList(raw.previousLookItemIds, 12),
+    excludedItemIds: cleanStringList(raw.excludedItemIds, 24),
+    previousLookSignatures: cleanStringList(raw.previousLookSignatures, 12),
+    maxOverlap: Math.max(0, Math.min(3, Math.round(Number(raw.maxOverlap ?? 2)))),
+  };
+}
+
+function outfitDiversityPromptNote(context: ClientOutfitDiversityContext | null) {
+  if (!context?.shouldAvoidRepeats) return "No recent outfit exclusions.";
+  return [
+    "Outfit diversity guard:",
+    `- User is asking for ${context.reason === "followup" ? "another/different look" : "distinct multi-look options"}.`,
+    `- Previous look item IDs: ${context.previousLookItemIds.length ? context.previousLookItemIds.join(", ") : "none"}.`,
+    `- Recent session item IDs: ${context.recentItemIds.length ? context.recentItemIds.join(", ") : "none"}.`,
+    `- Excluded item IDs where possible: ${context.excludedItemIds.length ? context.excludedItemIds.join(", ") : "none"}.`,
+    `- Previous look signatures: ${context.previousLookSignatures.length ? context.previousLookSignatures.join(" / ") : "none"}.`,
+    `- Do not return an exact same piece combination. Avoid more than ${context.maxOverlap} overlapping closet item IDs with the previous look unless the closet is too limited.`,
+    "- Prefer changing the top/bottom/shoes anchors first. For safe/balanced/bold, each option needs a distinct anchor combination.",
+    "- If the closet is too limited, briefly say that meaningful variety is limited, but still change at least one anchor piece.",
+  ].join("\n");
 }
 
 type AuraResponse = {
@@ -157,14 +223,6 @@ type AuraResponse = {
     targetStatus: "clean" | "needs_wash" | "in_laundry";
     matches: { itemId: string; label: string; subtitle?: string }[];
   };
-};
-
-type AuraLinkPreview = {
-  sourceUrl: string;
-  title: string | null;
-  imageUrl: string | null;
-  imageUrls?: string[];
-  description: string | null;
 };
 
 function shortenLookReply(text: string) {
@@ -386,6 +444,116 @@ function normalizeLookSurface(
   };
 }
 
+type AuraLookSurface = NonNullable<AuraResponse["look"]>;
+
+function itemIdsForAuraLook(look?: AuraLookSurface | null) {
+  return cleanStringList(
+    (look?.pieces ?? [])
+      .filter((piece) => piece.source === "closet")
+      .map((piece) => piece.itemId),
+    12,
+  );
+}
+
+function signatureForAuraLook(look?: AuraLookSurface | null) {
+  return itemIdsForAuraLook(look).sort().join("|");
+}
+
+function overlapWithPreviousLook(
+  look: AuraLookSurface,
+  diversity: ClientOutfitDiversityContext
+) {
+  const previous = new Set(diversity.previousLookItemIds);
+  return itemIdsForAuraLook(look).filter((itemId) => previous.has(itemId)).length;
+}
+
+function isTooSimilarToPrevious(
+  look: AuraLookSurface,
+  diversity: ClientOutfitDiversityContext
+) {
+  if (!diversity.shouldAvoidRepeats) return false;
+  const signature = signatureForAuraLook(look);
+  if (signature && diversity.previousLookSignatures.includes(signature)) return true;
+  return overlapWithPreviousLook(look, diversity) > diversity.maxOverlap;
+}
+
+function enforceOutfitDiversity(
+  response: AuraResponse,
+  diversity: ClientOutfitDiversityContext | null
+): AuraResponse {
+  if (!diversity?.shouldAvoidRepeats) return response;
+  const originalLooks = [
+    ...(response.lookOptions ?? []),
+    ...(response.look && !(response.lookOptions ?? []).includes(response.look) ? [response.look] : []),
+  ].filter(Boolean) as AuraLookSurface[];
+  if (!originalLooks.length) return response;
+
+  const selected: AuraLookSurface[] = [];
+  const selectedSignatures = new Set<string>();
+  const rejected = originalLooks.map((look) => {
+    const itemIds = itemIdsForAuraLook(look);
+    const signature = itemIds.slice().sort().join("|");
+    const previousOverlap = overlapWithPreviousLook(look, diversity);
+    const duplicateWithinResponse = !!signature && selectedSignatures.has(signature);
+    const tooSimilar = isTooSimilarToPrevious(look, diversity);
+    const selectedOverlapTooHigh =
+      selected.some((existing) => {
+        const existingIds = new Set(itemIdsForAuraLook(existing));
+        const overlap = itemIds.filter((itemId) => existingIds.has(itemId)).length;
+        return overlap > Math.max(1, diversity.maxOverlap);
+      });
+    const reject = duplicateWithinResponse || tooSimilar || selectedOverlapTooHigh;
+    if (!reject) {
+      selected.push(look);
+      if (signature) selectedSignatures.add(signature);
+    }
+    return {
+      title: look.lookTitle,
+      itemIds,
+      signature,
+      previousOverlap,
+      duplicateWithinResponse,
+      tooSimilar,
+      selectedOverlapTooHigh,
+      rejected: reject,
+    };
+  });
+
+  if (DEBUG_AURA_DIVERSITY) {
+    logger.info("[AURA_DIVERSITY] final look guard", {
+      previousItemIds: diversity.previousLookItemIds,
+      excludedItemIds: diversity.excludedItemIds,
+      recentItemIds: diversity.recentItemIds,
+      previousLookSignatures: diversity.previousLookSignatures,
+      maxOverlap: diversity.maxOverlap,
+      candidates: rejected,
+      selected: selected.map((look) => ({
+        title: look.lookTitle,
+        itemIds: itemIdsForAuraLook(look),
+        signature: signatureForAuraLook(look),
+        overlap: overlapWithPreviousLook(look, diversity),
+      })),
+    });
+  }
+
+  if (!selected.length) {
+    return {
+      ...fallbackAuraResponse("I need more usable pieces to make this meaningfully different."),
+      title: "More pieces needed",
+      presentation: "chat" as const,
+    };
+  }
+
+  if (response.lookOptions?.length) {
+    response.lookOptions = selected.slice(0, response.lookOptions.length);
+    response.look = response.lookOptions[0] ?? null;
+  } else if (response.look && selected[0]) {
+    response.look = selected[0];
+  }
+
+  return response;
+}
+
 function normalizeAuraResponse(
   response: AuraResponse,
   userMessage?: string,
@@ -422,7 +590,8 @@ function normalizeAuraResponse(
         vibeForThisSession?: string;
       } | null;
     } | null;
-  }
+  },
+  diversity?: ClientOutfitDiversityContext | null
 ) {
   const multiRequested = wantsMultipleLooks(userMessage ?? "");
   if (response.lookOptions?.length) {
@@ -528,7 +697,7 @@ function normalizeAuraResponse(
     });
   }
 
-  return response;
+  return enforceOutfitDiversity(response, diversity ?? null);
 }
 
 function fallbackAuraResponse(reply: string): AuraResponse {
@@ -590,23 +759,13 @@ function normalizeSuggestionItems(
     .slice(0, 3);
 }
 
-function isHmProductUrl(rawUrl?: string | null) {
-  try {
-    const url = new URL(String(rawUrl ?? ""));
-    const host = url.hostname.toLowerCase();
-    return (
-      (host === "hm.com" || host.endsWith(".hm.com")) &&
-      /\/productpage\.\d+\.html$/i.test(url.pathname)
-    );
-  } catch {
-    return false;
-  }
-}
-
 function auraLinkErrorMessage(error: unknown) {
   if (error instanceof ProductLinkError) {
     if (error.code === "invalid_url") return "That product link does not look valid.";
     if (error.code === "unsafe_url") return "I cannot fetch that kind of link.";
+    if (error.code === "blocked_store") {
+      return "This store blocked automatic reading. Try another link or upload a screenshot/photo of the item.";
+    }
     if (error.code === "fetch_failed") {
       return "I couldn't read that product link. Try another link or upload a photo.";
     }
@@ -656,54 +815,6 @@ function logStreamCandidateEmit(
   });
 }
 
-function mergeUrlMetadataIntoCandidate(
-  candidate: AuraCandidateItem,
-  metadata: Awaited<ReturnType<typeof extractProductUrlMetadata>> | AuraLinkPreview,
-): AuraCandidateItem {
-  const amount = "priceAmount" in metadata ? metadata.priceAmount ?? null : null;
-  const currency =
-    "priceCurrency" in metadata
-      ? metadata.priceCurrency ?? metadata.currency ?? null
-      : null;
-  const priceFields =
-    typeof amount === "number" && Number.isFinite(amount)
-      ? {
-          retailPrice: amount,
-          purchasePrice: amount,
-          estimatedValue: amount,
-          currency,
-          originalPrice: amount,
-          originalCurrency: currency,
-          priceSource: "product_link" as const,
-          priceDisplay:
-            "priceDisplay" in metadata
-              ? metadata.priceDisplay ?? metadata.price ?? null
-              : null,
-        }
-      : {};
-  return {
-    ...candidate,
-    candidateId: `url-${Date.now()}-0`,
-    imageUrls:
-      "imageUrls" in metadata && Array.isArray(metadata.imageUrls) && metadata.imageUrls.length
-        ? metadata.imageUrls
-        : metadata.imageUrl
-          ? [metadata.imageUrl]
-          : candidate.imageUrls,
-    title: candidate.title ?? metadata.title,
-    category: candidate.category ?? ("category" in metadata ? metadata.category ?? null : null),
-    subCategory: candidate.subCategory ?? ("subCategory" in metadata ? metadata.subCategory ?? null : null),
-    brand: candidate.brand ?? ("brand" in metadata ? metadata.brand ?? null : null),
-    confidence: candidate.confidence ?? ("confidence" in metadata ? metadata.confidence ?? null : null),
-    ...priceFields,
-    sourceType: "link",
-    sourceUrl: metadata.sourceUrl,
-    status: "status" in metadata && metadata.status === "needs_review"
-      ? "needs_review"
-      : "awaiting_confirmation",
-  };
-}
-
 function brandFromSourceUrl(sourceUrl?: string | null) {
   try {
     const host = new URL(String(sourceUrl ?? "")).hostname.replace(/^www\d*\./, "").toLowerCase();
@@ -717,22 +828,45 @@ function brandFromSourceUrl(sourceUrl?: string | null) {
   }
 }
 
-function cleanProductTitle(title?: string | null, brand?: string | null) {
-  let next = String(title ?? "").replace(/\s+/g, " ").trim();
-  next = next
-    .replace(/\s*\|\s*H\s*&\s*M(?:\s+[A-Z]{2})?\s*$/i, "")
-    .replace(/\s*\|\s*Zara\s*$/i, "")
-    .replace(/\s*\|\s*Nike\s*$/i, "")
-    .replace(/^Men[’']s\s+/i, "")
-    .replace(/^Women[’']s\s+/i, "")
-    .replace(/^Ladies[’']?\s+/i, "")
-    .trim();
-  if (brand) {
-    next = next
-      .replace(new RegExp(`^${brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`, "i"), "")
-      .trim();
+function isLikelyProductLinkForReview(sourceUrl?: string | null) {
+  try {
+    const url = new URL(String(sourceUrl ?? ""));
+    const host = url.hostname.toLowerCase();
+    if (
+      host.includes("amazon.") ||
+      host.endsWith("hm.com") ||
+      host.endsWith("zara.com") ||
+      host.endsWith("nike.com")
+    ) {
+      return true;
+    }
+    return /\b(product|productpage|pdp|item|dp|gp\/product)\b/i.test(url.pathname);
+  } catch {
+    return false;
   }
-  return next || title || null;
+}
+
+function fallbackLinkPreviewFromUrl(sourceUrl: string): AuraLinkPreview | null {
+  if (!isLikelyProductLinkForReview(sourceUrl)) return null;
+  try {
+    const url = new URL(sourceUrl);
+    const brand = brandFromSourceUrl(sourceUrl);
+    const articleId = isHmProductUrl(sourceUrl)
+      ? url.pathname.match(/\/productpage\.(\d+)\.html$/i)?.[1] ?? null
+      : null;
+    const hostLabel = url.hostname.replace(/^www\d*\./i, "");
+    return {
+      sourceUrl: url.toString(),
+      title: brand ? `${brand} product link` : `${hostLabel} product link`,
+      imageUrl: null,
+      imageUrls: [],
+      description: articleId ? `Product ${articleId}` : null,
+      brand,
+      status: "needs_review",
+    };
+  } catch {
+    return null;
+  }
 }
 
 function cleanPreviewText(value: unknown, maxLength = 500) {
@@ -830,117 +964,11 @@ async function emitUrlCandidatePreview(params: {
   uid: string;
   metadata: Awaited<ReturnType<typeof extractProductUrlMetadata>> | AuraLinkPreview;
 }) {
-  const rawImageUrls = [
-    ...("imageUrls" in params.metadata && Array.isArray(params.metadata.imageUrls)
-      ? params.metadata.imageUrls
-      : []),
-    params.metadata.imageUrl,
-  ].filter((url): url is string => !!url);
-  logger.info("[LINK_IMAGE_SOURCE] URL metadata image source", {
-    uid: params.uid,
-    sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
-    rawImageCount: rawImageUrls.length,
-    rawImageUrls: rawImageUrls.slice(0, 6).map((url) => redactUrlForLogs(url)),
-  });
-  const rankedImages = await rankProductLinkImages({
+  const { data } = await buildUrlCandidatePreview({
     client: params.client,
-    imageUrls: rawImageUrls,
-    title: params.metadata.title,
-    description: params.metadata.description,
-    sourceUrl: params.metadata.sourceUrl,
-  });
-  const rankedImageUrls = rankedImages.map((image) => image.url);
-  const primaryImageUrl = rankedImageUrls[0] ?? null;
-  const titleHints = productCategoryHintsFromText(params.metadata.title, params.metadata.description);
-  logger.info("[LINK_EXTRACTION_TARGET]", {
     uid: params.uid,
-    sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
-    title: params.metadata.title,
-    description: params.metadata.description,
-    hintedCategory: titleHints.category,
-    hintedSubCategory: titleHints.subCategory,
-    chosenImage: redactUrlForLogs(primaryImageUrl),
-    chosenImageReasons: rankedImages[0]?.reasons ?? [],
-    rawImageCount: rawImageUrls.length,
-    rankedImageCount: rankedImageUrls.length,
+    metadata: params.metadata,
   });
-
-  let candidates = primaryImageUrl
-    ? await extractImageCandidates({
-        client: params.client,
-        imageGroups: [[primaryImageUrl]],
-      })
-    : [];
-  if (!candidates.length && primaryImageUrl) {
-    candidates = fallbackImageCandidates([[primaryImageUrl]]);
-  }
-  if (!candidates.length) {
-    candidates = [
-      {
-        candidateId: `url-${Date.now()}-0`,
-        imageUrls: [],
-        title: params.metadata.title,
-        category: null,
-        subCategory: null,
-        color: null,
-        brand: null,
-        material: null,
-        fit: null,
-        pattern: null,
-        confidence: null,
-        sourceType: "link",
-        sourceUrl: params.metadata.sourceUrl,
-        status: "awaiting_confirmation",
-      },
-    ];
-  }
-  const candidate = mergeUrlMetadataIntoCandidate(candidates[0], params.metadata);
-  const needsReview = "status" in params.metadata && params.metadata.status === "needs_review";
-  candidate.imageUrls = rankedImageUrls.length ? rankedImageUrls : candidate.imageUrls;
-  candidate.primaryImageUrl = candidate.imageUrls[0] ?? null;
-  candidate.secondaryImageUrls = candidate.imageUrls.slice(1);
-  logger.info("[LINK_IMAGE_REVIEW_SET]", {
-    uid: params.uid,
-    sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
-    candidateId: candidate.candidateId,
-    primaryImageUrl: redactUrlForLogs(candidate.primaryImageUrl),
-    imageUrls: candidate.imageUrls.slice(0, 8).map((url) => redactUrlForLogs(url)),
-    secondaryImageUrls: candidate.secondaryImageUrls.slice(0, 8).map((url) => redactUrlForLogs(url)),
-  });
-  if (!needsReview) {
-    candidate.category = titleHints.category ?? candidate.category;
-    candidate.subCategory = titleHints.subCategory ?? candidate.subCategory;
-    candidate.brand = candidate.brand && !/^no brand$/i.test(candidate.brand)
-      ? candidate.brand
-      : brandFromSourceUrl(params.metadata.sourceUrl);
-  } else {
-    candidate.category = candidate.category ?? null;
-    candidate.subCategory = candidate.subCategory ?? null;
-    candidate.brand = candidate.brand ?? null;
-  }
-  candidate.title = cleanProductTitle(params.metadata.title ?? candidate.title, candidate.brand);
-  logger.info("[LINK_BRAND_NORMALIZE] candidate brand/title normalized", {
-    uid: params.uid,
-    sourceUrl: params.metadata.sourceUrl,
-    rawTitle: params.metadata.title,
-    savedBrand: candidate.brand,
-    savedTitle: candidate.title,
-  });
-  logger.info("[AURA_URL_TO_CANDIDATE] converted URL metadata to candidate", {
-    uid: params.uid,
-    sourceUrl: params.metadata.sourceUrl,
-    imageUrl: params.metadata.imageUrl,
-    title: params.metadata.title,
-    candidateId: candidate.candidateId,
-    category: candidate.category,
-    subCategory: candidate.subCategory,
-    color: candidate.color,
-    brand: candidate.brand,
-  });
-  const data = candidatePreviewResponse([candidate]);
-  if (needsReview) {
-    data.reply = "I couldn’t fully read this item — review before adding";
-  }
   logger.info("[AURA_STREAM_PRE_EMIT] URL candidate final object", {
     uid: params.uid,
     branchChosen: "url_candidate_preview",
@@ -991,6 +1019,7 @@ export const askAuraStream = onRequest(
       const uid = decodedToken.uid;
       const userMessage = sanitizeUserInput(String(req.body?.message ?? ""));
       const styleCoreNote = styleCoreNoteFromClientContext(req.body?.clientContext);
+      const outfitDiversity = outfitDiversityFromClientContext(req.body?.clientContext);
       const attachments = await parseAuraAttachments(uid, req.body?.attachments);
       const clientIntent = typeof req.body?.clientIntent === "string" ? req.body.clientIntent : null;
       const linkIntent = classifyAuraLinkIntent(userMessage);
@@ -1028,6 +1057,17 @@ export const askAuraStream = onRequest(
         detectedUrlCount: detectedUrls.length,
         detectedDomains: detectedUrls.map((entry) => safeUrlHost(entry.normalized)),
         attachmentCount: attachments.length,
+        outfitDiversity: outfitDiversity
+          ? {
+              shouldAvoidRepeats: outfitDiversity.shouldAvoidRepeats,
+              reason: outfitDiversity.reason,
+              previousItemIds: outfitDiversity.previousLookItemIds,
+              excludedItemIds: outfitDiversity.excludedItemIds,
+              recentItemIds: outfitDiversity.recentItemIds,
+              previousLookSignatures: outfitDiversity.previousLookSignatures,
+              maxOverlap: outfitDiversity.maxOverlap,
+            }
+          : null,
         attachments: attachments.map((attachment) => ({
           type: attachment.type,
           role: attachment.role ?? null,
@@ -1130,8 +1170,13 @@ export const askAuraStream = onRequest(
         try {
           const metadata = await extractProductUrlMetadata(firstDetectedUrl);
           if (!metadata.imageUrl) {
-            const fallbackPreview = clientLinkPreview ?? hmClientFallback;
-            if (fallbackPreview?.imageUrl) {
+            const fallbackPreview =
+              clientLinkPreview ??
+              hmClientFallback ??
+              (metadata.title || metadata.description
+                ? { ...metadata, status: "needs_review" as const }
+                : fallbackLinkPreviewFromUrl(firstDetectedUrl));
+            if (fallbackPreview) {
               logger.info("[AURA_URL_METADATA] using client link preview after missing server image", {
                 uid,
                 urlHost: safeUrlHost(firstDetectedUrl),
@@ -1167,8 +1212,11 @@ export const askAuraStream = onRequest(
           });
           return;
         } catch (error) {
-          const fallbackPreview = clientLinkPreview ?? hmClientFallback;
-          if (fallbackPreview?.imageUrl) {
+          const fallbackPreview =
+            clientLinkPreview ??
+            hmClientFallback ??
+            fallbackLinkPreviewFromUrl(firstDetectedUrl);
+          if (fallbackPreview) {
             logger.info("[AURA_URL_METADATA] using client link preview after server fetch failure", {
               uid,
               urlHost: safeUrlHost(firstDetectedUrl),
@@ -1358,6 +1406,7 @@ export const askAuraStream = onRequest(
           `Aura context:\n${JSON.stringify(compactAuraContext, null, 2)}\n\n` +
           "Stylist brief:\nPersonalize lightly.\n\n" +
           `Style core note:\n${styleCoreNote || "None."}\n\n` +
+          `Outfit diversity:\n${outfitDiversityPromptNote(outfitDiversity)}\n\n` +
           `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
           "Product link context:\nNo product links.\n\n" +
           "Attachments:\nNone.\n\n" +
@@ -1476,6 +1525,7 @@ export const askAuraStream = onRequest(
         `Aura context:\n${JSON.stringify(auraContext, null, 2)}\n\n` +
         `Stylist brief:\n${auraContext.stylistBrief || "Personalize lightly."}\n\n` +
         `Style core note:\n${styleCoreNote || "None."}\n\n` +
+        `Outfit diversity:\n${outfitDiversityPromptNote(outfitDiversity)}\n\n` +
         `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
         `Product link context:\n${linkProductContext}\n\n` +
         `Attachments:\n${attachmentContextText(attachments)}\n\n` +
@@ -1706,7 +1756,7 @@ export const askAuraStream = onRequest(
         rawOwnedPiecesCount: parsed.ownedPieces?.length ?? 0,
         rawOutfitItemsCount: parsed.outfitItems?.length ?? 0,
       });
-      parsed = normalizeAuraResponse(parsed, userMessage, auraContext);
+      parsed = normalizeAuraResponse(parsed, userMessage, auraContext, outfitDiversity);
       logger.info("[AURA_MULTI] stream structured response normalized", {
         uid,
         multiRequested: wantsMultipleLooks(userMessage),

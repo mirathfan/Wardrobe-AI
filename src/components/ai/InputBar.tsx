@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
 import Reanimated, {
   useAnimatedKeyboard,
@@ -18,45 +19,43 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TextInputContentSizeChangeEventData,
+  TextLayoutEventData,
   View,
 } from "react-native";
 
-import { Fonts, type AppColors } from "@/constants/theme";
+import { Colors, Fonts, type AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { getAttachmentGroupingLabel } from "@/src/lib/auraIntent";
 
 import type { ChatAttachment, ChatAttachmentGroupRole } from "./chatTypes";
 
 const BASE_COMPOSER_HEIGHT = 50;
-const BASE_INPUT_HEIGHT = 32;
-const MAX_INPUT_LINES = 6;
+const BASE_INPUT_HEIGHT = 34;
+const MAX_INPUT_LINES = 5;
 const INPUT_LINE_HEIGHT = 19;
-const INPUT_PADDING_TOP = Platform.OS === "ios" ? 8 : 5;
-const INPUT_PADDING_BOTTOM = Platform.OS === "ios" ? 4 : 3;
+const INPUT_PADDING_TOP = Platform.OS === "ios" ? 7 : 5;
+const INPUT_PADDING_BOTTOM = Platform.OS === "ios" ? 1 : 1;
 const INPUT_VERTICAL_PADDING = INPUT_PADDING_TOP + INPUT_PADDING_BOTTOM;
-const MAX_INPUT_HEIGHT = INPUT_LINE_HEIGHT * MAX_INPUT_LINES + INPUT_PADDING_TOP + INPUT_PADDING_BOTTOM;
-const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
+const MAX_INPUT_HEIGHT = INPUT_LINE_HEIGHT * MAX_INPUT_LINES + INPUT_VERTICAL_PADDING;
+const INPUT_SLOT_VERTICAL_PADDING = 8;
+const BASE_ROW_HEIGHT = BASE_COMPOSER_HEIGHT - 8;
+const MAX_INPUT_SLOT_HEIGHT = MAX_INPUT_HEIGHT + INPUT_SLOT_VERTICAL_PADDING;
 const ATTACHMENT_THUMB_SIZE = 76;
-const COMPOSER_RADIUS = 24;
+const COMPOSER_RADIUS = 25;
 const ATTACHMENT_COMPOSER_RADIUS = 24;
-const ATTACHMENT_MENU_WIDTH = 248;
-const ATTACHMENT_MENU_LEFT = 8;
-const ATTACHMENT_MENU_GAP = 10;
-const ATTACHMENT_MENU_CARET_LEFT = 14;
+const ATTACHMENT_MENU_WIDTH = 216;
+const ATTACHMENT_MENU_LEFT = 0;
+const ATTACHMENT_MENU_GAP = 12;
+const ATTACHMENT_MENU_CARET_LEFT = 17;
+const inputPalette = Colors.dark;
 
-function clampInputHeight(height: number) {
-  return Math.max(BASE_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, height));
-}
-
-function heightFromContentSize(contentHeight: number) {
-  const rawHeight = Math.max(0, Math.ceil(contentHeight));
-  if (rawHeight <= BASE_INPUT_HEIGHT + 2) return BASE_INPUT_HEIGHT;
-  const lineCount = Math.min(
-    MAX_INPUT_LINES,
-    Math.max(2, Math.ceil((rawHeight - INPUT_VERTICAL_PADDING) / INPUT_LINE_HEIGHT)),
+function slotHeightFromLineCount(lineCount: number) {
+  const nextLineCount = Math.max(1, Math.min(MAX_INPUT_LINES, lineCount));
+  const nextInputHeight = nextLineCount * INPUT_LINE_HEIGHT + INPUT_VERTICAL_PADDING;
+  return Math.min(
+    MAX_INPUT_SLOT_HEIGHT,
+    Math.max(BASE_ROW_HEIGHT, nextInputHeight + INPUT_SLOT_VERTICAL_PADDING),
   );
-  return clampInputHeight(lineCount * INPUT_LINE_HEIGHT + INPUT_VERTICAL_PADDING);
 }
 
 export default function InputBar({
@@ -104,17 +103,22 @@ export default function InputBar({
 }) {
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !loading;
   const canStop = loading && !!onStop;
-  const composerSideInset = 16;
+  const composerSideInset = 10;
   const [menuOpen, setMenuOpen] = React.useState(false);
-  const [inputHeight, setInputHeight] = React.useState(BASE_INPUT_HEIGHT);
   const [composerHeight, setComposerHeight] = React.useState(BASE_COMPOSER_HEIGHT);
+  const [inputSlotHeight, setInputSlotHeight] = React.useState(BASE_ROW_HEIGHT);
   const focusAnim = React.useRef(new Animated.Value(active ? 1 : 0)).current;
   const liveKeyboard = useAnimatedKeyboard();
   const restingBottomValue = useSharedValue(restingBottom ?? bottom);
   const menuAnim = React.useRef(new Animated.Value(0)).current;
-  const inputHeightAnim = React.useRef(new Animated.Value(BASE_INPUT_HEIGHT)).current;
   const sendVisibilityAnim = React.useRef(new Animated.Value(canSend ? 1 : 0)).current;
   const sendMotionAnim = React.useRef(new Animated.Value(0)).current;
+  const inputRef = React.useRef<TextInput>(null);
+  const initialValueRef = React.useRef(value);
+  const lastAppliedHeightRef = React.useRef(BASE_ROW_HEIGHT);
+  const nativeValueRef = React.useRef(value);
+  const mirroredPropValueRef = React.useRef(value);
+  const showSendControl = canSend && !recording;
 
   React.useEffect(() => {
     Animated.timing(focusAnim, {
@@ -125,7 +129,7 @@ export default function InputBar({
     }).start();
   }, [active, focusAnim]);
 
-  const keyboardTrackingGap = Platform.OS === "ios" ? 8 : 4;
+  const keyboardTrackingGap = Platform.OS === "ios" ? 10 : 6;
 
   React.useEffect(() => {
     restingBottomValue.value = restingBottom ?? bottom;
@@ -136,39 +140,40 @@ export default function InputBar({
     return {
       bottom:
         keyboardHeight > 1
-          ? Math.max(12, keyboardHeight + keyboardTrackingGap)
+          ? Math.max(14, keyboardHeight + keyboardTrackingGap)
           : restingBottomValue.value,
     };
   }, [keyboardTrackingGap]);
 
   React.useEffect(() => {
+    if (menuOpen) {
+      Animated.spring(menuAnim, {
+        toValue: 1,
+        damping: 16,
+        stiffness: 190,
+        mass: 0.72,
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
     Animated.timing(menuAnim, {
-      toValue: menuOpen ? 1 : 0,
-      duration: 180,
-      easing: Easing.bezier(0.22, 1, 0.36, 1),
+      toValue: 0,
+      duration: 130,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
   }, [menuAnim, menuOpen]);
 
   React.useEffect(() => {
-    Animated.timing(inputHeightAnim, {
-      toValue: inputHeight,
-      duration: 160,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [inputHeight, inputHeightAnim]);
-
-  React.useEffect(() => {
     Animated.parallel([
       Animated.timing(sendVisibilityAnim, {
-        toValue: canSend ? 1 : 0,
+        toValue: showSendControl ? 1 : 0,
         duration: 140,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
     ]).start();
-  }, [canSend, sendVisibilityAnim]);
+  }, [sendVisibilityAnim, showSendControl]);
 
   const hasAttachments = attachments.length > 0;
   const imageAttachmentCount = attachments.filter((attachment) => attachment.type === "image").length;
@@ -177,7 +182,6 @@ export default function InputBar({
   const [attachmentModeSelectorOpen, setAttachmentModeSelectorOpen] = React.useState(false);
   const [hasAttachmentModeOverride, setHasAttachmentModeOverride] = React.useState(false);
   const showAttachmentModeSelector = showAutoDetectAttachmentMode && attachmentModeSelectorOpen;
-  const isInputExpanded = inputHeight > BASE_INPUT_HEIGHT + 2;
   const shellRadius = hasAttachments ? ATTACHMENT_COMPOSER_RADIUS : COMPOSER_RADIUS;
   const attachmentRailHeight = hasAttachments
     ? showAttachmentModeSelector
@@ -186,8 +190,8 @@ export default function InputBar({
         ? 116
         : 88
     : 0;
-  const rowHeightDelta = Math.max(0, inputHeight - BASE_INPUT_HEIGHT);
-  const estimatedComposerHeight = BASE_COMPOSER_HEIGHT + attachmentRailHeight + rowHeightDelta;
+  const estimatedComposerHeight =
+    BASE_COMPOSER_HEIGHT + attachmentRailHeight + Math.max(0, inputSlotHeight - BASE_ROW_HEIGHT);
   const lastReportedHeightRef = React.useRef(0);
 
   const reportComposerHeight = React.useCallback(
@@ -201,11 +205,41 @@ export default function InputBar({
     [onHeightChange],
   );
 
+  const applyInputSlotHeight = React.useCallback((nextSlotHeight: number) => {
+    if (!Number.isFinite(nextSlotHeight) || nextSlotHeight <= 0) return;
+    if (Math.abs(lastAppliedHeightRef.current - nextSlotHeight) < 2) return;
+    lastAppliedHeightRef.current = nextSlotHeight;
+    setInputSlotHeight((current) => (Math.abs(current - nextSlotHeight) < 2 ? current : nextSlotHeight));
+    reportComposerHeight(
+      BASE_COMPOSER_HEIGHT + attachmentRailHeight + Math.max(0, nextSlotHeight - BASE_ROW_HEIGHT),
+    );
+  }, [attachmentRailHeight, reportComposerHeight]);
+
+  const resetInputHeight = React.useCallback(() => {
+    if (lastAppliedHeightRef.current === BASE_ROW_HEIGHT) return;
+    lastAppliedHeightRef.current = BASE_ROW_HEIGHT;
+    setInputSlotHeight(BASE_ROW_HEIGHT);
+    reportComposerHeight(BASE_COMPOSER_HEIGHT + attachmentRailHeight);
+  }, [attachmentRailHeight, reportComposerHeight]);
+
+  React.useEffect(() => {
+    const isExternalValueChange =
+      value !== mirroredPropValueRef.current && value !== nativeValueRef.current;
+    mirroredPropValueRef.current = value;
+    if (!isExternalValueChange) return;
+
+    nativeValueRef.current = value;
+    inputRef.current?.setNativeProps({ text: value });
+    if (!value) {
+      resetInputHeight();
+    }
+  }, [resetInputHeight, value]);
+
   React.useEffect(() => {
     if (!value) {
-      setInputHeight((current) => (current === BASE_INPUT_HEIGHT ? current : BASE_INPUT_HEIGHT));
+      resetInputHeight();
     }
-  }, [value]);
+  }, [resetInputHeight, value]);
 
   React.useEffect(() => {
     reportComposerHeight(estimatedComposerHeight);
@@ -233,39 +267,24 @@ export default function InputBar({
 
   const shellStyle = {
     borderRadius: shellRadius,
-    borderColor: focusAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: ["rgba(255,255,255,0.08)", "rgba(167,139,250,0.18)"],
-    }),
     backgroundColor: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: ["rgba(255,255,255,0.06)", "rgba(255,255,255,0.075)"],
+      outputRange: ["rgba(31,8,45,0.16)", "rgba(42,13,58,0.24)"],
     }),
     shadowOpacity: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [0.08, 0.14],
+      outputRange: [0.04, 0.08],
     }),
     shadowRadius: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [12, 18],
+      outputRange: [10, 16],
     }),
   } as const;
 
   const glassTintStyle = {
     backgroundColor: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: ["rgba(255,255,255,0.015)", "rgba(167,139,250,0.045)"],
-    }),
-  } as const;
-
-  const focusRimStyle = {
-    borderColor: focusAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: ["rgba(255,255,255,0.08)", "rgba(167,139,250,0.22)"],
-    }),
-    opacity: focusAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0.58, 1],
+      outputRange: ["rgba(251,228,216,0.028)", "rgba(223,182,178,0.045)"],
     }),
   } as const;
 
@@ -275,13 +294,19 @@ export default function InputBar({
       {
         translateY: menuAnim.interpolate({
           inputRange: [0, 1],
-          outputRange: [8, 0],
+          outputRange: [14, 0],
+        }),
+      },
+      {
+        translateX: menuAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [-7, 0],
         }),
       },
       {
         scale: menuAnim.interpolate({
           inputRange: [0, 1],
-          outputRange: [0.97, 1],
+          outputRange: [0.92, 1],
         }),
       },
     ],
@@ -292,24 +317,26 @@ export default function InputBar({
     inputRange: [0, 1],
     outputRange: [0.85, 1],
   });
-  const sendIconColor = canSend ? "#10131A" : "#EAF6FF";
+  const sendIconColor = canSend ? colors.ctaText : colors.text;
   const showPlaceholder = !value;
+  const idleIconColor = "rgba(251,228,216,0.62)";
+  const plusIconColor = menuOpen ? colors.ctaCream : "rgba(251,228,216,0.78)";
+  const inputShouldScroll = inputSlotHeight >= MAX_INPUT_SLOT_HEIGHT - 1;
   const micOpacity = sendVisibilityAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 0],
+    outputRange: [0.72, 0],
   });
   const micScale = sendVisibilityAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [1, 0.92],
   });
 
-  function handleContentSizeChange(
-    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
-  ) {
-    const nextHeight = heightFromContentSize(event.nativeEvent.contentSize.height);
-    if (Math.abs(nextHeight - inputHeight) > 1) {
-      setInputHeight(nextHeight);
+  function handleMeasuredTextLayout(event: NativeSyntheticEvent<TextLayoutEventData>) {
+    if (!value) {
+      resetInputHeight();
+      return;
     }
+    applyInputSlotHeight(slotHeightFromLineCount(event.nativeEvent.lines.length));
   }
 
   function handleComposerPress() {
@@ -317,9 +344,10 @@ export default function InputBar({
   }
 
   function handleTextChange(next: string) {
+    nativeValueRef.current = next;
     onChangeText(next);
     if (!next) {
-      setInputHeight(BASE_INPUT_HEIGHT);
+      resetInputHeight();
     }
   }
 
@@ -340,7 +368,7 @@ export default function InputBar({
       }),
     ]).start();
     setMenuOpen(false);
-    setInputHeight(BASE_INPUT_HEIGHT);
+    resetInputHeight();
     onSend();
   }
 
@@ -387,7 +415,20 @@ export default function InputBar({
         ]}
       >
         <View style={styles.menuPopoverCard}>
-          <BlurView intensity={Platform.OS === "ios" ? 72 : 54} tint="dark" style={StyleSheet.absoluteFill} />
+          <BlurView intensity={Platform.OS === "ios" ? 76 : 58} tint="dark" style={StyleSheet.absoluteFill} />
+          <LinearGradient
+            pointerEvents="none"
+            colors={[
+              "rgba(255,255,255,0.095)",
+              "rgba(251,228,216,0.035)",
+              "rgba(75,26,96,0.10)",
+              "rgba(0,0,0,0.14)",
+            ]}
+            locations={[0, 0.34, 0.7, 1]}
+            start={{ x: 0.08, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
           <View pointerEvents="none" style={styles.menuPopoverTint} />
           <AttachmentOption
             label="Photo Library"
@@ -412,7 +453,20 @@ export default function InputBar({
         <View pointerEvents="none" style={styles.menuCaret} />
       </Animated.View>
       <Animated.View style={[styles.shellSurface, { borderRadius: shellRadius }, shellStyle]}>
-      <BlurView intensity={Platform.OS === "ios" ? 76 : 58} tint="dark" style={StyleSheet.absoluteFill} />
+      <BlurView intensity={Platform.OS === "ios" ? 68 : 44} tint="dark" style={StyleSheet.absoluteFill} />
+      <LinearGradient
+        pointerEvents="none"
+        colors={[
+          "rgba(255,255,255,0.105)",
+          "rgba(251,228,216,0.035)",
+          "rgba(89,35,121,0.075)",
+          "rgba(0,0,0,0.10)",
+        ]}
+        locations={[0, 0.32, 0.68, 1]}
+        start={{ x: 0.05, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
       <Animated.View
         pointerEvents="none"
         style={[
@@ -420,19 +474,6 @@ export default function InputBar({
           styles.glassTint,
           { borderRadius: shellRadius },
           glassTintStyle,
-        ]}
-      />
-      <View pointerEvents="none" style={styles.topHighlight} />
-      <View pointerEvents="none" style={styles.bottomShade} />
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          styles.focusRim,
-          {
-            borderRadius: shellRadius,
-          },
-          focusRimStyle,
         ]}
       />
       <Pressable
@@ -466,7 +507,7 @@ export default function InputBar({
                     pressedOpacity={0.86}
                     style={styles.removeAttachmentButton}
                   >
-                    <Ionicons name="close" size={12} color="#fff" />
+                    <Ionicons name="close" size={12} color={colors.text} />
                   </AuraPressable>
                 </View>
               ))}
@@ -555,15 +596,7 @@ export default function InputBar({
           </View>
         ) : null}
 
-        <Animated.View
-          style={[
-            styles.row,
-            {
-              minHeight: BASE_COMPOSER_HEIGHT - 14,
-              alignItems: isInputExpanded ? "flex-end" : "center",
-            },
-          ]}
-        >
+        <View style={[styles.row, { minHeight: inputSlotHeight }]}>
           <View style={styles.iconLane}>
             <AuraPressable
               onPress={() => setMenuOpen((prev) => !prev)}
@@ -577,19 +610,11 @@ export default function InputBar({
                 menuOpen ? styles.sideButtonActive : null,
               ]}
             >
-              <Ionicons name={menuOpen ? "close" : "add"} size={16} color={colors.text} />
+              <Ionicons name={menuOpen ? "close" : "add"} size={14} color={plusIconColor} />
             </AuraPressable>
           </View>
 
-          <Animated.View
-            style={[
-              styles.inputSlot,
-              {
-                height: inputHeightAnim,
-                justifyContent: isInputExpanded ? "flex-start" : "center",
-              },
-            ]}
-          >
+          <View style={[styles.inputSlot, { height: inputSlotHeight }]}>
             {showPlaceholder ? (
               <View pointerEvents="none" style={styles.placeholderLayer}>
                 <Text numberOfLines={1} style={[styles.placeholderText, { color: colors.textSecondary }]}>
@@ -597,15 +622,15 @@ export default function InputBar({
                 </Text>
               </View>
             ) : null}
-            <AnimatedTextInput
-              value={value}
+            <TextInput
+              ref={inputRef}
+              defaultValue={initialValueRef.current}
               onChangeText={handleTextChange}
               onFocus={() => onFocusChange(true)}
               onBlur={() => onFocusChange(false)}
               onSubmitEditing={() => {
                 if (canSend) handleSendPress();
               }}
-              onContentSizeChange={handleContentSizeChange}
               placeholder=""
               multiline
               blurOnSubmit={false}
@@ -614,44 +639,47 @@ export default function InputBar({
               spellCheck
               returnKeyType="send"
               keyboardAppearance="dark"
-              scrollEnabled={inputHeight >= MAX_INPUT_HEIGHT - 1}
+              scrollEnabled={inputShouldScroll}
               selectionColor={colors.aiAccent}
               cursorColor={colors.aiAccent}
               maxLength={600}
               textAlignVertical="top"
-              style={[
-                styles.input,
-                {
-                  color: colors.text,
-                  height: inputHeight,
-                  maxHeight: MAX_INPUT_HEIGHT,
-                  minHeight: BASE_INPUT_HEIGHT,
-                },
-              ]}
+              style={styles.input}
             />
-          </Animated.View>
+            {value ? (
+              <Text
+                pointerEvents="none"
+                onTextLayout={handleMeasuredTextLayout}
+                style={styles.inputMeasure}
+              >
+                {value.endsWith("\n") ? `${value} ` : value}
+              </Text>
+            ) : null}
+          </View>
 
           <View style={styles.iconLane}>
             <AuraPressable
-              onPress={canStop ? onStop : canSend ? handleSendPress : onMicPress}
+              onPress={canStop ? onStop : recording ? onMicPress : canSend ? handleSendPress : onMicPress}
               disabled={loading && !canStop}
               hitSlop={10}
-              haptic={canStop ? "selection" : canSend ? "light" : "selection"}
+              haptic={canStop ? "selection" : recording ? "selection" : canSend ? "light" : "selection"}
               hapticTrigger="press"
               pressedScale={0.95}
               pressedOpacity={0.9}
               accessibilityRole="button"
-              accessibilityLabel={canStop ? "Stop generating" : canSend ? "Send message" : "Dictate message"}
+              accessibilityLabel={
+                canStop ? "Stop generating" : recording ? "Stop dictation" : canSend ? "Send message" : "Dictate message"
+              }
               style={[
                 styles.sideButton,
                 styles.trailingButton,
-                canStop ? styles.trailingButtonStop : canSend ? styles.trailingButtonSend : null,
-                recording && !canSend ? styles.trailingButtonRecording : null,
+                canStop ? styles.trailingButtonStop : recording ? null : canSend ? styles.trailingButtonSend : null,
+                recording ? styles.trailingButtonRecording : null,
                 loading && !canStop ? styles.sideButtonDisabled : null,
               ]}
             >
               {canStop ? (
-                <Ionicons name="square" size={13} color={colors.text} />
+                <Ionicons name="square" size={12} color={colors.text} />
               ) : (
                 <>
                   <Animated.View
@@ -662,9 +690,9 @@ export default function InputBar({
                     }}
                   >
                     <Ionicons
-                      name={recording && !canSend ? "stop" : "mic-outline"}
-                      size={17}
-                      color={recording && !canSend ? "#ff8f8f" : colors.text}
+                      name={recording ? "stop" : "mic-outline"}
+                      size={15}
+                      color={recording ? "#ff8f8f" : idleIconColor}
                     />
                   </Animated.View>
                   <Animated.View
@@ -673,13 +701,13 @@ export default function InputBar({
                       transform: [{ scale: sendScale }, { translateY: sendMotionAnim }],
                     }}
                   >
-                    <Ionicons name="arrow-up" size={17} color={sendIconColor} />
+                    <Ionicons name="arrow-up" size={15} color={sendIconColor} />
                   </Animated.View>
                 </>
               )}
             </AuraPressable>
           </View>
-        </Animated.View>
+        </View>
       </Pressable>
       </Animated.View>
     </Reanimated.View>
@@ -716,47 +744,28 @@ const styles = StyleSheet.create({
   shell: {
     position: "absolute",
     zIndex: 30,
-    shadowColor: "#8B7CF6",
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
   },
   shellSurface: {
     overflow: "hidden",
-    borderWidth: 1,
+    borderWidth: 0,
     borderRadius: 999,
     zIndex: 2,
   },
   glassTint: {
     borderRadius: 999,
   },
-  topHighlight: {
-    position: "absolute",
-    left: 24,
-    right: 24,
-    top: 0,
-    height: 1,
-    backgroundColor: "rgba(255,255,255,0.22)",
-  },
-  bottomShade: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 14,
-    backgroundColor: "rgba(0,0,0,0.12)",
-  },
-  focusRim: {
-    borderWidth: 1,
-  },
   chrome: {
-    paddingHorizontal: 10,
-    paddingTop: 6,
-    paddingBottom: 6,
+    paddingHorizontal: 6,
+    paddingTop: 4,
+    paddingBottom: 4,
   },
   chromeWithAttachments: {
-    paddingHorizontal: 11,
-    paddingTop: 8,
-    paddingBottom: 6,
+    paddingHorizontal: 7,
+    paddingTop: 7,
+    paddingBottom: 5,
   },
   attachmentRail: {
     gap: 7,
@@ -767,21 +776,21 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    backgroundColor: "rgba(255,255,255,0.038)",
+    backgroundColor: inputPalette.chipBackground,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.065)",
+    borderColor: "rgba(251,228,216,0.10)",
   },
   attachmentRoleChipActive: {
-    backgroundColor: "rgba(167,139,250,0.14)",
-    borderColor: "rgba(167,139,250,0.24)",
+    backgroundColor: inputPalette.purpleSurface,
+    borderColor: inputPalette.purpleBorder,
   },
   attachmentRoleText: {
-    color: "rgba(244,248,255,0.62)",
+    color: "rgba(251,228,216,0.68)",
     fontSize: 10,
     fontWeight: "800",
   },
   attachmentRoleTextActive: {
-    color: "#F4FBFF",
+    color: inputPalette.ctaCream,
   },
   attachmentItems: {
     flexDirection: "row",
@@ -793,9 +802,9 @@ const styles = StyleSheet.create({
     height: ATTACHMENT_THUMB_SIZE,
     borderRadius: 18,
     overflow: "hidden",
-    backgroundColor: "rgba(255,255,255,0.055)",
+    backgroundColor: inputPalette.chipBackground,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: "rgba(251,228,216,0.10)",
   },
   attachmentFallback: {
     flex: 1,
@@ -813,7 +822,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(4,5,9,0.68)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: "rgba(251,228,216,0.18)",
   },
   attachmentModeRow: {
     flexDirection: "row",
@@ -829,21 +838,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: "rgba(255,255,255,0.035)",
+    backgroundColor: inputPalette.chipBackground,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(251,228,216,0.10)",
   },
   autoDetectChipActive: {
-    backgroundColor: "rgba(167,139,250,0.10)",
-    borderColor: "rgba(167,139,250,0.18)",
+    backgroundColor: inputPalette.purpleSurface,
+    borderColor: inputPalette.purpleBorder,
   },
   autoDetectText: {
-    color: "rgba(244,248,255,0.68)",
+    color: "rgba(251,228,216,0.68)",
     fontSize: 10.5,
     fontWeight: "800",
   },
   autoDetectTextActive: {
-    color: "#F4FBFF",
+    color: inputPalette.ctaCream,
   },
   attachmentOverrideRow: {
     flexDirection: "row",
@@ -862,40 +871,40 @@ const styles = StyleSheet.create({
     width: ATTACHMENT_MENU_WIDTH,
     zIndex: 3,
     shadowColor: "#000",
-    shadowOpacity: 0.24,
-    shadowRadius: 22,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 24,
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 18,
   },
   menuPopoverCard: {
     overflow: "hidden",
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    backgroundColor: "rgba(18,18,27,0.78)",
-    padding: 6,
+    borderRadius: 24,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(251,228,216,0.16)",
+    backgroundColor: "rgba(38,16,54,0.74)",
+    padding: 5,
   },
   menuPopoverTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(167,139,250,0.045)",
+    backgroundColor: "rgba(223,182,178,0.025)",
   },
   menuCaret: {
     position: "absolute",
     left: ATTACHMENT_MENU_CARET_LEFT,
-    bottom: -5,
-    width: 12,
-    height: 12,
-    borderRadius: 2,
-    backgroundColor: "rgba(24,24,33,0.92)",
-    borderRightWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
+    bottom: -6,
+    width: 14,
+    height: 14,
+    borderRadius: 3,
+    backgroundColor: "rgba(38,16,54,0.92)",
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(251,228,216,0.13)",
     transform: [{ rotate: "45deg" }],
   },
   menuDivider: {
     height: StyleSheet.hairlineWidth,
     marginHorizontal: 10,
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "rgba(251,228,216,0.08)",
   },
   attachmentOption: {
     minHeight: 44,
@@ -908,52 +917,55 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   attachmentOptionText: {
-    color: "#F0F6FB",
+    color: inputPalette.text,
     fontSize: 12.5,
     fontWeight: "800",
   },
   row: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-end",
     gap: 5,
     borderRadius: COMPOSER_RADIUS,
     borderWidth: 0,
     paddingHorizontal: 0,
+    minHeight: BASE_COMPOSER_HEIGHT - 8,
   },
   iconLane: {
-    width: 36,
+    width: 34,
     alignItems: "center",
     justifyContent: "center",
+    alignSelf: "flex-end",
+    height: BASE_ROW_HEIGHT,
   },
   sideButton: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "rgba(251,228,216,0.065)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(251,228,216,0.12)",
   },
   sideButtonActive: {
-    backgroundColor: "rgba(167,139,250,0.14)",
-    borderColor: "rgba(167,139,250,0.22)",
+    backgroundColor: "rgba(223,182,178,0.16)",
+    borderColor: "rgba(251,228,216,0.22)",
   },
   trailingButton: {
     position: "relative",
   },
   trailingButtonSend: {
-    backgroundColor: "rgba(244,240,255,0.94)",
-    borderColor: "rgba(255,255,255,0.72)",
-    shadowColor: "#DED3F8",
-    shadowOpacity: 0.34,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 8,
+    backgroundColor: inputPalette.ctaCream,
+    borderColor: "rgba(251,228,216,0.18)",
+    shadowColor: inputPalette.ctaCream,
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   trailingButtonStop: {
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: inputPalette.secondaryCta,
+    borderColor: "rgba(251,228,216,0.16)",
   },
   trailingButtonRecording: {
     backgroundColor: "rgba(255,99,99,0.18)",
@@ -971,15 +983,19 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     borderWidth: 0,
     borderColor: "transparent",
-    justifyContent: "center",
-    minHeight: 32,
+    justifyContent: "flex-start",
+    alignItems: "stretch",
+    minHeight: BASE_ROW_HEIGHT,
+    paddingTop: 4,
+    paddingBottom: 4,
     position: "relative",
+    overflow: "hidden",
   },
   placeholderLayer: {
     position: "absolute",
-    left: 10,
-    right: 10,
-    top: 1,
+    left: 8,
+    right: 8,
+    top: 0,
     bottom: 0,
     justifyContent: "center",
   },
@@ -992,19 +1008,34 @@ const styles = StyleSheet.create({
   input: {
     width: "100%",
     minWidth: 0,
+    flex: 1,
     flexShrink: 1,
+    minHeight: BASE_INPUT_HEIGHT,
+    maxHeight: MAX_INPUT_HEIGHT,
     borderRadius: 18,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingTop: INPUT_PADDING_TOP,
     paddingBottom: INPUT_PADDING_BOTTOM,
     marginTop: 0,
     fontFamily: Fonts.sans,
-    fontSize: 14.5,
+    fontSize: 14.25,
     lineHeight: INPUT_LINE_HEIGHT,
     letterSpacing: 0.1,
+    color: inputPalette.text,
     backgroundColor: "transparent",
     includeFontPadding: false,
-    overflow: "hidden",
     textAlignVertical: "top",
+  },
+  inputMeasure: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    top: 4 + INPUT_PADDING_TOP,
+    opacity: 0,
+    fontFamily: Fonts.sans,
+    fontSize: 14.25,
+    lineHeight: INPUT_LINE_HEIGHT,
+    letterSpacing: 0.1,
+    includeFontPadding: false,
   },
 });

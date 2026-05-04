@@ -9,7 +9,7 @@ export type ExtractedUrl = {
   normalized: string;
 };
 
-const URL_RE = /\bhttps?:\/\/[^\s<>"')\]]+/gi;
+const URL_RE = /\b(?:https?:\/\/|www\d*\.)[^\s<>"')\]]+/gi;
 const TRAILING_PUNCTUATION_RE = /[.,!?;:]+$/;
 const ADD_RE =
   /\b(add|save|store|put|upload|log)\b[\s\S]{0,80}\b(closet|wardrobe|item|items|these|this|links?|all)\b|\b(add|save)\s+(this|these|all|item|items|links?)\b|\bput\s+(this|these|all|item|items|links?)\s+in\s+(my\s+)?(closet|wardrobe)\b/i;
@@ -22,7 +22,7 @@ export function extractUrlsFromText(text: string): ExtractedUrl[] {
   for (const match of matches) {
     const raw = match.replace(TRAILING_PUNCTUATION_RE, "");
     try {
-      const parsed = new URL(raw);
+      const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
         continue;
       }

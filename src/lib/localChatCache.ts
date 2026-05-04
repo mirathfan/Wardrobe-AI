@@ -4,6 +4,7 @@ const CACHE_PREFIX = "outfit-chat:";
 const MAX_MESSAGES_PER_SESSION = 30;
 const MAX_SESSIONS = 6;
 const DEBUG_LOCAL_CHAT_CACHE = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
+export const AURA_CHAT_SESSION_TTL_MS = 10 * 60 * 1000;
 
 function logSession(event: string, data: Record<string, unknown>) {
   if (__DEV__ && DEBUG_LOCAL_CHAT_CACHE) {
@@ -31,12 +32,21 @@ type SessionStore<T> = {
   sessions: LocalChatSession<T>[];
 };
 
+export type AuraChatSessionMeta = {
+  chatId: string | null;
+  openedAt: number;
+};
+
 function createSessionId() {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function getScopedKey(uid: string, suffix: string) {
   return `${CACHE_PREFIX}${uid}:${suffix}`;
+}
+
+function normalizeChatId(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function sanitizeForCache<T>(value: T): T {
@@ -243,4 +253,44 @@ export async function clearLatestChatCache(uid: string): Promise<void> {
   const latest = await loadLatestSession<unknown>(uid);
   if (!latest) return;
   await clearSession(uid, latest.sessionId);
+}
+
+export async function loadAuraChatSessionMeta(uid: string): Promise<AuraChatSessionMeta | null> {
+  try {
+    const raw = await Storage.getItem(getScopedKey(uid, "aura-session-v1"));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AuraChatSessionMeta>;
+    const openedAt = typeof parsed.openedAt === "number" ? parsed.openedAt : 0;
+    if (!openedAt) return null;
+    return {
+      chatId: normalizeChatId(parsed.chatId),
+      openedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function isAuraChatSessionFresh(
+  session: AuraChatSessionMeta | null,
+  now = Date.now(),
+) {
+  return !!session?.openedAt && now - session.openedAt < AURA_CHAT_SESSION_TTL_MS;
+}
+
+export async function saveAuraChatSessionMeta(
+  uid: string,
+  chatId: string | null,
+): Promise<void> {
+  try {
+    await Storage.setItem(
+      getScopedKey(uid, "aura-session-v1"),
+      JSON.stringify({
+        chatId: normalizeChatId(chatId),
+        openedAt: Date.now(),
+      } satisfies AuraChatSessionMeta),
+    );
+  } catch {
+    // Session metadata should never block chat.
+  }
 }

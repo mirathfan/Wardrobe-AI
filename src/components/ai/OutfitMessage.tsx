@@ -55,14 +55,14 @@ function OutfitMessage({
 
   return (
     <LinearGradient
-      colors={["rgba(17,19,26,0.96)", "rgba(11,12,18,0.98)"]}
+      colors={["rgba(43,18,76,0.42)", "rgba(9,0,11,0.96)"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{
         borderRadius: 24,
         padding: 15,
         borderWidth: CHIP_BORDER_WIDTH,
-        borderColor: "rgba(255,255,255,0.075)",
+        borderColor: colors.border,
         gap: 14,
         ...auraShadow(0.1),
       }}
@@ -98,9 +98,9 @@ function OutfitMessage({
             paddingHorizontal: 12,
             paddingVertical: 9,
             borderRadius: 15,
-            backgroundColor: "rgba(255,255,255,0.032)",
+            backgroundColor: colors.chipBackground,
             borderWidth: CHIP_BORDER_WIDTH,
-            borderColor: "rgba(255,255,255,0.065)",
+            borderColor: colors.border,
           }}
         >
           <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>
@@ -124,9 +124,9 @@ function OutfitMessage({
                 style={{
                   borderRadius: 18,
                   padding: 10,
-                  backgroundColor: "rgba(255,255,255,0.032)",
+                  backgroundColor: colors.boardLight,
                   borderWidth: CHIP_BORDER_WIDTH,
-                  borderColor: "rgba(255,255,255,0.065)",
+                  borderColor: colors.borderWarm,
                   aspectRatio: imagePresentation.containerAspectRatio,
                   justifyContent: "center",
                   alignItems: "center",

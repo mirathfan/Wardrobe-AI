@@ -6,6 +6,7 @@ import type { ChatAttachment, ChatAudioAttachment, ChatImageAttachment } from "@
 import { removeBackground } from "@/src/bg/removeBackground";
 import { normalizeCutoutImage } from "@/src/lib/cutoutNormalize";
 import { db, storage } from "@/src/lib/firebase";
+import { normalizeCurrencyCode } from "@/src/lib/currency";
 import { optimizeImageForUpload } from "@/src/lib/imageOptimization";
 import { uploadItemPhoto } from "@/src/lib/uploadImage";
 import { analyzeCutoutVisualNormalization } from "@/src/lib/visualNormalization";
@@ -29,6 +30,35 @@ function debugAuraAttachmentLog(...args: Parameters<typeof console.log>) {
   if (DEBUG_AURA_ATTACHMENTS) {
     console.log(...args);
   }
+}
+
+function priceFieldsFromCandidate(candidate: AuraCandidateItem): Record<string, unknown> {
+  const amountCandidates = [
+    candidate.salePrice,
+    candidate.estimatedValue,
+    candidate.purchasePrice,
+    candidate.retailPrice,
+    candidate.originalPrice,
+  ];
+  const amount = amountCandidates.find((value) => typeof value === "number" && Number.isFinite(value));
+  if (typeof amount !== "number") return {};
+  const currency = normalizeCurrencyCode(candidate.currency ?? candidate.originalCurrency);
+  const priceDisplay =
+    candidate.priceDisplay ??
+    (currency ? `${currency} ${amount}` : String(amount));
+  return {
+    retailPrice: amount,
+    purchasePrice: amount,
+    estimatedValue: amount,
+    originalPrice: candidate.originalPrice ?? amount,
+    salePrice: candidate.salePrice ?? null,
+    ...(currency ? { currency, originalCurrency: candidate.originalCurrency ?? currency, priceCurrency: currency } : {}),
+    priceSource: candidate.priceSource ?? "product_link",
+    priceDisplay,
+    priceAmount: amount,
+    price: amount,
+    productUrl: candidate.productUrl ?? candidate.sourceUrl ?? null,
+  };
 }
 
 export type AuraCandidateLocalPhoto = {
@@ -572,11 +602,19 @@ function brandFromSourceUrl(sourceUrl?: string | null) {
   }
 }
 
+function looksLikeGraphicBrand(value?: string | null) {
+  return /\b(kodak|barbie|disney|ferrari|proshots|camera club|graphic|artwork|slogan|print)\b/i.test(
+    String(value ?? ""),
+  );
+}
+
 function normalizeLinkBrandAndTitle(candidate: AuraCandidateItem) {
   const sourceBrand = brandFromSourceUrl(candidate.sourceUrl);
   const rawBrand = String(candidate.brand ?? "").trim();
   const brand =
-    rawBrand && !/^no brand$/i.test(rawBrand)
+    sourceBrand && looksLikeGraphicBrand(rawBrand)
+      ? sourceBrand
+      : rawBrand && !/^no brand$/i.test(rawBrand)
       ? rawBrand
       : sourceBrand;
   let title = String(candidate.title ?? "").replace(/\s+/g, " ").trim();
@@ -1027,15 +1065,29 @@ export async function createAuraItemDraftsFromCandidates(params: {
       },
       source: candidateSourceType(candidate),
       ...(candidate.sourceUrl ? { sourceUrl: candidate.sourceUrl } : {}),
+      ...(candidate.productUrl ?? candidate.sourceUrl ? { productUrl: candidate.productUrl ?? candidate.sourceUrl } : {}),
       auraPrompt: prompt,
       auraCandidate: candidate,
       name: normalizedLinkFields?.title ?? candidate.title ?? "",
       brand: normalizedLinkFields?.brand ?? candidate.brand ?? "",
-      colorLabel: candidate.color || "",
-      displayColor: candidate.color || null,
+      colorLabel: candidate.displayColor || candidate.color || "",
+      displayColor: candidate.displayColor || candidate.color || null,
+      displayColors: candidate.displayColors ?? [],
       material: candidate.material || null,
+      materials: candidate.materials ?? [],
       pattern: candidate.pattern || null,
       fit: candidate.fit || null,
+      sleeveLength: candidate.sleeveLength ?? null,
+      collar: candidate.collar ?? null,
+      length: candidate.length ?? null,
+      sizeOptions: candidate.sizeOptions ?? [],
+      availableSizes: candidate.availableSizes ?? candidate.sizeOptions ?? [],
+      careInstructions: candidate.careInstructions ?? [],
+      productDescription: candidate.productDescription ?? null,
+      graphicText: candidate.graphicText ?? null,
+      motif: candidate.motif ?? candidate.graphicText ?? null,
+      collaborationName: candidate.collaborationName ?? null,
+      ...priceFieldsFromCandidate(candidate),
       images: records,
       imageUrls: uniqueUrls,
       originalImageUrl: primaryUrl,

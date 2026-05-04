@@ -1,37 +1,140 @@
-import * as FileSystem from "expo-file-system/legacy";
+import type {
+  SpeechErrorEvent,
+  SpeechResultsEvent,
+} from "@react-native-voice/voice";
 import * as ImagePicker from "expo-image-picker";
 import React, { useRef, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, NativeModules, PermissionsAndroid, Platform } from "react-native";
 
 import type {
   ChatAttachment,
   ChatAttachmentGroupRole,
   ChatImageAttachment,
 } from "@/src/components/ai/chatTypes";
-import { transcribeAuraAudio } from "@/src/lib/aura";
-import {
-  uploadAuraTranscriptionAudio,
-} from "@/src/lib/auraAttachments";
 import { createLocalAttachmentId } from "@/src/lib/auraChatHelpers";
+import { Toast } from "@/src/lib/toast";
 
-type OptionalAudioRecorder = {
-  uri: string | null;
-  prepareToRecordAsync: () => Promise<void>;
-  record: () => void;
-  stop: () => Promise<void>;
+type VoiceRecognizer = typeof import("@react-native-voice/voice").default;
+
+type StopVoiceInputOptions = {
+  discardTranscript?: boolean;
 };
 
 type UseAuraComposerStateOptions = {
   uid: string | null;
 };
 
-export function useAuraComposerState({ uid }: UseAuraComposerStateOptions) {
+const VOICE_LOCALE = "en-US";
+const VOICE_UNAVAILABLE_MESSAGE = "Voice input is not available in this build.";
+const VOICE_PERMISSION_MESSAGE = "Microphone permission is needed for voice input.";
+
+function ensureNativeVoiceModuleAvailable() {
+  if (Platform.OS === "web") return false;
+  const nativeModules = NativeModules as unknown as Record<string, unknown>;
+  if (!nativeModules.Voice && nativeModules.RCTVoice) {
+    nativeModules.Voice = nativeModules.RCTVoice;
+  }
+  return !!nativeModules.Voice;
+}
+
+function getSpeechTranscript(event: SpeechResultsEvent) {
+  return event.value?.find((value) => value.trim().length > 0)?.trim() ?? "";
+}
+
+function getVoiceErrorText(error: unknown) {
+  if (typeof error === "string") return error;
+  const candidate = error as {
+    message?: unknown;
+    error?: {
+      message?: unknown;
+    };
+  };
+  return String(candidate?.error?.message ?? candidate?.message ?? "");
+}
+
+function getVoiceErrorCode(error: unknown) {
+  const candidate = error as {
+    error?: {
+      code?: unknown;
+    };
+  };
+  return String(candidate?.error?.code ?? "");
+}
+
+function isPermissionVoiceError(error: unknown) {
+  const code = getVoiceErrorCode(error);
+  const text = getVoiceErrorText(error).toLowerCase();
+  return (
+    code === "9" ||
+    text.includes("permission") ||
+    text.includes("denied") ||
+    text.includes("not authorized") ||
+    text.includes("authorization") ||
+    text.includes("microphone") ||
+    text.includes("record_audio") ||
+    text.includes("insufficient")
+  );
+}
+
+function isNoSpeechVoiceError(error: unknown) {
+  const code = getVoiceErrorCode(error);
+  const text = getVoiceErrorText(error).toLowerCase();
+  return (
+    code === "6" ||
+    code === "7" ||
+    text.includes("no match") ||
+    text.includes("no speech") ||
+    text.includes("speech timeout")
+  );
+}
+
+function isUnavailableVoiceError(error: unknown) {
+  const text = getVoiceErrorText(error).toLowerCase();
+  return (
+    text.includes("not available") ||
+    text.includes("restricted") ||
+    text.includes("speechrecognizer") ||
+    text.includes("recognition service")
+  );
+}
+
+function showFriendlyVoiceError(error: unknown) {
+  if (isPermissionVoiceError(error)) {
+    Toast.error(VOICE_PERMISSION_MESSAGE);
+    return;
+  }
+  if (isUnavailableVoiceError(error)) {
+    Toast.error(VOICE_UNAVAILABLE_MESSAGE);
+    return;
+  }
+  if (isNoSpeechVoiceError(error)) {
+    Toast.error("I couldn't hear any words. Try again.");
+    return;
+  }
+  Toast.error("Voice input stopped. Try again.");
+}
+
+async function requestAndroidMicrophonePermission() {
+  if (Platform.OS !== "android") return true;
+  const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
+  const hasPermission = await PermissionsAndroid.check(permission);
+  if (hasPermission) return true;
+  const result = await PermissionsAndroid.request(permission);
+  return result === PermissionsAndroid.RESULTS.GRANTED;
+}
+
+export function useAuraComposerState({ uid: _uid }: UseAuraComposerStateOptions) {
   const [message, setMessage] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentRole, setAttachmentRole] = useState<ChatAttachmentGroupRole>("reference");
   const [recordingAudio, setRecordingAudio] = useState(false);
-  const audioRecorderRef = useRef<OptionalAudioRecorder | null>(null);
-  const recordingStartedAtRef = useRef<number | null>(null);
+  const voiceRef = useRef<VoiceRecognizer | null>(null);
+  const voiceLoadingRef = useRef<Promise<VoiceRecognizer | null> | null>(null);
+  const isListeningRef = useRef(false);
+  const mountedRef = useRef(true);
+  const manualStopRef = useRef(false);
+  const ignoreSpeechResultsRef = useRef(false);
+  const dictationBaseTextRef = useRef("");
 
   const addImageAssets = React.useCallback(
     (assets: ImagePicker.ImagePickerAsset[]) => {
@@ -87,69 +190,174 @@ export function useAuraComposerState({ uid }: UseAuraComposerStateOptions) {
     addImageAssets(result.assets ?? []);
   }, [addImageAssets]);
 
-  const handleMicPress = React.useCallback(async () => {
-    if (!uid) return;
-    try {
-      if (recordingAudio && audioRecorderRef.current) {
-        const recorder = audioRecorderRef.current;
-        await recorder.stop();
-        const uri = recorder.uri;
-        const startedAt = recordingStartedAtRef.current;
-        audioRecorderRef.current = null;
-        recordingStartedAtRef.current = null;
-        setRecordingAudio(false);
-        if (!uri) return;
-        const durationMs = startedAt ? Date.now() - startedAt : null;
-        try {
-          const uploaded = await uploadAuraTranscriptionAudio(uid, {
-            id: createLocalAttachmentId(),
-            uri,
-            localUri: uri,
-            mimeType: "audio/mp4",
-            durationMs,
-          });
-          const transcript = await transcribeAuraAudio(uploaded);
-          if (transcript) {
-            setMessage((prev) => (prev.trim() ? `${prev.trim()} ${transcript}` : transcript));
-          } else {
-            Alert.alert("Voice", "I couldn't hear any words in that recording.");
-          }
-        } finally {
-          void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
-        }
-        return;
-      }
-
-      const audio = await import("expo-audio").catch(() => null);
-      if (!audio) {
-        Alert.alert("Voice", "Voice input needs the latest native build. Image and text chat still work.");
-        return;
-      }
-
-      const permission = await audio.requestRecordingPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert("Voice", "Please allow microphone access to dictate a message.");
-        return;
-      }
-      const recorder = new audio.AudioRecorder(audio.RecordingPresets.LOW_QUALITY);
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      audioRecorderRef.current = recorder;
-      recordingStartedAtRef.current = Date.now();
-      setRecordingAudio(true);
-    } catch (error: any) {
-      audioRecorderRef.current = null;
-      recordingStartedAtRef.current = null;
-      setRecordingAudio(false);
-      const messageText = String(error?.message ?? "");
-      Alert.alert(
-        "Voice",
-        messageText.includes("ExpoAudio")
-          ? "Voice input needs the latest native build. Image and text chat still work."
-          : messageText || "Unable to transcribe right now."
-      );
+  const setVoiceListening = React.useCallback((nextListening: boolean) => {
+    isListeningRef.current = nextListening;
+    if (mountedRef.current) {
+      setRecordingAudio(nextListening);
     }
-  }, [recordingAudio, uid]);
+  }, []);
+
+  const handleSpeechText = React.useCallback((event: SpeechResultsEvent) => {
+    if (ignoreSpeechResultsRef.current) return;
+    const transcript = getSpeechTranscript(event);
+    if (!transcript || !mountedRef.current) return;
+    const baseText = dictationBaseTextRef.current;
+    setMessage(baseText ? `${baseText} ${transcript}` : transcript);
+  }, []);
+
+  const handleSpeechError = React.useCallback(
+    (event: SpeechErrorEvent) => {
+      setVoiceListening(false);
+      if (manualStopRef.current) return;
+      showFriendlyVoiceError(event);
+    },
+    [setVoiceListening],
+  );
+
+  const attachVoiceListeners = React.useCallback(
+    (voice: VoiceRecognizer) => {
+      voice.onSpeechStart = () => {
+        setVoiceListening(true);
+      };
+      voice.onSpeechEnd = () => {
+        manualStopRef.current = false;
+        setVoiceListening(false);
+      };
+      voice.onSpeechResults = handleSpeechText;
+      voice.onSpeechPartialResults = handleSpeechText;
+      voice.onSpeechError = handleSpeechError;
+    },
+    [handleSpeechError, handleSpeechText, setVoiceListening],
+  );
+
+  const loadVoice = React.useCallback(async () => {
+    if (!ensureNativeVoiceModuleAvailable()) return null;
+    if (voiceRef.current) return voiceRef.current;
+    if (!voiceLoadingRef.current) {
+      voiceLoadingRef.current = import("@react-native-voice/voice")
+        .then((module) => {
+          const voice = module.default;
+          if (!voice || typeof voice.start !== "function" || typeof voice.stop !== "function") {
+            return null;
+          }
+          if (!mountedRef.current) {
+            void voice.destroy?.().catch(() => undefined);
+            voice.removeAllListeners?.();
+            return null;
+          }
+          attachVoiceListeners(voice);
+          voiceRef.current = voice;
+          return voice;
+        })
+        .catch(() => null)
+        .finally(() => {
+          voiceLoadingRef.current = null;
+        });
+    }
+    return voiceLoadingRef.current;
+  }, [attachVoiceListeners]);
+
+  const stopVoiceInput = React.useCallback(
+    async (options?: StopVoiceInputOptions) => {
+      const voice = voiceRef.current;
+      manualStopRef.current = true;
+      if (options?.discardTranscript) {
+        ignoreSpeechResultsRef.current = true;
+        dictationBaseTextRef.current = "";
+      }
+      setVoiceListening(false);
+      if (!voice || typeof voice.stop !== "function") {
+        manualStopRef.current = false;
+        return;
+      }
+      try {
+        await voice.stop();
+      } catch {
+        try {
+          await voice.cancel?.();
+        } catch {
+          // Best effort cleanup only; user-facing errors are handled by speech events.
+        }
+      } finally {
+        setTimeout(() => {
+          manualStopRef.current = false;
+        }, 500);
+      }
+    },
+    [setVoiceListening],
+  );
+
+  const handleMicPress = React.useCallback(async () => {
+    try {
+      if (recordingAudio || isListeningRef.current) {
+        await stopVoiceInput();
+        return;
+      }
+
+      ignoreSpeechResultsRef.current = false;
+      manualStopRef.current = false;
+      dictationBaseTextRef.current = message.trim();
+
+      const voice = await loadVoice();
+      if (!voice) {
+        Toast.error(VOICE_UNAVAILABLE_MESSAGE);
+        return;
+      }
+
+      const hasMicrophonePermission = await requestAndroidMicrophonePermission();
+      if (!hasMicrophonePermission) {
+        Toast.error(VOICE_PERMISSION_MESSAGE);
+        return;
+      }
+
+      if (Platform.OS === "android" && typeof voice.isAvailable === "function") {
+        const available = await voice.isAvailable();
+        if (!available) {
+          Toast.error(VOICE_UNAVAILABLE_MESSAGE);
+          return;
+        }
+      }
+
+      setVoiceListening(true);
+      await voice.start(
+        VOICE_LOCALE,
+        Platform.OS === "android"
+          ? {
+              EXTRA_LANGUAGE_MODEL: "LANGUAGE_MODEL_FREE_FORM",
+              EXTRA_MAX_RESULTS: 5,
+              EXTRA_PARTIAL_RESULTS: true,
+              REQUEST_PERMISSIONS_AUTO: false,
+            }
+          : undefined,
+      );
+    } catch (error: any) {
+      setVoiceListening(false);
+      showFriendlyVoiceError(error);
+    }
+  }, [loadVoice, message, recordingAudio, setVoiceListening, stopVoiceInput]);
+
+  React.useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      ignoreSpeechResultsRef.current = true;
+      isListeningRef.current = false;
+      const voice = voiceRef.current;
+      voiceRef.current = null;
+      if (!voice) return;
+      const removeListeners = () => {
+        try {
+          voice.removeAllListeners?.();
+        } catch {
+          // Listener cleanup should never surface a user-visible error.
+        }
+      };
+      try {
+        void voice.destroy?.().catch(() => undefined).finally(removeListeners);
+      } catch {
+        removeListeners();
+      }
+    };
+  }, []);
 
   const handleAttachmentRoleChange = React.useCallback((role: ChatAttachmentGroupRole) => {
     setAttachmentRole(role);
@@ -171,6 +379,7 @@ export function useAuraComposerState({ uid }: UseAuraComposerStateOptions) {
     handlePickImages,
     handleRemoveAttachment,
     handleTakePhoto,
+    stopVoiceInput,
     message,
     pendingAttachments,
     recordingAudio,

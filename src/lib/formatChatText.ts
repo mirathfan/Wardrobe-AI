@@ -1,5 +1,10 @@
 function trimCommonPrefix(value: string) {
-  return value.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+  return value.replace(/^https?:\/\//i, "").replace(/^www\d*\./i, "");
+}
+
+function normalizeUrlInput(url: string) {
+  const value = String(url ?? "").trim();
+  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 
 function humanizeSlug(value: string) {
@@ -13,12 +18,12 @@ function humanizeSlug(value: string) {
 export function isUrlOnlyMessage(text?: string | null) {
   const value = String(text ?? "").trim();
   if (!value) return false;
-  return /^https?:\/\/\S+$/i.test(value);
+  return /^(?:https?:\/\/|www\d*\.)\S+$/i.test(value);
 }
 
 export function formatUrlForDisplay(url: string) {
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(normalizeUrlInput(url));
     const host = trimCommonPrefix(parsed.host.toLowerCase());
     const firstPathSegment = parsed.pathname
       .split("/")

@@ -686,6 +686,9 @@ function auraLinkErrorMessage(error: unknown) {
   if (error instanceof ProductLinkError) {
     if (error.code === "invalid_url") return "That product link does not look valid.";
     if (error.code === "unsafe_url") return "I cannot fetch that kind of link.";
+    if (error.code === "blocked_store") {
+      return "This store blocked automatic reading. Try another link or upload a screenshot/photo of the item.";
+    }
     if (error.code === "fetch_failed") {
       return "I couldn't read that product link. Try another link or upload a photo.";
     }

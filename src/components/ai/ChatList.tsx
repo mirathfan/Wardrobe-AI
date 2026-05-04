@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
-import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, Text, View } from "react-native";
+import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, RefreshControl, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -80,9 +80,9 @@ function TypingBubble({ colors }: { colors: AppColors }) {
           borderRadius: 18,
           paddingHorizontal: 12,
           paddingVertical: 9,
-          backgroundColor: "rgba(255,255,255,0.032)",
+          backgroundColor: colors.surfaceGlass,
           borderWidth: 0.75,
-          borderColor: "rgba(255,255,255,0.07)",
+          borderColor: colors.border,
           flexDirection: "row",
           alignItems: "center",
           gap: 8,
@@ -120,6 +120,8 @@ export default function ChatList({
   autoScrollSignal = 0,
   focusMessageId,
   emptyState,
+  refreshing = false,
+  onRefresh,
   onSaveOutfit,
   onMoreLikeThis,
   onSwapOutfit,
@@ -139,6 +141,8 @@ export default function ChatList({
   autoScrollSignal?: number;
   focusMessageId?: string | null;
   emptyState?: React.ReactElement;
+  refreshing?: boolean;
+  onRefresh?: () => void;
   onSaveOutfit: (outfitId: string) => void;
   onMoreLikeThis: (outfit: import("./chatTypes").ChatOutfit) => void;
   onSwapOutfit: (outfit: import("./chatTypes").ChatOutfit) => void;
@@ -164,6 +168,9 @@ export default function ChatList({
   const scrollToIndexRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusAnchorReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutoScrollKeyRef = useRef<string | null>(null);
+  const lastInsetScrollKeyRef = useRef<string | null>(null);
+  const dismissedFocusMessageIdRef = useRef<string | null>(null);
+  const loadingRef = useRef(loading);
   const [listViewportHeight, setListViewportHeight] = React.useState(0);
   const [activeFocusAnchorId, setActiveFocusAnchorId] = React.useState<string | null>(null);
   const messageCount = messages.length;
@@ -174,11 +181,11 @@ export default function ChatList({
     () => (focusMessageId ? messages.findIndex((message) => message.id === focusMessageId) : -1),
     [focusMessageId, messages],
   );
+  const hasFocusedMessage = !!focusMessageId && focusedMessageIndex >= 0;
   const isFocusAnchoring =
-    !!focusMessageId &&
-    activeFocusAnchorId === focusMessageId &&
-    focusedMessageIndex >= 0 &&
-    loading;
+    hasFocusedMessage &&
+    loading &&
+    dismissedFocusMessageIdRef.current !== focusMessageId;
   const focusAnchorSpacer = isFocusAnchoring
     ? Math.max(contentBottomPadding, listViewportHeight * FOCUS_ANCHOR_SPACER_RATIO, FOCUS_ANCHOR_MIN_SPACER)
     : 0;
@@ -221,12 +228,13 @@ export default function ChatList({
   const handleScrollBeginDrag = useCallback(() => {
     userInteractingRef.current = true;
     focusAnchorActiveRef.current = false;
+    dismissedFocusMessageIdRef.current = focusMessageId ?? activeFocusAnchorId;
     if (focusAnchorReleaseTimerRef.current) {
       clearTimeout(focusAnchorReleaseTimerRef.current);
       focusAnchorReleaseTimerRef.current = null;
     }
     setActiveFocusAnchorId(null);
-  }, []);
+  }, [activeFocusAnchorId, focusMessageId]);
 
   const handleScrollEndDrag = useCallback(() => {
     userInteractingRef.current = false;
@@ -235,16 +243,21 @@ export default function ChatList({
   const handleMomentumScrollBegin = useCallback(() => {
     userInteractingRef.current = true;
     focusAnchorActiveRef.current = false;
+    dismissedFocusMessageIdRef.current = focusMessageId ?? activeFocusAnchorId;
     if (focusAnchorReleaseTimerRef.current) {
       clearTimeout(focusAnchorReleaseTimerRef.current);
       focusAnchorReleaseTimerRef.current = null;
     }
     setActiveFocusAnchorId(null);
-  }, []);
+  }, [activeFocusAnchorId, focusMessageId]);
 
   const handleMomentumScrollEnd = useCallback(() => {
     userInteractingRef.current = false;
   }, []);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
 
   useEffect(() => {
     return () => {
@@ -291,6 +304,7 @@ export default function ChatList({
 
   useEffect(() => {
     if (!focusMessageId || focusedMessageIndex < 0) return;
+    dismissedFocusMessageIdRef.current = null;
     focusAnchorActiveRef.current = true;
     shouldFollowRef.current = false;
     setActiveFocusAnchorId(focusMessageId);
@@ -299,11 +313,17 @@ export default function ChatList({
     }
     const focusTimer = setTimeout(() => scrollToFocusedMessage(focusedMessageIndex, true), 50);
     focusAnchorReleaseTimerRef.current = setTimeout(() => {
+      if (loadingRef.current) return;
       focusAnchorActiveRef.current = false;
       focusAnchorReleaseTimerRef.current = null;
+      if (!userInteractingRef.current) {
+        shouldFollowRef.current = true;
+        setActiveFocusAnchorId(null);
+        scrollToBottom(false);
+      }
     }, FOCUS_ANCHOR_LOCK_MS);
     return () => clearTimeout(focusTimer);
-  }, [focusMessageId, focusedMessageIndex, scrollToFocusedMessage]);
+  }, [focusMessageId, focusedMessageIndex, scrollToBottom, scrollToFocusedMessage]);
 
   useEffect(() => {
     if (loading || !activeFocusAnchorId) return;
@@ -312,9 +332,13 @@ export default function ChatList({
       clearTimeout(focusAnchorReleaseTimerRef.current);
       focusAnchorReleaseTimerRef.current = null;
     }
-    shouldFollowRef.current = false;
+    shouldFollowRef.current = true;
     setActiveFocusAnchorId(null);
-  }, [activeFocusAnchorId, loading]);
+    const timer = setTimeout(() => {
+      if (!userInteractingRef.current) scrollToBottom(false);
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [activeFocusAnchorId, loading, scrollToBottom]);
 
   useEffect(() => {
     if (!autoScrollSignal || !messageCount || !lastMessageId || !listViewportHeight) return;
@@ -349,6 +373,31 @@ export default function ChatList({
     };
   }, [
     autoScrollSignal,
+    contentBottomPadding,
+    isFocusAnchoring,
+    lastMessageId,
+    listViewportHeight,
+    messageCount,
+    scrollToBottom,
+  ]);
+
+  useEffect(() => {
+    if (!messageCount || !lastMessageId || !listViewportHeight) return;
+    if (isFocusAnchoring || userInteractingRef.current || !shouldFollowRef.current) return;
+    const insetScrollKey = [
+      lastMessageId,
+      messageCount,
+      Math.round(contentBottomPadding),
+      Math.round(listViewportHeight),
+    ].join(":");
+    if (lastInsetScrollKeyRef.current === insetScrollKey) return;
+    lastInsetScrollKeyRef.current = insetScrollKey;
+    const timer = setTimeout(() => {
+      if (userInteractingRef.current || !shouldFollowRef.current) return;
+      scrollToBottom(false);
+    }, 90);
+    return () => clearTimeout(timer);
+  }, [
     contentBottomPadding,
     isFocusAnchoring,
     lastMessageId,
@@ -488,6 +537,17 @@ export default function ChatList({
       onScrollToIndexFailed={handleScrollToIndexFailed}
       contentContainerStyle={contentContainerStyle}
       scrollIndicatorInsets={scrollIndicatorInsets}
+      refreshControl={
+        onRefresh ? (
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.ctaCream}
+            colors={[colors.ctaCream]}
+            progressBackgroundColor={colors.background}
+          />
+        ) : undefined
+      }
       ListEmptyComponent={emptyState ?? null}
       renderItem={renderItem}
       ItemSeparatorComponent={ChatItemSeparator}

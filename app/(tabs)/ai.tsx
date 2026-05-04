@@ -1,7 +1,7 @@
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Keyboard, KeyboardEvent, Platform, Share, Text, View } from "react-native";
+import { Alert, AppState, Image, Keyboard, KeyboardEvent, Platform, Share, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import AuraHeader from "@/src/components/ai/AuraHeader";
@@ -29,18 +29,24 @@ import { askAuraStream, isAuraStreamAbortError } from "@/src/lib/aura";
 import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
 import {
   appendUniqueSystemMessage,
+  type AuraChatIntent,
+  type AuraOutfitDiversityContext,
+  buildAuraOutfitDiversityContext,
   buildChatSeedText,
   buildShareTranscript,
   buildStructuredOutfitBatchPrompt,
+  classifyAuraChatIntent,
   createStreamingAssistantMessage,
   createSystemMessage,
   createMessageId,
   createUserMessageWithAttachments,
+  latestAuraLook,
   latestAuraLookCount,
   nextLocalMessageSequence,
   resolveStructuredBatchLookCount,
   updateMessageById,
   wantsStructuredOutfitBatch,
+  wantsStructuredOutfitRequest,
 } from "@/src/lib/auraChatHelpers";
 import { updateAuraSessionContextFromPrompt } from "@/src/lib/auraMemory";
 import {
@@ -69,7 +75,13 @@ import {
   type AIChatThread,
   updateChatThread,
 } from "@/src/lib/aiChats";
-import { clearLatestChatCache, saveLatestChatCache } from "@/src/lib/localChatCache";
+import {
+  clearLatestChatCache,
+  isAuraChatSessionFresh,
+  loadAuraChatSessionMeta,
+  saveAuraChatSessionMeta,
+  saveLatestChatCache,
+} from "@/src/lib/localChatCache";
 import { messageOrderMillis, orderChatMessages } from "@/src/lib/chatMessageOrder";
 import {
   clearCachedRecentMessages,
@@ -88,10 +100,11 @@ const AURA_TOP_CHIPS = [
   "Warm-weather",
 ];
 const DEFAULT_CHIPS = AURA_TOP_CHIPS.filter((chip) => chip !== TRAIN_AURA_CHIP_LABEL);
+const AURA_LOGO_SOURCE = require("../../assets/images/aura-tab-mark.png");
 
-const DEFAULT_COMPOSER_HEIGHT = 56;
-const CHAT_COMPOSER_TAB_GAP = 8;
-const CHAT_BOTTOM_BREATHING_ROOM = 18;
+const DEFAULT_COMPOSER_HEIGHT = 50;
+const CHAT_COMPOSER_TAB_GAP = 6;
+const CHAT_BOTTOM_BREATHING_ROOM = 26;
 const STREAM_FLUSH_INTERVAL_MS = 32;
 const AURA_REPLY_START_HAPTIC = "light" as const;
 const AURA_REPLY_FINISH_HAPTIC = "selection" as const;
@@ -112,6 +125,8 @@ const AURA_EMPTY_STATE_CHIPS = [
 type AskAuraOptions = {
   retryUserMessage?: AIMessage;
   removeMessageId?: string;
+  forceOutfitDiversity?: boolean;
+  diversityMessages?: AIMessage[];
 };
 
 function logAuraChatState(event: string, payload?: Record<string, unknown>) {
@@ -146,19 +161,11 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
       />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
         <View style={{ width: 42, height: 42, alignItems: "center", justifyContent: "center" }}>
-          <AnimatedAuraRing size={38} stroke={1.5} rotationDuration={5200} />
-          <Text
-            pointerEvents="none"
-            style={{
-              position: "absolute",
-              color: colors.text,
-              fontSize: 9,
-              fontWeight: "900",
-              letterSpacing: 0.8,
-            }}
-          >
-            AURA
-          </Text>
+          <Image
+            source={AURA_LOGO_SOURCE}
+            resizeMode="contain"
+            style={{ width: 40, height: 40, opacity: 0.92 }}
+          />
         </View>
         <View style={{ flex: 1, gap: 4 }}>
           <Text
@@ -439,6 +446,213 @@ function createAssistantMessage(
   };
 }
 
+function auraLookItemIds(look?: AuraResponse["look"] | null) {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const piece of look?.pieces ?? []) {
+    const itemId = String(piece.itemId ?? "").trim();
+    if (piece.source !== "closet" || !itemId || seen.has(itemId)) continue;
+    seen.add(itemId);
+    ids.push(itemId);
+  }
+  return ids;
+}
+
+function auraLookSignature(look?: AuraResponse["look"] | null) {
+  return auraLookItemIds(look).sort().join("|");
+}
+
+function auraLookPreviousOverlap(
+  look: NonNullable<AuraResponse["look"]>,
+  diversity: AuraOutfitDiversityContext
+) {
+  const previousIds = new Set(diversity.previousLookItemIds);
+  return auraLookItemIds(look).filter((itemId) => previousIds.has(itemId)).length;
+}
+
+function enforceClientOutfitDiversity(
+  response: AuraResponse,
+  diversity: AuraOutfitDiversityContext
+): AuraResponse {
+  if (!diversity.shouldAvoidRepeats) return response;
+  const originalLooks = [
+    ...(response.lookOptions ?? []),
+    ...(response.look && !(response.lookOptions ?? []).includes(response.look) ? [response.look] : []),
+  ];
+  if (!originalLooks.length) return response;
+
+  const selected: NonNullable<AuraResponse["look"]>[] = [];
+  const selectedSignatures = new Set<string>();
+  const candidates = originalLooks.map((look) => {
+    const itemIds = auraLookItemIds(look);
+    const signature = itemIds.slice().sort().join("|");
+    const previousOverlap = auraLookPreviousOverlap(look, diversity);
+    const exactPrevious = !!signature && diversity.previousLookSignatures.includes(signature);
+    const duplicateWithinResponse = !!signature && selectedSignatures.has(signature);
+    const selectedOverlapTooHigh = selected.some((existing) => {
+      const existingIds = new Set(auraLookItemIds(existing));
+      const overlap = itemIds.filter((itemId) => existingIds.has(itemId)).length;
+      return overlap > Math.max(1, diversity.maxOverlap);
+    });
+    const tooSimilar = exactPrevious || previousOverlap > diversity.maxOverlap;
+    const rejected = tooSimilar || duplicateWithinResponse || selectedOverlapTooHigh;
+    if (!rejected) {
+      selected.push(look);
+      if (signature) selectedSignatures.add(signature);
+    }
+    return {
+      title: look.lookTitle,
+      itemIds,
+      signature,
+      previousOverlap,
+      exactPrevious,
+      duplicateWithinResponse,
+      selectedOverlapTooHigh,
+      rejected,
+    };
+  });
+
+  if (DEBUG_AURA_CLIENT) {
+    console.log("[AURA_DIVERSITY]", "frontend final guard", {
+      previousItemIds: diversity.previousLookItemIds,
+      excludedItemIds: diversity.excludedItemIds,
+      recentItemIds: diversity.recentItemIds,
+      previousLookSignatures: diversity.previousLookSignatures,
+      maxOverlap: diversity.maxOverlap,
+      candidates,
+      selected: selected.map((look) => ({
+        title: look.lookTitle,
+        itemIds: auraLookItemIds(look),
+        signature: auraLookSignature(look),
+        overlap: auraLookPreviousOverlap(look, diversity),
+      })),
+    });
+  }
+
+  if (!selected.length) {
+    return {
+      title: "More pieces needed",
+      presentation: "chat",
+      reply: "I need more usable pieces to make this meaningfully different.",
+      reason: "AURA avoided repeating the previous outfit.",
+      outfitItems: [],
+      ownedPieces: [],
+      recommendedAdditions: [],
+      swapSuggestion: "",
+      missingPieces: [],
+      upgradeSuggestions: [],
+      chips: response.chips?.length ? response.chips : DEFAULT_CHIPS,
+      look: null,
+      lookOptions: [],
+    };
+  }
+
+  if (response.lookOptions?.length) {
+    const lookOptions = selected.slice(0, response.lookOptions.length);
+    return {
+      ...response,
+      look: lookOptions[0] ?? null,
+      lookOptions,
+    };
+  }
+
+  return {
+    ...response,
+    look: selected[0] ?? response.look ?? null,
+  };
+}
+
+function labelForLookPiece(look: NonNullable<AuraResponse["look"]>, role: string) {
+  return look.pieces.find((piece) => piece.role === role && piece.source === "closet")?.itemName ?? "";
+}
+
+function compactLookBase(look: NonNullable<AuraResponse["look"]>) {
+  const top = labelForLookPiece(look, "top");
+  const bottom = labelForLookPiece(look, "bottom");
+  const shoes = labelForLookPiece(look, "shoes");
+  const outerwear = labelForLookPiece(look, "outerwear");
+  return [top, bottom, shoes, outerwear].filter(Boolean).join(", ");
+}
+
+function buildNoExistingOutfitResponse(): AuraResponse {
+  return {
+    title: "No outfit yet",
+    presentation: "chat",
+    reply: "I don’t have an outfit yet — want me to create one first?",
+    reason: "",
+    outfitItems: [],
+    ownedPieces: [],
+    recommendedAdditions: [],
+    swapSuggestion: "",
+    chips: ["Give me an outfit", "Style me today", "Build from my closet"],
+  };
+}
+
+function buildExistingOutfitStylingResponse(
+  prompt: string,
+  look: NonNullable<AuraResponse["look"]>,
+  intent: AuraChatIntent,
+): AuraResponse {
+  const normalized = prompt.toLowerCase();
+  const top = labelForLookPiece(look, "top");
+  const bottom = labelForLookPiece(look, "bottom");
+  const shoes = labelForLookPiece(look, "shoes");
+  const base = compactLookBase(look);
+  const anchor = top || bottom || look.lookTitle || "the strongest piece";
+  const baseLine = base ? `Base: ${base}.` : `Base: ${look.lookTitle}.`;
+
+  let title = "How to style it";
+  let advice =
+    `Wear ${anchor} as the anchor and keep the rest intentional: clean proportions, one clear focal point, and no extra clutter. ` +
+    "If the fit feels flat, sharpen it with a small tuck, cleaner socks, or one refined accessory.";
+  let swaps =
+    "Optional swaps: change one thing only, like cleaner shoes for polish, a relaxed shoe for ease, or a simple layer if the weather needs it.";
+
+  if (/\b(dressier|formal|sharper|office|work)\b/.test(normalized)) {
+    title = "Make it dressier";
+    advice =
+      `Keep ${anchor} as the base, then make the silhouette cleaner: neater tuck, sharper hem break, and minimal accessories. ` +
+      "The goal is refined, not overdressed.";
+    swaps =
+      `Optional swaps: ${shoes ? `trade ${shoes} for loafers, boots, or your cleanest low-profile shoes` : "use your cleanest low-profile shoes"}; add a watch or simple chain; layer a blazer or structured jacket if you own one.`;
+  } else if (/\b(casual|relaxed|easy|everyday)\b/.test(normalized)) {
+    title = "Make it more casual";
+    advice =
+      `Soften the outfit around ${anchor}: keep the lines relaxed, let one piece sit slightly loose, and avoid anything too shiny or formal.`;
+    swaps =
+      `Optional swaps: ${shoes ? `keep ${shoes} if they feel easy, or swap to a softer sneaker` : "use a softer sneaker"}; skip heavy accessories; add a light overshirt if it needs shape.`;
+  } else if (/\b(streetwear|bold|bolder|statement|edge)\b/.test(normalized)) {
+    title = "Push the styling";
+    advice =
+      `Let ${anchor} carry the attitude, then add contrast through proportion: a stronger layer, chunkier shoe, or one statement accessory.`;
+    swaps =
+      "Optional swaps: add headwear or a heavier shoe if it fits the vibe, but keep the color story tight so it does not get crowded.";
+  } else if (intent === "MODIFY_OUTFIT") {
+    title = "Refine this look";
+    advice =
+      `Keep the core outfit intact, especially ${anchor}. Tighten the styling by changing the mood around it rather than rebuilding from scratch.`;
+    swaps =
+      "Optional swaps: adjust one anchor-adjacent piece, like shoes, outerwear, or one accessory, then leave the rest alone.";
+  }
+
+  const pieceNote =
+    top && bottom
+      ? `Let ${top} and ${bottom} stay as the main relationship.`
+      : "Keep the main pieces visually connected.";
+
+  return {
+    title,
+    presentation: "chat",
+    reply: `${baseLine} ${advice} ${pieceNote} ${swaps}`,
+    reason: "",
+    outfitItems: [],
+    ownedPieces: [],
+    recommendedAdditions: [],
+    swapSuggestion: "",
+    chips: ["Make it dressier", "Make it more casual", "Give me another one"],
+  };
+}
+
 function promptRequestsOuterwear(prompt: string) {
   return OUTERWEAR_REQUEST_RE.test(String(prompt ?? ""));
 }
@@ -700,6 +914,7 @@ export default function AIScreen() {
     recordingAudio,
     setMessage,
     setPendingAttachments,
+    stopVoiceInput,
   } = useAuraComposerState({ uid });
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<ClothingItem[]>([]);
@@ -709,18 +924,13 @@ export default function AIScreen() {
   const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
   const [focusScrollSignal, setFocusScrollSignal] = useState(0);
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
+  const [chatRefreshing, setChatRefreshing] = useState(false);
   const consumedPromptTokens = useRef(new Set<string>());
   const {
     handleStopGenerating,
     stopStreamingRequestedRef,
     streamAbortControllerRef,
   } = useAuraStreamingState();
-
-  useFocusEffect(
-    React.useCallback(() => {
-      setFocusScrollSignal((value) => value + 1);
-    }, [])
-  );
 
   const routePrompt = useMemo(() => {
     const raw = Array.isArray(params.prompt) ? params.prompt[0] : params.prompt;
@@ -838,6 +1048,7 @@ export default function AIScreen() {
         setActiveChatId(null);
         setMessages([]);
         await clearLatestChatCache(uid);
+        await saveAuraChatSessionMeta(uid, null);
       }
       await refreshRecentThreads();
     },
@@ -854,6 +1065,7 @@ export default function AIScreen() {
         setActiveChatId(null);
         setMessages([]);
         await clearLatestChatCache(uid);
+        await saveAuraChatSessionMeta(uid, null);
       }
       await refreshRecentThreads();
     },
@@ -998,12 +1210,58 @@ export default function AIScreen() {
           )
         : nextLocalMessages;
       const historyMessagesBeforeRequest = isRetry ? retryBaselineMessages : latestMessagesRef.current;
+      const intentContextMessages = options?.diversityMessages ?? historyMessagesBeforeRequest;
+      const lastLookForIntent = latestAuraLook(intentContextMessages);
+      const chatIntent = classifyAuraChatIntent(prompt, {
+        attachmentCount: uploadedAttachments.length,
+        hasPreviousLook: !!lastLookForIntent,
+      });
       const structuredBatchPrompt = buildStructuredOutfitBatchPrompt(prompt, historyMessagesBeforeRequest);
       const shouldForceStructuredBatch = wantsStructuredOutfitBatch(
         prompt,
         uploadedAttachments.length,
         historyMessagesBeforeRequest,
       );
+      const shouldForceStructuredOutfit = wantsStructuredOutfitRequest(
+        prompt,
+        uploadedAttachments.length,
+        historyMessagesBeforeRequest,
+      );
+      const shouldRouteToExistingLook =
+        chatIntent === "STYLE_EXISTING" || chatIntent === "MODIFY_OUTFIT";
+      const structuredOutfitPrompt = shouldForceStructuredBatch ? structuredBatchPrompt : prompt;
+      const outfitDiversity = buildAuraOutfitDiversityContext(
+        options?.forceOutfitDiversity ? "Try again" : prompt,
+        intentContextMessages,
+        {
+          multiLook: shouldForceStructuredBatch,
+        },
+      );
+      if (DEBUG_AURA_CLIENT) {
+        console.log("[AURA_INTENT]", "chat intent route", {
+          prompt,
+          detectedIntent: chatIntent,
+          hasPreviousLook: !!lastLookForIntent,
+          routeChosen: shouldRouteToExistingLook
+            ? lastLookForIntent
+              ? "existing_outfit_styling"
+              : "existing_outfit_missing_context"
+            : shouldForceStructuredOutfit
+              ? "outfit_generator"
+              : "stream_stylist",
+          outfitGeneratorWillRun: !shouldRouteToExistingLook && shouldForceStructuredOutfit,
+        });
+      }
+      if (DEBUG_AURA_CLIENT && outfitDiversity.shouldAvoidRepeats) {
+        console.log("[AURA_DIVERSITY]", "frontend outfit diversity context", {
+          previousItemIds: outfitDiversity.previousLookItemIds,
+          excludedItemIds: outfitDiversity.excludedItemIds,
+          recentItemIds: outfitDiversity.recentItemIds,
+          previousLookSignatures: outfitDiversity.previousLookSignatures,
+          maxOverlap: outfitDiversity.maxOverlap,
+          reason: outfitDiversity.reason,
+        });
+      }
       setMessages(nextLocalMessages);
       setFocusMessageId(userMessage.id);
       if (!override && !isRetry) {
@@ -1032,6 +1290,7 @@ export default function AIScreen() {
           const chat = await createChatThread(uid, chatSeedText);
           chatId = chat.chatId;
           setActiveChatId(chat.chatId);
+          await saveAuraChatSessionMeta(uid, chat.chatId);
         }
 
         void updateAuraSessionContextFromPrompt(uid, chatId, prompt);
@@ -1076,21 +1335,68 @@ export default function AIScreen() {
           });
         }
 
-        if (shouldForceStructuredBatch) {
-          const desiredLookCount = resolveStructuredBatchLookCount(
-            prompt,
-            structuredBatchPrompt,
-            latestMessagesRef.current,
-          );
+        if (shouldRouteToExistingLook) {
+          const stylingResponse = lastLookForIntent
+            ? buildExistingOutfitStylingResponse(prompt, lastLookForIntent, chatIntent)
+            : buildNoExistingOutfitResponse();
+          if (DEBUG_AURA_CLIENT) {
+            console.log("[AURA_INTENT]", "existing outfit route selected", {
+              detectedIntent: chatIntent,
+              hasPreviousLook: !!lastLookForIntent,
+              outfitGeneratorCalled: false,
+              lookTitle: lastLookForIntent?.lookTitle ?? null,
+            });
+          }
+          const assistantMessage = createAssistantMessage(stylingResponse, {
+            id: streamingMessageId,
+            createdAt: streamingMessageCreatedAt,
+            clientCreatedAt: streamingMessageCreatedAt,
+            localSequence: streamingMessageLocalSequence,
+            replyToMessageId: userMessage.id,
+            streaming: false,
+          }, {
+            userRequest: prompt,
+          });
+          logAuraChatState("message_created", {
+            messageId: assistantMessage.id,
+            type: assistantMessage.type,
+            kind: assistantMessage.kind,
+            source: lastLookForIntent ? "style_existing_outfit" : "style_existing_missing_context",
+          });
+          setMessages(orderChatMessages([...nextLocalMessages, assistantMessage]));
+          setQuickChips(stylingResponse.chips?.length ? stylingResponse.chips : DEFAULT_CHIPS);
+          await appendMessageToChat(uid, chatId, assistantMessage);
+          await updateChatThread(uid, chatId, {
+            title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
+          });
+          await refreshRecentThreads();
+          return;
+        }
+
+        if (shouldForceStructuredOutfit) {
+          if (DEBUG_AURA_CLIENT) {
+            console.log("[AURA_INTENT]", "outfit generator route selected", {
+              detectedIntent: chatIntent,
+              outfitGeneratorCalled: true,
+              structuredBatch: shouldForceStructuredBatch,
+            });
+          }
+          const desiredLookCount = shouldForceStructuredBatch
+            ? resolveStructuredBatchLookCount(
+                prompt,
+                structuredBatchPrompt,
+                latestMessagesRef.current,
+              )
+            : 1;
           if (DEBUG_AURA_CLIENT) {
             console.log("[AURA_MULTI]", "frontend structured batch request", {
               prompt,
-              structuredBatchPrompt,
+              structuredBatchPrompt: structuredOutfitPrompt,
               desiredLookCount,
               latestLookCount: latestAuraLookCount(latestMessagesRef.current),
             });
           }
-          if (promptRequestsOuterwear(structuredBatchPrompt) && !closetHasOuterwear(items)) {
+          if (promptRequestsOuterwear(structuredOutfitPrompt) && !closetHasOuterwear(items)) {
             const noOuterwearResponse: AuraResponse = {
               title: "No outerwear found",
               reply:
@@ -1127,18 +1433,23 @@ export default function AIScreen() {
             return;
           }
           const outfitBatch = await generateAuraSwipeBatch({
-            intentText: structuredBatchPrompt,
+            intentText: structuredOutfitPrompt,
             numOutfits: desiredLookCount,
             items,
+            excludeItemIds: outfitDiversity.excludedItemIds,
+            recentItemIds: outfitDiversity.recentItemIds,
+            previousLookItemIds: outfitDiversity.previousLookItemIds,
+            previousLookSignatures: outfitDiversity.previousLookSignatures,
+            maxOverlap: outfitDiversity.maxOverlap,
           });
-          const batchResponse = buildAuraResponseFromSwipeBatch(outfitBatch, {
-            prompt: structuredBatchPrompt,
+          const batchResponse = enforceClientOutfitDiversity(buildAuraResponseFromSwipeBatch(outfitBatch, {
+            prompt: structuredOutfitPrompt,
             items,
-          });
+          }), outfitDiversity);
           if (DEBUG_AURA_CLIENT) {
             console.log("[AURA_MULTI]", "frontend batch fallback response", {
               prompt,
-              structuredBatchPrompt,
+              structuredBatchPrompt: structuredOutfitPrompt,
               lookOptionsCount: batchResponse.lookOptions?.length ?? 0,
               lookTitles: batchResponse.lookOptions?.map((look) => look.lookTitle) ?? [],
             });
@@ -1151,7 +1462,7 @@ export default function AIScreen() {
             replyToMessageId: userMessage.id,
             streaming: false,
           }, {
-            userRequest: structuredBatchPrompt,
+            userRequest: structuredOutfitPrompt,
           });
           logAuraChatState("message_created", {
             messageId: assistantMessage.id,
@@ -1232,6 +1543,12 @@ export default function AIScreen() {
         streamAbortControllerRef.current = streamAbortController;
         setMessages(orderChatMessages([...nextLocalMessages, streamingMessage]));
 
+        if (DEBUG_AURA_CLIENT) {
+          console.log("[AURA_INTENT]", "stream stylist route selected", {
+            detectedIntent: chatIntent,
+            outfitGeneratorCalled: false,
+          });
+        }
         const result = await askAuraStream(
           {
             message: prompt,
@@ -1241,6 +1558,7 @@ export default function AIScreen() {
             clientIntent: imageIntent,
             clientContext: {
               minimumCloset: minimumClosetSummary,
+              outfitDiversity,
             },
           },
           {
@@ -1294,12 +1612,18 @@ export default function AIScreen() {
             intentText: structuredBatchPrompt,
             numOutfits: desiredLookCount,
             items,
+            excludeItemIds: outfitDiversity.excludedItemIds,
+            recentItemIds: outfitDiversity.recentItemIds,
+            previousLookItemIds: outfitDiversity.previousLookItemIds,
+            previousLookSignatures: outfitDiversity.previousLookSignatures,
+            maxOverlap: outfitDiversity.maxOverlap,
           });
           finalResult = buildAuraResponseFromSwipeBatch(outfitBatch, {
             prompt: structuredBatchPrompt,
             items,
           });
         }
+        finalResult = enforceClientOutfitDiversity(finalResult, outfitDiversity);
         const elapsed = Date.now() - startedAt;
         if (elapsed < 300) {
           await new Promise((resolve) => setTimeout(resolve, 300 - elapsed));
@@ -1456,6 +1780,13 @@ export default function AIScreen() {
     ]
   );
 
+  const handleComposerSend = React.useCallback(async () => {
+    if (recordingAudio) {
+      await stopVoiceInput({ discardTranscript: true });
+    }
+    await handleAsk();
+  }, [handleAsk, recordingAudio, stopVoiceInput]);
+
   const handleRetryAuraResponse = React.useCallback(
     (sourceMessage: AIMessage) => {
       if (loading) return;
@@ -1477,6 +1808,11 @@ export default function AIScreen() {
       void handleAsk(undefined, {
         retryUserMessage,
         removeMessageId: sourceMessage.id,
+        forceOutfitDiversity: true,
+        diversityMessages:
+          sourceIndex >= 0
+            ? currentMessages.slice(0, sourceIndex + 1)
+            : currentMessages,
       });
     },
     [handleAsk, latestMessagesRef, loading],
@@ -1599,7 +1935,7 @@ export default function AIScreen() {
           if (first?.itemId) {
             router.push({
               pathname: "/(tabs)/add",
-              params: { editId: first.itemId },
+              params: { editId: first.itemId, sourceItemId: first.itemId, sourceRoute: "/(tabs)/ai" },
             });
           }
           return;
@@ -1742,7 +2078,7 @@ export default function AIScreen() {
   const isComposerActive = isComposerFocused || keyboardHeight > 0;
   const keyboardComposerBottom =
     keyboardHeight > 0
-      ? Math.max(12, keyboardHeight + (Platform.OS === "ios" ? 8 : 4))
+      ? Math.max(12, keyboardHeight + (Platform.OS === "ios" ? 10 : 6))
       : 0;
   const composerBottom = keyboardHeight > 0 ? keyboardComposerBottom : restingComposerBottom;
   const closedDockStackInset =
@@ -1751,8 +2087,119 @@ export default function AIScreen() {
     composerBottom + composerHeight,
     closedDockStackInset + composerHeight,
   ) + CHAT_BOTTOM_BREATHING_ROOM;
+  const lastMessageIdForFocus = orderedMessages[orderedMessages.length - 1]?.id ?? "empty";
+  const focusScrollKey = `${activeChatId ?? "new"}:${lastMessageIdForFocus}:${orderedMessages.length}`;
+  const chatAutoScrollReady = chatBottomInset > 0 && composerHeight > 0 && layout.height > 0;
+
+  useEffect(() => {
+    if (loading || !focusMessageId) return;
+    const timer = setTimeout(() => setFocusMessageId(null), 240);
+    return () => clearTimeout(timer);
+  }, [focusMessageId, loading]);
+
+  const enforceAuraSessionWindow = React.useCallback(async () => {
+    if (!uid) return;
+    const session = await loadAuraChatSessionMeta(uid);
+    if (activeChatId) {
+      if (session && !isAuraChatSessionFresh(session)) {
+        setMessage("");
+        setPendingAttachments([]);
+        setMessages([]);
+        setFocusMessageId(null);
+        setActiveChatId(null);
+        setQuickChips(DEFAULT_CHIPS);
+        await saveAuraChatSessionMeta(uid, null);
+        return;
+      }
+      await saveAuraChatSessionMeta(uid, activeChatId);
+      return;
+    }
+    if (orderedMessages.length === 0) {
+      await saveAuraChatSessionMeta(uid, null);
+    }
+  }, [
+    activeChatId,
+    orderedMessages.length,
+    setActiveChatId,
+    setMessage,
+    setMessages,
+    setPendingAttachments,
+    setQuickChips,
+    uid,
+  ]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        await enforceAuraSessionWindow();
+        if (cancelled) return;
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [enforceAuraSessionWindow]),
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void enforceAuraSessionWindow();
+      }
+    });
+    return () => subscription.remove();
+  }, [enforceAuraSessionWindow]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      let cancelled = false;
+      const scheduleScroll = () => {
+        if (cancelled || !chatAutoScrollReady) return;
+        void focusScrollKey;
+        requestAnimationFrame(() => {
+          if (!cancelled) setFocusScrollSignal((value) => value + 1);
+        });
+      };
+      const firstTimer = setTimeout(scheduleScroll, 90);
+      const secondTimer = setTimeout(scheduleScroll, 220);
+      const finalTimer = setTimeout(scheduleScroll, 520);
+      return () => {
+        cancelled = true;
+        clearTimeout(firstTimer);
+        clearTimeout(secondTimer);
+        clearTimeout(finalTimer);
+      };
+    }, [chatAutoScrollReady, focusScrollKey])
+  );
+
+  const handleChatRefresh = React.useCallback(async () => {
+    if (!uid || chatRefreshing) return;
+    setChatRefreshing(true);
+    const startedAt = Date.now();
+    try {
+      await refreshRecentThreads();
+      if (activeChatId) {
+        const threadMessages = await loadChatMessages(uid, activeChatId);
+        setMessages(orderChatMessages(threadMessages));
+        await saveLatestChatCache(uid, activeChatId, null, threadMessages);
+        await saveAuraChatSessionMeta(uid, activeChatId);
+      }
+      setFocusScrollSignal((value) => value + 1);
+    } catch {
+      Toast.error("Refresh failed", "AURA could not refresh this chat just now.");
+    } finally {
+      const remaining = Math.max(0, 450 - (Date.now() - startedAt));
+      setTimeout(() => setChatRefreshing(false), remaining);
+    }
+  }, [
+    activeChatId,
+    chatRefreshing,
+    refreshRecentThreads,
+    setMessages,
+    uid,
+  ]);
   const showEmptyState = orderedMessages.length === 0 && !loading && !isBooting && !message.trim();
-  const showKeyboardWatermark = keyboardHeight > 0 && orderedMessages.length < 2;
+  const showKeyboardWatermark = keyboardHeight > 0 && orderedMessages.length < 2 && !showEmptyState;
   const visibleHeroChips = AURA_TOP_CHIPS;
   const emptyChatState = useMemo(
     () =>
@@ -1808,14 +2255,12 @@ export default function AIScreen() {
         onOpenRecent={() => setChatDrawerOpen(true)}
         onReset={() => {
           setMessage("");
+          setPendingAttachments([]);
           setMessages([]);
-          if (uid && activeChatId) {
-            void clearCachedRecentMessages(uid, activeChatId);
-          }
           setActiveChatId(null);
           setQuickChips(DEFAULT_CHIPS);
           if (uid) {
-            void clearLatestChatCache(uid);
+            void saveAuraChatSessionMeta(uid, null);
           }
         }}
       />
@@ -1845,6 +2290,8 @@ export default function AIScreen() {
           autoScrollSignal={focusScrollSignal}
           focusMessageId={focusMessageId}
           emptyState={emptyChatState}
+          refreshing={chatRefreshing}
+          onRefresh={handleChatRefresh}
           onSaveOutfit={handleSaveOutfitFromLegacyMessage}
           onMoreLikeThis={handleMoreLikeThisFromLegacyMessage}
           onSwapOutfit={handleSwapFromLegacyMessage}
@@ -1855,23 +2302,23 @@ export default function AIScreen() {
           onRetryAuraResponse={handleRetryAuraResponse}
           />
           {showKeyboardWatermark ? (
-            <Text
+            <View
               pointerEvents="none"
               style={{
                 position: "absolute",
-                left: 0,
-                right: 0,
+                alignSelf: "center",
                 bottom: chatBottomInset + 20,
-                textAlign: "center",
-                color: colors.text,
-                opacity: 0.06,
-                fontSize: 24,
-                letterSpacing: 8,
-                fontWeight: "900",
+                width: 58,
+                height: 58,
+                opacity: 0.055,
               }}
             >
-              AURA
-            </Text>
+              <Image
+                source={AURA_LOGO_SOURCE}
+                resizeMode="contain"
+                style={{ width: "100%", height: "100%" }}
+              />
+            </View>
           ) : null}
         </View>
 
@@ -1886,7 +2333,7 @@ export default function AIScreen() {
         onChangeText={setMessage}
         onFocusChange={setIsComposerFocused}
         onHeightChange={setComposerHeight}
-        onSend={() => void handleAsk()}
+        onSend={() => void handleComposerSend()}
         onStop={hasStreamingMessage ? handleStopGenerating : undefined}
         onPickImages={() => void handlePickImages()}
         onTakePhoto={() => void handleTakePhoto()}
@@ -1916,11 +2363,13 @@ export default function AIScreen() {
             setMessages(orderChatMessages(cachedMessages.data));
             setActiveChatId(thread.chatId);
           }
+          await saveAuraChatSessionMeta(uid, thread.chatId);
           const threadMessages = await loadChatMessages(uid, thread.chatId);
           const orderedThreadMessages = orderChatMessages(threadMessages);
           setMessages(orderedThreadMessages);
           setActiveChatId(thread.chatId);
           await saveLatestChatCache(uid, thread.chatId, thread.threadId, orderedThreadMessages);
+          await saveAuraChatSessionMeta(uid, thread.chatId);
           setChatDrawerOpen(false);
         }}
         />

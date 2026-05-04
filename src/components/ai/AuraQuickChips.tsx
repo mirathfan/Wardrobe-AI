@@ -1,3 +1,4 @@
+import { BlurView } from "expo-blur";
 import React from "react";
 import { Animated, ScrollView, StyleSheet, Text, View } from "react-native";
 
@@ -5,10 +6,10 @@ import { Fonts } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
-const TOP_CHIP_HEIGHT = 28;
-const TOP_CHIP_RADIUS = 14;
-const TOP_CHIP_GAP = 6;
-const TOP_CHIP_HORIZONTAL_PADDING = 10;
+const TOP_CHIP_HEIGHT = 36;
+const TOP_CHIP_RADIUS = 999;
+const TOP_CHIP_GAP = 7;
+const TOP_CHIP_HORIZONTAL_PADDING = 12;
 
 const DEFAULT_CHIPS = [
   "What should I wear today?",
@@ -35,7 +36,7 @@ export default function AuraQuickChips({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ gap: TOP_CHIP_GAP, paddingHorizontal: 18, paddingRight: 20 }}
+      contentContainerStyle={{ gap: TOP_CHIP_GAP, paddingHorizontal: 16, paddingRight: 18 }}
     >
       {source.map((item, index) =>
         typeof item === "string" ? (
@@ -91,7 +92,7 @@ function ChipCard({
           width: 164,
           minHeight: 46,
           borderRadius: 15,
-          backgroundColor: colors.surfaceSoft,
+          backgroundColor: colors.chipBackground,
           borderWidth: 1,
           borderColor: colors.border,
           paddingHorizontal: 10,
@@ -167,22 +168,33 @@ function Chip({
           paddingHorizontal: TOP_CHIP_HORIZONTAL_PADDING,
           paddingVertical: 0,
           borderRadius: TOP_CHIP_RADIUS,
-          backgroundColor: isTrainingChip ? colors.purpleSurface : colors.surfaceSoft,
+          backgroundColor: isTrainingChip ? "rgba(72,36,76,0.44)" : "rgba(31,9,48,0.34)",
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: isTrainingChip ? colors.purpleBorder : colors.border,
+          borderColor: isTrainingChip ? "rgba(251,228,216,0.18)" : "rgba(251,228,216,0.09)",
+          overflow: "hidden",
         }}
       >
+        <BlurView intensity={16} tint="dark" style={StyleSheet.absoluteFill} />
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundColor: isTrainingChip ? "rgba(223,182,178,0.035)" : "rgba(251,228,216,0.012)",
+            },
+          ]}
+        />
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           {isTrainingChip ? (
             <View
               style={{
-                width: 5,
-                height: 5,
+                width: 4.5,
+                height: 4.5,
                 borderRadius: 999,
-                backgroundColor: colors.lightPurple,
-                shadowColor: colors.softPurple,
-                shadowOpacity: 0.45,
-                shadowRadius: 6,
+                backgroundColor: colors.ctaCream,
+                shadowColor: colors.ctaCream,
+                shadowOpacity: 0.2,
+                shadowRadius: 4,
                 shadowOffset: { width: 0, height: 0 },
               }}
             />
@@ -191,9 +203,10 @@ function Chip({
             numberOfLines={1}
             ellipsizeMode="tail"
             style={{
-              color: isTrainingChip ? colors.lightPurple : colors.textSecondary,
-              fontSize: 10.5,
-              fontWeight: "700",
+              color: isTrainingChip ? colors.ctaCream : "rgba(251,228,216,0.72)",
+              fontSize: 11.5,
+              lineHeight: 16,
+              fontWeight: "800",
               fontFamily: Fonts.sans,
             }}
           >

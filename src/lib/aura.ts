@@ -36,12 +36,23 @@ type AskAuraArgs = {
       nudge: string;
       tone: string;
     };
+    outfitDiversity?: {
+      shouldAvoidRepeats: boolean;
+      reason: "followup" | "multi_look" | "none";
+      recentItemIds: string[];
+      previousLookItemIds: string[];
+      excludedItemIds: string[];
+      previousLookSignatures: string[];
+      maxOverlap: number;
+    };
   };
 };
 
-const URL_RE = /https?:\/\/[^\s<>"']+/i;
+const URL_RE = /(?:https?:\/\/|www\d*\.)[^\s<>"']+/i;
 const LINK_PREVIEW_TIMEOUT_MS = 9000;
-const ENABLE_CLIENT_LINK_PREVIEW = process.env.EXPO_PUBLIC_AURA_CLIENT_LINK_PREVIEW === "1";
+const ENABLE_CLIENT_LINK_PREVIEW =
+  process.env.EXPO_PUBLIC_AURA_CLIENT_LINK_PREVIEW === "1" ||
+  (Platform.OS !== "web" && process.env.EXPO_PUBLIC_AURA_CLIENT_LINK_PREVIEW !== "0");
 const DEBUG_AURA_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const AURA_STREAM_TIMEOUT_MS = 30_000;
 const AURA_STREAM_WITH_IMAGE_TIMEOUT_MS = 90_000;
@@ -200,6 +211,17 @@ function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
           outfitRange: args.clientContext.minimumCloset.outfitRange,
         }
       : null,
+    outfitDiversity: args.clientContext?.outfitDiversity
+      ? {
+          shouldAvoidRepeats: args.clientContext.outfitDiversity.shouldAvoidRepeats,
+          reason: args.clientContext.outfitDiversity.reason,
+          previousItemIds: args.clientContext.outfitDiversity.previousLookItemIds,
+          excludedItemIds: args.clientContext.outfitDiversity.excludedItemIds,
+          recentItemIds: args.clientContext.outfitDiversity.recentItemIds,
+          previousLookSignatures: args.clientContext.outfitDiversity.previousLookSignatures,
+          maxOverlap: args.clientContext.outfitDiversity.maxOverlap,
+        }
+      : null,
   });
 }
 
@@ -213,7 +235,8 @@ function firstUrlFromText(text: string) {
   const match = String(text ?? "").match(URL_RE)?.[0];
   if (!match) return null;
   try {
-    const url = new URL(match.replace(/[),.;!?]+$/g, ""));
+    const raw = match.replace(/[),.;!?]+$/g, "");
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     return url.toString();
   } catch {
@@ -465,7 +488,7 @@ async function bestClientPreviewHtml(sourceUrl: string, signal: AbortSignal) {
   return best;
 }
 
-async function buildClientLinkPreview(sourceUrl: string) {
+export async function buildClientProductLinkPreview(sourceUrl: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LINK_PREVIEW_TIMEOUT_MS);
   try {
@@ -528,7 +551,7 @@ async function withClientLinkPreview(args: AskAuraArgs): Promise<AskAuraArgs> {
     }
     return args;
   }
-  const linkPreview = await buildClientLinkPreview(sourceUrl);
+  const linkPreview = await buildClientProductLinkPreview(sourceUrl);
   return linkPreview ? { ...args, linkPreview } : args;
 }
 

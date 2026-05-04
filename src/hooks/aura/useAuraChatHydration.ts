@@ -12,7 +12,13 @@ import {
   getCachedRecentMessages,
   setCachedRecentMessages,
 } from "@/src/lib/localCache";
-import { loadLatestChatCache, saveLatestChatCache } from "@/src/lib/localChatCache";
+import {
+  isAuraChatSessionFresh,
+  loadAuraChatSessionMeta,
+  loadLatestChatCache,
+  saveAuraChatSessionMeta,
+  saveLatestChatCache,
+} from "@/src/lib/localChatCache";
 
 type UseAuraChatHydrationOptions = {
   uid: string | null;
@@ -22,6 +28,27 @@ type UseAuraChatHydrationOptions = {
   defaultChips: string[];
   debug: boolean;
 };
+
+function messageSignature(messages: AIMessage[]) {
+  return messages
+    .map((message) =>
+      [
+        message.id,
+        message.type,
+        message.kind ?? "",
+        message.createdAt ?? "",
+        message.clientCreatedAt ?? "",
+        message.streaming ? "streaming" : "done",
+        message.aura?.lookOptions?.length ?? 0,
+        message.aura?.look ? 1 : 0,
+      ].join("|"),
+    )
+    .join("::");
+}
+
+function shouldReplaceMessages(current: AIMessage[], next: AIMessage[]) {
+  return messageSignature(current) !== messageSignature(next);
+}
 
 export function useAuraChatHydration({
   uid,
@@ -72,47 +99,119 @@ export function useAuraChatHydration({
         setRecentThreads(cachedThreads.data);
       }
 
-      const cachedActiveChatId = routeChatId || cachedThreads?.data?.find((thread) => !thread.archived)?.chatId || "";
-      if (cachedActiveChatId) {
-        const cachedMessages = await getCachedRecentMessages(uid, cachedActiveChatId);
-        if (!cancelled && cachedMessages?.data?.length) {
-          setMessages(orderChatMessages(cachedMessages.data));
-          setActiveChatId(cachedActiveChatId);
-        }
-      } else {
-        const cached = await loadLatestChatCache<AIMessage>(uid);
-        if (!cancelled && cached?.messages?.length) {
-          setMessages(orderChatMessages(cached.messages));
-          setActiveChatId(cached.chatId ?? null);
-        }
-      }
-
       try {
         const shouldLoadSpecificChat =
           !!routeChatId && !consumedChatTokens.current.has(`${routeChatKey}:${routeChatId}`);
         if (shouldLoadSpecificChat) {
           consumedChatTokens.current.add(`${routeChatKey}:${routeChatId}`);
-          const threadMessages = await loadChatMessages(uid, routeChatId);
-          const recent = await loadRecentChatThreads(uid, recentChatLimit);
+          const cachedMessages = await getCachedRecentMessages(uid, routeChatId);
+          if (!cancelled && cachedMessages?.data?.length) {
+            setMessages(orderChatMessages(cachedMessages.data));
+            setActiveChatId(routeChatId);
+            setIsBooting(false);
+          }
+          const [threadMessages, recent] = await Promise.all([
+            loadChatMessages(uid, routeChatId),
+            loadRecentChatThreads(uid, recentChatLimit),
+          ]);
           if (!cancelled) {
-            setMessages(orderChatMessages(threadMessages));
+            const orderedThreadMessages = orderChatMessages(threadMessages);
+            if (shouldReplaceMessages(latestMessagesRef.current, orderedThreadMessages)) {
+              setMessages(orderedThreadMessages);
+            }
             setActiveChatId(routeChatId);
             setQuickChips(defaultChips);
             setRecentThreads(recent);
-            await saveLatestChatCache(uid, routeChatId, null, threadMessages);
+            await saveAuraChatSessionMeta(uid, routeChatId);
+            await saveLatestChatCache(uid, routeChatId, null, orderedThreadMessages);
           }
           return;
         }
 
+        const session = await loadAuraChatSessionMeta(uid);
+        if (isAuraChatSessionFresh(session) && session?.chatId) {
+          let renderedCachedMessages = false;
+          const cachedMessages = await getCachedRecentMessages(uid, session.chatId);
+          if (!cancelled && cachedMessages?.data?.length) {
+            setMessages(orderChatMessages(cachedMessages.data));
+            setActiveChatId(session.chatId);
+            setIsBooting(false);
+            renderedCachedMessages = true;
+          }
+
+          if (!renderedCachedMessages) {
+            const cachedLatest = await loadLatestChatCache<AIMessage>(uid);
+            if (!cancelled && cachedLatest?.chatId === session.chatId && cachedLatest.messages.length) {
+              setMessages(orderChatMessages(cachedLatest.messages));
+              setActiveChatId(session.chatId);
+              setIsBooting(false);
+              renderedCachedMessages = true;
+            }
+          }
+
+          if (!cancelled && !renderedCachedMessages) {
+            setMessages([]);
+            setActiveChatId(session.chatId);
+            setIsBooting(false);
+          }
+
+          await saveAuraChatSessionMeta(uid, session.chatId);
+          const [recent, threadMessages] = await Promise.all([
+            loadRecentChatThreads(uid, recentChatLimit),
+            loadChatMessages(uid, session.chatId),
+          ]);
+          if (!cancelled) {
+            const orderedThreadMessages = orderChatMessages(threadMessages);
+            setRecentThreads(recent);
+            setActiveChatId(session.chatId);
+            if (shouldReplaceMessages(latestMessagesRef.current, orderedThreadMessages)) {
+              setMessages(orderedThreadMessages);
+            }
+            await saveLatestChatCache(uid, session.chatId, null, orderedThreadMessages);
+          }
+          return;
+        }
+
+        const cachedLatest = session ? null : await loadLatestChatCache<AIMessage>(uid);
+        if (
+          cachedLatest?.chatId &&
+          isAuraChatSessionFresh({
+            chatId: cachedLatest.chatId,
+            openedAt: cachedLatest.updatedAt ?? 0,
+          })
+        ) {
+          const orderedCachedMessages = orderChatMessages(cachedLatest.messages);
+          if (!cancelled) {
+            setMessages(orderedCachedMessages);
+            setActiveChatId(cachedLatest.chatId);
+            setIsBooting(false);
+          }
+          await saveAuraChatSessionMeta(uid, cachedLatest.chatId);
+          const [recent, threadMessages] = await Promise.all([
+            loadRecentChatThreads(uid, recentChatLimit),
+            loadChatMessages(uid, cachedLatest.chatId),
+          ]);
+          if (!cancelled) {
+            const orderedThreadMessages = orderChatMessages(threadMessages);
+            setRecentThreads(recent);
+            setActiveChatId(cachedLatest.chatId);
+            if (shouldReplaceMessages(latestMessagesRef.current, orderedThreadMessages)) {
+              setMessages(orderedThreadMessages);
+            }
+            await saveLatestChatCache(uid, cachedLatest.chatId, null, orderedThreadMessages);
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          setMessages([]);
+          setActiveChatId(null);
+          setQuickChips(defaultChips);
+          setIsBooting(false);
+        }
+        await saveAuraChatSessionMeta(uid, null);
         const recent = await loadRecentChatThreads(uid, recentChatLimit);
-        const latestThread = recent[0] ?? null;
-        if (!cancelled && latestThread?.chatId) {
-          const threadMessages = await loadChatMessages(uid, latestThread.chatId);
-          setMessages(orderChatMessages(threadMessages));
-          setActiveChatId(latestThread.chatId);
-          setRecentThreads(recent);
-          await saveLatestChatCache(uid, latestThread.chatId, latestThread.threadId, threadMessages);
-        } else if (!cancelled) {
+        if (!cancelled) {
           setRecentThreads(recent);
         }
       } catch (error) {
@@ -137,8 +236,11 @@ export function useAuraChatHydration({
     if (hasStreamingMessage) return;
     if (activeChatId) {
       void setCachedRecentMessages(uid, activeChatId, orderedMessages);
+      void saveLatestChatCache(uid, activeChatId, null, orderedMessages);
+      void saveAuraChatSessionMeta(uid, activeChatId);
+    } else if (orderedMessages.length === 0) {
+      void saveAuraChatSessionMeta(uid, null);
     }
-    void saveLatestChatCache(uid, activeChatId, null, orderedMessages);
   }, [activeChatId, hasStreamingMessage, isBooting, orderedMessages, uid]);
 
   const refreshRecentThreads = React.useCallback(async () => {
