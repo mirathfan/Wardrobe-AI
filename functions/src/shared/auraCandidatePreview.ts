@@ -5,7 +5,7 @@ import { redactUrlForLogs } from "./safeFetch";
 const DEBUG_AURA_CANDIDATE_LOGS =
   process.env.DEBUG_AURA_CANDIDATE_LOGS === "1" ||
   process.env.DEBUG_AURA_CANDIDATE_LOGS === "true";
-const PRODUCT_IMAGE_VISION_RANK_LIMIT = 3;
+const PRODUCT_IMAGE_VISION_RANK_LIMIT = 8;
 
 function debugAuraCandidateInfo(...args: Parameters<typeof console.info>) {
   if (DEBUG_AURA_CANDIDATE_LOGS) {
@@ -30,9 +30,33 @@ export type AuraCandidateItem = {
   color?: string | null;
   brand?: string | null;
   material?: string | null;
+  materials?: string[];
   fit?: string | null;
+  sleeveLength?: string | null;
+  collar?: string | null;
+  length?: string | null;
   pattern?: string | null;
   confidence?: number | null;
+  retailPrice?: number | null;
+  purchasePrice?: number | null;
+  estimatedValue?: number | null;
+  currency?: string | null;
+  originalPrice?: number | null;
+  salePrice?: number | null;
+  originalCurrency?: string | null;
+  priceSource?: "product_link" | "manual" | "estimated" | null;
+  priceDisplay?: string | null;
+  price?: number | null;
+  productUrl?: string | null;
+  displayColor?: string | null;
+  displayColors?: string[] | null;
+  sizeOptions?: string[];
+  availableSizes?: string[];
+  careInstructions?: string[];
+  productDescription?: string | null;
+  graphicText?: string | null;
+  motif?: string | null;
+  collaborationName?: string | null;
   sourceType: "image" | "link" | "batch";
   sourceUrl?: string | null;
   status: "awaiting_confirmation" | "needs_review" | "added" | "cancelled" | "failed";
@@ -52,6 +76,8 @@ export type RankedProductImage = {
   isCropped: boolean;
   isThumbnail: boolean;
   isLifestyleOrBanner: boolean;
+  isSideProfileFootwear?: boolean;
+  isOverheadFootwear?: boolean;
   bucket?: ProductImageBucket;
 };
 
@@ -68,6 +94,8 @@ type RawProductImageRanking = {
   isCropped: boolean;
   isThumbnail: boolean;
   isLifestyleOrBanner: boolean;
+  isSideProfileFootwear: boolean;
+  isOverheadFootwear: boolean;
   containsMultipleGarments: boolean;
   reasons: string[];
 };
@@ -139,27 +167,69 @@ export function fallbackImageCandidates(imageGroups: string[][]): AuraCandidateI
 export function candidatesFromProductExtractions(
   extractions: ProductExtraction[],
 ): AuraCandidateItem[] {
-  return extractions.map((extraction, index) => ({
-    candidateId: `link-${Date.now()}-${index}`,
-    imageUrls: extraction.imageUrls,
-    primaryImageUrl: extraction.imageUrls[0] ?? null,
-    secondaryImageUrls: extraction.imageUrls.slice(1),
-    title: extraction.metadata.title ?? null,
-    category: extraction.metadata.categoryHints?.[0] ?? null,
-    subCategory: extraction.metadata.categoryHints?.[1] ?? null,
-    color: extraction.metadata.color ?? null,
-    brand:
-      extraction.status === "needs_review"
-        ? extraction.metadata.brand ?? null
-        : extraction.metadata.brand ?? extraction.metadata.retailer ?? null,
-    material: extraction.metadata.material ?? null,
-    fit: null,
-    pattern: null,
-    confidence: extraction.confidence ?? null,
-    sourceType: extractions.length > 1 ? "batch" : "link",
-    sourceUrl: extraction.metadata.sourceUrl,
-    status: extraction.status === "needs_review" ? "needs_review" : "awaiting_confirmation",
-  }));
+  return extractions.map((extraction, index) => {
+    const titleHints = productCategoryHintsFromText(
+      extraction.metadata.title,
+      extraction.metadata.description,
+    );
+    const amount = extraction.metadata.priceAmount ?? null;
+    const currency = extraction.metadata.priceCurrency ?? extraction.metadata.currency ?? null;
+    const currentAmount =
+      typeof extraction.metadata.salePrice === "number"
+        ? extraction.metadata.salePrice
+        : amount;
+    const priceFields =
+      typeof currentAmount === "number" && Number.isFinite(currentAmount)
+        ? {
+            retailPrice: currentAmount,
+            purchasePrice: currentAmount,
+            estimatedValue: currentAmount,
+            currency,
+            originalPrice: extraction.metadata.originalPrice ?? amount ?? currentAmount,
+            salePrice: extraction.metadata.salePrice ?? null,
+            originalCurrency: currency,
+            priceSource: "product_link" as const,
+            priceDisplay: extraction.metadata.priceDisplay ?? extraction.metadata.price ?? null,
+            price: currentAmount,
+          }
+        : {};
+    return {
+      candidateId: `link-${Date.now()}-${index}`,
+      imageUrls: extraction.imageUrls,
+      primaryImageUrl: extraction.imageUrls[0] ?? null,
+      secondaryImageUrls: extraction.imageUrls.slice(1),
+      title: extraction.metadata.title ?? null,
+      category: titleHints.category ?? extraction.metadata.categoryHints?.[0] ?? null,
+      subCategory: titleHints.subCategory ?? extraction.metadata.categoryHints?.[1] ?? null,
+      color: extraction.metadata.color ?? null,
+      displayColor: extraction.metadata.displayColor ?? extraction.metadata.color ?? null,
+      displayColors: extraction.metadata.displayColors ?? [],
+      brand:
+        extraction.status === "needs_review"
+          ? extraction.metadata.brand ?? null
+          : extraction.metadata.brand ?? extraction.metadata.retailer ?? null,
+      material: extraction.metadata.material ?? null,
+      materials: extraction.metadata.materials ?? [],
+      fit: extraction.metadata.fit ?? null,
+      sleeveLength: extraction.metadata.sleeveLength ?? null,
+      collar: extraction.metadata.collar ?? null,
+      length: extraction.metadata.length ?? null,
+      pattern: extraction.metadata.pattern ?? null,
+      sizeOptions: extraction.metadata.sizeOptions ?? [],
+      availableSizes: extraction.metadata.availableSizes ?? extraction.metadata.sizeOptions ?? [],
+      careInstructions: extraction.metadata.careInstructions ?? [],
+      productDescription: extraction.metadata.productDescription ?? extraction.metadata.description ?? null,
+      graphicText: extraction.metadata.graphicText ?? null,
+      motif: extraction.metadata.motif ?? null,
+      collaborationName: extraction.metadata.collaborationName ?? null,
+      confidence: extraction.confidence ?? null,
+      ...priceFields,
+      sourceType: extractions.length > 1 ? "batch" : "link",
+      sourceUrl: extraction.metadata.sourceUrl,
+      productUrl: extraction.metadata.sourceUrl,
+      status: extraction.status === "needs_review" ? "needs_review" : "awaiting_confirmation",
+    };
+  });
 }
 
 function imageDedupeKey(url: string) {
@@ -337,24 +407,39 @@ function productImageScore(params: {
   result: RawProductImageRanking | undefined;
   bucket: ProductImageBucket;
   url: string;
+  isFootwearProduct?: boolean;
 }) {
-  const { result, bucket, url } = params;
+  const { result, bucket, url, isFootwearProduct } = params;
   const baseScore = Math.max(0, Math.min(100, Number(result?.score ?? 20)));
   const signals = urlImageSignals(url);
   let score = baseScore + signals.score;
   if (result?.hasFullProductVisible) score += 80;
   if (result?.isFrontFacing) score += 24;
-  if (result?.isGarmentOnly) score += 22;
-  if (result?.isModelImage) score += result?.hasFullProductVisible ? 8 : -18;
+  if (result?.isGarmentOnly) score += 40;
+  if (result?.isModelImage) score += result?.hasFullProductVisible ? 0 : -24;
   if (!result?.hasFullProductVisible) score -= 55;
   if (result?.containsMultipleGarments) score -= 38;
   if (result?.isDetailCloseUp || signals.detailPenalty) score -= 120;
   if (result?.isCropped) score -= 95;
   if (result?.isThumbnail || signals.thumbnailPenalty) score -= 120;
   if (result?.isLifestyleOrBanner || signals.socialPenalty) score -= 90;
-  if (bucket === "garment_only") score += 28;
-  if (bucket === "model_editorial") score += result?.hasFullProductVisible ? 10 : -35;
+  if (bucket === "garment_only") score += 44;
+  if (bucket === "model_editorial") score += result?.hasFullProductVisible ? 0 : -42;
   if (bucket === "detail_or_crop") score -= 120;
+  if (isFootwearProduct) {
+    const usableFootwearProductImage =
+      result?.hasFullProductVisible &&
+      !result?.isDetailCloseUp &&
+      !result?.isCropped &&
+      !result?.isThumbnail &&
+      !result?.isLifestyleOrBanner;
+    if (usableFootwearProductImage && result?.isSideProfileFootwear) {
+      score += 170;
+    }
+    if (usableFootwearProductImage && result?.isOverheadFootwear) {
+      score -= 80;
+    }
+  }
   return score;
 }
 
@@ -506,9 +591,19 @@ function logRankedProductImages(params: {
       isCropped: item.isCropped,
       isThumbnail: item.isThumbnail,
       isLifestyleOrBanner: item.isLifestyleOrBanner,
+      isSideProfileFootwear: item.isSideProfileFootwear ?? false,
+      isOverheadFootwear: item.isOverheadFootwear ?? false,
       reasons: item.reasons,
     })),
   });
+}
+
+function isFootwearProductText(title?: string | null, description?: string | null) {
+  const hints = productCategoryHintsFromText(title, description);
+  if (hints.category === "footwear") return true;
+  return /\b(air force|jordan|dunk|shoe|shoes|sneaker|sneakers|trainer|trainers|boot|boots|loafer|loafers|sandal|sandals|footwear)\b/i.test(
+    `${title ?? ""} ${description ?? ""}`,
+  );
 }
 
 export async function rankProductLinkImages(params: {
@@ -520,6 +615,7 @@ export async function rankProductLinkImages(params: {
 }): Promise<RankedProductImage[]> {
   const extractedImageCount = params.imageUrls.length;
   const imageUrls = stableUniqueUrls(params.imageUrls).slice(0, 24);
+  const isFootwearProduct = isFootwearProductText(params.title, params.description);
   const urlOnlyRanked = imageUrls.map((url, index) => rankedImageFromUrlOnly(url, index));
   const visionRankCandidates = selectVisionRankCandidates(urlOnlyRanked);
   debugAuraCandidateInfo("[LINK_IMAGE_CANDIDATES]", {
@@ -527,6 +623,7 @@ export async function rankProductLinkImages(params: {
     candidateCount: imageUrls.length,
     urls: imageUrls,
     title: params.title ?? null,
+    isFootwearProduct,
   });
   if (imageUrls.length <= 1) {
     const ranked = imageUrls.map((url, index) => ({
@@ -595,7 +692,7 @@ export async function rankProductLinkImages(params: {
         {
           role: "developer",
           content:
-            "Rank retail product images for wardrobe item ingestion. Prefer the image that shows the complete target garment/product clearly. Penalize detail crops, fabric/texture shots, zoomed logos or chest graphics, thumbnails, banners, social previews, and lifestyle images where the item is not the clear product. A garment-only/product-only image has no visible person, model, limbs, head, torso, mannequin, or full outfit; it is usually a standalone garment on a plain studio background or flat lay. Any image with a person wearing the item, even if the target product is visible, is model/editorial. A full clean model shot is better than a cropped detail close-up. If the title says shirt, shorts, jeans, or another specific garment, a full-body model wearing other garments is not garment-only.",
+            "Rank retail product images for wardrobe item ingestion. Prefer a clean garment-only/product-only packshot over model/editorial images when both clearly show the product. The primary wardrobe image should show the complete target garment/product clearly. For footwear, if a clean side/lateral profile product photo of the shoe is available, prefer it as primary over top-down, overhead, pair, sole, or detail views. A side/lateral footwear profile is a horizontal shoe image from the side, often toe pointing left or right; only prefer it when the full shoe is visible and it is not cropped. Penalize detail crops, fabric/texture shots, zoomed logos or chest graphics, thumbnails, banners, social previews, and lifestyle images where the item is not the clear product. A garment-only/product-only image has no visible person, model, limbs, head, torso, mannequin, or full outfit; it is usually a standalone garment on a plain studio background or flat lay. Any image with a person wearing the item, even if the target product is visible, is model/editorial. A full clean model shot is better than a cropped detail close-up only when no garment-only/product-only packshot is available. If the title says shirt, shorts, jeans, or another specific garment, a full-body model wearing other garments is not garment-only.",
         },
         {
           role: "user",
@@ -605,7 +702,7 @@ export async function rankProductLinkImages(params: {
               text:
                 `Product title: ${params.title ?? "unknown"}\n` +
                 `Description: ${params.description ?? "unknown"}\n` +
-                "For each image index, score 0-100 for usefulness as the primary wardrobe item image and classify whether it is garment-only/product-only, model/editorial, front-facing/canonical, whether the full target product is visible, whether it is a detail close-up, cropped/partial, thumbnail, social/banner/lifestyle image, and whether it contains multiple visible garments. Return JSON only.",
+                "For each image index, score 0-100 for usefulness as the primary wardrobe item image and classify whether it is garment-only/product-only, model/editorial, front-facing/canonical, whether the full target product is visible, whether it is a footwear side/lateral profile view, whether it is a footwear overhead/top-down view, whether it is a detail close-up, cropped/partial, thumbnail, social/banner/lifestyle image, and whether it contains multiple visible garments. Return JSON only.",
             },
             ...visionRankCandidates.flatMap((item) => [
               {
@@ -645,6 +742,8 @@ export async function rankProductLinkImages(params: {
                     isCropped: { type: "boolean" },
                     isThumbnail: { type: "boolean" },
                     isLifestyleOrBanner: { type: "boolean" },
+                    isSideProfileFootwear: { type: "boolean" },
+                    isOverheadFootwear: { type: "boolean" },
                     containsMultipleGarments: { type: "boolean" },
                     reasons: {
                       type: "array",
@@ -662,6 +761,8 @@ export async function rankProductLinkImages(params: {
                     "isCropped",
                     "isThumbnail",
                     "isLifestyleOrBanner",
+                    "isSideProfileFootwear",
+                    "isOverheadFootwear",
                     "containsMultipleGarments",
                     "reasons",
                   ],
@@ -685,6 +786,8 @@ export async function rankProductLinkImages(params: {
         isCropped: boolean;
         isThumbnail: boolean;
         isLifestyleOrBanner: boolean;
+        isSideProfileFootwear: boolean;
+        isOverheadFootwear: boolean;
         containsMultipleGarments: boolean;
         reasons: string[];
       }[];
@@ -705,7 +808,7 @@ export async function rankProductLinkImages(params: {
         signals.detailPenalty || signals.thumbnailPenalty || signals.socialPenalty
           ? "detail_or_crop"
           : productImageBucket(result);
-      const score = productImageScore({ result, bucket, url });
+      const score = productImageScore({ result, bucket, url, isFootwearProduct });
       const combinedReasons = [
         ...(result?.reasons?.slice(0, 4) ?? ["not ranked by model"]),
         ...signals.reasons.slice(0, 3),
@@ -724,6 +827,8 @@ export async function rankProductLinkImages(params: {
         isCropped: !!result?.isCropped,
         isThumbnail: !!result?.isThumbnail || signals.thumbnailPenalty,
         isLifestyleOrBanner: !!result?.isLifestyleOrBanner || signals.socialPenalty,
+        isSideProfileFootwear: !!result?.isSideProfileFootwear,
+        isOverheadFootwear: !!result?.isOverheadFootwear,
         bucket,
       };
       debugAuraCandidateInfo("[LINK_PRIMARY_SCORE]", {
@@ -742,6 +847,8 @@ export async function rankProductLinkImages(params: {
         isCropped: item.isCropped,
         isThumbnail: item.isThumbnail,
         isLifestyleOrBanner: item.isLifestyleOrBanner,
+        isSideProfileFootwear: item.isSideProfileFootwear,
+        isOverheadFootwear: item.isOverheadFootwear,
         containsMultipleGarments: !!result?.containsMultipleGarments,
         reasons: item.reasons,
       });
@@ -759,6 +866,8 @@ export async function rankProductLinkImages(params: {
         isCropped: item.isCropped,
         isThumbnail: item.isThumbnail,
         isLifestyleOrBanner: item.isLifestyleOrBanner,
+        isSideProfileFootwear: item.isSideProfileFootwear,
+        isOverheadFootwear: item.isOverheadFootwear,
         reasons: item.reasons,
       });
       return item;
@@ -886,12 +995,46 @@ export async function rankProductExtractionImages(params: {
 }
 
 export function productCategoryHintsFromText(title?: string | null, description?: string | null) {
-  const text = `${title ?? ""} ${description ?? ""}`.toLowerCase();
+  const titleText = String(title ?? "").toLowerCase();
+  const text = `${titleText} ${description ?? ""}`.toLowerCase();
+  const topSubCategory = (() => {
+    if (/\bpolo\b/.test(titleText)) return "polo";
+    if (/\bt-?shirt|\btee\b/.test(titleText)) return "tshirt";
+    if (/\bhoodie\b/.test(titleText)) return "hoodie";
+    if (/\bsweater|jumper|knit\b/.test(titleText)) return "sweater";
+    if (/\btank|vest\b/.test(titleText)) return "tank";
+    if (/\bblouse\b/.test(titleText)) return "blouse";
+    if (/\bshirt\b/.test(titleText)) return "shirt";
+    return null;
+  })();
+  if (topSubCategory) return { category: "top", subCategory: topSubCategory };
+  if (/\b(jacket|coat|blazer)\b/.test(titleText)) return { category: "outerwear", subCategory: null };
+  if (/\b(shoe|sneaker|boot|loafer|sandal)\b/.test(titleText)) return { category: "footwear", subCategory: null };
+  if (/\b(dress|jumpsuit|romper)\b/.test(titleText)) return { category: "one_piece", subCategory: null };
+  if (/\b(shorts?|trousers?|pants?|jeans?|skirt|leggings?)\b/.test(titleText)) {
+    return {
+      category: "bottom",
+      subCategory: /\bshorts?\b/.test(titleText)
+        ? "shorts"
+        : /\bjeans?\b/.test(titleText)
+          ? "jeans"
+          : /\bskirt\b/.test(titleText)
+            ? "skirt"
+            : "trousers",
+    };
+  }
   if (/\b(shorts?|trousers?|pants?|jeans?|skirt|leggings?)\b/.test(text)) {
     return { category: "bottom", subCategory: text.includes("short") ? "shorts" : null };
   }
   if (/\b(shirt|t-shirt|tee|polo|sweater|hoodie|blouse|top)\b/.test(text)) {
-    return { category: "top", subCategory: text.includes("sweater") ? "sweater" : null };
+    return {
+      category: "top",
+      subCategory: text.includes("polo")
+        ? "polo"
+        : text.includes("sweater")
+          ? "sweater"
+          : null,
+    };
   }
   if (/\b(jacket|coat|blazer)\b/.test(text)) return { category: "outerwear", subCategory: null };
   if (/\b(shoe|sneaker|boot|loafer|sandal)\b/.test(text)) return { category: "footwear", subCategory: null };

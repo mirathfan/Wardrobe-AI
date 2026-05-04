@@ -1,6 +1,6 @@
+import { getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook, AuraLookPiece } from "@/src/types/aura";
-import { getItemImageUrl } from "@/src/lib/itemImage";
 
 export type AuraLayoutVariant = "chat" | "swipe" | "home" | "studio";
 
@@ -685,7 +685,9 @@ function toLayoutItem(
   const role = inferLayoutRole(piece, tokens);
   const accessoryType =
     role === "accessory" ? classifyAccessoryType(tokens) : null;
-  const normalizedImage = item ? getItemImageUrl(item, { variant: "thumb" }) ?? piece.imageUrl ?? null : piece.imageUrl ?? null;
+  const normalizedImage = item
+    ? (getItemImageUrl(item, { variant: "thumb" }) ?? piece.imageUrl ?? null)
+    : (piece.imageUrl ?? null);
 
   return {
     key: `${piece.itemId ?? piece.itemName}-${piece.role}-${index}`,
@@ -866,45 +868,46 @@ function withZone(zone: ZoneSpec, overrides: Partial<ZoneSpec>): ZoneSpec {
 function variantZone(zone: ZoneSpec, variant: string): ZoneSpec {
   if (variant !== "home") return zone;
 
+  // Zones control board placement/container bounds only. Accessory image fill is tuned in AuraLookCard.
   switch (zone.slotName) {
     case "layered-shirt":
       return withZone(zone, {
-        centerX: 28,
-        centerY: 31,
-        width: 34,
-        height: 40,
-        rotation: 4,
+        centerX: 20,
+        centerY: 40,
+        width: 45,
+        height: 55,
+        rotation: 0,
       });
     case "layered-jacket":
       return withZone(zone, {
-        centerX: 70,
-        centerY: 31,
-        width: 32,
-        height: 41,
-        rotation: -4,
+        centerX: 80,
+        centerY: 40,
+        width: 50,
+        height: 60,
+        rotation: 0,
       });
     case "right-outerwear":
       return withZone(zone, {
-        centerX: 68,
-        centerY: 33,
-        width: 32,
-        height: 42,
+        centerX: 75,
+        centerY: 35,
+        width: 39,
+        height: 50,
       });
     case "left-top":
     case "left-top-alone":
       return withZone(zone, {
-        centerX: zone.slotName === "left-top-alone" ? 30 : zone.centerX,
-        centerY: 32,
-        width: 36,
-        height: 42,
+        centerX: zone.slotName === "left-top-alone" ? 30 : 28,
+        centerY: 34,
+        width: 42,
+        height: 50,
       });
     case "bottom-center":
     case "bottom-no-jacket":
       return withZone(zone, {
-        centerX: zone.slotName === "bottom-no-jacket" ? 68 : 50,
-        centerY: 66,
-        width: 30,
-        height: 48,
+        centerX: zone.slotName === "bottom-no-jacket" ? 70 : 50,
+        centerY: 70,
+        width: 100,
+        height: 100,
       });
     case "bottom-center-short":
       return withZone(zone, {
@@ -914,16 +917,32 @@ function variantZone(zone: ZoneSpec, variant: string): ZoneSpec {
       });
     case "bottom-left-shoes":
       return withZone(zone, {
-        centerX: 18,
-        centerY: 88,
-        width: 24,
-        height: 14,
+        centerX: 20,
+        centerY: 90,
+        width: 60,
+        height: 40,
       });
     case "bag-zone":
       return withZone(zone, {
-        centerY: 72,
-        width: 23,
-        height: 24,
+        centerX: 78,
+        centerY: 71,
+        width: 28,
+        height: 30,
+      });
+    case "top-center-glasses":
+      return withZone(zone, {
+        centerX: 50,
+        centerY: 15,
+        width: 60,
+        height: 20,
+      });
+
+    case "belt-zone":
+      return withZone(zone, {
+        centerX: 78,
+        centerY: 60,
+        width: 60,
+        height: 50,
       });
     default:
       return zone;

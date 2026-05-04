@@ -6,6 +6,7 @@ import React from "react";
 import {
   Alert,
   Animated,
+  Image,
   Modal,
   PanResponder,
   Pressable,
@@ -16,8 +17,13 @@ import {
   useWindowDimensions,
 } from "react-native";
 import Reanimated, {
+  Easing,
+  Extrapolation,
+  interpolate,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withSpring,
   withRepeat,
   withSequence,
   withTiming,
@@ -26,6 +32,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Colors, Fonts } from "@/constants/theme";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
+import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
 import AuraRing, { RING_SIZE_MD } from "@/src/components/brand/AuraRing";
 import { auraShadow, auraTheme } from "@/src/components/ai/aiTheme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
@@ -46,11 +53,24 @@ import type { ClothingItem } from "@/src/types/ClothingItem";
 
 const SWIPE_X_THRESHOLD = 110;
 const SWIPE_Y_THRESHOLD = -110;
+const SWIPE_X_VELOCITY_THRESHOLD = 850;
+const SWIPE_Y_VELOCITY_THRESHOLD = -850;
 const DOMINANT_AXIS_RATIO = 1.15;
 const NON_DOMINANT_DAMPING = 0.14;
+const STACK_NEXT_SCALE = 0.94;
+const STACK_NEXT_OFFSET = 14;
+const CANCEL_SPRING = { damping: 18, stiffness: 180 };
 const palette = Colors.dark;
 const DEBUG_AURA_SWIPE_SCREEN =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
+
+type SwipeMetrics = {
+  translationX: number;
+  translationY: number;
+  velocityX: number;
+  velocityY: number;
+  source: "gesture" | "button";
+};
 
 function createEmptyItemsMap(items: ClothingItem[]) {
   return new Map(items.map((item) => [item.id, item]));
@@ -89,6 +109,53 @@ function getConstrainedPan(dx: number, dy: number) {
   return { x: dx, y: dy * 0.22 };
 }
 
+function swipeLookSignature(lookEntry: AuraSwipeBatchLook) {
+  const pieceKey = (lookEntry.look.pieces ?? [])
+    .map((piece) => piece.itemId || `${piece.role}:${piece.itemName}`)
+    .filter(Boolean)
+    .sort()
+    .join("|");
+  return pieceKey || lookEntry.id || lookEntry.look.lookTitle;
+}
+
+function dedupeSwipeLooks(looks: AuraSwipeBatchLook[]) {
+  const seen = new Set<string>();
+  return looks.filter((lookEntry) => {
+    const signature = swipeLookSignature(lookEntry);
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    return true;
+  });
+}
+
+function swipeToastTitle(direction: AuraSwipeDirectionLabel) {
+  if (direction === "right") return "Got it — more like this";
+  if (direction === "left") return "Less of this";
+  return "Saved";
+}
+
+function swipeActionLabel(direction: AuraSwipeDirectionLabel) {
+  if (direction === "right") return "like";
+  if (direction === "left") return "nope";
+  return "save";
+}
+
+function getSwipeLookId(lookEntry?: AuraSwipeBatchLook | null) {
+  if (!lookEntry) return null;
+  return lookEntry.id || lookEntry.look.lookTitle || swipeLookSignature(lookEntry);
+}
+
+function preloadLookImages(looks: AuraSwipeBatchLook[]) {
+  const urls = looks
+    .flatMap((lookEntry) => lookEntry.look.pieces ?? [])
+    .map((piece) => String(piece.imageUrl ?? "").trim())
+    .filter(Boolean);
+
+  for (const url of new Set(urls)) {
+    void Image.prefetch(url);
+  }
+}
+
 export default function AuraSwipeScreen() {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -107,17 +174,59 @@ export default function AuraSwipeScreen() {
   const itemsById = React.useMemo(() => createEmptyItemsMap(items), [items]);
   const counts = React.useMemo(() => wardrobeCounts(items), [items]);
   const canGenerate = counts.tops > 0 && counts.bottoms > 0 && counts.shoes > 0;
-  const pan = React.useRef(new Animated.ValueXY()).current;
+  const progress = React.useRef(new Animated.Value(0)).current;
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const activeScale = useSharedValue(1);
+  const activeOpacity = useSharedValue(1);
   const activeLookRef = React.useRef<AuraSwipeBatchLook | null>(null);
+  const pendingSwipeRef = React.useRef<{
+    direction: AuraSwipeDirectionLabel;
+    lookEntry: AuraSwipeBatchLook;
+  } | null>(null);
+  const processingSwipeRef = React.useRef(false);
   const touchStartRef = React.useRef({ moved: false });
 
-  const visibleLooks = batch.slice(currentIndex, currentIndex + 3);
-  const activeLook = visibleLooks[0] ?? null;
+  const current = batch[currentIndex] ?? null;
+  const next = batch[currentIndex + 1] ?? null;
+  const activeLook = current;
   const remaining = Math.max(0, batch.length - currentIndex);
+  const looksLeftLabel = `${remaining} ${remaining === 1 ? "look" : "looks"} left`;
+  const progressWidth = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0%", "100%"],
+    extrapolate: "clamp",
+  });
 
   React.useEffect(() => {
     activeLookRef.current = activeLook;
   }, [activeLook]);
+
+  React.useEffect(() => {
+    processingSwipeRef.current = processingSwipe;
+  }, [processingSwipe]);
+
+  const resetMotionValues = React.useCallback(() => {
+    translateX.value = 0;
+    translateY.value = 0;
+    activeScale.value = 1;
+    activeOpacity.value = 1;
+  }, [activeOpacity, activeScale, translateX, translateY]);
+
+  React.useEffect(() => {
+    resetMotionValues();
+  }, [currentIndex, resetMotionValues]);
+
+  React.useEffect(() => {
+    const nextProgress = batch.length
+      ? Math.min(1, Math.max(0, currentIndex / batch.length))
+      : 0;
+    Animated.timing(progress, {
+      toValue: nextProgress,
+      duration: 180,
+      useNativeDriver: false,
+    }).start();
+  }, [batch.length, currentIndex, progress]);
 
   React.useEffect(() => {
     if (!uid) return undefined;
@@ -136,10 +245,11 @@ export default function AuraSwipeScreen() {
       if (DEBUG_AURA_SWIPE_SCREEN) {
         console.log("[AURA_SWIPE] normalized response", result);
       }
-      setBatch(result.lookOptions);
+      setBatch(dedupeSwipeLooks(result.lookOptions));
       setBatchId(result.batchId);
       setCurrentIndex(0);
-      pan.setValue({ x: 0, y: 0 });
+      progress.setValue(0);
+      resetMotionValues();
     } catch (loadError) {
       if (DEBUG_AURA_SWIPE_SCREEN) {
         console.log("[AURA_SWIPE] loadBatch failed", loadError);
@@ -148,7 +258,7 @@ export default function AuraSwipeScreen() {
     } finally {
       setLoading(false);
     }
-  }, [canGenerate, items, pan, uid]);
+  }, [canGenerate, items, progress, resetMotionValues, uid]);
 
   React.useEffect(() => {
     if (!uid) return;
@@ -160,6 +270,10 @@ export default function AuraSwipeScreen() {
     if (batch.length > 0 || loading) return;
     void loadBatch();
   }, [batch.length, canGenerate, items.length, loadBatch, loading, uid]);
+
+  React.useEffect(() => {
+    preloadLookImages(batch.slice(currentIndex, currentIndex + 3));
+  }, [batch, currentIndex]);
 
   const persistSwipe = React.useCallback(
     async (lookEntry: AuraSwipeBatchLook, direction: AuraSwipeDirectionLabel) => {
@@ -192,7 +306,6 @@ export default function AuraSwipeScreen() {
             sessionId: batchId,
             title: lookEntry.look.lookTitle,
           });
-          Toast.saved();
         }
       } catch (e) {
         if (DEBUG_AURA_SWIPE_SCREEN) {
@@ -204,66 +317,187 @@ export default function AuraSwipeScreen() {
     [batchId, uid],
   );
 
-  const advanceDeck = React.useCallback((direction: AuraSwipeDirectionLabel) => {
-    if (processingSwipe || !activeLookRef.current) return;
-    const lookEntry = activeLookRef.current;
-    setProcessingSwipe(true);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    const target =
-      direction === "left"
-        ? { x: -width * 1.1, y: 30 }
-        : direction === "right"
-          ? { x: width * 1.1, y: 30 }
-          : { x: 0, y: -height * 0.7 };
-
-    Animated.timing(pan, {
-      toValue: target,
-      duration: 220,
-      useNativeDriver: true,
-    }).start(() => {
-      pan.setValue({ x: 0, y: 0 });
-      setCurrentIndex((previous) => previous + 1);
+  const finishCommittedSwipe = React.useCallback(() => {
+    const pendingSwipe = pendingSwipeRef.current;
+    if (!pendingSwipe) {
+      processingSwipeRef.current = false;
       setProcessingSwipe(false);
-      void persistSwipe(lookEntry, direction).catch((persistError) => {
-        Alert.alert(
-          "Swipe saved locally",
-          persistError instanceof Error
-            ? persistError.message
-            : "We could not finish saving that feedback.",
-        );
-      });
+      resetMotionValues();
+      return;
+    }
+
+    pendingSwipeRef.current = null;
+    const { direction, lookEntry } = pendingSwipe;
+    resetMotionValues();
+    setCurrentIndex((previous) => previous + 1);
+    processingSwipeRef.current = false;
+    setProcessingSwipe(false);
+    Toast.success(swipeToastTitle(direction));
+    void persistSwipe(lookEntry, direction).catch((persistError) => {
+      Alert.alert(
+        "Swipe saved locally",
+        persistError instanceof Error
+          ? persistError.message
+          : "We could not finish saving that feedback.",
+      );
     });
-  }, [height, pan, persistSwipe, processingSwipe, width]);
+  }, [persistSwipe, resetMotionValues]);
+
+  const commitSwipe = React.useCallback(
+    (direction: AuraSwipeDirectionLabel, metrics: SwipeMetrics) => {
+      if (processingSwipeRef.current || !activeLookRef.current) return;
+
+      const lookEntry = activeLookRef.current;
+      pendingSwipeRef.current = { direction, lookEntry };
+      processingSwipeRef.current = true;
+      setProcessingSwipe(true);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      if (DEBUG_AURA_SWIPE_SCREEN) {
+        const nextLook = batch[currentIndex + 1] ?? null;
+        console.log("[AURA_SWIPE] commit", {
+          currentIndex,
+          action: swipeActionLabel(direction),
+          source: metrics.source,
+          translationX: Math.round(metrics.translationX),
+          translationY: Math.round(metrics.translationY),
+          velocityX: Math.round(metrics.velocityX),
+          velocityY: Math.round(metrics.velocityY),
+          previousLookId: getSwipeLookId(lookEntry),
+          nextLookId: getSwipeLookId(nextLook),
+          looksRemaining: Math.max(0, batch.length - currentIndex - 1),
+        });
+      }
+
+      const finishOnUi = (finished?: boolean) => {
+        "worklet";
+        if (!finished) return;
+        runOnJS(finishCommittedSwipe)();
+      };
+
+      if (direction === "up") {
+        translateX.value = withTiming(0, {
+          duration: 260,
+          easing: Easing.out(Easing.cubic),
+        });
+        translateY.value = withTiming(-height * 0.78, {
+          duration: 270,
+          easing: Easing.out(Easing.cubic),
+        }, finishOnUi);
+        activeScale.value = withTiming(0.92, {
+          duration: 270,
+          easing: Easing.out(Easing.cubic),
+        });
+        activeOpacity.value = withTiming(0, {
+          duration: 250,
+          easing: Easing.out(Easing.quad),
+        });
+        return;
+      }
+
+      const directionSign = direction === "right" ? 1 : -1;
+      const exitY = Math.max(-70, Math.min(76, metrics.translationY || 24));
+      translateX.value = withTiming(directionSign * width * 1.18, {
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+      }, finishOnUi);
+      translateY.value = withTiming(exitY, {
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+      });
+      activeScale.value = withTiming(0.985, {
+        duration: 220,
+        easing: Easing.out(Easing.quad),
+      });
+      activeOpacity.value = withTiming(1, { duration: 180 });
+    },
+    [
+      activeOpacity,
+      activeScale,
+      batch,
+      currentIndex,
+      finishCommittedSwipe,
+      height,
+      translateX,
+      translateY,
+      width,
+    ],
+  );
+
+  const advanceDeck = React.useCallback(
+    (direction: AuraSwipeDirectionLabel) => {
+      commitSwipe(direction, {
+        translationX: 0,
+        translationY: 0,
+        velocityX: 0,
+        velocityY: 0,
+        source: "button",
+      });
+    },
+    [commitSwipe],
+  );
 
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, gestureState) =>
-          Math.abs(gestureState.dx) > 6 || Math.abs(gestureState.dy) > 6,
+          !processingSwipeRef.current &&
+          Boolean(activeLookRef.current) &&
+          (Math.abs(gestureState.dx) > 6 || Math.abs(gestureState.dy) > 6),
         onPanResponderGrant: () => {
           touchStartRef.current = { moved: false };
+          activeOpacity.value = 1;
+          activeScale.value = withTiming(0.98, {
+            duration: 110,
+            easing: Easing.out(Easing.quad),
+          });
         },
         onPanResponderMove: (_, gestureState) => {
           touchStartRef.current.moved = true;
-          pan.setValue(getConstrainedPan(gestureState.dx, gestureState.dy));
+          const constrainedPan = getConstrainedPan(gestureState.dx, gestureState.dy);
+          translateX.value = constrainedPan.x;
+          translateY.value = constrainedPan.y;
         },
         onPanResponderRelease: (_, gestureState) => {
           const absX = Math.abs(gestureState.dx);
           const absY = Math.abs(gestureState.dy);
+          const velocityX = gestureState.vx * 1000;
+          const velocityY = gestureState.vy * 1000;
+          const isFastUp =
+            velocityY <= SWIPE_Y_VELOCITY_THRESHOLD &&
+            gestureState.dy < -36 &&
+            absY > absX * 0.55;
+          const isFastRight =
+            velocityX >= SWIPE_X_VELOCITY_THRESHOLD &&
+            gestureState.dx > 42 &&
+            absX > absY * 0.55;
+          const isFastLeft =
+            velocityX <= -SWIPE_X_VELOCITY_THRESHOLD &&
+            gestureState.dx < -42 &&
+            absX > absY * 0.55;
+          const metrics: SwipeMetrics = {
+            translationX: gestureState.dx,
+            translationY: gestureState.dy,
+            velocityX,
+            velocityY,
+            source: "gesture",
+          };
 
-          if (gestureState.dy <= SWIPE_Y_THRESHOLD && absY > absX * 0.8) {
-            advanceDeck("up");
+          if (
+            (gestureState.dy <= SWIPE_Y_THRESHOLD && absY > absX * 0.8) ||
+            isFastUp
+          ) {
+            commitSwipe("up", metrics);
             return;
           }
 
-          if (gestureState.dx >= SWIPE_X_THRESHOLD) {
-            advanceDeck("right");
+          if (gestureState.dx >= SWIPE_X_THRESHOLD || isFastRight) {
+            commitSwipe("right", metrics);
             return;
           }
 
-          if (gestureState.dx <= -SWIPE_X_THRESHOLD) {
-            advanceDeck("left");
+          if (gestureState.dx <= -SWIPE_X_THRESHOLD || isFastLeft) {
+            commitSwipe("left", metrics);
             return;
           }
 
@@ -271,78 +505,142 @@ export default function AuraSwipeScreen() {
             setDetailsLook(activeLookRef.current);
           }
 
-          Animated.spring(pan, {
-            toValue: { x: 0, y: 0 },
-            useNativeDriver: true,
-            friction: 10,
-            tension: 120,
-          }).start();
+          translateX.value = withSpring(0, CANCEL_SPRING);
+          translateY.value = withSpring(0, CANCEL_SPRING);
+          activeScale.value = withSpring(1, CANCEL_SPRING);
+          activeOpacity.value = withSpring(1, CANCEL_SPRING);
+        },
+        onPanResponderTerminate: () => {
+          translateX.value = withSpring(0, CANCEL_SPRING);
+          translateY.value = withSpring(0, CANCEL_SPRING);
+          activeScale.value = withSpring(1, CANCEL_SPRING);
+          activeOpacity.value = withSpring(1, CANCEL_SPRING);
         },
       }),
-    [advanceDeck, pan],
+    [activeOpacity, activeScale, commitSwipe, translateX, translateY],
   );
 
-  const likeOpacity = pan.x.interpolate({
-    inputRange: [0, 60, 140],
-    outputRange: [0, 0.4, 1],
-    extrapolate: "clamp",
-  });
-  const nopeOpacity = pan.x.interpolate({
-    inputRange: [-140, -60, 0],
-    outputRange: [1, 0.4, 0],
-    extrapolate: "clamp",
-  });
-  const favoriteOpacity = pan.y.interpolate({
-    inputRange: [-150, -80, 0],
-    outputRange: [1, 0.45, 0],
-    extrapolate: "clamp",
-  });
-  const revealProgress = Animated.add(
-    pan.x.interpolate({
-      inputRange: [-160, 0, 160],
-      outputRange: [1, 0, 1],
-      extrapolate: "clamp",
-    }),
-    pan.y.interpolate({
-      inputRange: [-180, 0],
-      outputRange: [1, 0],
-      extrapolate: "clamp",
-    }),
-  ).interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-    extrapolate: "clamp",
+  const revealProgressStyle = useAnimatedStyle(() => {
+    const horizontalReveal = interpolate(
+      Math.abs(translateX.value),
+      [0, 160],
+      [0, 1],
+      Extrapolation.CLAMP,
+    );
+    const verticalReveal = interpolate(
+      -translateY.value,
+      [0, 170],
+      [0, 1],
+      Extrapolation.CLAMP,
+    );
+    const reveal = Math.max(horizontalReveal, verticalReveal);
+
+    return {
+      opacity: interpolate(reveal, [0, 1], [0.55, 1], Extrapolation.CLAMP),
+      transform: [
+        {
+          translateY: interpolate(
+            reveal,
+            [0, 1],
+            [STACK_NEXT_OFFSET, 0],
+            Extrapolation.CLAMP,
+          ),
+        },
+        {
+          scale: interpolate(
+            reveal,
+            [0, 1],
+            [STACK_NEXT_SCALE, 1],
+            Extrapolation.CLAMP,
+          ),
+        },
+      ],
+    };
   });
 
-  const topCardStyle = {
-    transform: [{ translateX: pan.x }, { translateY: pan.y }],
-  };
+  const nextDimStyle = useAnimatedStyle(() => {
+    const reveal = Math.max(
+      interpolate(Math.abs(translateX.value), [0, 160], [0, 1], Extrapolation.CLAMP),
+      interpolate(-translateY.value, [0, 170], [0, 1], Extrapolation.CLAMP),
+    );
+
+    return {
+      opacity: interpolate(reveal, [0, 1], [0.22, 0], Extrapolation.CLAMP),
+    };
+  });
+
+  const activeCardStyle = useAnimatedStyle(() => {
+    const verticalPullDamping = interpolate(
+      translateY.value,
+      [-150, 0],
+      [0.2, 1],
+      Extrapolation.CLAMP,
+    );
+    const rotation = interpolate(
+      translateX.value,
+      [-width, 0, width],
+      [-7, 0, 7],
+      Extrapolation.CLAMP,
+    ) * verticalPullDamping;
+
+    return {
+      opacity: activeOpacity.value,
+      transform: [
+        { translateX: translateX.value },
+        { translateY: translateY.value },
+        { rotate: `${rotation}deg` },
+        { scale: activeScale.value },
+      ],
+    };
+  });
+
+  const dragGlowStyle = useAnimatedStyle(() => {
+    const dragAmount = Math.max(Math.abs(translateX.value), Math.max(0, -translateY.value));
+    return {
+      opacity: interpolate(dragAmount, [0, 80, 150], [0, 0.34, 0.5], Extrapolation.CLAMP),
+    };
+  });
+
+  const likeBadgeStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(translateX.value, [28, 120], [0, 0.9], Extrapolation.CLAMP),
+    transform: [
+      { translateY: interpolate(translateX.value, [28, 120], [8, 0], Extrapolation.CLAMP) },
+    ],
+  }));
+
+  const nopeBadgeStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(-translateX.value, [28, 120], [0, 0.9], Extrapolation.CLAMP),
+    transform: [
+      { translateY: interpolate(-translateX.value, [28, 120], [8, 0], Extrapolation.CLAMP) },
+    ],
+  }));
+
+  const saveBadgeStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(-translateY.value, [28, 118], [0, 0.9], Extrapolation.CLAMP),
+    transform: [
+      { translateY: interpolate(-translateY.value, [28, 118], [8, 0], Extrapolation.CLAMP) },
+    ],
+  }));
 
   return (
     <LinearGradient
       colors={[auraTheme.backgroundTop, auraTheme.backgroundMid, auraTheme.backgroundBottom]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
-      style={{ flex: 1, paddingTop: insets.top + 10 }}
+      style={{ flex: 1 }}
     >
-      <View style={[styles.headerRow, { paddingHorizontal: 18 }]}>
-        <HeaderButton icon="chevron-back" label="Back" onPress={() => router.back()} />
-        <View style={styles.headerCopy}>
-          <Text style={styles.headerEyebrow}>AURA SWIPE</Text>
-          <Text style={styles.headerTitle}>Train your taste</Text>
-        </View>
-        <HeaderButton icon="refresh" label="Refresh" onPress={() => void loadBatch()} />
-      </View>
+      <AuraSubpageHeader
+        title="Train your taste"
+        eyebrow="AURA SWIPE"
+        fallbackRoute="/(tabs)/ai"
+        rightAction={<HeaderButton icon="refresh" label="Refresh" onPress={() => void loadBatch()} />}
+      />
 
       <View style={{ paddingHorizontal: 18, paddingTop: 12 }}>
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryLabel}>Remaining</Text>
-            <Text style={styles.summaryValue}>{remaining}</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryLabel}>Favorites save to</Text>
-            <Text style={styles.summaryValue}>savedLooks</Text>
+        <View style={styles.progressCard}>
+          <Text style={styles.progressTitle}>{looksLeftLabel}</Text>
+          <View style={styles.progressTrack}>
+            <Animated.View style={[styles.progressFill, { width: progressWidth }]} />
           </View>
         </View>
       </View>
@@ -361,98 +659,76 @@ export default function AuraSwipeScreen() {
         ) : error ? (
           <StateCard title="Unable to load swipe looks" body={error} actionLabel="Try again" onAction={() => void loadBatch()} />
         ) : !activeLook ? (
-          <CaughtUpStateCard onRefresh={() => void loadBatch()} />
+          <TasteTrainedStateCard onRefresh={() => void loadBatch()} />
         ) : (
           <View style={{ width: "100%", alignItems: "center" }}>
             <View style={{ width: "100%", maxWidth: 408, height: Math.min(height * 0.56, 640) }}>
-              {visibleLooks
-                .slice()
-                .reverse()
-                .map((lookEntry, reverseIndex) => {
-                  const actualIndex = visibleLooks.length - 1 - reverseIndex;
-                  const isTop = actualIndex === 0;
-                  const depthOffset = actualIndex * 8;
-                  const scale = 1 - actualIndex * 0.018;
-                  const card = (
-                    <View
-                      style={[
-                        styles.deckCard,
-                        {
-                          top: depthOffset,
-                          transform: [{ scale }],
-                          opacity: isTop ? 1 : actualIndex === 1 ? 0.98 : 0.92,
-                        },
-                      ]}
-                    >
-                      {isTop ? (
-                        <>
-                          <Animated.View style={[styles.overlayBadge, styles.overlayLeft, { opacity: nopeOpacity }]}>
-                            <Text style={styles.overlayText}>PASS</Text>
-                          </Animated.View>
-                          <Animated.View style={[styles.overlayBadge, styles.overlayRight, { opacity: likeOpacity }]}>
-                            <Text style={styles.overlayText}>LIKE</Text>
-                          </Animated.View>
-                          <Animated.View style={[styles.overlayBadge, styles.overlayTop, { opacity: favoriteOpacity }]}>
-                            <Text style={styles.overlayText}>SAVE</Text>
-                          </Animated.View>
-                        </>
-                      ) : null}
+              {next ? (
+                <Reanimated.View
+                  key={`next-${next.id}`}
+                  pointerEvents="none"
+                  style={[
+                    styles.deckCard,
+                    styles.nextDeckCard,
+                    revealProgressStyle,
+                  ]}
+                >
+                  <View style={styles.nextPreviewShell}>
+                    <AuraLookCard
+                      look={next.look}
+                      itemsById={itemsById}
+                      viewportWidth={Math.min(width - 74, 356)}
+                      hideActions
+                      compact
+                      swipeVariant
+                      boardOnly
+                    />
+                    <Reanimated.View pointerEvents="none" style={[styles.nextPreviewDim, nextDimStyle]} />
+                  </View>
+                </Reanimated.View>
+              ) : null}
 
-                      {isTop ? (
-                        <AuraLookCard
-                          look={lookEntry.look}
-                          itemsById={itemsById}
-                          viewportWidth={Math.min(width - 54, 382)}
-                          hideActions
-                          compact
-                          swipeVariant
-                        />
-                      ) : (
-                        <Animated.View
-                          style={[
-                            styles.deckShellWrap,
-                            actualIndex === 1
-                              ? {
-                                  opacity: revealProgress.interpolate({
-                                    inputRange: [0, 0.55, 1],
-                                    outputRange: [0.1, 0.2, 0.58],
-                                    extrapolate: "clamp",
-                                  }),
-                                }
-                              : { opacity: 0.1 },
-                          ]}
-                        >
-                          <DeckCardShell depth={actualIndex} />
-                        </Animated.View>
-                      )}
-                    </View>
-                  );
-
-                  if (!isTop) return <View key={lookEntry.id} style={StyleSheet.absoluteFill}>{card}</View>;
-
-                  return (
-                    <Animated.View
-                      key={lookEntry.id}
-                      style={[StyleSheet.absoluteFill, topCardStyle]}
-                      {...panResponder.panHandlers}
-                    >
-                      <Pressable style={StyleSheet.absoluteFill} onPress={() => setDetailsLook(lookEntry)}>
-                        {card}
-                      </Pressable>
-                    </Animated.View>
-                  );
-                })}
+              {current ? (
+                <Reanimated.View
+                  key={`current-${current.id}`}
+                  style={[styles.deckCard, styles.currentDeckCard, activeCardStyle]}
+                  {...panResponder.panHandlers}
+                >
+                  <Pressable style={styles.cardPressable} onPress={() => setDetailsLook(current)}>
+                    <Reanimated.View pointerEvents="none" style={[styles.cardGlow, dragGlowStyle]} />
+                    <AuraLookCard
+                      look={current.look}
+                      itemsById={itemsById}
+                      viewportWidth={Math.min(width - 54, 382)}
+                      hideActions
+                      compact
+                      swipeVariant
+                    />
+                    <Reanimated.View pointerEvents="none" style={[styles.swipeBadge, styles.likeBadge, likeBadgeStyle]}>
+                      <Ionicons name="heart" size={15} color="#DFF8EA" />
+                      <Text style={styles.swipeBadgeText}>LIKE</Text>
+                    </Reanimated.View>
+                    <Reanimated.View pointerEvents="none" style={[styles.swipeBadge, styles.nopeBadge, nopeBadgeStyle]}>
+                      <Ionicons name="close" size={16} color="#FFE2E5" />
+                      <Text style={styles.swipeBadgeText}>NOPE</Text>
+                    </Reanimated.View>
+                    <Reanimated.View pointerEvents="none" style={[styles.swipeBadge, styles.saveBadge, saveBadgeStyle]}>
+                      <Ionicons name="star" size={15} color="#FFF2C7" />
+                      <Text style={styles.swipeBadgeText}>SAVE</Text>
+                    </Reanimated.View>
+                  </Pressable>
+                </Reanimated.View>
+              ) : null}
             </View>
           </View>
         )}
       </View>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 14, 24) }]}>
-        <Text style={styles.footerHint}>Left to pass, right to like, up to save. Tap to inspect.</Text>
         <View style={styles.footerActions}>
-          <ActionButton label="Nope" icon="close" onPress={() => advanceDeck("left")} disabled={!activeLook || processingSwipe} />
+          <ActionButton label="Nope" icon="close" onPress={() => advanceDeck("left")} disabled={!activeLook || processingSwipe} tone="subtle" />
           <ActionButton label="Like" icon="heart" onPress={() => advanceDeck("right")} disabled={!activeLook || processingSwipe} primary />
-          <ActionButton label="Favorite" icon="arrow-up" onPress={() => advanceDeck("up")} disabled={!activeLook || processingSwipe} />
+          <ActionButton label="Save" icon="star" onPress={() => advanceDeck("up")} disabled={!activeLook || processingSwipe} tone="secondary" />
         </View>
       </View>
 
@@ -498,7 +774,7 @@ export default function AuraSwipeScreen() {
   );
 }
 
-function CaughtUpStateCard({ onRefresh }: { onRefresh: () => void }) {
+function TasteTrainedStateCard({ onRefresh }: { onRefresh: () => void }) {
   const { colors } = useAppTheme();
   const reduceMotion = useReduceMotion();
   const scale = useSharedValue(1);
@@ -527,19 +803,29 @@ function CaughtUpStateCard({ onRefresh }: { onRefresh: () => void }) {
       <Reanimated.View style={[styles.caughtUpMark, markStyle]}>
         <AuraRing size={RING_SIZE_MD} animated={!reduceMotion} />
       </Reanimated.View>
-      <Text style={styles.stateTitle}>{"You're all caught up"}</Text>
-      <Text style={styles.stateBody}>Refresh to get your next batch.</Text>
-      <Pressable onPress={onRefresh} style={styles.caughtUpButton}>
-        <LinearGradient
-          colors={[colors.iridescentStart, colors.iridescentEnd]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.caughtUpButtonGradient}
-        >
-          <Ionicons name="refresh" size={15} color={colors.background} />
-          <Text style={[styles.caughtUpButtonText, { color: colors.background }]}>Refresh</Text>
-        </LinearGradient>
-      </Pressable>
+      <Text style={styles.stateTitle}>Taste trained.</Text>
+      <Text style={styles.stateBody}>AURA has more signal for your next outfit.</Text>
+      <View style={styles.endActionStack}>
+        <Pressable onPress={onRefresh} style={styles.caughtUpButton}>
+          <LinearGradient
+            colors={[colors.ctaCream, colors.ctaCream]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.caughtUpButtonGradient}
+          >
+            <Ionicons name="refresh" size={15} color={colors.background} />
+            <Text style={[styles.caughtUpButtonText, { color: colors.background }]}>Generate new set</Text>
+          </LinearGradient>
+        </Pressable>
+        <View style={styles.endSecondaryRow}>
+          <Pressable onPress={() => router.push("/profile/my-looks")} style={styles.endSecondaryButton}>
+            <Text style={styles.endSecondaryText}>View saved looks</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push("/(tabs)/ai")} style={styles.endSecondaryButton}>
+            <Text style={styles.endSecondaryText}>Back to AURA</Text>
+          </Pressable>
+        </View>
+      </View>
     </View>
   );
 }
@@ -567,26 +853,39 @@ function ActionButton({
   onPress,
   disabled,
   primary,
+  tone = "secondary",
 }: {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   onPress: () => void;
   disabled: boolean;
   primary?: boolean;
+  tone?: "subtle" | "secondary";
 }) {
+  const iconColor = primary ? palette.ctaText : tone === "subtle" ? auraTheme.textMuted : palette.textPrimary;
+  const textStyle = primary
+    ? styles.actionPrimaryText
+    : tone === "subtle"
+      ? styles.actionSubtleText
+      : null;
+
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
       style={({ pressed }) => [
         styles.actionButton,
-        primary ? styles.actionPrimary : styles.actionSecondary,
+        primary
+          ? [styles.actionPrimary, styles.actionPrimarySize]
+          : tone === "subtle"
+            ? styles.actionSubtle
+            : styles.actionSecondary,
         disabled ? { opacity: 0.45 } : null,
         pressed && !disabled ? { transform: [{ scale: 0.98 }] } : null,
       ]}
     >
-      <Ionicons name={icon} size={15} color={primary ? palette.ctaText : palette.textPrimary} />
-      <Text style={[styles.actionButtonText, primary ? { color: palette.ctaText } : null]}>{label}</Text>
+      <Ionicons name={icon} size={primary ? 15 : 13} color={iconColor} />
+      <Text style={[styles.actionButtonText, textStyle]}>{label}</Text>
     </Pressable>
   );
 }
@@ -615,47 +914,7 @@ function StateCard({
   );
 }
 
-function DeckCardShell({ depth }: { depth: number }) {
-  return (
-    <View style={styles.shellCard}>
-      <View style={styles.shellHeader}>
-        <View style={styles.shellChip} />
-        <View style={[styles.shellLine, styles.shellTitleLine]} />
-        <View style={[styles.shellLine, styles.shellBodyLine]} />
-      </View>
-      <View style={[styles.shellBoard, depth > 1 ? styles.shellBoardDeep : null]} />
-      <View style={styles.shellSummary}>
-        <View style={[styles.shellLine, styles.shellSummaryLine]} />
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  headerCopy: {
-    alignItems: "center",
-    gap: 2,
-  },
-  headerEyebrow: {
-    color: auraTheme.accentStrong,
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.4,
-    fontFamily: Fonts.sans,
-  },
-  headerTitle: {
-    color: palette.textPrimary,
-    fontSize: 18,
-    fontWeight: "800",
-    letterSpacing: 0,
-    fontFamily: Fonts.sans,
-  },
   headerButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -673,32 +932,31 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontFamily: Fonts.sans,
   },
-  summaryRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  summaryPill: {
-    flex: 1,
+  progressCard: {
     borderRadius: 16,
     borderWidth: 1,
     borderColor: auraTheme.borderSoft,
     backgroundColor: auraTheme.surfaceSoft,
     paddingHorizontal: 13,
     paddingVertical: 11,
-    gap: 2,
+    gap: 8,
   },
-  summaryLabel: {
-    color: auraTheme.textFaint,
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    fontFamily: Fonts.sans,
-  },
-  summaryValue: {
+  progressTitle: {
     color: palette.textPrimary,
-    fontSize: 13,
-    fontWeight: "700",
+    fontSize: 14,
+    fontWeight: "800",
     fontFamily: Fonts.sans,
+  },
+  progressTrack: {
+    height: 4,
+    borderRadius: 999,
+    overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.1)",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: "#F8D4C8",
   },
   deckArea: {
     flex: 1,
@@ -709,12 +967,84 @@ const styles = StyleSheet.create({
   },
   deckCard: {
     position: "absolute",
+    top: 0,
     left: 0,
     right: 0,
     overflow: "visible",
   },
-  deckShellWrap: {
-    flex: 1,
+  currentDeckCard: {
+    zIndex: 2,
+  },
+  nextDeckCard: {
+    zIndex: 1,
+    alignItems: "center",
+  },
+  nextPreviewShell: {
+    width: "100%",
+    alignItems: "center",
+    borderRadius: 24,
+    paddingTop: 18,
+    paddingHorizontal: 10,
+    paddingBottom: 18,
+    overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+  },
+  nextPreviewDim: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 24,
+    backgroundColor: "rgba(4, 7, 12, 0.32)",
+  },
+  cardPressable: {
+    position: "relative",
+    width: "100%",
+    overflow: "visible",
+  },
+  cardGlow: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 19,
+    borderRadius: 32,
+    borderWidth: 1.5,
+    borderColor: "rgba(248, 212, 200, 0.62)",
+    backgroundColor: "rgba(248, 212, 200, 0.025)",
+  },
+  swipeBadge: {
+    position: "absolute",
+    zIndex: 20,
+    top: 18,
+    minHeight: 34,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  likeBadge: {
+    right: 18,
+    backgroundColor: "rgba(33, 130, 82, 0.26)",
+    borderColor: "rgba(190, 247, 216, 0.34)",
+  },
+  nopeBadge: {
+    left: 18,
+    backgroundColor: "rgba(150, 44, 56, 0.28)",
+    borderColor: "rgba(255, 201, 207, 0.34)",
+  },
+  saveBadge: {
+    left: "50%",
+    width: 96,
+    marginLeft: -48,
+    backgroundColor: "rgba(165, 122, 42, 0.28)",
+    borderColor: "rgba(255, 235, 176, 0.38)",
+  },
+  swipeBadgeText: {
+    color: palette.textPrimary,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    fontFamily: Fonts.sans,
   },
   overlayBadge: {
     position: "absolute",
@@ -747,8 +1077,8 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingHorizontal: 18,
-    paddingTop: 12,
-    gap: 14,
+    paddingTop: 8,
+    gap: 10,
   },
   footerHint: {
     textAlign: "center",
@@ -759,31 +1089,47 @@ const styles = StyleSheet.create({
   },
   footerActions: {
     flexDirection: "row",
-    gap: 10,
+    gap: 8,
   },
   actionButton: {
     flex: 1,
-    minHeight: 48,
+    minHeight: 42,
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
-    gap: 7,
+    gap: 6,
     borderWidth: 1,
   },
   actionPrimary: {
     backgroundColor: palette.ctaCream,
-    borderColor: palette.borderStrong,
+    borderColor: palette.borderWarm,
+  },
+  actionPrimarySize: {
+    minHeight: 42,
   },
   actionSecondary: {
-    backgroundColor: auraTheme.surfaceStrong,
+    backgroundColor: "rgba(255,255,255,0.07)",
     borderColor: auraTheme.borderSoft,
+  },
+  actionSubtle: {
+    backgroundColor: "rgba(255,255,255,0.035)",
+    borderColor: "rgba(255,255,255,0.08)",
   },
   actionButtonText: {
     color: palette.textPrimary,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "800",
     fontFamily: Fonts.sans,
+  },
+  actionPrimaryText: {
+    color: palette.ctaText,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  actionSubtleText: {
+    color: auraTheme.textMuted,
+    fontWeight: "700",
   },
   stateCard: {
     width: "100%",
@@ -859,6 +1205,31 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     fontFamily: Fonts.sans,
   },
+  endActionStack: {
+    gap: 10,
+    marginTop: 4,
+  },
+  endSecondaryRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  endSecondaryButton: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  endSecondaryText: {
+    color: palette.textPrimary,
+    fontSize: 12,
+    fontWeight: "800",
+    fontFamily: Fonts.sans,
+  },
   modalScrim: {
     flex: 1,
     backgroundColor: palette.overlay,
@@ -927,59 +1298,5 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     lineHeight: 18,
     fontFamily: Fonts.sans,
-  },
-  shellCard: {
-    flex: 1,
-    gap: 14,
-    paddingTop: 16,
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-    borderRadius: 32,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.border,
-  },
-  shellHeader: {
-    gap: 10,
-  },
-  shellChip: {
-    width: 84,
-    height: 22,
-    borderRadius: 999,
-    backgroundColor: palette.purpleSurface,
-    borderWidth: 1,
-    borderColor: palette.purpleBorder,
-  },
-  shellLine: {
-    borderRadius: 999,
-    backgroundColor: palette.purpleSurface,
-  },
-  shellTitleLine: {
-    width: "58%",
-    height: 18,
-  },
-  shellBodyLine: {
-    width: "76%",
-    height: 12,
-  },
-  shellBoard: {
-    flex: 1,
-    minHeight: 388,
-    borderRadius: 28,
-    backgroundColor: palette.outfitBoardBackground,
-    borderWidth: 1,
-    borderColor: "rgba(17,19,26,0.08)",
-  },
-  shellBoardDeep: {
-    minHeight: 372,
-    opacity: 0.8,
-  },
-  shellSummary: {
-    gap: 8,
-    paddingTop: 4,
-  },
-  shellSummaryLine: {
-    width: "66%",
-    height: 11,
   },
 });

@@ -7,9 +7,16 @@ import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
 import { homeTypography } from "@/src/components/home/homeTypography";
+import { auraButtonStyle, auraButtonTextStyle } from "@/src/components/ui/auraStylePrimitives";
+import { CTA_HEIGHT, CTA_HORIZONTAL_PADDING, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook, AuraLookAction } from "@/src/types/aura";
+
+const MODULE_CONTENT_GAP = 16;
+const MODULE_CARD_GAP = 12;
+const MODULE_TIGHT_GAP = 4;
+const MODULE_ACTION_GAP = 8;
 
 export default function AuraLookModule({
   colors,
@@ -24,6 +31,8 @@ export default function AuraLookModule({
   fallbackBody,
   primaryPrompt,
   secondaryPrompt,
+  onRegenerate,
+  regenerating = false,
 }: {
   colors: AppColors;
   look: AuraLook | null;
@@ -37,6 +46,8 @@ export default function AuraLookModule({
   fallbackBody?: string;
   primaryPrompt?: string;
   secondaryPrompt?: string;
+  onRegenerate?: () => void;
+  regenerating?: boolean;
 }) {
   const layout = useResponsiveLayout();
 
@@ -46,56 +57,58 @@ export default function AuraLookModule({
         auraBorder
         style={{
           borderRadius: layout.largeRadius,
-          gap: 12,
+          gap: MODULE_CARD_GAP,
+          marginTop: 28,
         }}
       >
-        <View style={{ padding: layout.cardPadding, gap: 12 }}>
-        <View style={{ gap: 4 }}>
-          <Text style={[homeTypography.label, { color: colors.lightPurple }]}>
-            {eyebrow}
-          </Text>
-          <Text style={[homeTypography.titleMedium, { color: colors.text }]}>
-            {fallbackTitle}
-          </Text>
-          <Text style={[homeTypography.body, { color: colors.textSecondary, opacity: 0.8 }]}>
-            {fallbackBody ?? "Ask AURA for a date look, a casual look, or a sharper outfit and Home will surface the visual recommendation here."}
-          </Text>
-        </View>
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <AuraGradientButton
-              label="Build a look"
-              onPress={() => onAskAura(primaryPrompt ?? "Build a casual look with a visual outfit recommendation.")}
-            />
+        <View style={{ padding: layout.cardPadding, gap: MODULE_CARD_GAP }}>
+          <View style={{ gap: MODULE_TIGHT_GAP }}>
+            <Text style={[homeTypography.label, { color: colors.lightPurple }]}>
+              {eyebrow}
+            </Text>
+            <Text style={[homeTypography.titleMedium, { color: colors.text }]}>
+              {fallbackTitle}
+            </Text>
+            <Text style={[homeTypography.body, { color: colors.textSecondary, opacity: 0.8 }]}>
+              {fallbackBody ?? "Ask AURA for a date look, a casual look, or a sharper outfit and Home will surface the visual recommendation here."}
+            </Text>
           </View>
-          <AuraPressable
-            onPress={() => onAskAura(secondaryPrompt ?? "Find gaps in my wardrobe and show a hybrid visual look.")}
-            haptic="selection"
-            hapticTrigger="press"
-            pressedScale={0.97}
-            pressedOpacity={0.88}
-            style={{
-              flex: 1,
-              borderRadius: layout.mediumRadius,
-              paddingVertical: 13,
-              alignItems: "center",
-              backgroundColor: "rgba(255,255,255,0.04)",
-              borderWidth: 1,
-              borderColor: "rgba(243,223,195,0.14)",
-            }}
-          >
-            <Text style={[homeTypography.buttonText, { color: colors.text }]}>Find gaps</Text>
-          </AuraPressable>
-        </View>
+
+          <View style={{ flexDirection: "row", gap: MODULE_ACTION_GAP }}>
+            <View style={{ flex: 1 }}>
+              <AuraGradientButton
+                label="Build a look"
+                onPress={() => onAskAura(primaryPrompt ?? "Build a casual look with a visual outfit recommendation.")}
+              />
+            </View>
+            <AuraPressable
+              onPress={() => onAskAura(secondaryPrompt ?? "Find gaps in my wardrobe and show a hybrid visual look.")}
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.97}
+              pressedOpacity={0.88}
+              style={{
+                ...auraButtonStyle(colors, "secondary"),
+                flex: 1,
+                minHeight: CTA_HEIGHT,
+                borderRadius: PILL_RADIUS,
+                paddingHorizontal: CTA_HORIZONTAL_PADDING,
+                paddingVertical: 0,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={auraButtonTextStyle(colors, "secondary")}>Find gaps</Text>
+            </AuraPressable>
+          </View>
         </View>
       </AuraGlassCard>
     );
   }
 
   return (
-    <View style={{ gap: 10 }}>
-      <View style={{ gap: 3 }}>
+    <View style={{ gap: MODULE_CONTENT_GAP }}>
+      <View style={{ gap: MODULE_TIGHT_GAP }}>
         <Text style={[homeTypography.label, { color: colors.lightPurple }]}>
           {eyebrow}
         </Text>
@@ -113,6 +126,8 @@ export default function AuraLookModule({
         look={look}
         itemsById={itemsById}
         onAction={onAction}
+        onPressRegenerate={onRegenerate}
+        regenerating={regenerating}
         boardVariant="home"
         viewportWidth={layout.width - layout.horizontalPadding * 2}
       />

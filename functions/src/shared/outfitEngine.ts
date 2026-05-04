@@ -167,6 +167,14 @@ type OutfitCandidate = {
   itemIds: string[];
 };
 
+export type OutfitDiversityOptions = {
+  recentItemIds?: string[];
+  previousLookItemIds?: string[];
+  previousLookSignatures?: string[];
+  excludedLookIds?: string[];
+  maxOverlap?: number;
+};
+
 type PreferenceBiasContext = {
   explicitFavoriteColors: AllowedColor[];
   explicitAvoidColors: AllowedColor[];
@@ -376,6 +384,66 @@ function toMillis(value: WardrobeItem["lastWornDate"]): number | null {
     return value.toMillis();
   }
   return null;
+}
+
+function normalizeIdList(values: unknown, maxLength: number): string[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const id = String(value ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= maxLength) break;
+  }
+  return out;
+}
+
+function outfitSignature(itemIds: string[]) {
+  return normalizeIdList(itemIds, 12).sort().join("|");
+}
+
+function overlapCount(itemIds: string[], compareIds: Set<string>) {
+  if (!compareIds.size) return 0;
+  return itemIds.filter((itemId) => compareIds.has(itemId)).length;
+}
+
+function underusedWearableBonus(items: WardrobeItem[]) {
+  const now = Date.now();
+  return items.reduce((sum, item) => {
+    const worn = toMillis(item.lastWornDate);
+    if (!worn) return sum + 0.018;
+    const days = (now - worn) / (24 * 60 * 60 * 1000);
+    if (days >= 30) return sum + 0.02;
+    if (days >= 14) return sum + 0.012;
+    return sum;
+  }, 0);
+}
+
+function diversityAdjustment(
+  candidate: OutfitCandidate,
+  diversity?: OutfitDiversityOptions | null
+) {
+  if (!diversity) return 0;
+  const previousIds = new Set(normalizeIdList(diversity.previousLookItemIds, 12));
+  const recentIds = new Set(normalizeIdList(diversity.recentItemIds, 36));
+  const previousSignatures = new Set([
+    ...normalizeIdList(diversity.previousLookSignatures, 12),
+    ...normalizeIdList(diversity.excludedLookIds, 12),
+  ]);
+  const signature = outfitSignature(candidate.itemIds);
+  const previousOverlap = overlapCount(candidate.itemIds, previousIds);
+  const recentOverlap = overlapCount(candidate.itemIds, recentIds);
+  const maxOverlap = Math.max(0, Math.min(3, Number(diversity.maxOverlap ?? 2)));
+  let adjustment = 0;
+  if (previousSignatures.has(signature)) adjustment -= 999;
+  adjustment -= previousOverlap * 0.18;
+  adjustment -= Math.max(0, previousOverlap - maxOverlap) * 0.36;
+  adjustment -= Math.max(0, recentOverlap - previousOverlap) * 0.055;
+  const roleCoverage = new Set(candidate.picks.map((pick) => pick.slot)).size;
+  adjustment += Math.max(0, roleCoverage - 3) * 0.018;
+  return adjustment;
 }
 
 function normalizeItemColors(item: WardrobeItem): AllowedColor[] {
@@ -1035,7 +1103,8 @@ function assembleOutfits(
   intent: OutfitIntentV1,
   preferenceBias: PreferenceBiasContext,
   count: number,
-  lockedBySlot?: Partial<Record<Slot, WardrobeItem>>
+  lockedBySlot?: Partial<Record<Slot, WardrobeItem>>,
+  diversity?: OutfitDiversityOptions | null
 ): OutfitCandidate[] {
   const topCandidates = lockedBySlot?.top
     ? topItems.filter((item) => item.item.id === lockedBySlot.top?.id).slice(0, 1)
@@ -1101,7 +1170,8 @@ function assembleOutfits(
                 preferenceBias
               ) +
               variant.bonus +
-              accessoryVariant.bonus;
+              accessoryVariant.bonus +
+              underusedWearableBonus(chosen.map((value) => value.item));
             const picks = chosen.map((value) => ({
               slot: value.slot,
               itemId: value.item.id,
@@ -1137,7 +1207,7 @@ function assembleOutfits(
     .slice(0, Math.max(count * 6, 18))
     .map((combo) => ({
       combo,
-      score: combo.score,
+      score: combo.score + diversityAdjustment(combo, diversity),
       randomSeed: Math.random(),
     }));
 
@@ -1343,6 +1413,7 @@ function buildCandidatesFromPool(
     numOutfits: number;
     preferredSlot?: Slot | null;
     lockedItemsBySlot?: Partial<Record<Slot, WardrobeItem>>;
+    diversity?: OutfitDiversityOptions | null;
   },
 ) {
   const memory = options.memory ?? null;
@@ -1400,6 +1471,7 @@ function buildCandidatesFromPool(
     preferenceBias,
     options.numOutfits,
     options.lockedItemsBySlot,
+    options.diversity,
   );
 
   if (options.preferredSlot) {
@@ -1429,6 +1501,7 @@ export function generateOutfitCandidates(
     excludeItemIds?: string[];
     lockedItemsBySlot?: Partial<Record<Slot, WardrobeItem>>;
     memory?: CompactAuraMemoryContext | null;
+    diversity?: OutfitDiversityOptions | null;
   }
 ): {
   outfits: OutfitCandidate[];
@@ -1446,6 +1519,7 @@ export function generateOutfitCandidates(
     numOutfits: count,
     preferredSlot: options?.preferredSlot,
     lockedItemsBySlot: options?.lockedItemsBySlot,
+    diversity: options?.diversity,
   });
   if (strictResult.outfits.length > 0) {
     return strictResult;
@@ -1459,6 +1533,7 @@ export function generateOutfitCandidates(
     numOutfits: count,
     preferredSlot: options?.preferredSlot,
     lockedItemsBySlot: options?.lockedItemsBySlot,
+    diversity: options?.diversity,
   });
   if (relaxedResult.outfits.length > 0) {
     return {
@@ -1474,6 +1549,7 @@ export function generateOutfitCandidates(
     numOutfits: count,
     preferredSlot: options?.preferredSlot,
     lockedItemsBySlot: options?.lockedItemsBySlot,
+    diversity: options?.diversity,
   });
   if (unconstrainedRelaxedResult.outfits.length > 0) {
     return {

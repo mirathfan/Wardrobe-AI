@@ -226,14 +226,49 @@ export const generateAuraSwipeBatch = onCall(
     const requestedNumOutfits =
       request.data?.numOutfits ?? parsed.numOutfits ?? inferRequestedOutfitCount(intentText) ?? 8;
     const numOutfits = clampNumOutfits(requestedNumOutfits, 8);
+    const excludeItemIds = Array.isArray(request.data?.excludeItemIds)
+      ? request.data.excludeItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 24)
+      : [];
+    const recentItemIds = Array.isArray(request.data?.recentItemIds)
+      ? request.data.recentItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 36)
+      : [];
+    const previousLookItemIds = Array.isArray(request.data?.previousLookItemIds)
+      ? request.data.previousLookItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 12)
+      : [];
+    const previousLookSignatures = Array.isArray(request.data?.previousLookSignatures)
+      ? request.data.previousLookSignatures.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 12)
+      : [];
+    const maxOverlap = Number.isFinite(Number(request.data?.maxOverlap))
+      ? Math.max(0, Math.min(3, Math.round(Number(request.data.maxOverlap))))
+      : 2;
 
     const db = getFirestore();
     const allItems = await fetchWardrobeItems(db, uid);
     const memory = await loadCompactAuraMemoryContext(db, uid, null);
-    const generated = generateOutfitCandidates(allItems, parsed.intent, {
+    let generated = generateOutfitCandidates(allItems, parsed.intent, {
       numOutfits,
       memory,
+      excludeItemIds,
+      diversity: {
+        recentItemIds,
+        previousLookItemIds,
+        previousLookSignatures,
+        maxOverlap,
+      },
     });
+    if (!generated.outfits.length && excludeItemIds.length) {
+      generated = generateOutfitCandidates(allItems, parsed.intent, {
+        numOutfits,
+        memory,
+        excludeItemIds: [],
+        diversity: {
+          recentItemIds,
+          previousLookItemIds,
+          previousLookSignatures,
+          maxOverlap,
+        },
+      });
+    }
 
     logger.info("generateAuraSwipeBatch built batch", {
       uid,
@@ -243,6 +278,13 @@ export const generateAuraSwipeBatch = onCall(
       slotCounts: generated.slotCounts,
       returned: generated.outfits.length,
       fallbackMode: generated.fallbackMode ?? "strict",
+      diversity: {
+        excludeItemIds,
+        previousLookItemIds,
+        recentItemIds,
+        previousLookSignatures,
+        maxOverlap,
+      },
     });
 
     const itemsById = new Map(allItems.map((item) => [item.id, item]));

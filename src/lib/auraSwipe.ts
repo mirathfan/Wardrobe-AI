@@ -2,7 +2,6 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 
 import { app } from "@/src/lib/firebase";
 import { getItemImageUrl } from "@/src/lib/itemImage";
-import { getMissingMinimumClosetCategories } from "@/src/lib/minimumCloset";
 import { generateOutfits } from "@/src/lib/outfitGenerator";
 import { toCanonicalCategory } from "@/src/lib/items";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -31,6 +30,11 @@ export type AuraSwipeBatchLook = {
 type GenerateAuraSwipeBatchArgs = {
   intentText?: string;
   numOutfits?: number;
+  excludeItemIds?: string[];
+  recentItemIds?: string[];
+  previousLookItemIds?: string[];
+  previousLookSignatures?: string[];
+  maxOverlap?: number;
 };
 
 type OutfitResult = {
@@ -162,6 +166,11 @@ function roleForItem(item: ClothingItem): "top" | "bottom" | "shoes" | "outerwea
   return "top";
 }
 
+function hasCoreOutfitCategories(items: ClothingItem[]) {
+  const categories = new Set(items.map((item) => toCanonicalCategory(item.category)));
+  return categories.has("top") && categories.has("bottom") && categories.has("shoes");
+}
+
 function localSwipeBatchFromCloset(
   args: Required<GenerateAuraSwipeBatchArgs> & { items: ClothingItem[] },
 ): GenerateAuraSwipeBatchResponse | null {
@@ -172,6 +181,12 @@ function localSwipeBatchFromCloset(
     includeAccessory: true,
     allowRewearToday: true,
     allowOverWearLimit: true,
+    excludeItemIds: args.excludeItemIds,
+    recentItemIds: args.recentItemIds,
+    previousLookItemIds: args.previousLookItemIds,
+    previousLookSignatures: args.previousLookSignatures,
+    maxOverlap: args.maxOverlap,
+    numOutfits: args.numOutfits,
   }).slice(0, args.numOutfits);
 
   if (!suggestions.length) return null;
@@ -253,13 +268,20 @@ export async function generateAuraSwipeBatch(
       args?.intentText ??
       "Build a varied batch of outfit directions from my wardrobe. Keep them polished, wearable, and distinct.",
     numOutfits: args?.numOutfits ?? 8,
+    excludeItemIds: args?.excludeItemIds ?? [],
+    recentItemIds: args?.recentItemIds ?? [],
+    previousLookItemIds: args?.previousLookItemIds ?? [],
+    previousLookSignatures: args?.previousLookSignatures ?? [],
+    maxOverlap: args?.maxOverlap ?? 2,
   };
   const itemsById = new Map((args?.items ?? []).map((item) => [item.id, item]));
   const localItems = args?.items ?? [];
-  const isSparseCloset =
-    localItems.length > 0 && getMissingMinimumClosetCategories(localItems).length > 0;
-  if (isSparseCloset) {
-    const localBatch = localSwipeBatchFromCloset({ ...request, items: localItems });
+  const isMissingCoreCategory =
+    localItems.length > 0 && !hasCoreOutfitCategories(localItems);
+  if (isMissingCoreCategory) {
+    const localBatch =
+      localSwipeBatchFromCloset({ ...request, items: localItems }) ??
+      localSwipeBatchFromCloset({ ...request, excludeItemIds: [], items: localItems });
     if (localBatch) return localBatch;
   }
 
@@ -290,7 +312,9 @@ export async function generateAuraSwipeBatch(
       }
     }
     if (code && !code.includes("not-found")) {
-      const localBatch = localSwipeBatchFromCloset({ ...request, items: localItems });
+      const localBatch =
+        localSwipeBatchFromCloset({ ...request, items: localItems }) ??
+        localSwipeBatchFromCloset({ ...request, excludeItemIds: [], items: localItems });
       if (localBatch) return localBatch;
       throw error instanceof Error ? error : new Error(String(error));
     }
@@ -302,7 +326,9 @@ export async function generateAuraSwipeBatch(
   }
   const lookOptions = normalizeLookOptions(fallback.data ?? {}, itemsById);
   if (lookOptions.length === 0) {
-    const localBatch = localSwipeBatchFromCloset({ ...request, items: localItems });
+    const localBatch =
+      localSwipeBatchFromCloset({ ...request, items: localItems }) ??
+      localSwipeBatchFromCloset({ ...request, excludeItemIds: [], items: localItems });
     if (localBatch) return localBatch;
     if (DEBUG_AURA_SWIPE) {
       console.log("[AURA_SWIPE] no lookOptions after fallback");
