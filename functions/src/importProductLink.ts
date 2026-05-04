@@ -26,6 +26,7 @@ function codeForError(
     case "unsafe_url":
     case "fetch_failed":
       return "invalid-argument";
+    case "blocked_store":
     case "no_metadata":
     case "no_images":
       return "failed-precondition";

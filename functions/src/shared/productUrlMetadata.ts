@@ -1,10 +1,13 @@
 import * as cheerio from "cheerio";
 import { logger } from "firebase-functions/v2";
 import {
+  BLOCKED_STORE_MESSAGE,
+  ProductLinkError,
   extractAmazonLinkData,
   filterSafeExternalImageUrls,
   extractNikeSelectedVariantData,
   extractProductImagesFromHtml,
+  extractProductMetadataFromHtml,
   isAmazonProductUrl,
   validateProductUrl,
 } from "./productLinkExtractor";
@@ -19,6 +22,30 @@ export type ProductUrlMetadata = {
   brand?: string | null;
   category?: string | null;
   subCategory?: string | null;
+  color?: string | null;
+  price?: string | null;
+  currency?: string | null;
+  priceAmount?: number | null;
+  priceCurrency?: string | null;
+  priceDisplay?: string | null;
+  salePrice?: number | null;
+  originalPrice?: number | null;
+  material?: string | null;
+  materials?: string[];
+  fit?: string | null;
+  sleeveLength?: string | null;
+  collar?: string | null;
+  length?: string | null;
+  pattern?: string | null;
+  displayColor?: string | null;
+  displayColors?: string[] | null;
+  sizeOptions?: string[];
+  availableSizes?: string[];
+  careInstructions?: string[];
+  productDescription?: string | null;
+  graphicText?: string | null;
+  motif?: string | null;
+  collaborationName?: string | null;
   confidence?: number | null;
   status?: "ready" | "needs_review";
 };
@@ -198,8 +225,12 @@ async function extractZaraProductUrlMetadata(url: URL): Promise<ProductUrlMetada
 
 async function fetchHtml(url: URL) {
   const headers = {
-    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "accept-language": "en-US,en;q=0.9",
+    "cache-control": "no-cache",
+    pragma: "no-cache",
+    referer: `${url.origin}/`,
+    "upgrade-insecure-requests": "1",
     "user-agent": USER_AGENT,
   };
 
@@ -253,6 +284,17 @@ async function fetchHtml(url: URL) {
 
   if (originalError instanceof Error) {
     throw originalError;
+  }
+  if (originalStatus === 401 || originalStatus === 403 || originalStatus === 429) {
+    throw new ProductLinkError(BLOCKED_STORE_MESSAGE, "blocked_store", {
+      productLinkCode: "blocked_store",
+      blockedStore: true,
+      recoverable: true,
+      status: originalStatus,
+      host: url.hostname,
+      title: "This store blocked automatic reading.",
+      message: "You can try again, paste another link, or add the item from a screenshot.",
+    });
   }
   throw new Error(`Product page returned ${originalStatus ?? "unknown status"}`);
 }
@@ -365,12 +407,20 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
       brand: amazon.status === "ready" ? amazon.metadata.brand ?? null : null,
       category: amazon.status === "ready" ? amazon.metadata.categoryHints?.[0] ?? null : null,
       subCategory: amazon.status === "ready" ? amazon.metadata.categoryHints?.[1] ?? null : null,
+      price: amazon.metadata.price ?? null,
+      currency: amazon.metadata.currency ?? null,
+      priceAmount: amazon.metadata.priceAmount ?? null,
+      priceCurrency: amazon.metadata.priceCurrency ?? null,
+      priceDisplay: amazon.metadata.priceDisplay ?? null,
+      salePrice: amazon.metadata.salePrice ?? null,
+      originalPrice: amazon.metadata.originalPrice ?? null,
       confidence: amazon.confidence,
       status: amazon.status,
     };
   }
   const $ = cheerio.load(html);
   const nikeVariant = extractNikeSelectedVariantData(finalUrl.toString(), html);
+  const productMetadata = extractProductMetadataFromHtml(finalUrl.toString(), html);
   const imageUrls =
     nikeVariant?.imageUrls?.length
       ? nikeVariant.imageUrls
@@ -384,14 +434,43 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
     sourceUrl: nikeVariant?.metadata?.sourceUrl ?? finalUrl.toString(),
     title:
       nikeVariant?.metadata?.title ??
+      productMetadata.title ??
       metaContent($, "og:title") ??
       cleanText($("title").first().text(), 220),
     imageUrl: safeImageUrls[0] ?? null,
     imageUrls: safeImageUrls,
     description:
       nikeVariant?.metadata?.description ??
+      productMetadata.description ??
       metaContent($, "og:description") ??
       metaContent($, "description"),
+    brand: productMetadata.brand ?? null,
+    category: productMetadata.categoryHints?.[0] ?? null,
+    subCategory: productMetadata.categoryHints?.[1] ?? null,
+    color: productMetadata.color ?? null,
+    price: productMetadata.price ?? null,
+    currency: productMetadata.currency ?? null,
+    priceAmount: productMetadata.priceAmount ?? null,
+    priceCurrency: productMetadata.priceCurrency ?? null,
+    priceDisplay: productMetadata.priceDisplay ?? null,
+    salePrice: productMetadata.salePrice ?? null,
+    originalPrice: productMetadata.originalPrice ?? null,
+    material: productMetadata.material ?? null,
+    materials: productMetadata.materials ?? [],
+    fit: productMetadata.fit ?? null,
+    sleeveLength: productMetadata.sleeveLength ?? null,
+    collar: productMetadata.collar ?? null,
+    length: productMetadata.length ?? null,
+    pattern: productMetadata.pattern ?? null,
+    displayColor: productMetadata.displayColor ?? productMetadata.color ?? null,
+    displayColors: productMetadata.displayColors ?? [],
+    sizeOptions: productMetadata.sizeOptions ?? productMetadata.sizeHints ?? [],
+    availableSizes: productMetadata.availableSizes ?? productMetadata.sizeOptions ?? [],
+    careInstructions: productMetadata.careInstructions ?? [],
+    productDescription: productMetadata.productDescription ?? productMetadata.description ?? null,
+    graphicText: productMetadata.graphicText ?? null,
+    motif: productMetadata.motif ?? null,
+    collaborationName: productMetadata.collaborationName ?? null,
   };
   logger.info("[AURA_URL_METADATA] extracted product URL metadata", {
     host: finalUrl.hostname,
@@ -399,6 +478,7 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
     hasImageUrl: !!metadata.imageUrl,
     imageCount: metadata.imageUrls.length,
     hasDescription: !!metadata.description,
+    hasPrice: typeof metadata.priceAmount === "number",
     imageHost: metadata.imageUrl ? new URL(metadata.imageUrl).hostname : null,
     sourceUrl: redactUrlForLogs(metadata.sourceUrl),
   });

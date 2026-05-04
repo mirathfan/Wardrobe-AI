@@ -10,6 +10,7 @@ export { askAura } from "./askAura";
 export { askAuraStream } from "./askAuraStream";
 export { transcribeAuraAudio } from "./transcribeAuraAudio";
 export { importProductLink } from "./importProductLink";
+export { previewProductLink } from "./previewProductLink";
 export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
 export { deleteAccountData } from "./deleteAccountData";
 // export { generateCleanedProductImages } from "./generateCleanedProductImages";
