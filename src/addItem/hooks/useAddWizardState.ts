@@ -5,20 +5,20 @@ export const WIZARD_STEPS = [
   {
     id: "photo",
     label: "Photo",
-    title: "Step 1 — Photo",
-    subtitle: "Pick a photo, preview it, and optionally refine the background cutout.",
+    title: "Photo",
+    subtitle: "Add the item image.",
   },
   {
-    id: "review",
-    label: "Review",
-    title: "Step 2 — Review AI Details",
-    subtitle: "Check AI-extracted details and correct anything before moving on.",
+    id: "details",
+    label: "Details",
+    title: "Details",
+    subtitle: "Confirm the essentials.",
   },
   {
-    id: "more",
-    label: "More",
-    title: "Step 3 — More Details",
-    subtitle: "Add optional metadata, then save the item to your wardrobe.",
+    id: "optional",
+    label: "Optional",
+    title: "Optional",
+    subtitle: "Add extra metadata.",
   },
 ] as const;
 
@@ -45,7 +45,15 @@ export function useAddWizardState(params: {
   }, [actions, currentStep, state.advancedExpanded]);
 
   const hasPhoto = !!derived.previewPhotoUri;
-  const hasReviewDetails = !!state.category && state.selectedColors.length > 0;
+  const detailMissing = useMemo(() => {
+    const missing: string[] = [];
+    if (!String(state.brand ?? "").trim()) missing.push("brand");
+    if (!String(state.name ?? "").trim()) missing.push("item name");
+    if (!state.category) missing.push("category");
+    if (state.selectedColors.length === 0) missing.push("color");
+    return missing;
+  }, [state.brand, state.category, state.name, state.selectedColors.length]);
+  const hasReviewDetails = detailMissing.length === 0;
   const canContinue =
     currentStep === 0 ? hasPhoto : currentStep === 1 ? hasReviewDetails : derived.canSave;
   const currentStepMeta = WIZARD_STEPS[currentStep];
@@ -55,7 +63,7 @@ export function useAddWizardState(params: {
       ? state.isEdit
         ? "Save Changes"
         : "Add to Wardrobe"
-      : "Next";
+      : "Continue";
 
   const stepStatusText =
     currentStep === 0
@@ -64,8 +72,8 @@ export function useAddWizardState(params: {
         : "Add a photo to continue"
       : currentStep === 1
         ? hasReviewDetails
-          ? "Review complete"
-          : "Confirm category and color before continuing"
+          ? "Details ready"
+          : `Missing: ${detailMissing.join(", ")}`
         : derived.ctaStatusText;
 
   const handleStepBack = useCallback(() => {
@@ -87,12 +95,20 @@ export function useAddWizardState(params: {
     }
 
     if (currentStep === 1) {
+      if (!String(state.brand ?? "").trim()) {
+        Alert.alert("Confirm details", "Add a brand before continuing.");
+        return;
+      }
+      if (!String(state.name ?? "").trim()) {
+        Alert.alert("Confirm details", "Add an item name before continuing.");
+        return;
+      }
       if (!state.category) {
-        Alert.alert("Review details", "Confirm a category before continuing.");
+        Alert.alert("Confirm details", "Confirm a category before continuing.");
         return;
       }
       if (state.selectedColors.length === 0) {
-        Alert.alert("Review details", "Pick at least one color before continuing.");
+        Alert.alert("Confirm details", "Pick at least one color before continuing.");
         return;
       }
       setCurrentStep(2);
@@ -100,7 +116,7 @@ export function useAddWizardState(params: {
     }
 
     actions.saveItem();
-  }, [actions, currentStep, hasPhoto, state.category, state.selectedColors.length]);
+  }, [actions, currentStep, hasPhoto, state.brand, state.category, state.name, state.selectedColors.length]);
 
   const currentStepKey = currentStepMeta.id;
 
@@ -112,6 +128,7 @@ export function useAddWizardState(params: {
       canContinue,
       hasPhoto,
       hasReviewDetails,
+      detailMissing,
       stepButtonText,
       stepStatusText,
       setCurrentStep,
@@ -128,6 +145,7 @@ export function useAddWizardState(params: {
       handleStepForward,
       hasPhoto,
       hasReviewDetails,
+      detailMissing,
       stepButtonText,
       stepStatusText,
     ]

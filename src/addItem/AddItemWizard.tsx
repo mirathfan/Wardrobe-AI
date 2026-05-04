@@ -1,6 +1,6 @@
-import { router } from "expo-router";
 import React, { useMemo } from "react";
 import { useFocusEffect } from "@react-navigation/native";
+import { router } from "expo-router";
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -16,6 +16,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { makeDevThrottleLogger } from "./devPerf";
 import { useAddItemController } from "./useAddItemController";
+import { AddItemHeader } from "./components/AddItemHeader";
+import { AddItemStepIndicator } from "./components/AddItemStepIndicator";
+import { AddItemStickyFooter } from "./components/AddItemStickyFooter";
 import { useAddWizardState } from "./hooks/useAddWizardState";
 import { MoreDetailsStepScreen } from "./steps/MoreDetailsStepScreen";
 import { PhotoStepScreen } from "./steps/PhotoStepScreen";
@@ -23,26 +26,89 @@ import { ReviewDetailsStepScreen } from "./steps/ReviewDetailsStepScreen";
 import { Pill } from "./ui/Pill";
 import { SafeScreen } from "../components/SafeScreen";
 import { dockSpace } from "@/src/constants/dock";
+import {
+  auraCardStyle,
+  auraChipStyle,
+  auraChipTextStyle,
+  auraSheetBackdropStyle,
+  auraTypography,
+} from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import type { AddItemMode } from "@/src/addItem/controllerShared";
 import type { Category } from "@/src/shared/wardrobeTaxonomy";
 
+type AddItemExitRoute = Parameters<typeof router.replace>[0];
+
+function itemDetailRoute(itemId: string): AddItemExitRoute {
+  return {
+    pathname: "/(tabs)/item/[id]",
+    params: { id: itemId, refreshKey: String(Date.now()) },
+  } as AddItemExitRoute;
+}
+
 export const AddItemWizard = React.memo(function AddItemWizard({
+  mode,
   editItemId,
+  duplicateItemId,
+  sourceItemId,
   initialCategory,
+  formSessionKey,
+  exitRoute = "/(tabs)/closet",
 }: {
+  mode: AddItemMode;
   editItemId: string | null;
+  duplicateItemId?: string | null;
+  sourceItemId?: string | null;
   initialCategory?: Category | null;
+  formSessionKey: string;
+  exitRoute?: AddItemExitRoute;
 }) {
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
   const floatingDockSpace = dockSpace(insets.bottom);
-  const controller = useAddItemController({ editItemId, initialCategory: initialCategory ?? null });
+  const controller = useAddItemController({
+    mode,
+    editItemId,
+    duplicateItemId: duplicateItemId ?? null,
+    initialCategory: initialCategory ?? null,
+    formSessionKey,
+  });
   const { state, derived, actions, styles } = controller;
   const renderLog = useMemo(() => makeDevThrottleLogger("AddItemWizard"), []);
+  const handleExit = React.useCallback(() => {
+    const target =
+      mode === "edit" && editItemId
+        ? itemDetailRoute(editItemId)
+        : mode === "duplicate" && sourceItemId
+          ? itemDetailRoute(sourceItemId)
+          : exitRoute;
+
+    void (async () => {
+      await actions.resetFormSession?.("exit", { deleteActiveDraft: mode !== "edit" });
+      router.replace(target);
+    })();
+  }, [actions, editItemId, exitRoute, mode, sourceItemId]);
+
+  const handleDuplicate = React.useCallback(() => {
+    if (mode === "edit" && editItemId) {
+      void actions.resetFormSession?.("duplicate-from-edit");
+      router.replace({
+        pathname: "/(tabs)/add",
+        params: {
+          duplicateId: editItemId,
+          sourceItemId: editItemId,
+          addSession: String(Date.now()),
+        },
+      });
+      return;
+    }
+
+    void actions.duplicateLastItem();
+  }, [actions, editItemId, mode]);
 
   const wizard = useAddWizardState({
     controller,
-    onExit: () => router.back(),
+    onExit: handleExit,
   });
 
   const onScreenFocus = actions.onScreenFocus;
@@ -67,6 +133,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
   return (
     <SafeScreen
       backgroundColor={colors.background}
+      includeTopInset={false}
       includeBottomInset={false}
       style={styles.screen}
     >
@@ -75,134 +142,49 @@ export const AddItemWizard = React.memo(function AddItemWizard({
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.container}>
+          <AddItemHeader
+            title={state.isEdit ? "Edit Item" : "Add Item"}
+            eyebrow="AURA CLOSET"
+            onBack={handleExit}
+            canDuplicate={wizard.currentStepKey === "photo" && (mode === "edit" || mode === "create")}
+            duplicateActive={state.duplicateBanner}
+            duplicateLabel={mode === "create" ? "Duplicate last" : "Duplicate"}
+            onDuplicate={handleDuplicate}
+          />
           <ScrollView
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
             onScrollBeginDrag={() => Keyboard.dismiss()}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={[styles.listContent, { paddingBottom: floatingDockSpace + 180 }]}
+            contentContainerStyle={[styles.listContent, { paddingBottom: floatingDockSpace + 120 }]}
           >
-            <View style={{ marginBottom: 10, gap: 10 }}>
-              <View style={styles.headerRow}>
-                <Pressable onPress={wizard.handleStepBack} style={styles.btnSecondary}>
-                  <Text style={styles.btnSecondaryText}>Back</Text>
-                </Pressable>
-
-                <Text style={{ fontSize: 22, fontWeight: "900", color: colors.text }}>
-                  {state.isEdit ? "Edit Item" : "Add Item"}
+            <View style={{ marginBottom: 12, gap: 8 }}>
+              <AddItemStepIndicator steps={wizard.steps} currentStep={wizard.currentStep} />
+              {state.duplicateBanner && wizard.currentStepKey === "photo" ? (
+                <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17 }}>
+                  Duplicated. Replace the photo to finish.
                 </Text>
-
-                <View style={{ width: 60 }} />
-              </View>
-
-              <View style={{ gap: 8 }}>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                    {wizard.currentStepMeta.title}
-                  </Text>
-                  {!state.isEdit && wizard.currentStepKey === "photo" ? (
-                    <Pressable onPress={() => void actions.duplicateLastItem()}>
-                      <Text style={{ color: colors.text, fontSize: 13, fontWeight: "700" }}>
-                        Duplicate last item
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-                <View
-                  style={{
-                    height: 6,
-                    borderRadius: 999,
-                    backgroundColor: colors.border,
-                    overflow: "hidden",
-                  }}
-                >
-                  <View
-                    style={{
-                      width: `${((wizard.currentStep + 1) / wizard.steps.length) * 100}%`,
-                      height: "100%",
-                      borderRadius: 999,
-                      backgroundColor: colors.accent,
-                    }}
-                  />
-                </View>
-                <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                  {wizard.steps.map((step, index) => {
-                    const active = index === wizard.currentStep;
-                    const complete = index < wizard.currentStep;
-                    return (
-                      <View
-                        key={step.id}
-                        style={{
-                          paddingVertical: 6,
-                          paddingHorizontal: 10,
-                          borderRadius: 999,
-                          borderWidth: 1,
-                          borderColor: active || complete ? colors.ctaCream : colors.border,
-                          backgroundColor: active ? colors.ctaCream : colors.chipBackground,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: active ? colors.ctaText : complete ? colors.ctaCream : colors.textSecondary,
-                            fontSize: 12,
-                            fontWeight: "800",
-                          }}
-                        >
-                          {step.label}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-                  {wizard.currentStepMeta.subtitle}
-                </Text>
-                {state.duplicateBanner && wizard.currentStepKey === "photo" ? (
-                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-                    Duplicated — replace photo to finish.
-                  </Text>
-                ) : null}
-              </View>
+              ) : null}
             </View>
 
             {wizard.currentStepKey === "photo" ? (
               <PhotoStepScreen controller={controller} />
-            ) : wizard.currentStepKey === "review" ? (
+            ) : wizard.currentStepKey === "details" ? (
               <ReviewDetailsStepScreen controller={controller} />
             ) : (
               <MoreDetailsStepScreen controller={controller} />
             )}
           </ScrollView>
 
-          <View style={[styles.footer, { paddingBottom: floatingDockSpace + 12 }]}>
-            <Text style={styles.ctaStatus}>{wizard.stepStatusText}</Text>
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              {wizard.currentStep > 0 ? (
-                <Pressable onPress={wizard.handleStepBack} style={[styles.btnSecondary, { flex: 1 }]}>
-                  <Text style={styles.btnSecondaryText}>Back</Text>
-                </Pressable>
-              ) : null}
-              <Pressable
-                onPress={wizard.handleStepForward}
-                style={[
-                  styles.btnPrimary,
-                  { flex: wizard.currentStep > 0 ? 1.6 : 1 },
-                  !wizard.canContinue ? { opacity: 0.6 } : null,
-                ]}
-                disabled={!wizard.canContinue}
-              >
-                <Text style={{ color: colors.ctaText, fontSize: 16, fontWeight: "900" }}>
-                  {wizard.stepButtonText}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
+          <AddItemStickyFooter
+            currentStep={wizard.currentStep}
+            bottomPadding={floatingDockSpace + 10}
+            statusText={wizard.stepStatusText}
+            buttonText={wizard.stepButtonText}
+            canContinue={wizard.canContinue}
+            onBack={wizard.handleStepBack}
+            onForward={wizard.handleStepForward}
+          />
 
           <Modal
             visible={state.showCurrencyPicker}
@@ -213,10 +195,8 @@ export const AddItemWizard = React.memo(function AddItemWizard({
             <Pressable
               onPress={() => actions.setShowCurrencyPicker(false)}
               style={{
-                flex: 1,
-                backgroundColor: "rgba(0,0,0,0.2)",
+                ...auraSheetBackdropStyle(colors),
                 alignItems: "center",
-                justifyContent: "center",
                 padding: 24,
               }}
             >
@@ -224,37 +204,34 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                 style={{
                   width: "100%",
                   maxWidth: 320,
-                  borderRadius: 16,
-                  backgroundColor: colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: colors.border,
+                  ...auraCardStyle(colors, "sheet"),
                   padding: 14,
                   gap: 8,
                 }}
               >
-                <Text style={{ fontSize: 16, fontWeight: "800", color: colors.text }}>
+                <Text style={[auraTypography.cardTitle, { color: colors.text }]}>
                   Select currency
                 </Text>
                 {derived.CURRENCIES.map((currency: string) => (
                   <Pressable
                     key={currency}
                     onPress={() => {
+                      actions.markUserEdited("price");
                       actions.setPriceCurrency(currency);
+                      if (state.priceAmount) {
+                        actions.setPriceSource("manual");
+                        actions.setPriceDisplay("");
+                      }
                       actions.setShowCurrencyPicker(false);
                     }}
                     style={{
-                      paddingVertical: 10,
-                      paddingHorizontal: 12,
-                      borderRadius: 12,
-                      borderWidth: 1,
-                      borderColor: state.priceCurrency === currency ? colors.ctaCream : colors.border,
-                      backgroundColor: state.priceCurrency === currency ? colors.ctaCream : colors.chipBackground,
+                      ...auraChipStyle(colors, state.priceCurrency === currency ? "selected" : "unselected"),
+                      alignItems: "flex-start",
                     }}
                   >
                     <Text
                       style={{
-                        color: state.priceCurrency === currency ? colors.ctaText : colors.text,
-                        fontWeight: "800",
+                        ...auraChipTextStyle(colors, state.priceCurrency === currency ? "selected" : "unselected"),
                       }}
                     >
                       {currency}
@@ -276,23 +253,21 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                 onPress={() => actions.setShowAttributeSheet(null)}
                 style={{
                   ...StyleSheet.absoluteFillObject,
-                  backgroundColor: "rgba(0,0,0,0.25)",
+                  backgroundColor: colors.overlay,
                 }}
               />
               <View
                 style={{
-                  backgroundColor: colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderTopLeftRadius: 20,
-                  borderTopRightRadius: 20,
+                  ...auraCardStyle(colors, "sheet"),
+                  borderBottomLeftRadius: 0,
+                  borderBottomRightRadius: 0,
                   paddingHorizontal: 16,
                   paddingTop: 14,
                   paddingBottom: Math.max(14, insets.bottom + 6),
                   gap: 10,
                 }}
               >
-                <Text style={{ fontSize: 17, fontWeight: "800", color: colors.text }}>
+                <Text style={[auraTypography.cardTitle, { color: colors.text }]}>
                   {state.showAttributeSheet === "material"
                     ? "Material"
                     : state.showAttributeSheet === "pattern"

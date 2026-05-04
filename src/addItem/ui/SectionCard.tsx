@@ -1,6 +1,7 @@
 import React from "react";
 import { View } from "react-native";
 
+import { auraCardStyle } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
@@ -16,16 +17,14 @@ export const SectionCard = React.memo(function SectionCard({
     <View
       style={{
         gap: 12,
+        ...auraCardStyle(colors, "card"),
         padding: layout.cardPadding,
         borderRadius: layout.mediumRadius,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: "rgba(255,255,255,0.045)",
         shadowColor: colors.shadow,
-        shadowOpacity: 0.12,
-        shadowRadius: 18,
-        shadowOffset: { width: 0, height: 10 },
-        elevation: 2,
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 6 },
+        elevation: 1,
       }}
     >
       {children}

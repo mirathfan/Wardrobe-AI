@@ -25,6 +25,13 @@ import { db } from "../../lib/firebase";
 import { uploadItemPhoto } from "../../lib/uploadImage";
 import { analyzeCutoutVisualNormalization, type VisualNormalization } from "../../lib/visualNormalization";
 
+type FileSystemCompat = typeof FileSystem & {
+  cacheDirectory?: string | null;
+  documentDirectory?: string | null;
+};
+
+const fileSystem = FileSystem as FileSystemCompat;
+
 type UploadedPhotoRecord = {
   imageId: string;
   itemId: string;
@@ -86,6 +93,8 @@ const CUTOUT_ERROR_MESSAGE =
   "We couldn't remove the background. Please try again.";
 const PHOTO_PROCESSING_ERROR_MESSAGE =
   "We couldn't prepare this photo. Please try again.";
+const REMOTE_CUTOUT_PREP_MESSAGE = "Download this image to refine the cutout.";
+const REMOTE_CUTOUT_FAILED_MESSAGE = "Couldn’t prepare this image. Try changing the photo.";
 
 function makeSelectedPhotoId() {
   return randomId();
@@ -116,6 +125,12 @@ function userFacingPhotoProcessingError(error: unknown) {
   const rawMessage = error instanceof Error ? error.message : String(error ?? "");
   const message = rawMessage.trim();
   const lower = message.toLowerCase();
+  if (lower.includes("remote images cannot") || lower.includes("download this image")) {
+    return REMOTE_CUTOUT_PREP_MESSAGE;
+  }
+  if (lower.includes("couldn’t prepare this image") || lower.includes("couldn't prepare this image")) {
+    return REMOTE_CUTOUT_FAILED_MESSAGE;
+  }
   if (
     lower.includes("renderasync") ||
     lower.includes("not readable") ||
@@ -125,6 +140,10 @@ function userFacingPhotoProcessingError(error: unknown) {
     return CUTOUT_ERROR_MESSAGE;
   }
   return message || PHOTO_PROCESSING_ERROR_MESSAGE;
+}
+
+function isRemoteImageUri(uri?: string | null) {
+  return /^https?:\/\//i.test(String(uri ?? "").trim());
 }
 
 export function usePhotoStep({
@@ -380,6 +399,31 @@ export function usePhotoStep({
     []
   );
 
+  const prepareImageUriForCutout = useCallback(async (uri: string) => {
+    if (!isRemoteImageUri(uri)) return uri;
+    const baseDirectory = fileSystem.cacheDirectory ?? fileSystem.documentDirectory;
+    if (!baseDirectory || typeof FileSystem.downloadAsync !== "function") {
+      throw new Error(REMOTE_CUTOUT_FAILED_MESSAGE);
+    }
+    try {
+      const destination = `${baseDirectory}aura-cutout-${randomId()}.jpg`;
+      const result = await FileSystem.downloadAsync(uri, destination);
+      if (!result?.uri) throw new Error(REMOTE_CUTOUT_FAILED_MESSAGE);
+      setSelectedPhotos((prev) =>
+        prev.map((entry) =>
+          entry.localUri === uri || entry.originalUri === uri
+            ? { ...entry, localUri: result.uri }
+            : entry
+        )
+      );
+      setOriginalPickedPhotoUri(result.uri);
+      setPendingPhotoUri(result.uri);
+      return result.uri;
+    } catch {
+      throw new Error(REMOTE_CUTOUT_FAILED_MESSAGE);
+    }
+  }, []);
+
   const buildNormalizedPreviewCutout = useCallback(
     async (params: {
       cutoutUri: string;
@@ -474,8 +518,9 @@ export function usePhotoStep({
     setRefiningCutout(true);
     setBgRemovalError(null);
     try {
+      const localCutoutInputUri = await prepareImageUriForCutout(originalPickedPhotoUri);
       const cutout = await runBackgroundRemoval({
-        inputUri: originalPickedPhotoUri,
+        inputUri: localCutoutInputUri,
         width: pendingPhotoWidth,
         height: null,
         options,
@@ -516,11 +561,11 @@ export function usePhotoStep({
         setBgRemovalError(CUTOUT_ERROR_MESSAGE);
       }
       lastCompletedRefineKeyRef.current = getRefineRequestKey(
-        originalPickedPhotoUri,
+        localCutoutInputUri,
         refineValue
       );
-    } catch {
-      setBgRemovalError(CUTOUT_ERROR_MESSAGE);
+    } catch (error) {
+      setBgRemovalError(userFacingPhotoProcessingError(error));
     } finally {
       if (requestId === latestRefineRequestIdRef.current) {
         setRefiningCutout(false);
@@ -532,6 +577,7 @@ export function usePhotoStep({
     commitPendingCutoutState,
     originalPickedPhotoUri,
     pendingPhotoWidth,
+    prepareImageUriForCutout,
     refineValue,
     analyzeCurrentVisualNormalization,
     runBackgroundRemoval,
@@ -565,8 +611,9 @@ export function usePhotoStep({
           setRefiningCutout(true);
           extractionRef.current?.actions?.setAutofillRunningState?.();
           setBgRemovalError(null);
+          const localCutoutInputUri = await prepareImageUriForCutout(originalPickedPhotoUri);
           const cutout = await runBackgroundRemoval({
-            inputUri: originalPickedPhotoUri,
+            inputUri: localCutoutInputUri,
             width: pendingPhotoWidth,
             height: null,
             options: { threshold, cleanupRadius, feather, edgeTighten, edgePolish, maskToAlpha },
@@ -608,9 +655,9 @@ export function usePhotoStep({
           if (!usableCutout) {
             setBgRemovalError(CUTOUT_ERROR_MESSAGE);
           }
-        } catch {
+        } catch (error) {
           if (requestId === latestRefineRequestIdRef.current) {
-            setBgRemovalError(CUTOUT_ERROR_MESSAGE);
+            setBgRemovalError(userFacingPhotoProcessingError(error));
           }
         } finally {
           if (requestId === latestRefineRequestIdRef.current) {
@@ -640,6 +687,7 @@ export function usePhotoStep({
       extractionRef,
       originalPickedPhotoUri,
       pendingPhotoWidth,
+      prepareImageUriForCutout,
       analyzeCurrentVisualNormalization,
       runBackgroundRemoval,
     ]
@@ -1092,13 +1140,12 @@ export function usePhotoStep({
     }
 
     const primaryId = primaryPhotoId ?? activeEntries[0]?.id ?? null;
-    const reusableUpload =
-      activeEntries.every(
-        (entry) =>
-          entry.uploaded &&
-          entry.uploaded.itemId === itemId &&
-          entry.uploaded.photoHash === entry.photoHash
-      );
+    const canReuseUploadedEntry = (entry: SelectedPhotoEntry) =>
+      !!entry.uploaded &&
+      (entry.uploaded.itemId === itemId || isRemoteImageUri(entry.localUri)) &&
+      entry.uploaded.photoHash === entry.photoHash;
+
+    const reusableUpload = activeEntries.every(canReuseUploadedEntry);
 
     let uploadedEntries = activeEntries;
     if (!reusableUpload) {
@@ -1106,11 +1153,7 @@ export function usePhotoStep({
       try {
         uploadedEntries = await Promise.all(
           activeEntries.map(async (entry, index) => {
-            if (
-              entry.uploaded &&
-              entry.uploaded.itemId === itemId &&
-              entry.uploaded.photoHash === entry.photoHash
-            ) {
+            if (canReuseUploadedEntry(entry)) {
               return entry;
             }
             const uploadedUrl = await uploadWithTimeout(
@@ -1148,10 +1191,9 @@ export function usePhotoStep({
         setSelectedPhotos(uploadedEntries);
         setUploadError(null);
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Photo upload failed. Please retry.";
+        const message = userFacingPhotoProcessingError(error);
         setUploadError(message);
-        throw error;
+        throw new Error(message);
       } finally {
         endUploadAttempt(attemptId, "resolve-photo-fields");
       }

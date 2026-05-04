@@ -1,6 +1,7 @@
 import React from "react";
 import { Text, View } from "react-native";
 
+import { auraTypography } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 export const SectionTitle = React.memo(function SectionTitle({
@@ -24,13 +25,13 @@ export const SectionTitle = React.memo(function SectionTitle({
           gap: 10,
         }}
       >
-        <Text style={{ color: colors.text, fontSize: 18, lineHeight: 23, fontWeight: "900" }}>
+        <Text style={[auraTypography.cardTitle, { color: colors.text }]}>
           {title}
         </Text>
         {right}
       </View>
       {subtitle ? (
-        <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
+        <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>
           {subtitle}
         </Text>
       ) : null}

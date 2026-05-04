@@ -21,10 +21,13 @@ import {
   AUTOFILL_DEBOUNCE_MS,
   AUTOFILL_TIMEOUT_MS,
   AutofillSource,
+  buildUsefulItemName,
   hasTwoLegRegionCue,
+  isWeakItemName,
   nearestColorLabel,
   norm,
   normColor,
+  normalizeDisplayColorToDefault,
   normalizeColorList,
   normalizeIngestionStatus,
   parseHexRgb,
@@ -109,6 +112,7 @@ export function useItemExtraction({
   const [aiFit, setAiFit] = useState<string | null>(null);
   const [aiOccasionTags, setAiOccasionTags] = useState<string[]>([]);
   const [aiSeasonTags, setAiSeasonTags] = useState<string[]>([]);
+  const [aiColorNeedsReview, setAiColorNeedsReview] = useState(false);
 
   const aiRunIdRef = useRef(0);
   const lastAutofillStartedHashRef = useRef<string | null>(null);
@@ -257,6 +261,7 @@ export function useItemExtraction({
     setIngestionStatus(null);
     setAiPattern(null);
     setAiMaterial(null);
+    setAiColorNeedsReview(false);
     photo.refs.syncedPreviewUriRef.current = null;
   }, [createSessionRef, draftItemId, draftPhotoHash, photo.refs, stopDraftSubscription]);
 
@@ -335,6 +340,11 @@ export function useItemExtraction({
       fit: norm(data?.fit),
       occasionTags: Array.isArray(data?.occasionTags) ? data.occasionTags : [],
       seasonTags: Array.isArray(data?.seasonTags) ? data.seasonTags : [],
+      estimatedValue: data?.estimatedValue ?? null,
+      purchasePrice: data?.purchasePrice ?? null,
+      retailPrice: data?.retailPrice ?? null,
+      currency: data?.currency ?? data?.priceCurrency ?? null,
+      priceSource: data?.priceSource ?? null,
       primaryUrl: norm(data?.photos?.primaryUrl ?? data?.photoUrl),
       cleanedPhotoUrl: norm(data?.photos?.cleanedUrl ?? data?.photos?.cleanedPhotoUrl),
     });
@@ -414,6 +424,31 @@ export function useItemExtraction({
     setAiFit(norm(data?.fit) || null);
     setAiOccasionTags(Array.isArray(data?.occasionTags) ? data.occasionTags : []);
     setAiSeasonTags(Array.isArray(data?.seasonTags) ? data.seasonTags : []);
+    setAiColorNeedsReview(Boolean(data?.colorNeedsReview));
+    const incomingPrice =
+      typeof data?.estimatedValue === "number"
+        ? data.estimatedValue
+        : typeof data?.purchasePrice === "number"
+          ? data.purchasePrice
+          : typeof data?.retailPrice === "number"
+            ? data.retailPrice
+            : typeof data?.priceAmount === "number"
+              ? data.priceAmount
+              : typeof data?.price === "number"
+                ? data.price
+                : null;
+    if (!draft.refs.userEditedKeysRef.current.has("price") && incomingPrice != null) {
+      draft.actions.setPriceAmount(String(incomingPrice));
+      draft.actions.setPriceCurrency(norm(data?.currency ?? data?.priceCurrency) || "USD");
+      draft.actions.setPriceSource(
+        data?.priceSource === "product_link" ||
+          data?.priceSource === "manual" ||
+          data?.priceSource === "estimated"
+          ? data.priceSource
+          : "product_link"
+      );
+      draft.actions.setPriceDisplay(norm(data?.priceDisplay) || "");
+    }
 
     const serverPrimaryUrl = data?.photos?.primaryUrl ?? data?.photoUrl ?? null;
     const serverCleanedPhotoUrl =
@@ -480,9 +515,21 @@ export function useItemExtraction({
         : warmNeutralDominant && (rawPrimary === "Orange" || rawPrimary === "Grey")
         ? ""
         : rawPrimary;
+    const displayColorFallback = normalizeDisplayColorToDefault(
+      [
+        data?.displayColor,
+        ...(Array.isArray(data?.displayColors) ? data.displayColors : []),
+        data?.colorLabel,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
     const finalColors = [
       ...filteredRawColors,
       ...(filteredRawPrimary ? [filteredRawPrimary] : []),
+      ...(filteredRawColors.length === 0 && !filteredRawPrimary && displayColorFallback
+        ? [displayColorFallback]
+        : []),
       ...(filteredRawColors.length === 0 && !filteredRawPrimary && dominantColorLabel
         ? [dominantColorLabel]
         : []),
@@ -721,10 +768,18 @@ export function useItemExtraction({
         ? norm(String(data.displayColors[0] ?? ""))
         : "") ||
       "";
+    const generatedSummaryName = buildUsefulItemName({
+      displayColor: displayColorForName,
+      colors: finalColors,
+      material: incomingMaterial,
+      fit: norm(data?.fit),
+      subCategory: resolvedSubCategory,
+      category: summaryCategory,
+    });
     const summaryName =
-      colorNeedsReview
-        ? ""
-        : rawSummaryName ||
+      !isWeakItemName(rawSummaryName)
+        ? rawSummaryName
+        : generatedSummaryName ||
           [displayColorForName, summaryCategory]
             .filter(Boolean)
             .map((part) => humanizeAutofillLabel(part))
@@ -1099,6 +1154,7 @@ export function useItemExtraction({
     setAiFit(null);
     setAiOccasionTags([]);
     setAiSeasonTags([]);
+    setAiColorNeedsReview(false);
     setAiDebugInputUri("");
     setAiDebugInputSource("");
     setAiDebugAspectRatio(null);
@@ -1151,6 +1207,7 @@ export function useItemExtraction({
     setAiFit(null);
     setAiOccasionTags([]);
     setAiSeasonTags([]);
+    setAiColorNeedsReview(false);
     aiRunIdRef.current += 1;
     aiLockedValuesRef.current = { runId: aiRunIdRef.current };
     lastAutofillStartedHashRef.current = null;
@@ -1194,6 +1251,7 @@ export function useItemExtraction({
     setAiFit(null);
     setAiOccasionTags([]);
     setAiSeasonTags([]);
+    setAiColorNeedsReview(false);
   }, []);
 
   const autofillTriggerUri = useMemo(
@@ -1460,6 +1518,7 @@ export function useItemExtraction({
     aiFit,
     aiOccasionTags,
     aiSeasonTags,
+    aiColorNeedsReview,
   };
 
   const refs = {

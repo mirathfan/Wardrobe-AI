@@ -2,6 +2,7 @@ import React from "react";
 import { Text } from "react-native";
 
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import { auraChipStyle, auraChipTextStyle } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 export const Pill = React.memo(function Pill({
@@ -23,23 +24,15 @@ export const Pill = React.memo(function Pill({
       pressedScale={0.96}
       pressedOpacity={0.88}
       style={{
-        minHeight: 38,
-        justifyContent: "center",
-        paddingVertical: 8,
+        ...auraChipStyle(colors, active ? "selected" : "unselected"),
         paddingHorizontal: 14,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: active ? colors.ctaCream : colors.border,
-        backgroundColor: active ? colors.ctaCream : colors.chipBackground,
       }}
     >
       <Text
-        style={{
-          color: active ? colors.ctaText : colors.text,
-          fontSize: 13,
-          lineHeight: 17,
-          fontWeight: "800",
-        }}
+        style={[
+          auraChipTextStyle(colors, active ? "selected" : "unselected"),
+          { fontSize: 13, lineHeight: 17 },
+        ]}
       >
         {label}
       </Text>

@@ -1,5 +1,6 @@
 // Requires @react-native-community/slider in the Expo dev client; falls back to stepper controls when unavailable.
 import Slider from "@react-native-community/slider";
+import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import React, { useEffect, useState } from "react";
 import {
@@ -15,6 +16,7 @@ import {
 } from "react-native";
 import { SafeScreen } from "./SafeScreen";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { Colors } from "@/constants/theme";
 
 type PhotoEditorSectionProps = {
   previewUri: string | null;
@@ -49,6 +51,7 @@ type PhotoEditorSectionProps = {
   onRotate?: () => void;
   onAdjust?: () => void;
   onRefineOpen?: () => void;
+  frameless?: boolean;
 };
 
 type RefineControlsProps = {
@@ -93,6 +96,7 @@ function clamp01(value: number) {
 }
 
 const sliderThumbImage = require("../assets/sliderThumb.png");
+const editorColors = Colors.dark;
 
 function RefineControls(props: RefineControlsProps) {
   const {
@@ -145,17 +149,17 @@ function RefineControls(props: RefineControlsProps) {
             justifyContent: "space-between",
           }}
         >
-          <Text style={{ color: "#111", fontSize: 14, fontWeight: "700" }}>
+          <Text style={{ color: editorColors.text, fontSize: 14, fontWeight: "700" }}>
             Clean more: {percent}%
           </Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <Text style={{ color: "#666", fontSize: 12, fontWeight: "700" }}>
+            <Text style={{ color: editorColors.textSecondary, fontSize: 12, fontWeight: "700" }}>
               {statusLabel}
             </Text>
             <Pressable onPress={onReset} disabled={isProcessing}>
               <Text
                 style={{
-                  color: "#111",
+                  color: editorColors.ctaCream,
                   fontSize: 12,
                   fontWeight: "700",
                   opacity: isProcessing ? 0.5 : 1,
@@ -170,7 +174,7 @@ function RefineControls(props: RefineControlsProps) {
           <Pressable onPress={() => nudge(-0.05)} style={stepperButton}>
             <Text style={stepperButtonText}>-</Text>
           </Pressable>
-          <Text style={{ minWidth: 56, textAlign: "center", fontWeight: "700", color: "#111" }}>
+          <Text style={{ minWidth: 56, textAlign: "center", fontWeight: "700", color: editorColors.text }}>
             {percent}%
           </Text>
           <Pressable onPress={() => nudge(0.05)} style={stepperButton}>
@@ -184,17 +188,17 @@ function RefineControls(props: RefineControlsProps) {
   return (
     <View style={{ gap: 8 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={{ color: "#111", fontSize: 14, fontWeight: "700" }}>
+        <Text style={{ color: editorColors.text, fontSize: 14, fontWeight: "700" }}>
           Clean more: {percent}%
         </Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <Text style={{ color: "#666", fontSize: 12, fontWeight: "700" }}>
+          <Text style={{ color: editorColors.textSecondary, fontSize: 12, fontWeight: "700" }}>
             {statusLabel}
           </Text>
           <Pressable onPress={onReset} disabled={isProcessing}>
             <Text
               style={{
-                color: "#111",
+                color: editorColors.ctaCream,
                 fontSize: 12,
                 fontWeight: "700",
                 opacity: isProcessing ? 0.5 : 1,
@@ -214,11 +218,11 @@ function RefineControls(props: RefineControlsProps) {
             step={0.01}
             onValueChange={handleValueChange}
             onSlidingComplete={handleSlidingComplete}
-            minimumTrackTintColor="#111"
-            maximumTrackTintColor="#e5e5e5"
+            minimumTrackTintColor={editorColors.ctaCream}
+            maximumTrackTintColor={editorColors.borderStrong}
             tapToSeek={false}
             thumbImage={Platform.OS === "ios" ? sliderThumbImage : undefined}
-            thumbTintColor={Platform.OS === "ios" ? undefined : "#111"}
+            thumbTintColor={Platform.OS === "ios" ? undefined : editorColors.ctaCream}
           />
         </NativeGuard>
       </View>
@@ -270,8 +274,8 @@ function DebugTuneRow(props: {
   return (
     <View style={{ gap: 8 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={{ color: "#111", fontSize: 13, fontWeight: "700" }}>{label}</Text>
-        <Text style={{ color: "#666", fontSize: 13, fontVariant: ["tabular-nums"] }}>
+        <Text style={{ color: editorColors.text, fontSize: 13, fontWeight: "700" }}>{label}</Text>
+        <Text style={{ color: editorColors.textSecondary, fontSize: 13, fontVariant: ["tabular-nums"] }}>
           {formatDebugValue(value, decimals)}
         </Text>
       </View>
@@ -285,11 +289,11 @@ function DebugTuneRow(props: {
               step={step}
               onValueChange={(nextValue) => onChange(clamp(nextValue), false)}
               onSlidingComplete={(nextValue) => onChange(clamp(nextValue), true)}
-              minimumTrackTintColor="#111"
-              maximumTrackTintColor="#e5e5e5"
+              minimumTrackTintColor={editorColors.ctaCream}
+              maximumTrackTintColor={editorColors.borderStrong}
               tapToSeek={false}
               thumbImage={Platform.OS === "ios" ? sliderThumbImage : undefined}
-              thumbTintColor={Platform.OS === "ios" ? undefined : "#111"}
+              thumbTintColor={Platform.OS === "ios" ? undefined : editorColors.ctaCream}
             />
           </NativeGuard>
         </View>
@@ -303,7 +307,7 @@ function DebugTuneRow(props: {
               minWidth: 72,
               textAlign: "center",
               fontWeight: "700",
-              color: "#111",
+              color: editorColors.text,
               fontVariant: ["tabular-nums"],
             }}
           >
@@ -325,17 +329,17 @@ function PreviewCanvas(props: {
   checkerboard?: boolean;
 }) {
   const { uri, large = false, compact = false, checkerboard = false } = props;
-  const previewPadding = compact ? 22 : large ? 28 : 24;
-  const previewBackgroundColor = checkerboard ? "#fff" : "#E9E8E3";
+  const previewPadding = compact ? 18 : large ? 28 : 24;
+  const previewBackgroundColor = editorColors.boardLight;
 
   return (
     <View
       style={{
         width: "100%",
-        aspectRatio: compact ? 1 : large ? 4 / 5 : 1,
+        aspectRatio: compact ? 1.14 : large ? 4 / 5 : 1,
         borderRadius: large ? 20 : 16,
         borderWidth: 1,
-        borderColor: "#e7e7e7",
+        borderColor: editorColors.borderWarm,
         backgroundColor: previewBackgroundColor,
         overflow: "hidden",
         alignItems: "center",
@@ -357,8 +361,8 @@ function PreviewCanvas(props: {
           style={{
             width: "100%",
             height: "100%",
-            shadowColor: "#000",
-            shadowOpacity: checkerboard ? 0 : 0.08,
+            shadowColor: editorColors.ctaCream,
+            shadowOpacity: checkerboard ? 0 : 0.12,
             shadowRadius: 16,
             shadowOffset: { width: 0, height: 5 },
           }}
@@ -390,7 +394,7 @@ function CheckerboardBackground() {
             style={{
               width: "12.5%",
               height: "12.5%",
-              backgroundColor: dark ? "#d9d9d9" : "#f3f3f3",
+              backgroundColor: dark ? "rgba(25,0,25,0.06)" : editorColors.boardLight,
             }}
           />
         );
@@ -432,6 +436,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     onRotate,
     onAdjust,
     onRefineOpen,
+    frameless = false,
   } = props;
   const { colors } = useAppTheme();
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -483,11 +488,20 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     ...editorButtonText,
     color: colors.text,
   };
+  const themedDestructiveEditorButton = {
+    ...editorButton,
+    borderColor: "rgba(255,77,79,0.28)",
+    backgroundColor: "rgba(255,77,79,0.08)",
+  };
+  const themedDestructiveEditorButtonText = {
+    ...editorButtonText,
+    color: colors.danger,
+  };
   const themedPrimaryEditorButtonText = {
     ...editorButtonText,
     color: colors.ctaText,
   };
-  const emptyPreviewHeight = Math.min(260, Math.max(210, screenHeight * 0.28));
+  const emptyPreviewHeight = Math.min(220, Math.max(176, screenHeight * 0.22));
 
   function handleNativeSliderError() {
     setSliderErrored(true);
@@ -498,11 +512,11 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
       <View
         style={{
           gap: 12,
-          padding: 12,
-          borderRadius: 20,
-          borderWidth: 1,
-          borderColor: colors.border,
-          backgroundColor: colors.inputBackground,
+          padding: frameless ? 0 : 12,
+          borderRadius: frameless ? 0 : 22,
+          borderWidth: frameless ? 0 : 1,
+          borderColor: "rgba(251,228,216,0.12)",
+          backgroundColor: frameless ? "transparent" : "rgba(18,0,20,0.62)",
         }}
       >
         {displayedPreviewUri ? (
@@ -522,15 +536,33 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
               height: emptyPreviewHeight,
               borderRadius: 18,
               borderWidth: 1,
-              borderColor: colors.border,
-              backgroundColor: colors.surfaceSoft,
+              borderColor: "rgba(251,228,216,0.14)",
+              backgroundColor: "rgba(43,18,76,0.34)",
               alignItems: "center",
               justifyContent: "center",
-              paddingHorizontal: 24,
+              paddingHorizontal: 22,
+              gap: 10,
             }}
           >
-            <Text style={{ color: colors.textSecondary, fontWeight: "800", textAlign: "center" }}>
-              Pick a photo to start.
+            <View
+              style={{
+                width: 46,
+                height: 46,
+                borderRadius: 999,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "rgba(223,182,178,0.12)",
+                borderWidth: 1,
+                borderColor: "rgba(223,182,178,0.18)",
+              }}
+            >
+              <Ionicons name="cloud-upload-outline" size={22} color={colors.ctaCream} />
+            </View>
+            <Text style={{ color: colors.text, fontWeight: "900", textAlign: "center", fontSize: 16 }}>
+              Add an item photo
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontWeight: "600", textAlign: "center", fontSize: 13 }}>
+              A clean front-facing image works best.
             </Text>
           </View>
         )}
@@ -544,31 +576,28 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
                   setActiveModalPreview("cutout");
                   setIsModalVisible(true);
                 }}
-                style={[themedPrimaryEditorButton, { minWidth: 120 }]}
+                style={[themedPrimaryEditorButton, { minHeight: 42, flexGrow: 1 }]}
               >
                 <Text style={themedPrimaryEditorButtonText}>Refine cutout</Text>
               </Pressable>
             ) : null}
             <Pressable
               onPress={onReplace ?? onPickLibrary}
-              style={[themedEditorButton, { minWidth: 120 }]}
+              style={[themedEditorButton, { minHeight: 42, flexGrow: 1 }]}
             >
-              <Text style={themedEditorButtonText}>Change photo</Text>
+              <Text style={themedEditorButtonText}>Change</Text>
             </Pressable>
-            <Pressable onPress={onUseCamera} style={[themedEditorButton, { minWidth: 110 }]}>
-              <Text style={themedEditorButtonText}>Use camera</Text>
-            </Pressable>
-            <Pressable onPress={onRemove} style={themedEditorButton}>
-              <Text style={themedEditorButtonText}>Remove</Text>
+            <Pressable onPress={onRemove} style={[themedDestructiveEditorButton, { minHeight: 42 }]}>
+              <Text style={themedDestructiveEditorButtonText}>Remove</Text>
             </Pressable>
           </View>
         ) : (
           <View style={{ flexDirection: "row", gap: 8 }}>
             <Pressable onPress={onPickLibrary} style={[themedPrimaryEditorButton, { flex: 1 }]}>
-              <Text style={themedPrimaryEditorButtonText}>Pick from gallery</Text>
+              <Text style={themedPrimaryEditorButtonText}>Choose Photo</Text>
             </Pressable>
             <Pressable onPress={onUseCamera} style={[themedEditorButton, { flex: 1 }]}>
-              <Text style={themedEditorButtonText}>Use camera</Text>
+              <Text style={themedEditorButtonText}>Camera</Text>
             </Pressable>
           </View>
         )}
@@ -596,10 +625,10 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
         }}
       >
         <SafeScreen
-          backgroundColor="#111"
+          backgroundColor={colors.background}
           includeBottomInset={false}
         >
-        <View style={{ flex: 1, backgroundColor: "#111" }}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
           <View
             style={{
               height: 72,
@@ -608,7 +637,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
               alignItems: "center",
               justifyContent: "space-between",
               borderBottomWidth: 1,
-              borderBottomColor: "rgba(255,255,255,0.08)",
+              borderBottomColor: colors.border,
             }}
           >
             <Pressable
@@ -619,9 +648,9 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
               hitSlop={10}
               style={{ minHeight: 40, justifyContent: "center" }}
             >
-              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "800" }}>Cancel</Text>
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: "800" }}>Cancel</Text>
             </Pressable>
-            <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }}>Refine Cutout</Text>
+            <Text style={{ color: colors.text, fontSize: 18, fontWeight: "800" }}>Refine Cutout</Text>
             <Pressable
               onPress={() => {
                 setActiveModalPreview("cutout");
@@ -630,7 +659,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
               hitSlop={10}
               style={{ minHeight: 40, justifyContent: "center" }}
             >
-              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "800" }}>Apply</Text>
+              <Text style={{ color: colors.ctaCream, fontSize: 15, fontWeight: "800" }}>Apply</Text>
             </Pressable>
           </View>
 
@@ -656,8 +685,10 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
                   width: Math.max(280, screenWidth - 32),
                   height: Math.max(360, screenHeight * 0.55),
                   borderRadius: 24,
+                  borderWidth: 1,
+                  borderColor: colors.borderWarm,
                   overflow: "hidden",
-                  backgroundColor: "#f8f8f8",
+                  backgroundColor: colors.boardLight,
                   alignItems: "center",
                   justifyContent: "center",
                 }}
@@ -679,7 +710,9 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
               paddingBottom: 24,
               borderTopLeftRadius: 24,
               borderTopRightRadius: 24,
-              backgroundColor: "#fff",
+              borderTopWidth: 1,
+              borderColor: colors.border,
+              backgroundColor: "rgba(18,0,20,0.96)",
               gap: 10,
             }}
           >
@@ -688,32 +721,32 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
                 <Pressable
                   onPress={() => setActiveModalPreview("cutout")}
                   style={[
-                    editorButton,
+                    themedEditorButton,
                     activeModalPreview === "cutout" ? activePreviewButton : null,
                   ]}
                 >
-                  <Text style={editorButtonText}>Show cutout</Text>
+                  <Text style={themedEditorButtonText}>Show cutout</Text>
                 </Pressable>
               ) : null}
               {onAdjust ? (
-                <Pressable onPress={onAdjust} style={editorButton}>
-                  <Text style={editorButtonText}>Adjust</Text>
+                <Pressable onPress={onAdjust} style={themedEditorButton}>
+                  <Text style={themedEditorButtonText}>Adjust</Text>
                 </Pressable>
               ) : null}
               {maskDebugUri ? (
                 <Pressable
                   onPress={() => setActiveModalPreview("mask")}
                   style={[
-                    editorButton,
+                    themedEditorButton,
                     activeModalPreview === "mask" ? activePreviewButton : null,
                   ]}
                 >
-                  <Text style={editorButtonText}>Show mask</Text>
+                  <Text style={themedEditorButtonText}>Show mask</Text>
                 </Pressable>
               ) : null}
               {onRotate ? (
-                <Pressable onPress={onRotate} style={editorButton}>
-                  <Text style={editorButtonText}>Rotate</Text>
+                <Pressable onPress={onRotate} style={themedEditorButton}>
+                  <Text style={themedEditorButtonText}>Rotate</Text>
                 </Pressable>
               ) : null}
             </View>
@@ -741,19 +774,19 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
                     padding: 12,
                     borderRadius: 16,
                     borderWidth: 1,
-                    borderColor: "#ececec",
-                    backgroundColor: "#fafafa",
+                    borderColor: colors.border,
+                    backgroundColor: "rgba(18,0,20,0.76)",
                   }}
                 >
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <Text style={{ color: "#111", fontSize: 13, fontWeight: "800" }}>
+                    <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800" }}>
                       Edge polish
                     </Text>
-                    <Text style={{ color: "#666", fontSize: 13, fontVariant: ["tabular-nums"] }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 13, fontVariant: ["tabular-nums"] }}>
                       {formatDebugValue(edgePolish, 2)}
                     </Text>
                   </View>
-                  <Text style={{ color: "#666", fontSize: 12 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
                     Subtle contour cleanup for a smoother premium edge.
                   </Text>
                   <DebugTuneRow
@@ -774,15 +807,15 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
                     padding: 12,
                     borderRadius: 16,
                     borderWidth: 1,
-                    borderColor: "#ececec",
-                    backgroundColor: "#fafafa",
+                    borderColor: colors.border,
+                    backgroundColor: "rgba(18,0,20,0.76)",
                   }}
                 >
                   <View style={{ gap: 2 }}>
-                    <Text style={{ color: "#111", fontSize: 13, fontWeight: "800" }}>
+                    <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800" }}>
                       Debug tuning
                     </Text>
-                    <Text style={{ color: "#666", fontSize: 12 }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
                       Temporary live Apple Vision parameters for visual tuning.
                     </Text>
                   </View>
@@ -831,12 +864,12 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
                     onChange={onDebugEdgeTightenChange}
                   />
                 </View>
-                <Text style={{ color: "#666", fontSize: 12 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
                   Drag to remove leftover background. Release for final quality.
                 </Text>
               </>
             ) : (
-              <Text style={{ color: "#666", fontSize: 12 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
                 Refine becomes available after a removable cutout is ready.
               </Text>
             )}
@@ -849,23 +882,24 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
 }
 
 const editorButton = {
+  minHeight: 44,
   paddingVertical: 10,
   paddingHorizontal: 14,
   borderRadius: 999,
   borderWidth: 1,
-  borderColor: "#ddd",
-  backgroundColor: "#fff",
+  borderColor: editorColors.border,
+  backgroundColor: editorColors.chipBackground,
   alignItems: "center" as const,
   justifyContent: "center" as const,
 };
 
 const activePreviewButton = {
-  borderColor: "#111",
-  backgroundColor: "#f3f4f6",
+  borderColor: editorColors.purpleBorder,
+  backgroundColor: editorColors.purpleSurface,
 };
 
 const editorButtonText = {
-  color: "#111",
+  color: editorColors.text,
   fontWeight: "700" as const,
 };
 
@@ -874,14 +908,14 @@ const stepperButton = {
   height: 38,
   borderRadius: 999,
   borderWidth: 1,
-  borderColor: "#ddd",
-  backgroundColor: "#fff",
+  borderColor: editorColors.border,
+  backgroundColor: editorColors.chipBackground,
   alignItems: "center" as const,
   justifyContent: "center" as const,
 };
 
 const stepperButtonText = {
-  color: "#111",
+  color: editorColors.ctaCream,
   fontSize: 18,
   fontWeight: "800" as const,
 };

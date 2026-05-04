@@ -13,8 +13,9 @@ import {
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Alert, LayoutAnimation, Platform, UIManager } from "react-native";
 
-import { norm, normColor } from "../controllerShared";
+import { type AddItemMode, norm, normColor } from "../controllerShared";
 import { db } from "../../lib/firebase";
+import { safeGoBack } from "../../lib/navigation";
 import { Toast } from "../../lib/toast";
 import { normalizeCategoryForStorage } from "../../lib/items";
 import {
@@ -23,19 +24,34 @@ import {
   wearSlot,
 } from "../../shared/wardrobeTaxonomy";
 
+type ItemDetailRoute = Parameters<typeof router.replace>[0];
+
+function itemDetailRoute(itemId: string): ItemDetailRoute {
+  return {
+    pathname: "/(tabs)/item/[id]",
+    params: { id: itemId, refreshKey: String(Date.now()) },
+  } as ItemDetailRoute;
+}
+
 export function useItemDraft({
   uid,
+  mode,
   editItemId,
+  duplicateItemId,
   isEdit,
   initialCategory,
+  formSessionKey,
   photoRef,
   extractionRef,
   resetCreateFlowRef,
 }: {
   uid: string | null;
+  mode: AddItemMode;
   editItemId: string | null;
+  duplicateItemId?: string | null;
   isEdit: boolean;
   initialCategory?: Category | null;
+  formSessionKey: string;
   photoRef: MutableRefObject<any>;
   extractionRef: MutableRefObject<any>;
   resetCreateFlowRef: MutableRefObject<any>;
@@ -59,6 +75,9 @@ export function useItemDraft({
   const [notes, setNotes] = useState("");
   const [priceAmount, setPriceAmount] = useState("");
   const [priceCurrency, setPriceCurrency] = useState<string>("USD");
+  const [priceSource, setPriceSource] = useState<"product_link" | "manual" | "estimated" | null>(null);
+  const [priceDisplay, setPriceDisplay] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [showAttributeSheet, setShowAttributeSheet] = useState<
     null | "material" | "pattern" | "care"
@@ -150,10 +169,33 @@ export function useItemDraft({
   const parsePriceToNumber = useCallback((s: string) => {
     const t = norm(s);
     if (!t) return null;
-    const cleaned = t.replace(/[^0-9.]/g, "");
-    if (!cleaned) return null;
-    const num = Number(cleaned);
-    return Number.isFinite(num) ? num : null;
+    const match = t.match(/\d(?:[\d,.]*\d)?/);
+    if (!match) return null;
+    const remainder = `${t.slice(0, match.index)}${t.slice((match.index ?? 0) + match[0].length)}`;
+    const unsupportedRemainder = remainder
+      .replace(/\b(?:USD|INR|EUR|GBP|CAD|AUD|AED)\b/gi, "")
+      .replace(/US\$|CA\$|C\$|AU\$|A\$|\$|₹|€|£|د\.إ/gi, "")
+      .replace(/[\s()/-]/g, "");
+    if (unsupportedRemainder) return null;
+
+    const numeric = match[0];
+    const lastComma = numeric.lastIndexOf(",");
+    const lastDot = numeric.lastIndexOf(".");
+    let normalized = numeric;
+    if (lastComma >= 0 && lastDot >= 0) {
+      normalized =
+        lastComma > lastDot
+          ? numeric.replace(/\./g, "").replace(",", ".")
+          : numeric.replace(/,/g, "");
+    } else if (lastComma >= 0) {
+      const decimalDigits = numeric.length - lastComma - 1;
+      normalized = decimalDigits === 2 ? numeric.replace(",", ".") : numeric.replace(/,/g, "");
+    }
+    normalized = normalized.replace(/[^0-9.]/g, "");
+    const num = Number(normalized);
+    return Number.isFinite(num) && num > 0 && num <= 1_000_000
+      ? Math.round(num * 100) / 100
+      : null;
   }, []);
 
   const parsePurchaseDate = useCallback((s: string) => {
@@ -163,6 +205,42 @@ export function useItemDraft({
     if (!ok) return "INVALID";
     return t;
   }, []);
+
+  const buildPricePayload = useCallback(
+    (priceNum: number | null) => {
+      const normalizedCurrency = (norm(priceCurrency) || "USD").toUpperCase();
+      if (priceNum == null) {
+        return {
+          priceAmount: null,
+          price: null,
+          purchasePrice: null,
+          retailPrice: null,
+          estimatedValue: null,
+          currency: normalizedCurrency,
+          priceCurrency: normalizedCurrency,
+          priceSource: null,
+          priceDisplay: null,
+        };
+      }
+      const source = priceSource ?? "manual";
+      const display =
+        source === "product_link" && priceDisplay
+          ? priceDisplay
+          : `${normalizedCurrency} ${priceNum}`;
+      return {
+        priceAmount: priceNum,
+        price: priceNum,
+        purchasePrice: priceNum,
+        retailPrice: priceNum,
+        estimatedValue: priceNum,
+        currency: normalizedCurrency,
+        priceCurrency: normalizedCurrency,
+        priceSource: source,
+        priceDisplay: display,
+      };
+    },
+    [priceCurrency, priceDisplay, priceSource]
+  );
 
   const syncDraftProgress = useCallback(async () => {
     const extraction = extractionRef.current;
@@ -191,8 +269,8 @@ export function useItemDraft({
         material: norm(material ?? "") || null,
         size: norm(size) || null,
         notes: norm(notes) || null,
-        priceAmount: parsePriceToNumber(priceAmount),
-        priceCurrency,
+        ...buildPricePayload(parsePriceToNumber(priceAmount)),
+        sourceUrl: norm(sourceUrl) || null,
         purchaseDate:
           parsePurchaseDate(purchaseDate) === "INVALID"
             ? null
@@ -220,11 +298,12 @@ export function useItemDraft({
     name,
     notes,
     occasionTags,
+    buildPricePayload,
     parsePriceToNumber,
     parsePurchaseDate,
     pattern,
     priceAmount,
-    priceCurrency,
+    sourceUrl,
     purchaseDate,
     rise,
     seasonTags,
@@ -252,6 +331,9 @@ export function useItemDraft({
     setNotes("");
     setPriceAmount("");
     setPriceCurrency("USD");
+    setPriceSource(null);
+    setPriceDisplay("");
+    setSourceUrl("");
     setShowCurrencyPicker(false);
     setShowAttributeSheet(null);
     setPurchaseDate("");
@@ -273,6 +355,92 @@ export function useItemDraft({
     userEditedKeysRef.current.clear();
   }, [initialCategory]);
 
+  const applyItemDataToDraft = useCallback(
+    (data: any, options?: { markAsDuplicate?: boolean }) => {
+      setBrand(cleanBrandInput(data.brand) || "");
+      setName(norm(data.name) || "");
+      const loadedCategory = normalizeCategoryForStorage(data.category);
+      setCategory(loadedCategory);
+      setSubCategory(
+        isValidCategorySubCategory(loadedCategory, data.subCategory)
+          ? data.subCategory
+          : ""
+      );
+      setPattern(norm(data.pattern) || null);
+      setMaterial(norm(data.material) || null);
+      const loadedColors: string[] =
+        Array.isArray(data.colors) && data.colors.length
+          ? data.colors.map(normColor).filter(Boolean)
+          : data.primaryColor
+            ? [normColor(data.primaryColor)]
+            : [];
+      setSelectedColors(loadedColors);
+      setDisplayColor(norm(data.displayColor) || "");
+      setDisplayColors(
+        Array.isArray(data.displayColors)
+          ? data.displayColors.map((value: unknown) => norm(String(value ?? "")) || "").filter(Boolean)
+          : []
+      );
+      setAddingCustomColor(false);
+      setSize(norm(data.size) || "");
+      setPriceAmount(
+        data.estimatedValue != null
+          ? String(data.estimatedValue)
+          : data.purchasePrice != null
+            ? String(data.purchasePrice)
+            : data.retailPrice != null
+              ? String(data.retailPrice)
+              : data.priceAmount != null
+                ? String(data.priceAmount)
+                : data.price != null
+                  ? String(data.price)
+                  : ""
+      );
+      setPriceCurrency(norm(data.currency ?? data.priceCurrency) || "USD");
+      setPriceSource(
+        data.priceSource === "product_link" ||
+          data.priceSource === "manual" ||
+          data.priceSource === "estimated"
+          ? data.priceSource
+          : null
+      );
+      setPriceDisplay(norm(data.priceDisplay) || "");
+      setSourceUrl(norm(data.sourceUrl) || "");
+      setPurchaseDate(norm(data.purchaseDate) || "");
+      setNotes(norm(data.notes) || "");
+      setOccasionTags(Array.isArray(data.occasionTags) ? data.occasionTags : []);
+      setSeasonTags(Array.isArray(data.seasonTags) ? data.seasonTags : []);
+      setFit(norm(data.fit) || null);
+      setRise(norm(data.rise) || null);
+      setLegShape(norm(data.legShape) || null);
+      setWarmthPreference(
+        typeof data.warmthPreference === "number" ? data.warmthPreference : null
+      );
+      setDuplicateBanner(Boolean(options?.markAsDuplicate));
+      if (options?.markAsDuplicate) {
+        markUserEdited(
+          "brand",
+          "name",
+          "category",
+          "subCategory",
+          "pattern",
+          "material",
+          "colors",
+          "displayColor",
+          "displayColors",
+          "price",
+          "sourceUrl",
+          "fit",
+          "rise",
+          "legShape",
+          "occasionTags",
+          "seasonTags"
+        );
+      }
+    },
+    [markUserEdited]
+  );
+
   const duplicateLastItem = useCallback(async () => {
     if (!uid || isEdit) return;
     try {
@@ -289,61 +457,11 @@ export function useItemDraft({
         return;
       }
       const data = latestRealItem.data() as any;
-      setBrand(cleanBrandInput(data.brand) || "");
-      setName(norm(data.name) || "");
-      setCategory(data.category ? normalizeCategoryForStorage(data.category) : null);
-      setSubCategory(norm(data.subCategory) || "");
-      setPattern(norm(data.pattern) || null);
-      setMaterial(norm(data.material) || null);
-      setSelectedColors(
-        Array.isArray(data.colors) ? data.colors.map(normColor).filter(Boolean) : []
-      );
-      setDisplayColor(norm(data.displayColor) || "");
-      setDisplayColors(
-        Array.isArray(data.displayColors)
-          ? data.displayColors.map((value: unknown) => norm(String(value ?? "")) || "").filter(Boolean)
-          : []
-      );
-      setSize(norm(data.size) || "");
-      setPriceAmount(
-        data.priceAmount != null
-          ? String(data.priceAmount)
-          : data.price != null
-            ? String(data.price)
-            : ""
-      );
-      setPriceCurrency(norm(data.priceCurrency) || "USD");
-      setPurchaseDate(norm(data.purchaseDate) || "");
-      setNotes(norm(data.notes) || "");
-      setOccasionTags(Array.isArray(data.occasionTags) ? data.occasionTags : []);
-      setSeasonTags(Array.isArray(data.seasonTags) ? data.seasonTags : []);
-      setFit(norm(data.fit) || null);
-      setRise(norm(data.rise) || null);
-      setLegShape(norm(data.legShape) || null);
-      setWarmthPreference(
-        typeof data.warmthPreference === "number" ? data.warmthPreference : null
-      );
-      setDuplicateBanner(true);
-      markUserEdited(
-        "brand",
-        "name",
-        "category",
-        "subCategory",
-        "pattern",
-        "material",
-        "colors",
-        "displayColor",
-        "displayColors",
-        "fit",
-        "rise",
-        "legShape",
-        "occasionTags",
-        "seasonTags"
-      );
+      applyItemDataToDraft(data, { markAsDuplicate: true });
     } catch {
       Alert.alert("No recent items", "Could not load a recent item.");
     }
-  }, [isEdit, markUserEdited, uid]);
+  }, [applyItemDataToDraft, isEdit, uid]);
 
   const saveItem = useCallback(async () => {
     const photo = photoRef.current;
@@ -434,8 +552,8 @@ export function useItemDraft({
         material: norm(material ?? "") || null,
         size: norm(size) || null,
         notes: norm(notes) || null,
-        priceAmount: priceNum,
-        priceCurrency,
+        ...buildPricePayload(priceNum),
+        sourceUrl: norm(sourceUrl) || null,
         purchaseDate: date,
         ...(occasionTags.length ? { occasionTags } : {}),
         ...(seasonTags.length ? { seasonTags } : {}),
@@ -489,8 +607,13 @@ export function useItemDraft({
           updatePayload.visualNormalization = nextPhoto.visualNormalization;
         }
         await updateDoc(itemRef, updatePayload);
-        Alert.alert("Saved ✅", "Item updated.");
-        router.back();
+        lastFinalizedSubmissionKeyRef.current = submissionKey;
+        Toast.success("Item updated");
+        resetDraftState();
+        photo.actions.resetPhotoState?.();
+        extraction.actions.resetExtractionState?.();
+        finalizedAndExiting = true;
+        router.replace(itemDetailRoute(itemRef.id));
         return;
       }
 
@@ -538,9 +661,9 @@ export function useItemDraft({
         extraction.actions.stopDraftSubscription?.();
         finalizedAndExiting = true;
         if (__DEV__) {
-          console.log("[AddItemSave] navigate:replace-closet");
+          console.log("[AddItemSave] navigate:replace-item-detail");
         }
-        router.replace("/(tabs)/closet");
+        router.replace(itemDetailRoute(itemRef.id));
         return;
       }
 
@@ -598,9 +721,9 @@ export function useItemDraft({
       extraction.actions.stopDraftSubscription?.();
       finalizedAndExiting = true;
       if (__DEV__) {
-        console.log("[AddItemSave] navigate:replace-closet");
+        console.log("[AddItemSave] navigate:replace-item-detail");
       }
-      router.replace("/(tabs)/closet");
+      router.replace(itemDetailRoute(itemRef.id));
     } catch (e: any) {
       Alert.alert(
         "Error",
@@ -636,12 +759,13 @@ export function useItemDraft({
     displayColor,
     displayColors,
     occasionTags,
+    buildPricePayload,
     parsePriceToNumber,
     parsePurchaseDate,
     pattern,
     photoRef,
     priceAmount,
-    priceCurrency,
+    sourceUrl,
     purchaseDate,
     rise,
     seasonTags,
@@ -654,76 +778,58 @@ export function useItemDraft({
   ]);
 
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
       try {
-        if (!isEdit) return;
+        lastFinalizedSubmissionKeyRef.current = "";
+        resetDraftState();
+        photoRef.current?.actions?.resetPhotoState?.();
+        extractionRef.current?.actions?.resetExtractionState?.();
+        if (mode === "create") return;
         if (!uid) {
           router.replace("/(auth)/login");
           return;
         }
+        const itemIdToLoad = mode === "edit" ? editItemId : duplicateItemId;
+        if (!itemIdToLoad) return;
         setLoading(true);
-        const ref = doc(db, "users", uid, "items", String(editItemId));
+        const ref = doc(db, "users", uid, "items", String(itemIdToLoad));
         const snap = await getDoc(ref);
+        if (cancelled) return;
         if (!snap.exists()) {
           Alert.alert("Not found", "This item no longer exists.");
-          router.back();
+          safeGoBack("/(tabs)/closet");
           return;
         }
         const data = snap.data() as any;
-        setBrand(data.brand ?? "");
-        setName(data.name ?? "");
-        const loadedCategory = normalizeCategoryForStorage(data.category);
-        setCategory(loadedCategory);
-        setPattern(norm(data.pattern) || null);
-        setMaterial(norm(data.material) || null);
-        setSubCategory(
-          isValidCategorySubCategory(loadedCategory, data.subCategory)
-            ? data.subCategory
-            : ""
-        );
-        const loadedColors: string[] =
-          Array.isArray(data.colors) && data.colors.length
-            ? data.colors.map(normColor).filter(Boolean)
-            : data.primaryColor
-              ? [normColor(data.primaryColor)]
-              : [];
-        setSelectedColors(loadedColors);
-        setDisplayColor(norm(data.displayColor) || "");
-        setDisplayColors(
-          Array.isArray(data.displayColors)
-            ? data.displayColors.map((value: unknown) => norm(String(value ?? "")) || "").filter(Boolean)
-            : []
-        );
-        setAddingCustomColor(false);
-        setSize(data.size ?? "");
-        setNotes(data.notes ?? "");
-        setPriceAmount(
-          data.priceAmount != null
-            ? String(data.priceAmount)
-            : data.price != null
-              ? String(data.price)
-              : ""
-        );
-        setPriceCurrency(data.priceCurrency ?? "USD");
-        setPurchaseDate(data.purchaseDate ?? "");
-        setOccasionTags(Array.isArray(data.occasionTags) ? data.occasionTags : []);
-        setSeasonTags(Array.isArray(data.seasonTags) ? data.seasonTags : []);
-        setFit(norm(data.fit) || null);
-        setRise(norm(data.rise) || null);
-        setLegShape(norm(data.legShape) || null);
-        setWarmthPreference(
-          typeof data.warmthPreference === "number" ? data.warmthPreference : null
-        );
-        setDuplicateBanner(false);
-        photoRef.current?.actions?.hydrateFromItem?.(data);
-        extractionRef.current?.actions?.resetForLoadedEditItem?.();
+        applyItemDataToDraft(data, { markAsDuplicate: mode === "duplicate" });
+        if (mode === "edit" || mode === "duplicate") {
+          photoRef.current?.actions?.hydrateFromItem?.({ id: itemIdToLoad, ...data });
+        }
+        if (mode === "edit") {
+          extractionRef.current?.actions?.resetForLoadedEditItem?.();
+        }
       } catch (e: any) {
+        if (cancelled) return;
         Alert.alert("Error", e?.message ?? "Failed to load item");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [editItemId, extractionRef, isEdit, photoRef, uid]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    applyItemDataToDraft,
+    duplicateItemId,
+    editItemId,
+    extractionRef,
+    formSessionKey,
+    mode,
+    photoRef,
+    resetDraftState,
+    uid,
+  ]);
 
   useEffect(() => {
     if (
@@ -750,6 +856,9 @@ export function useItemDraft({
     notes,
     priceAmount,
     priceCurrency,
+    priceSource,
+    priceDisplay,
+    sourceUrl,
     showCurrencyPicker,
     showAttributeSheet,
     purchaseDate,
@@ -786,6 +895,9 @@ export function useItemDraft({
     setNotes,
     setPriceAmount,
     setPriceCurrency,
+    setPriceSource,
+    setPriceDisplay,
+    setSourceUrl,
     setShowCurrencyPicker,
     setShowAttributeSheet,
     setPurchaseDate,

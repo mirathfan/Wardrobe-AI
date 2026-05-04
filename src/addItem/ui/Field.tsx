@@ -1,6 +1,7 @@
 import React from "react";
 import { Text, View } from "react-native";
 
+import { auraTypography } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 export const Field = React.memo(function Field({
@@ -24,7 +25,7 @@ export const Field = React.memo(function Field({
           gap: 8,
         }}
       >
-        <Text style={{ color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: "800" }}>
+        <Text style={[auraTypography.body, { color: colors.text, fontWeight: "800" }]}>
           {label}
         </Text>
         {right}

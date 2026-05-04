@@ -79,7 +79,14 @@ export const SizeHeaderRow = React.memo(function SizeHeaderRow({ controller }: {
 
 export const SizeContentRow = React.memo(function SizeContentRow({ controller }: { controller: any }) {
   const { state, derived, actions } = controller;
+  const { colors } = useAppTheme();
   logAdvancedRender({ row: "size-content", size: !!state.size, price: !!state.priceAmount });
+  const priceNote =
+    state.priceSource === "product_link"
+      ? "From product link"
+      : state.priceAmount
+        ? "Manual"
+        : "";
   return (
     <SectionCard>
       <View style={{ gap: 12 }}>
@@ -108,11 +115,25 @@ export const SizeContentRow = React.memo(function SizeContentRow({ controller }:
             placeholder="e.g., M, 32 / 30, EU 42"
           />
         </Field>
-        <Field label="Price">
+        <Field
+          label="Price"
+          right={
+            priceNote ? (
+              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }}>
+                {priceNote}
+              </Text>
+            ) : null
+          }
+        >
           <View style={{ flexDirection: "row", gap: 8 }}>
             <MemoTextInputField
               value={state.priceAmount}
-              onCommit={actions.setPriceAmount}
+              onCommit={(value) => {
+                actions.markUserEdited("price");
+                actions.setPriceAmount(value);
+                actions.setPriceSource(value.trim() ? "manual" : null);
+                actions.setPriceDisplay("");
+              }}
               placeholder="e.g., 220"
               keyboardType="numeric"
               containerStyle={{ flex: 1 }}
@@ -129,6 +150,16 @@ export const SizeContentRow = React.memo(function SizeContentRow({ controller }:
               onPress={() => actions.setPurchaseDate(new Date().toISOString().slice(0, 10))}
             />
           </ChipRow>
+        </Field>
+        <Field label="Product URL">
+          <MemoTextInputField
+            value={state.sourceUrl}
+            onCommit={(value) => {
+              actions.markUserEdited("sourceUrl");
+              actions.setSourceUrl(value);
+            }}
+            placeholder="https://..."
+          />
         </Field>
       </View>
     </SectionCard>
