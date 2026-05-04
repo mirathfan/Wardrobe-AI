@@ -5,6 +5,8 @@ import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View, useWindowD
 
 import { Colors } from "@/constants/theme";
 import { SafeScreen } from "@/src/components/SafeScreen";
+import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
+import { auraButtonStyle, auraButtonTextStyle } from "@/src/components/ui/auraStylePrimitives";
 import { LookDetailModal } from "@/src/components/profile/LookDetailModal";
 import { MyLookSkeleton, MyLookThumbnail } from "@/src/components/profile/MyLookThumbnail";
 import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
@@ -262,7 +264,7 @@ export default function MyLooksScreen() {
   };
 
   return (
-    <SafeScreen backgroundColor={colors.background} includeBottomInset={false} style={{ flex: 1 }}>
+    <SafeScreen backgroundColor={colors.background} includeTopInset={selectionMode} includeBottomInset={false} style={{ flex: 1 }}>
       {selectionMode ? (
         <View style={styles.selectionToolbar}>
           <Pressable onPress={clearSelection} style={styles.toolbarButton} accessibilityRole="button">
@@ -297,13 +299,7 @@ export default function MyLooksScreen() {
         </View>
       ) : (
         <>
-          <View style={styles.header}>
-            <Pressable onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Back">
-              <Text style={styles.backText}>←</Text>
-            </Pressable>
-            <Text style={styles.headerTitle}>My Looks</Text>
-            <View style={styles.headerSpacer} />
-          </View>
+          <AuraSubpageHeader title="My Looks" eyebrow="PROFILE" fallbackRoute="/(tabs)/profile" />
 
           <View style={styles.tabContainer}>
             {TABS.map((tab) => {
@@ -363,34 +359,6 @@ export default function MyLooksScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 14,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  backText: {
-    color: palette.textPrimary,
-    fontSize: 26,
-    fontWeight: "700",
-  },
-  headerTitle: {
-    flex: 1,
-    textAlign: "center",
-    color: palette.textPrimary,
-    fontSize: 18,
-    fontWeight: "900",
-  },
-  headerSpacer: {
-    width: 44,
-  },
   selectionToolbar: {
     paddingHorizontal: 16,
     paddingTop: 8,
@@ -445,10 +413,13 @@ const styles = StyleSheet.create({
   },
   tabContainer: {
     marginHorizontal: 16,
+    marginTop: 12,
     marginBottom: 16,
     borderRadius: 12,
     padding: 3,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: palette.surfaceBase,
+    borderWidth: 1,
+    borderColor: palette.border,
     flexDirection: "row",
   },
   tab: {
@@ -460,16 +431,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   activeTab: {
-    backgroundColor: palette.surfaceElevated,
+    backgroundColor: palette.purpleSurface,
   },
   tabText: {
     color: palette.textMuted,
-    fontSize: 12,
-    fontWeight: "600",
+    fontSize: 12.5,
+    lineHeight: 16,
+    fontWeight: "800",
+    letterSpacing: 0,
   },
   activeTabText: {
-    color: palette.textPrimary,
-    fontWeight: "600",
+    color: palette.ctaCream,
   },
   grid: {
     paddingHorizontal: 16,
@@ -510,19 +482,15 @@ const styles = StyleSheet.create({
   },
   emptyButton: {
     marginTop: 18,
+    ...auraButtonStyle(palette, "primary"),
     minHeight: 44,
     paddingHorizontal: 16,
     borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: palette.chipBackground,
-    borderWidth: 1,
-    borderColor: palette.borderStrong,
   },
   emptyButtonText: {
-    color: palette.textPrimary,
+    ...auraButtonTextStyle(palette, "primary"),
     fontSize: 13,
-    fontWeight: "800",
+    lineHeight: 17,
   },
   errorState: {
     padding: 24,

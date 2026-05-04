@@ -19,12 +19,28 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Pill } from "@/src/addItem/ui/Pill";
 import { SafeScreen } from "@/src/components/SafeScreen";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
+import {
+  auraButtonStyle,
+  auraButtonTextStyle,
+  auraCardStyle,
+  auraSheetBackdropStyle,
+  auraSurfaceTiers,
+  auraTypography,
+} from "@/src/components/ui/auraStylePrimitives";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import {
+  SUPPORTED_CURRENCIES,
+  formatMoney,
+  resolveUserCurrency,
+  type SupportedCurrencyCode,
+} from "@/src/lib/currency";
 import { app, auth, db, storage } from "@/src/lib/firebase";
 import { signOutGoogle } from "@/src/auth/googleAuth";
 import { Storage } from "@/src/lib/storage";
@@ -97,6 +113,8 @@ const LENGTH_UNIT_OPTIONS = ["cm", "in"] as const;
 const WEIGHT_UNIT_OPTIONS = ["kg", "lb"] as const;
 const SHOE_REGION_OPTIONS = ["US", "UK", "EU"] as const;
 const CLOTHING_REGION_OPTIONS = ["US", "UK", "EU", "INTL"] as const;
+const CURRENCY_MODE_OPTIONS = ["auto", "manual"] as const;
+const CURRENCY_OPTIONS = SUPPORTED_CURRENCIES.map((currency) => currency.code) as SupportedCurrencyCode[];
 
 function commaText(values?: string[]) {
   return Array.isArray(values) && values.length ? values.join(", ") : "";
@@ -265,11 +283,14 @@ export function formatDefaultSizesSummary(profile: UserProfilePreferences) {
 }
 
 export function formatUnitsSummary(profile: UserProfilePreferences) {
+  const currency = resolveUserCurrency(profile);
+  const currencyMode = profile.currencyMode === "manual" ? "Manual" : "Auto";
   return [
     profile.units.length,
     profile.units.weight,
     profile.units.shoeRegion,
     profile.units.clothingRegion,
+    `${currencyMode} ${currency}`,
   ]
     .filter(Boolean)
     .join(" • ");
@@ -320,10 +341,8 @@ export function ProfileHubRow({
       pressedScale={0.985}
       pressedOpacity={0.88}
       style={{
-        backgroundColor: colors.surface,
+        ...auraSurfaceTiers.surfaceInteractive,
         borderRadius: 18,
-        borderWidth: 1,
-        borderColor: colors.border,
         padding: 16,
         flexDirection: "row",
         alignItems: "center",
@@ -332,8 +351,8 @@ export function ProfileHubRow({
       }}
     >
       <View style={{ flex: 1, gap: 4 }}>
-        <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text }}>{title}</Text>
-        <Text style={{ color: colors.textSecondary }}>{summary}</Text>
+        <Text style={[auraTypography.cardTitle, { color: colors.text }]}>{title}</Text>
+        <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>{summary}</Text>
       </View>
       <Text style={{ color: colors.textSecondary, fontSize: 18 }}>›</Text>
     </AuraPressable>
@@ -342,7 +361,6 @@ export function ProfileHubRow({
 
 export function ProfileSectionScreen({
   title,
-  subtitle,
   children,
   onSave,
   saving,
@@ -354,34 +372,15 @@ export function ProfileSectionScreen({
   saving?: boolean;
 }) {
   const { colors } = useAppTheme();
+  const insets = useSafeAreaInsets();
   return (
-    <SafeScreen backgroundColor={colors.background} style={{ flex: 1 }}>
+    <SafeScreen backgroundColor={colors.background} includeTopInset={false} includeBottomInset={false} style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 120 }}>
-          <View style={{ gap: 8 }}>
-            <Pressable
-              onPress={() => router.back()}
-              style={{
-                alignSelf: "flex-start",
-                paddingHorizontal: 12,
-                paddingVertical: 8,
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: colors.border,
-                backgroundColor: colors.surface,
-              }}
-            >
-              <Text style={{ color: colors.text, fontWeight: "700" }}>Back</Text>
-            </Pressable>
-            <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>{title}</Text>
-            {subtitle ? <Text style={{ color: colors.textSecondary }}>{subtitle}</Text> : null}
-          </View>
+        <AuraSubpageHeader title={title} eyebrow="PROFILE" fallbackRoute="/(tabs)/profile" />
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, gap: 14, paddingBottom: onSave ? 24 : insets.bottom + 24 }}>
           <View
             style={{
-              backgroundColor: colors.surface,
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: colors.border,
+              ...auraCardStyle(colors, "card"),
               padding: 16,
               gap: 14,
             }}
@@ -393,11 +392,11 @@ export function ProfileSectionScreen({
           <View
             style={{
               paddingHorizontal: 16,
-              paddingTop: 12,
-              paddingBottom: 12,
+              paddingTop: 10,
+              paddingBottom: insets.bottom + 10,
               borderTopWidth: 1,
               borderTopColor: colors.border,
-              backgroundColor: colors.background,
+              backgroundColor: "rgba(9,0,11,0.88)",
             }}
           >
             <PrimaryButton label={saving ? "Saving..." : "Save"} onPress={onSave} disabled={saving} />
@@ -530,13 +529,10 @@ function AccountSection({ title, children }: { title: string; children: React.Re
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 10 }}>
-      <Text style={{ color: colors.iridescentStart, fontSize: 12, fontWeight: "900" }}>{title}</Text>
+      <Text style={[auraTypography.eyebrow, { color: colors.iridescentStart }]}>{title}</Text>
       <View
         style={{
-          backgroundColor: colors.surface,
-          borderRadius: 18,
-          borderWidth: 1,
-          borderColor: colors.border,
+          ...auraCardStyle(colors, "card"),
           padding: 16,
           gap: 14,
         }}
@@ -567,18 +563,16 @@ function AccountActionRow({
       disabled={disabled}
       style={{
         minHeight: 50,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: danger ? "rgba(241,153,153,0.34)" : colors.border,
-        backgroundColor: danger ? "rgba(241,153,153,0.08)" : colors.background,
+        ...(danger ? auraButtonStyle(colors, "danger", disabled, "compact") : auraCardStyle(colors, "inset")),
+        alignItems: "stretch",
         paddingHorizontal: 14,
         paddingVertical: 12,
         opacity: disabled ? 0.55 : 1,
         gap: 4,
       }}
     >
-      <Text style={{ color: danger ? colors.danger : colors.text, fontWeight: "800" }}>{title}</Text>
-      {subtitle ? <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18 }}>{subtitle}</Text> : null}
+      <Text style={[auraTypography.body, { color: danger ? colors.danger : colors.text, fontWeight: "800" }]}>{title}</Text>
+      {subtitle ? <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary, fontSize: 13, lineHeight: 18 }]}>{subtitle}</Text> : null}
     </Pressable>
   );
 }
@@ -804,26 +798,13 @@ export function AccountScreen() {
   }, [runAction, user?.uid]);
 
   return (
-    <SafeScreen backgroundColor={colors.background} style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 128 }}>
-        <View style={{ gap: 8 }}>
-          <Pressable
-            onPress={() => router.back()}
-            style={{
-              alignSelf: "flex-start",
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              borderRadius: 999,
-              borderWidth: 1,
-              borderColor: colors.border,
-              backgroundColor: colors.surface,
-            }}
-          >
-            <Text style={{ color: colors.text, fontWeight: "700" }}>Back</Text>
-          </Pressable>
-          <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>Account</Text>
-          <Text style={{ color: colors.textSecondary }}>Identity, security, AURA data, and plan controls.</Text>
-        </View>
+    <SafeScreen backgroundColor={colors.background} includeTopInset={false} includeBottomInset={false} style={{ flex: 1 }}>
+      <AuraSubpageHeader
+        title="Account"
+        eyebrow="PROFILE"
+        fallbackRoute="/(tabs)/profile"
+      />
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, gap: 16, paddingBottom: 32 }}>
 
         {profileLoading || preferencesLoading ? (
           <View style={{ paddingVertical: 40, alignItems: "center" }}>
@@ -831,7 +812,7 @@ export function AccountScreen() {
           </View>
         ) : (
           <>
-            <AccountSection title="ACCOUNT">
+            <AccountSection title="IDENTITY">
               <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
                 <Pressable
                   onPress={pickProfilePhoto}
@@ -842,7 +823,7 @@ export function AccountScreen() {
                     borderRadius: 38,
                     borderWidth: 1,
                     borderColor: colors.glassBorder,
-                    backgroundColor: "rgba(255,255,255,0.06)",
+                    backgroundColor: colors.surfaceInteractive,
                     overflow: "hidden",
                     alignItems: "center",
                     justifyContent: "center",
@@ -1169,7 +1150,7 @@ export function DefaultSizesScreen() {
           ))}
 
           <Modal visible={activePicker != null} transparent animationType="slide" onRequestClose={closePicker}>
-            <View style={{ flex: 1, justifyContent: "flex-end" }}>
+            <View style={auraSheetBackdropStyle(colors)}>
               <Pressable
                 onPress={closePicker}
                 style={{
@@ -1178,15 +1159,16 @@ export function DefaultSizesScreen() {
                   right: 0,
                   bottom: 0,
                   left: 0,
-                  backgroundColor: "rgba(0,0,0,0.3)",
                 }}
               />
               <View
                 style={{
                   maxHeight: "78%",
-                  backgroundColor: colors.surface,
+                  ...auraCardStyle(colors, "sheet"),
                   borderTopLeftRadius: 24,
                   borderTopRightRadius: 24,
+                  borderBottomLeftRadius: 0,
+                  borderBottomRightRadius: 0,
                   paddingHorizontal: 16,
                   paddingTop: 16,
                   paddingBottom: 24,
@@ -1209,12 +1191,9 @@ export function DefaultSizesScreen() {
                       closePicker();
                     }}
                     style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      borderRadius: 14,
+                      ...auraCardStyle(colors, !activeValue ? "inset" : "card"),
                       paddingHorizontal: 14,
                       paddingVertical: 12,
-                      backgroundColor: !activeValue ? colors.background : colors.surface,
                     }}
                   >
                     <Text style={{ color: colors.text, fontWeight: "700" }}>Not set</Text>
@@ -1227,12 +1206,10 @@ export function DefaultSizesScreen() {
                         closePicker();
                       }}
                       style={{
-                        borderWidth: 1,
-                        borderColor: colors.accent,
-                        borderRadius: 14,
+                        ...auraCardStyle(colors, "inset"),
+                        borderColor: colors.purpleBorder,
                         paddingHorizontal: 14,
                         paddingVertical: 12,
-                        backgroundColor: colors.background,
                       }}
                     >
                       <Text style={{ color: colors.text, fontWeight: "700" }}>
@@ -1249,12 +1226,10 @@ export function DefaultSizesScreen() {
                         closePicker();
                       }}
                       style={{
-                        borderWidth: 1,
-                        borderColor: activeValue === option ? colors.accent : colors.border,
-                        borderRadius: 14,
+                        ...auraCardStyle(colors, activeValue === option ? "inset" : "card"),
+                        borderColor: activeValue === option ? colors.purpleBorder : colors.border,
                         paddingHorizontal: 14,
                         paddingVertical: 12,
-                        backgroundColor: activeValue === option ? colors.background : colors.surface,
                       }}
                     >
                       <Text style={{ color: colors.text, fontWeight: "700" }}>{option}</Text>
@@ -1264,12 +1239,9 @@ export function DefaultSizesScreen() {
                   <Pressable
                     onPress={() => setShowCustomInput((prev) => !prev)}
                     style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      borderRadius: 14,
+                      ...auraCardStyle(colors, "card"),
                       paddingHorizontal: 14,
                       paddingVertical: 12,
-                      backgroundColor: colors.surface,
                     }}
                   >
                     <Text style={{ color: colors.text, fontWeight: "700" }}>Custom…</Text>
@@ -1315,11 +1287,13 @@ export function DefaultSizesScreen() {
 export function UnitsRegionScreen() {
   const { profile, setProfile, save, loading, saving } = useProfilePreferencesState();
   const { colors } = useAppTheme();
+  const resolvedCurrency = resolveUserCurrency(profile);
+  const detectedCurrency = profile.detectedCurrency ?? resolvedCurrency;
 
   return (
     <ProfileSectionScreen
       title="Units & Region"
-      subtitle="Measurement labels and size region defaults."
+      subtitle="Measurement labels, size regions, and money display."
       onSave={save}
       saving={saving}
     >
@@ -1362,6 +1336,43 @@ export function UnitsRegionScreen() {
               }))
             }
           />
+          <ProfilePillField
+            label="Currency"
+            value={profile.currencyMode ?? "auto"}
+            options={CURRENCY_MODE_OPTIONS}
+            onSelect={(value) =>
+              setProfile((prev) => ({
+                ...prev,
+                currencyMode: value,
+                preferredCurrency: prev.preferredCurrency ?? resolvedCurrency,
+                detectedCurrency: detectedCurrency,
+              }))
+            }
+            labelFormatter={(value) => (value === "auto" ? "Auto-detect" : "Manual")}
+          />
+          {profile.currencyMode === "manual" ? (
+            <ProfilePillField
+              label="Preferred currency"
+              value={(profile.preferredCurrency ?? resolvedCurrency) as SupportedCurrencyCode}
+              options={CURRENCY_OPTIONS}
+              onSelect={(value) =>
+                setProfile((prev) => ({
+                  ...prev,
+                  currencyMode: "manual",
+                  preferredCurrency: value,
+                  detectedCurrency: detectedCurrency,
+                }))
+              }
+              labelFormatter={(value) =>
+                SUPPORTED_CURRENCIES.find((currency) => currency.code === value)?.label ?? value
+              }
+            />
+          ) : (
+            <ProfileValueRow
+              label="Detected currency"
+              value={`${detectedCurrency} • ${formatMoney(0, detectedCurrency)}`}
+            />
+          )}
         </>
       )}
     </ProfileSectionScreen>
@@ -1635,8 +1646,8 @@ function ProfileValueRow({ label, value }: { label: string; value: string }) {
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 6 }}>
-      <Text style={{ color: colors.text, fontWeight: "700" }}>{label}</Text>
-      <Text style={{ color: colors.textSecondary }}>{value}</Text>
+      <Text style={[auraTypography.body, { color: colors.text, fontWeight: "700" }]}>{label}</Text>
+      <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>{value}</Text>
     </View>
   );
 }
@@ -1659,7 +1670,7 @@ function ProfileInputRow({
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 6 }}>
-      <Text style={{ color: colors.text, fontWeight: "700" }}>
+      <Text style={[auraTypography.body, { color: colors.text, fontWeight: "700" }]}>
         {label}
         {suffix ? ` (${suffix})` : ""}
       </Text>
@@ -1672,11 +1683,11 @@ function ProfileInputRow({
         style={{
           borderWidth: 1,
           borderColor: colors.border,
-          borderRadius: 12,
+          borderRadius: 16,
           paddingHorizontal: 12,
           paddingVertical: 11,
           color: colors.text,
-          backgroundColor: colors.background,
+          backgroundColor: colors.inputBackground,
           fontSize: 16,
         }}
       />
@@ -1698,19 +1709,16 @@ function ProfileSelectorRow({
     <Pressable
       onPress={onPress}
       style={{
-        borderWidth: 1,
-        borderColor: colors.border,
-        borderRadius: 14,
+        ...auraCardStyle(colors, "inset"),
         paddingHorizontal: 14,
         paddingVertical: 13,
-        backgroundColor: colors.background,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         gap: 12,
       }}
     >
-      <Text style={{ color: colors.text, fontWeight: "700", flex: 1 }}>{label}</Text>
+      <Text style={[auraTypography.body, { color: colors.text, fontWeight: "700", flex: 1 }]}>{label}</Text>
       <Text style={{ color: value ? colors.text : colors.textSecondary }}>
         {value || "Not set"}  ›
       </Text>
@@ -1734,7 +1742,7 @@ function ProfilePillField<T extends string>({
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ color: colors.text, fontWeight: "700" }}>{label}</Text>
+      <Text style={[auraTypography.body, { color: colors.text, fontWeight: "700" }]}>{label}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
         {options.map((option) => (
           <Pill
@@ -1761,7 +1769,7 @@ function ProfileBooleanRow({
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ fontWeight: "700", color: colors.text }}>{label}</Text>
+      <Text style={[auraTypography.body, { fontWeight: "700", color: colors.text }]}>{label}</Text>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Pill label="On" active={value} onPress={() => onSet(true)} />
         <Pill label="Off" active={!value} onPress={() => onSet(false)} />
@@ -1790,13 +1798,10 @@ function PrimaryButton({
       pressedOpacity={0.88}
       disabledOpacity={0.6}
       style={{
-        paddingVertical: 14,
-        borderRadius: 12,
-        alignItems: "center",
-        backgroundColor: colors.accent,
+        ...auraButtonStyle(colors, "primary", disabled),
       }}
     >
-      <Text style={{ color: colors.background, fontWeight: "900", fontSize: 16 }}>{label}</Text>
+      <Text style={auraButtonTextStyle(colors, "primary", disabled)}>{label}</Text>
     </AuraPressable>
   );
 }

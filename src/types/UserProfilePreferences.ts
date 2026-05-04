@@ -5,12 +5,16 @@ export type ClothingRegion = "US" | "UK" | "EU" | "INTL";
 export type UnitsPreference = "imperial" | "metric";
 export type WardrobeMode = "masculine" | "feminine" | "neutral" | "mixed" | "custom";
 export type PreferredFit = "slim" | "regular" | "relaxed" | "oversized";
+export type CurrencyMode = "auto" | "manual";
 
 export type UserProfilePreferences = {
   onboardingCompleted: boolean;
   firstName?: string | null;
   region?: string | null;
   unitsPreference: UnitsPreference;
+  currencyMode?: CurrencyMode;
+  preferredCurrency?: string;
+  detectedCurrency?: string;
   wardrobeMode: WardrobeMode;
   selectedCategories: string[];
   styleAesthetics: string[];

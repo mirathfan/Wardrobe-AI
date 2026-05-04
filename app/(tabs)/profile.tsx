@@ -2,16 +2,23 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
 import { SafeScreen } from "@/src/components/SafeScreen";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { LookDetailModal } from "@/src/components/profile/LookDetailModal";
 import { MyLookSkeleton, MyLookThumbnail } from "@/src/components/profile/MyLookThumbnail";
+import {
+  auraButtonStyle,
+  auraButtonTextStyle,
+  auraCardStyle,
+  auraTypography,
+} from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { listenToItems, toCanonicalCategory, type ClosetItem } from "@/src/lib/items";
 import { subscribeFavouriteLooks, subscribeProfileFeedbackLooks, type ProfileLookRecord } from "@/src/lib/profileLooks";
+import { loadUserAccountProfile, loadUserProfilePreferences } from "@/src/lib/userProfile";
 import {
   ProfileHubRow,
   useAccountProfileState,
@@ -190,17 +197,14 @@ function StatCard({ label, value, onPress }: StatCardProps) {
       style={{
         flex: 1,
         minWidth: 72,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: "rgba(255,255,255,0.04)",
+        ...auraCardStyle(colors, "inset"),
         paddingHorizontal: 10,
         paddingVertical: 12,
         gap: 4,
       }}
     >
-      <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900" }}>{value}</Text>
-      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "700", lineHeight: 15 }}>{label}</Text>
+      <Text style={[auraTypography.sectionTitle, { color: colors.text }]}>{value}</Text>
+      <Text style={[auraTypography.caption, { color: colors.textSecondary, fontSize: 11, lineHeight: 15 }]}>{label}</Text>
     </AuraPressable>
   );
 }
@@ -215,20 +219,15 @@ function QuickAction({ icon, label, onPress }: QuickActionProps) {
       pressedScale={0.97}
       pressedOpacity={0.88}
       style={{
-        minHeight: 46,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.surface,
+        ...auraButtonStyle(colors, "tertiary"),
+        minHeight: 44,
         paddingHorizontal: 14,
-        paddingVertical: 10,
         gap: 8,
         flexDirection: "row",
-        alignItems: "center",
       }}
     >
       <Ionicons name={icon} size={18} color={colors.iridescentStart} />
-      <Text style={{ color: colors.text, fontSize: 14, fontWeight: "800" }}>{label}</Text>
+      <Text style={[auraButtonTextStyle(colors, "tertiary"), { color: colors.text, fontSize: 14 }]}>{label}</Text>
     </AuraPressable>
   );
 }
@@ -236,7 +235,7 @@ function QuickAction({ icon, label, onPress }: QuickActionProps) {
 function SectionLabel({ children }: { children: React.ReactNode }) {
   const { colors } = useAppTheme();
   return (
-    <Text style={{ color: colors.iridescentStart, fontSize: 12, fontWeight: "900" }}>
+    <Text style={[auraTypography.eyebrow, { color: colors.iridescentStart }]}>
       {children}
     </Text>
   );
@@ -245,8 +244,8 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 export default function ProfileScreen() {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
-  const { user, loading, profile } = useProfilePreferencesState();
-  const { accountProfile } = useAccountProfileState();
+  const { user, loading, profile, setProfile } = useProfilePreferencesState();
+  const { accountProfile, setAccountProfile } = useAccountProfileState();
   const [favouriteLooks, setFavouriteLooks] = useState<ProfileLookRecord[]>([]);
   const [likedLooks, setLikedLooks] = useState<ProfileLookRecord[]>([]);
   const [looksLoading, setLooksLoading] = useState(true);
@@ -254,6 +253,7 @@ export default function ProfileScreen() {
   const [items, setItems] = useState<ClosetItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(true);
   const [selectedLook, setSelectedLook] = useState<ProfileLookRecord | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const displayName = getDisplayName(accountProfile.name, user?.email, user?.displayName);
   const accountSummary = accountProfile.name
@@ -348,6 +348,25 @@ export default function ProfileScreen() {
     });
   }, [user?.uid]);
 
+  const handleRefresh = React.useCallback(async () => {
+    if (!user?.uid || refreshing) return;
+    setRefreshing(true);
+    const startedAt = Date.now();
+    try {
+      const [nextProfile, nextAccountProfile] = await Promise.all([
+        loadUserProfilePreferences(user.uid),
+        loadUserAccountProfile(user.uid),
+      ]);
+      setProfile(nextProfile);
+      setAccountProfile(nextAccountProfile);
+    } catch {
+      // Live subscriptions keep the visible profile from going stale if a manual refresh fails.
+    } finally {
+      const remaining = Math.max(0, 450 - (Date.now() - startedAt));
+      setTimeout(() => setRefreshing(false), remaining);
+    }
+  }, [refreshing, setAccountProfile, setProfile, user?.uid]);
+
   const openMyLooks = () => router.push("/profile/my-looks");
   const openFavourites = () => router.push({ pathname: "/profile/my-looks", params: { tab: "favourites" } });
   const previewLooks = favouriteLooks.slice(0, 5);
@@ -355,16 +374,25 @@ export default function ProfileScreen() {
   return (
     <SafeScreen backgroundColor={colors.background} includeBottomInset={false} style={{ flex: 1 }}>
       <ScrollView
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.ctaCream}
+            colors={[colors.ctaCream]}
+            progressBackgroundColor={colors.background}
+          />
+        }
         contentContainerStyle={{
           paddingHorizontal: layout.horizontalPadding,
           paddingTop: 0,
           gap: 18,
-          paddingBottom: layout.bottomDockPadding + 52,
+          paddingBottom: layout.bottomDockPadding + 24,
         }}
       >
         <View style={{ gap: 5 }}>
-          <Text style={{ fontSize: 28 * layout.titleScale, fontWeight: "900", color: colors.text }}>Profile</Text>
-          <Text style={{ color: colors.textSecondary, opacity: 0.76, lineHeight: 22 }}>
+          <Text style={[auraTypography.screenTitle, { fontSize: 28 * layout.titleScale, lineHeight: 34 * layout.titleScale, color: colors.text }]}>Profile</Text>
+          <Text style={[auraTypography.body, { color: colors.textSecondary, opacity: 0.76 }]}>
             Your style identity, closet signal, and preferences.
           </Text>
         </View>
@@ -380,8 +408,7 @@ export default function ProfileScreen() {
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={{
-                borderRadius: 26,
-                borderWidth: 1,
+                ...auraCardStyle(colors, "largeGlass"),
                 borderColor: colors.glassBorder,
                 padding: 18,
                 overflow: "hidden",
@@ -422,17 +449,12 @@ export default function ProfileScreen() {
                     <Pressable
                       onPress={() => router.push("/profile/account")}
                       style={{
-                        minHeight: 36,
-                        borderRadius: 999,
-                        borderWidth: 1,
-                        borderColor: "rgba(255,255,255,0.16)",
-                        backgroundColor: "rgba(255,255,255,0.08)",
+                        ...auraButtonStyle(colors, "tertiary", false, "compact"),
+                        minHeight: 44,
                         paddingHorizontal: 12,
-                        alignItems: "center",
-                        justifyContent: "center",
                       }}
                     >
-                      <Text style={{ color: colors.text, fontSize: 12, fontWeight: "900" }}>Edit</Text>
+                      <Text style={[auraButtonTextStyle(colors, "tertiary"), { color: colors.text, fontSize: 12 }]}>Edit</Text>
                     </Pressable>
                   </View>
                   <Text style={{ color: colors.auraLavender, fontSize: 14, fontWeight: "800" }} numberOfLines={1}>
@@ -467,7 +489,13 @@ export default function ProfileScreen() {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ gap: 10, paddingRight: 2 }}
               >
-                <QuickAction icon="add" label="Add item" onPress={() => router.push("/(tabs)/add")} />
+                <QuickAction
+                  icon="add"
+                  label="Add item"
+                  onPress={() =>
+                    router.push({ pathname: "/(tabs)/add", params: { addSession: String(Date.now()) } })
+                  }
+                />
                 <QuickAction icon="sparkles-outline" label="Build outfit" onPress={() => router.push("/(tabs)/studio")} />
                 <QuickAction icon="chatbubble-ellipses-outline" label="Ask AURA" onPress={() => router.push("/(tabs)/ai")} />
                 <QuickAction icon="calendar-outline" label="Plan week" onPress={() => router.push("/(tabs)/calendar")} />
@@ -478,10 +506,7 @@ export default function ProfileScreen() {
               <SectionLabel>AURA PROFILE</SectionLabel>
               <View
                 style={{
-                  backgroundColor: colors.surface,
-                  borderRadius: 22,
-                  borderWidth: 1,
-                  borderColor: colors.border,
+                  ...auraCardStyle(colors, "card"),
                   padding: 16,
                   gap: 12,
                 }}
@@ -509,17 +534,12 @@ export default function ProfileScreen() {
                   onPress={() => router.push("/profile/style-preferences")}
                   style={{
                     alignSelf: "flex-start",
-                    minHeight: 42,
-                    borderRadius: 999,
-                    backgroundColor: "rgba(192,132,252,0.14)",
-                    borderWidth: 1,
-                    borderColor: "rgba(192,132,252,0.26)",
+                    ...auraButtonStyle(colors, "secondary", false, "compact"),
+                    minHeight: 44,
                     paddingHorizontal: 14,
-                    alignItems: "center",
-                    justifyContent: "center",
                   }}
                 >
-                  <Text style={{ color: colors.auraLavender, fontSize: 13, fontWeight: "900" }}>
+                  <Text style={[auraButtonTextStyle(colors, "secondary"), { color: colors.auraLavender, fontSize: 13 }]}>
                     Edit style profile
                   </Text>
                 </Pressable>
@@ -560,10 +580,7 @@ export default function ProfileScreen() {
                     style={{
                       minHeight: 104,
                       width: 250,
-                      borderRadius: 18,
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      backgroundColor: colors.surface,
+                      ...auraCardStyle(colors, "card"),
                       paddingHorizontal: 16,
                       alignItems: "center",
                       justifyContent: "center",

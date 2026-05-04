@@ -8,6 +8,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
+import { Colors } from "@/constants/theme";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -108,7 +109,7 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
             <>
               <Pressable disabled={busy} onPress={() => runAction("like")} style={styles.gradientButton}>
                 <LinearGradient
-                  colors={[colors.iridescentStart, colors.iridescentEnd]}
+                  colors={[colors.ctaCream, colors.ctaCream]}
                   start={{ x: 0, y: 0.5 }}
                   end={{ x: 1, y: 0.5 }}
                   style={styles.gradientFill}
@@ -124,7 +125,7 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
             <>
               <Pressable disabled={busy} onPress={() => runAction("plan")} style={styles.gradientButton}>
                 <LinearGradient
-                  colors={[colors.iridescentStart, colors.iridescentEnd]}
+                  colors={[colors.ctaCream, colors.ctaCream]}
                   start={{ x: 0, y: 0.5 }}
                   end={{ x: 1, y: 0.5 }}
                   style={styles.gradientFill}
@@ -146,7 +147,7 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#080808",
+    backgroundColor: Colors.dark.background,
   },
   header: {
     paddingTop: 56,
@@ -164,12 +165,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   title: {
-    color: "#F7F1E8",
+    color: Colors.dark.textPrimary,
     fontSize: 17,
     fontWeight: "800",
   },
   date: {
-    color: "rgba(255,255,255,0.35)",
+    color: Colors.dark.textMuted,
     fontSize: 12,
   },
   closeButton: {
@@ -179,7 +180,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   closeText: {
-    color: "#F7F1E8",
+    color: Colors.dark.textPrimary,
     fontSize: 30,
     lineHeight: 34,
     fontWeight: "300",
@@ -200,7 +201,7 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
     borderTopWidth: 1,
     gap: 10,
-    backgroundColor: "#080808",
+    backgroundColor: Colors.dark.background,
   },
   gradientButton: {
     minHeight: 50,
@@ -213,7 +214,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   gradientText: {
-    color: "#080808",
+    color: Colors.dark.ctaText,
     fontSize: 15,
     fontWeight: "900",
   },
@@ -222,12 +223,12 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#111111",
+    backgroundColor: Colors.dark.secondaryCta,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    borderColor: Colors.dark.border,
   },
   darkButtonText: {
-    color: "#F7F1E8",
+    color: Colors.dark.textPrimary,
     fontSize: 15,
     fontWeight: "800",
   },

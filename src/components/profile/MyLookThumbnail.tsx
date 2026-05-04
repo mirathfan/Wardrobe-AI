@@ -8,8 +8,11 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
+import { Colors } from "@/constants/theme";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
 import type { ProfileLookRecord } from "@/src/lib/profileLooks";
+
+const colors = Colors.dark;
 
 type Props = {
   record: ProfileLookRecord;
@@ -106,7 +109,7 @@ export function MyLookSkeleton({ width, height = Math.round((width * 4) / 3) }: 
     <View style={[styles.skeleton, { width, height }]}>
       <Animated.View style={[styles.shimmer, shimmerStyle]}>
         <LinearGradient
-          colors={["#1A1A1A", "#222222", "#1A1A1A"]}
+          colors={[colors.surface, colors.surfaceElevated, colors.surface]}
           start={{ x: 0, y: 0.5 }}
           end={{ x: 1, y: 0.5 }}
           style={StyleSheet.absoluteFill}
@@ -120,14 +123,14 @@ const styles = StyleSheet.create({
   card: {
     aspectRatio: 3 / 4,
     borderRadius: 16,
-    backgroundColor: "#F5F2ED",
+    backgroundColor: colors.boardLight,
     overflow: "hidden",
     minHeight: 44,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: colors.borderWarm,
   },
   cardSelected: {
-    borderColor: "#C084FC",
+    borderColor: colors.purpleBorder,
     borderWidth: 2,
   },
   previewClip: {
@@ -163,7 +166,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 6,
     right: 6,
-    color: "#C084FC",
+    color: colors.ctaCream,
     fontSize: 14,
     fontWeight: "900",
     textShadowColor: "rgba(0,0,0,0.45)",
@@ -185,19 +188,19 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#C084FC",
+    backgroundColor: colors.ctaCream,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.72)",
+    borderColor: colors.borderWarm,
   },
   checkText: {
-    color: "#080808",
+    color: colors.ctaText,
     fontSize: 15,
     lineHeight: 18,
     fontWeight: "900",
   },
   skeleton: {
     borderRadius: 16,
-    backgroundColor: "#1A1A1A",
+    backgroundColor: colors.surface,
     overflow: "hidden",
   },
   shimmer: {

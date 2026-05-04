@@ -1,6 +1,11 @@
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
 import { db } from "./firebase";
+import {
+  detectDeviceCurrency,
+  isSupportedCurrencyCode,
+  normalizeCurrencyCode,
+} from "./currency";
 import { getCachedProfilePreferences, setCachedProfilePreferences } from "./localCache";
 import { Category } from "../shared/wardrobeTaxonomy";
 import type { UserProfilePreferences } from "../types/UserProfilePreferences";
@@ -10,11 +15,16 @@ export type UserAccountProfile = {
   photoURL?: string | null;
 };
 
+const DEFAULT_DETECTED_CURRENCY = detectDeviceCurrency();
+
 export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
   onboardingCompleted: false,
   firstName: null,
   region: null,
   unitsPreference: "metric",
+  currencyMode: "auto",
+  preferredCurrency: DEFAULT_DETECTED_CURRENCY,
+  detectedCurrency: DEFAULT_DETECTED_CURRENCY,
   wardrobeMode: "mixed",
   selectedCategories: [],
   styleAesthetics: [],
@@ -97,6 +107,12 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
   const stylePreferences = readRecord(root.stylePreferences);
   const closetPreferences = readRecord(root.closetPreferences);
   const notifications = readRecord(root.notifications);
+  const detectedCurrency = detectDeviceCurrency();
+  const rawPreferredCurrency =
+    typeof root.preferredCurrency === "string" ? root.preferredCurrency : null;
+  const preferredCurrency = isSupportedCurrencyCode(rawPreferredCurrency)
+    ? normalizeCurrencyCode(rawPreferredCurrency) ?? detectedCurrency
+    : detectedCurrency;
 
   return {
     onboardingCompleted: typeof root.onboardingCompleted === "boolean" ? root.onboardingCompleted : false,
@@ -108,6 +124,9 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
         : units.length === "in" || units.weight === "lb"
           ? "imperial"
           : "metric",
+    currencyMode: root.currencyMode === "manual" ? "manual" : "auto",
+    preferredCurrency,
+    detectedCurrency,
     wardrobeMode:
       root.wardrobeMode === "masculine" ||
       root.wardrobeMode === "feminine" ||
