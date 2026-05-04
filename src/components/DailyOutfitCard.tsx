@@ -10,6 +10,13 @@ import { homeTypography } from "@/src/components/home/homeTypography";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import {
+  auraButtonStyle,
+  auraButtonTextStyle,
+  auraCardStyle,
+  auraChipStyle,
+  auraChipTextStyle,
+} from "@/src/components/ui/auraStylePrimitives";
 
 type SlotKey = "outerwear" | "top" | "bottom" | "shoes";
 
@@ -45,24 +52,38 @@ function plannedToLook(planned: PlannedOutfit): PlannedLook {
   };
 }
 
-function PrimaryActionButton({ label, onPress }: { label: string; onPress: () => void }) {
+function PrimaryActionButton({
+  label,
+  colors,
+  onPress,
+}: {
+  label: string;
+  colors: ReturnType<typeof useAppTheme>["colors"];
+  onPress: () => void;
+}) {
   return (
     <AuraPressable
       accessibilityRole="button"
       haptic="light"
       pressedScale={0.97}
       pressedOpacity={0.9}
-      style={styles.primaryBtn}
+      style={[
+        styles.primaryBtn,
+        auraButtonStyle(colors, "primary"),
+        {
+          shadowColor: colors.ctaCream,
+        },
+      ]}
       onPress={onPress}
     >
       <LinearGradient
         pointerEvents="none"
-        colors={["#7C5CFF", "#5B3BFF"]}
+        colors={[colors.ctaCream, colors.ctaCream]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
-      <Text style={styles.primaryBtnText}>{label}</Text>
+      <Text style={[auraButtonTextStyle(colors, "primary"), styles.primaryBtnText]}>{label}</Text>
     </AuraPressable>
   );
 }
@@ -100,9 +121,9 @@ export default function DailyOutfitCard({
     <View
       style={[
         styles.card,
+        auraCardStyle(colors, "largeGlass"),
         {
           borderColor: colors.glassBorder,
-          backgroundColor: colors.overlay,
           borderRadius: layout.largeRadius,
           padding: layout.cardPadding,
         },
@@ -119,14 +140,13 @@ export default function DailyOutfitCard({
                 key={look.id}
                 style={[
                   styles.segChip,
+                  auraChipStyle(colors, active ? "selected" : "filter"),
                   {
-                    borderColor: active ? colors.ctaCream : colors.border,
-                    backgroundColor: active ? colors.ctaCream : colors.chipBackground,
                   },
                 ]}
                 onPress={() => onSelectLook(look.id)}
               >
-                <Text style={[homeTypography.caption, { color: active ? colors.ctaText : colors.text }]}>{look.label}</Text>
+                <Text style={[homeTypography.caption, auraChipTextStyle(colors, active ? "selected" : "filter")]}>{look.label}</Text>
               </Pressable>
             );
           })}
@@ -151,16 +171,16 @@ export default function DailyOutfitCard({
           <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Outfit already marked worn.</Text>
         ) : hasPlanned ? (
           <>
-            <PrimaryActionButton label="Mark Worn" onPress={onMarkWorn} />
-            <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.chipBackground }]} onPress={() => Alert.alert("Edit", "Tap a slot to swap an item.") }>
-              <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Edit/Swap</Text>
+            <PrimaryActionButton label="Mark Worn" colors={colors} onPress={onMarkWorn} />
+            <Pressable style={[styles.secondaryBtn, auraButtonStyle(colors, "secondary", false, "compact")]} onPress={() => Alert.alert("Edit", "Tap a slot to swap an item.") }>
+              <Text style={[homeTypography.caption, auraButtonTextStyle(colors, "secondary"), { fontSize: 13 }]}>Edit/Swap</Text>
             </Pressable>
           </>
         ) : (
           <>
-            <PrimaryActionButton label="Use this outfit" onPress={onUseOutfit} />
-            <Pressable style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.chipBackground }]} onPress={onWhy}>
-              <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Why?</Text>
+            <PrimaryActionButton label="Use this outfit" colors={colors} onPress={onUseOutfit} />
+            <Pressable style={[styles.secondaryBtn, auraButtonStyle(colors, "secondary", false, "compact")]} onPress={onWhy}>
+              <Text style={[homeTypography.caption, auraButtonTextStyle(colors, "secondary"), { fontSize: 13 }]}>Why?</Text>
             </Pressable>
           </>
         )}
@@ -200,10 +220,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   segChip: {
-    paddingVertical: 7,
     paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
   },
   segText: {
     fontWeight: "700",
@@ -234,34 +251,19 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   primaryBtn: {
-    height: 56,
     minWidth: 190,
     alignSelf: "flex-start",
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 22,
     overflow: "hidden",
-    shadowColor: "#7C5CFF",
-    shadowOpacity: 0.28,
-    shadowRadius: 18,
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
     shadowOffset: { width: 0, height: 10 },
     elevation: 4,
   },
   primaryBtnText: {
-    color: "#FFFFFF",
     fontSize: 15,
-    lineHeight: 19,
-    fontWeight: "700",
-    letterSpacing: 0,
   },
   secondaryBtn: {
-    height: 40,
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    justifyContent: "center",
-    alignItems: "center",
+    minHeight: 44,
   },
   secondaryBtnText: {
     fontSize: 13,
@@ -274,10 +276,6 @@ const styles = StyleSheet.create({
   },
   textAction: {
     fontWeight: "600",
-  },
-  muted: {
-    color: "#666",
-    fontSize: 12,
   },
   linkBtn: {
     marginTop: 10,

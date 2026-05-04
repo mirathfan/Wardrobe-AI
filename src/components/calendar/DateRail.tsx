@@ -77,10 +77,10 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
       const isActive = item.key === selectedKey;
       const dayStatus = statuses[item.key];
       const weatherLine = formatWeatherLine(weatherByDate[item.key]);
-      const weekdayColor = isActive ? colors.ctaText : colors.textSecondary;
-      const dayColor = isActive ? colors.ctaText : colors.text;
-      const weatherColor = isActive ? colors.ctaText : colors.textMuted;
-      const markerColor = isActive ? colors.ctaText : colors.aiAccent;
+      const weekdayColor = isActive ? colors.ctaCream : colors.textSecondary;
+      const dayColor = isActive ? colors.text : colors.text;
+      const weatherColor = isActive ? colors.textSecondary : colors.textMuted;
+      const markerColor = isActive ? colors.ctaCream : colors.aiAccent;
       return (
         <AuraPressable
           haptic="selection"
@@ -94,8 +94,8 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
               ? [
                   styles.cellActive,
                   {
-                    backgroundColor: colors.ctaCream,
-                    borderColor: colors.ctaCream,
+                    backgroundColor: colors.purpleSurface,
+                    borderColor: colors.purpleBorder,
                     shadowColor: colors.ctaCream,
                   },
                 ]
@@ -123,7 +123,7 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
           </View>
           <View style={styles.indicatorRow}>
             {dayStatus?.planned ? <View style={[styles.planDot, { backgroundColor: markerColor }]} /> : null}
-            {dayStatus?.worn ? <Text style={[styles.check, { color: isActive ? colors.ctaText : colors.success }]}>✓</Text> : null}
+            {dayStatus?.worn ? <Text style={[styles.check, { color: isActive ? colors.ctaCream : colors.success }]}>✓</Text> : null}
             {dayStatus?.streak ? <Text style={styles.fire}>🔥</Text> : null}
           </View>
         </AuraPressable>
@@ -133,7 +133,8 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
       colors.aiAccent,
       colors.border,
       colors.ctaCream,
-      colors.ctaText,
+      colors.purpleBorder,
+      colors.purpleSurface,
       colors.surfaceSoft,
       colors.success,
       colors.text,

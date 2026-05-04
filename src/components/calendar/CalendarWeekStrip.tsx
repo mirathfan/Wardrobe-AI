@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { Colors } from "@/constants/theme";
 import { formatDayNumber, formatWeekLabel, isSameLocalDate, toDayKey } from "../../utils/date";
 
 type DayStatus = {
@@ -58,29 +59,29 @@ const styles = StyleSheet.create({
   pill: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: Colors.dark.border,
     borderRadius: 12,
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark.chipBackground,
     alignItems: "center",
     paddingVertical: 8,
   },
   pillActive: {
-    backgroundColor: "#111",
-    borderColor: "#111",
+    backgroundColor: Colors.dark.purpleSurface,
+    borderColor: Colors.dark.purpleBorder,
   },
   week: {
     fontSize: 11,
-    color: "#666",
+    color: Colors.dark.textSecondary,
     fontWeight: "700",
   },
   day: {
     marginTop: 2,
     fontSize: 16,
-    color: "#111",
+    color: Colors.dark.text,
     fontWeight: "800",
   },
   activeText: {
-    color: "#fff",
+    color: Colors.dark.ctaCream,
   },
   indicators: {
     marginTop: 4,
@@ -95,11 +96,11 @@ const styles = StyleSheet.create({
     borderRadius: 2.5,
   },
   planDot: {
-    backgroundColor: "#3b82f6",
+    backgroundColor: Colors.dark.ctaCream,
   },
   check: {
     fontSize: 9,
-    color: "#16a34a",
+    color: Colors.dark.success,
     fontWeight: "900",
     lineHeight: 9,
   },
@@ -116,9 +117,9 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     marginTop: 4,
-    backgroundColor: "#111",
+    backgroundColor: Colors.dark.ctaCream,
   },
   todayDotActive: {
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark.ctaCream,
   },
 });

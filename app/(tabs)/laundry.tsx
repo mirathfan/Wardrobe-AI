@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
+import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers, auraTypography } from "@/src/components/ui/auraStylePrimitives";
 import AppImage from "@/src/components/common/AppImage";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -141,16 +142,6 @@ export default function LaundryScreen() {
 
   const Header = useMemo(() => (
     <View style={{ gap: 16, paddingBottom: 12 }}>
-      <View style={{ minHeight: 44, justifyContent: "center" }}>
-        <GlassBackButton onPress={() => router.replace("/(tabs)")} />
-        <View style={{ alignItems: "center" }}>
-          <Text style={{ color: colors.text, fontSize: 26 * layout.titleScale, fontWeight: "900" }}>Laundry</Text>
-          <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 3 }}>
-            Keep AURA honest about what is actually wearable.
-          </Text>
-        </View>
-      </View>
-
       <View style={{ flexDirection: "row", gap: 10 }}>
         {TABS.map((status) => (
           <StatusCard
@@ -189,7 +180,7 @@ export default function LaundryScreen() {
       </View>
 
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>
+        <Text style={[auraTypography.cardTitle, { color: colors.text }]}>
           {TABS.find((entry) => entry.key === tab)?.label}
         </Text>
         <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }}>
@@ -203,7 +194,6 @@ export default function LaundryScreen() {
     canMoveNeedsWash,
     colors.text,
     colors.textSecondary,
-    layout.titleScale,
     listItems.length,
     savingStatus,
     tab,
@@ -212,21 +202,33 @@ export default function LaundryScreen() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.background, alignItems: "center", justifyContent: "center", gap: 10 }}>
-        <ActivityIndicator color={colors.ctaCream} />
-        <Text style={{ color: colors.textSecondary }}>Loading laundry...</Text>
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <AuraSubpageHeader
+          title="Laundry"
+          eyebrow="AURA LAUNDRY"
+          fallbackRoute="/"
+        />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <ActivityIndicator color={colors.ctaCream} />
+          <Text style={{ color: colors.textSecondary }}>Loading laundry...</Text>
+        </View>
       </View>
     );
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <AuraSubpageHeader
+        title="Laundry"
+        eyebrow="AURA LAUNDRY"
+        fallbackRoute="/"
+      />
       <FlatList
         data={listItems}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{
           paddingHorizontal: layout.horizontalPadding,
-          paddingTop: layout.topContentInset,
+          paddingTop: 12,
           paddingBottom: layout.bottomDockPadding + 28,
           gap: 10,
         }}
@@ -241,40 +243,6 @@ export default function LaundryScreen() {
         extraData={savingStatus}
       />
     </View>
-  );
-}
-
-function GlassBackButton({ onPress }: { onPress: () => void }) {
-  const { colors, isDark } = useAppTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => ({
-        position: "absolute",
-        left: 0,
-        top: 0,
-        zIndex: 2,
-        width: 42,
-        height: 42,
-        borderRadius: 999,
-        overflow: "hidden",
-        opacity: pressed ? 0.8 : 1,
-      })}
-    >
-      <BlurView intensity={26} tint={isDark ? "dark" : "light"} style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <View
-          style={{
-            position: "absolute",
-            inset: 0,
-            borderWidth: 1,
-            borderColor: colors.border,
-            borderRadius: 999,
-            backgroundColor: colors.surfaceGlass,
-          }}
-        />
-        <Ionicons name="chevron-back" size={22} color={colors.text} />
-      </BlurView>
-    </Pressable>
   );
 }
 
@@ -300,17 +268,16 @@ function StatusCard(props: {
         borderRadius: 18,
         padding: 12,
         gap: 8,
-        backgroundColor: props.active ? colors.purpleSurface : colors.surfaceSoft,
-        borderWidth: 1,
+        ...(props.active ? auraSurfaceTiers.surfaceInteractive : auraSurfaceTiers.surfaceBase),
         borderColor: props.active ? colors.purpleBorder : colors.border,
       }}
     >
       <View style={{ width: 30, height: 30, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: props.active ? colors.purpleSurfaceStrong : colors.chipBackground }}>
         <Ionicons name={props.icon} size={17} color={props.active ? colors.lightPurple : colors.textSecondary} />
       </View>
-      <Text style={{ color: colors.text, fontSize: 23, fontWeight: "900" }}>{props.count}</Text>
+      <Text style={[auraTypography.screenTitle, { color: colors.text, fontSize: 23, lineHeight: 28 }]}>{props.count}</Text>
       <View style={{ gap: 2 }}>
-        <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "900" }} numberOfLines={1}>
+        <Text style={[auraTypography.chipLabel, { color: colors.text, fontWeight: "900" }]} numberOfLines={1}>
           {props.label}
         </Text>
         <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15 }} numberOfLines={2}>
@@ -339,20 +306,16 @@ function ActionButton(props: {
       pressedOpacity={0.82}
       disabledOpacity={0.42}
       style={{
+        ...auraButtonStyle(colors, props.primary ? "primary" : "secondary", props.disabled),
         flex: 1,
-        minHeight: 46,
-        borderRadius: 14,
-        alignItems: "center",
-        justifyContent: "center",
         flexDirection: "row",
         gap: 7,
-        backgroundColor: props.primary ? colors.ctaCream : colors.surfaceSoft,
-        borderWidth: props.primary ? 0 : 1,
-        borderColor: colors.border,
+        minHeight: 46,
+        borderRadius: 14,
       }}
     >
       <Ionicons name={props.icon} size={16} color={props.primary ? colors.ctaText : colors.text} />
-      <Text style={{ color: props.primary ? colors.ctaText : colors.text, fontSize: 13, fontWeight: "900" }} numberOfLines={1}>
+      <Text style={[auraButtonTextStyle(colors, props.primary ? "primary" : "secondary", props.disabled), { fontSize: 13, lineHeight: 17 }]} numberOfLines={1}>
         {props.label}
       </Text>
     </AuraPressable>
@@ -368,14 +331,12 @@ function PremiumEmptyState() {
         borderRadius: 22,
         padding: 18,
         gap: 14,
-        backgroundColor: colors.surfaceGlass,
-        borderWidth: 1,
-        borderColor: colors.border,
+        ...auraSurfaceTiers.surfaceBase,
       }}
     >
       <View style={{ gap: 6 }}>
-        <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>No items in laundry</Text>
-        <Text style={{ color: colors.textSecondary, lineHeight: 21 }}>
+        <Text style={[auraTypography.cardTitle, { color: colors.text }]}>No items in laundry</Text>
+        <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>
           Tell AURA what you washed or move items from Closet.
         </Text>
       </View>
@@ -406,9 +367,7 @@ const LaundryRow = React.memo(function LaundryRow({
       style={{
         borderRadius: 18,
         padding: 12,
-        backgroundColor: colors.surfaceGlass,
-        borderWidth: 1,
-        borderColor: colors.border,
+        ...auraSurfaceTiers.surfaceBase,
         gap: 12,
       }}
     >
@@ -419,7 +378,9 @@ const LaundryRow = React.memo(function LaundryRow({
             height: 58,
             borderRadius: 16,
             overflow: "hidden",
-            backgroundColor: colors.surfaceSoft,
+            backgroundColor: colors.boardLight,
+            borderWidth: 1,
+            borderColor: colors.borderWarm,
             alignItems: "center",
             justifyContent: "center",
           }}
@@ -427,11 +388,11 @@ const LaundryRow = React.memo(function LaundryRow({
           {imageSource ? (
             <AppImage source={imageSource} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
           ) : (
-            <Ionicons name="shirt-outline" size={24} color={colors.textSecondary} />
+            <Ionicons name="shirt-outline" size={24} color={colors.textOnLightSecondary} />
           )}
         </View>
         <Pressable
-          onPress={() => router.push({ pathname: "/(tabs)/item/[id]", params: { id: item.id, sourceTab: "closet" } })}
+          onPress={() => router.push({ pathname: "/(tabs)/item/[id]", params: { id: item.id, sourceTab: "laundry", sourceRoute: "/(tabs)/laundry" } })}
           style={{ flex: 1, gap: 3 }}
         >
           <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900" }} numberOfLines={1}>
@@ -464,15 +425,14 @@ function RowAction({ label, disabled, primary, onPress }: { label: string; disab
       pressedOpacity={0.76}
       disabledOpacity={0.42}
       style={{
+        ...auraButtonStyle(colors, primary ? "primary" : "tertiary", disabled),
+        minHeight: 36,
         borderRadius: 999,
         paddingHorizontal: 11,
         paddingVertical: 8,
-        backgroundColor: primary ? colors.ctaCream : colors.surfaceSoft,
-        borderWidth: primary ? 0 : 1,
-        borderColor: colors.border,
       }}
     >
-      <Text style={{ color: primary ? colors.ctaText : colors.text, fontSize: 12, fontWeight: "900" }}>
+      <Text style={[auraButtonTextStyle(colors, primary ? "primary" : "tertiary", disabled), { fontSize: 12, lineHeight: 16 }]}>
         {label}
       </Text>
     </AuraPressable>

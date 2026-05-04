@@ -1,9 +1,9 @@
 import { router } from "expo-router";
+import { BlurView } from "expo-blur";
 import { doc, increment, serverTimestamp, writeBatch } from "firebase/firestore";
-import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import Reanimated, {
   Easing,
   useAnimatedStyle,
@@ -20,6 +20,13 @@ import DateRail from "@/src/components/calendar/DateRail";
 import DayContextCard from "@/src/components/calendar/DayContextCard";
 import SwapSheet from "@/src/components/calendar/SwapSheet";
 import TimelineCard from "@/src/components/calendar/TimelineCard";
+import {
+  auraButtonStyle,
+  auraButtonTextStyle,
+  auraCardStyle,
+  auraSheetBackdropStyle,
+  auraTypography,
+} from "@/src/components/ui/auraStylePrimitives";
 import { useDayEvents } from "@/src/hooks/useDayEvents";
 import { useDayWeather } from "@/src/hooks/useDayWeather";
 import { useNow } from "@/src/hooks/useNow";
@@ -45,22 +52,16 @@ import { useAuth } from "@/src/hooks/useAuth";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { db } from "@/src/lib/firebase";
 import { MAX_WEARS_BEFORE_WASH, listenToItems, normalizeLaundryStatus, toCanonicalCategory } from "@/src/lib/items";
+import { impactLight } from "@/src/lib/haptics";
 import { Toast } from "@/src/lib/toast";
+import { FLOATING_TAB_BAR_HEIGHT } from "@/src/constants/dock";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 type SectionIconName = "calendar" | "sparkles" | "chart.bar.xaxis";
 type SlotKey = keyof OutfitItemsByCategory;
 type RailWeather = { high?: number; low?: number; label?: string };
 
-const DateTimePickerModule = (() => {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require("@react-native-community/datetimepicker");
-  } catch {
-    return null;
-  }
-})();
-const NativeDatePicker = DateTimePickerModule?.default ?? null;
+const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;
 
 function iconFallback(name: SectionIconName): keyof typeof Ionicons.glyphMap {
   if (name === "calendar") return "calendar-outline";
@@ -97,12 +98,8 @@ function computeDaysSinceLastWorn(item: ClothingItem) {
   return Math.max(0, Math.floor((Date.now() - date.getTime()) / (24 * 60 * 60 * 1000)));
 }
 
-async function hapticLight() {
-  try {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  } catch {
-    // no-op
-  }
+function hapticLight() {
+  return impactLight();
 }
 
 function lookToPlanned(look: PlannedLook): PlannedOutfit {
@@ -123,6 +120,32 @@ function buildRailDateKeys(anchor: Date) {
   return Array.from({ length: 121 }, (_, i) => toDayKey(addDays(anchor, i - 60)));
 }
 
+function dateOnly(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, offset: number) {
+  return new Date(date.getFullYear(), date.getMonth() + offset, 1);
+}
+
+function buildCalendarWeeks(month: Date) {
+  const monthStart = startOfMonth(month);
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(monthStart.getDate() - monthStart.getDay());
+
+  return Array.from({ length: 6 }, (_, weekIndex) =>
+    Array.from({ length: 7 }, (_, dayIndex) => {
+      const date = new Date(gridStart);
+      date.setDate(gridStart.getDate() + weekIndex * 7 + dayIndex);
+      return date;
+    }),
+  );
+}
+
 function DatePickerSheet({
   visible,
   value,
@@ -141,28 +164,155 @@ function DatePickerSheet({
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(value));
+
+  useEffect(() => {
+    if (visible) {
+      setVisibleMonth(startOfMonth(value));
+    }
+  }, [value, visible]);
+
+  const todayKey = toDayKey(new Date());
+  const selectedKey = useMemo(() => toDayKey(value), [value]);
+  const calendarWeeks = useMemo(() => buildCalendarWeeks(visibleMonth), [visibleMonth]);
+  const monthLabel = useMemo(
+    () => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(visibleMonth),
+    [visibleMonth],
+  );
+
+  const onSelectDate = useCallback(
+    (date: Date) => {
+      const nextDate = dateOnly(date);
+      setVisibleMonth(startOfMonth(nextDate));
+      onChange(nextDate);
+      void hapticLight();
+    },
+    [onChange],
+  );
+
+  const onDone = useCallback(() => {
+    void hapticLight();
+    onConfirm();
+  }, [onConfirm]);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={styles.modalBackdrop}>
         <View style={styles.modalSheet}>
-          <Text style={styles.modalTitle}>{title}</Text>
-          {NativeDatePicker ? (
-            <NativeDatePicker
-              value={value}
-              mode="date"
-              display="spinner"
-              onChange={(_: unknown, nextDate?: Date) => {
-                if (nextDate) onChange(nextDate);
-              }}
-            />
-          ) : (
-            <Text style={styles.muted}>Date picker is unavailable in this client.</Text>
-          )}
+          <BlurView intensity={64} tint="dark" style={StyleSheet.absoluteFill} />
+          <View pointerEvents="none" style={styles.modalGlassTint} />
+
+          <View style={styles.modalHeaderRow}>
+            <Text style={styles.modalTitle}>{title}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close date picker"
+              hitSlop={8}
+              style={styles.modalCloseButton}
+              onPress={onCancel}
+            >
+              <Ionicons name="close" size={18} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+
+          <View style={styles.monthNavRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Previous month"
+              hitSlop={8}
+              style={styles.monthNavButton}
+              onPress={() => setVisibleMonth((month) => addMonths(month, -1))}
+            >
+              <Ionicons name="chevron-back" size={19} color={colors.text} />
+            </Pressable>
+            <Text style={styles.monthTitle}>{monthLabel}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Next month"
+              hitSlop={8}
+              style={styles.monthNavButton}
+              onPress={() => setVisibleMonth((month) => addMonths(month, 1))}
+            >
+              <Ionicons name="chevron-forward" size={19} color={colors.text} />
+            </Pressable>
+          </View>
+
+          <View style={styles.weekdayRow}>
+            {WEEKDAY_LABELS.map((label, index) => (
+              <Text key={`${label}-${index}`} style={styles.weekdayLabel}>
+                {label}
+              </Text>
+            ))}
+          </View>
+
+          <View style={styles.calendarGrid}>
+            {calendarWeeks.map((week, weekIndex) => (
+              <View key={`week-${weekIndex}`} style={styles.calendarGridRow}>
+                {week.map((date) => {
+                  const dateKey = toDayKey(date);
+                  const inVisibleMonth =
+                    date.getFullYear() === visibleMonth.getFullYear() && date.getMonth() === visibleMonth.getMonth();
+                  const isSelected = dateKey === selectedKey;
+                  const isToday = dateKey === todayKey;
+                  return (
+                    <Pressable
+                      key={dateKey}
+                      accessibilityRole="button"
+                      accessibilityState={isSelected ? { selected: true } : undefined}
+                      style={styles.dateCell}
+                      onPress={() => onSelectDate(date)}
+                    >
+                      <View
+                        style={[
+                          styles.dateCircle,
+                          {
+                            borderColor: isToday ? colors.ctaCream : "transparent",
+                            opacity: inVisibleMonth ? 1 : 0.42,
+                          },
+                          isSelected
+                            ? {
+                                backgroundColor: colors.ctaCream,
+                                borderColor: colors.ctaCream,
+                                shadowColor: colors.ctaCream,
+                              }
+                            : null,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.dateText,
+                            {
+                              color: isSelected
+                                ? colors.primaryText
+                                : inVisibleMonth
+                                  ? colors.text
+                                  : colors.textMuted,
+                            },
+                          ]}
+                        >
+                          {date.getDate()}
+                        </Text>
+                        {isToday ? (
+                          <View
+                            style={[
+                              styles.todayMarker,
+                              { backgroundColor: isSelected ? colors.primaryText : colors.ctaCream },
+                            ]}
+                          />
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+
           <View style={styles.modalActions}>
             <Pressable style={styles.modalSecondary} onPress={onCancel}>
               <Text style={styles.modalSecondaryText}>Cancel</Text>
             </Pressable>
-            <Pressable style={styles.modalPrimary} onPress={onConfirm}>
+            <Pressable style={styles.modalPrimary} onPress={onDone}>
               <Text style={styles.modalPrimaryText}>Done</Text>
             </Pressable>
           </View>
@@ -177,7 +327,7 @@ export default function CalendarScreen() {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const uid = user?.uid ?? null;
-  const bottomDockPadding = layout.bottomDockPadding + 112;
+  const bottomDockPadding = layout.bottomDockPadding + 24;
 
   const { greeting, timeLabel } = useNow();
   const day = useSelectedDate();
@@ -188,6 +338,7 @@ export default function CalendarScreen() {
 
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [record, setRecord] = useState<DailyOutfitRecord | null>(null);
   const [looks, setLooks] = useState<PlannedLook[]>([]);
@@ -464,6 +615,22 @@ export default function CalendarScreen() {
     if (events.permission === "granted" && events.state === "error") return events.actions.refresh();
   }, [events.actions, events.permission, events.state]);
 
+  const onRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    const startedAt = Date.now();
+    try {
+      await Promise.allSettled([
+        loadStreakData(),
+        events.actions.refresh(),
+        weather.actions.refresh(),
+      ]);
+    } finally {
+      const remaining = Math.max(0, 450 - (Date.now() - startedAt));
+      setTimeout(() => setRefreshing(false), remaining);
+    }
+  }, [events.actions, loadStreakData, refreshing, weather.actions]);
+
   const onSelectDate = useCallback(async (date: Date) => {
     day.setSelectedDate(date);
     await hapticLight();
@@ -667,10 +834,19 @@ export default function CalendarScreen() {
   return (
     <View style={themedStyles.screen}>
       <ScrollView
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.ctaCream}
+            colors={[colors.ctaCream]}
+            progressBackgroundColor={colors.background}
+          />
+        }
         contentContainerStyle={{
           paddingHorizontal: layout.horizontalPadding,
           paddingTop: layout.topContentInset,
-          paddingBottom: Math.max(bottomDockPadding, 180),
+          paddingBottom: Math.max(bottomDockPadding, 160),
         }}
         showsVerticalScrollIndicator={false}
       >
@@ -801,9 +977,9 @@ export default function CalendarScreen() {
         title="Jump to date"
         onChange={setPickerDate}
         onCancel={() => setJumpPickerOpen(false)}
-        onConfirm={async () => {
+        onConfirm={() => {
           setJumpPickerOpen(false);
-          await onSelectDate(pickerDate);
+          day.setSelectedDate(pickerDate);
         }}
       />
 
@@ -863,10 +1039,7 @@ return StyleSheet.create({
     gap: 8,
   },
   sectionTitle: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.5,
-    textTransform: "uppercase",
+    ...auraTypography.eyebrow,
   },
   monthPicker: {
     marginTop: 6,
@@ -891,11 +1064,10 @@ return StyleSheet.create({
     height: layout.sectionGap - 4,
   },
   card: {
-    borderWidth: 1,
+    ...auraCardStyle(colors, "card"),
     borderColor: colors.glassBorder,
     borderRadius: layout.mediumRadius,
     padding: layout.cardPadding,
-    backgroundColor: colors.surface,
   },
   emptyDayCard: {
     backgroundColor: "rgba(255,255,255,0.045)",
@@ -916,14 +1088,10 @@ return StyleSheet.create({
   planCta: {
     marginTop: 10,
     alignSelf: "flex-start",
-    borderRadius: 999,
-    backgroundColor: colors.accent,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    ...auraButtonStyle(colors, "primary", false, "compact"),
   },
   planCtaText: {
-    color: colors.ctaText,
-    fontWeight: "800",
+    ...auraButtonTextStyle(colors, "primary"),
     fontSize: 12,
   },
   weekBars: {
@@ -949,48 +1117,141 @@ return StyleSheet.create({
     gap: 5,
   },
   modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.24)",
-    justifyContent: "flex-end",
+    ...auraSheetBackdropStyle(colors),
   },
   modalSheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: layout.largeRadius,
-    borderTopRightRadius: layout.largeRadius,
+    ...auraCardStyle(colors, "sheet"),
+    marginHorizontal: layout.horizontalPadding,
+    marginBottom: layout.floatingDockBottom + FLOATING_TAB_BAR_HEIGHT + 12,
+    borderRadius: layout.largeRadius,
+    borderColor: colors.purpleBorder,
     padding: layout.cardPadding,
+    gap: 13,
+    overflow: "hidden",
+    shadowColor: colors.ctaCream,
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
+  },
+  modalGlassTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(25,0,25,0.72)",
+  },
+  modalHeaderRow: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: 12,
   },
   modalTitle: {
-    fontSize: 16,
-    fontWeight: "800",
+    ...auraTypography.cardTitle,
     color: colors.text,
+    flex: 1,
+  },
+  modalCloseButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.chipBackground,
+  },
+  monthNavRow: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  monthNavButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceInteractive,
+  },
+  monthTitle: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  weekdayRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  weekdayLabel: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  calendarGrid: {
+    gap: 5,
+  },
+  calendarGridRow: {
+    minHeight: 38,
+    flexDirection: "row",
+    gap: 4,
+  },
+  dateCell: {
+    flex: 1,
+    minHeight: 38,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(251,228,216,0.025)",
+  },
+  dateText: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  todayMarker: {
+    position: "absolute",
+    bottom: 4,
+    width: 3.5,
+    height: 3.5,
+    borderRadius: 1.75,
   },
   modalActions: {
     flexDirection: "row",
     gap: 10,
+    marginTop: 2,
   },
   modalSecondary: {
     flex: 1,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 10,
-    alignItems: "center",
+    ...auraButtonStyle(colors, "secondary", false, "compact"),
   },
   modalSecondaryText: {
-    color: colors.text,
-    fontWeight: "700",
+    ...auraButtonTextStyle(colors, "secondary"),
   },
   modalPrimary: {
     flex: 1,
-    borderRadius: 12,
-    backgroundColor: colors.accent,
-    paddingVertical: 10,
-    alignItems: "center",
+    ...auraButtonStyle(colors, "primary", false, "compact"),
   },
   modalPrimaryText: {
-    color: colors.ctaText,
-    fontWeight: "800",
+    ...auraButtonTextStyle(colors, "primary"),
   },
 });
 }
