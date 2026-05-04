@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -6,25 +7,24 @@ import {
   Alert,
   Animated,
   InteractionManager,
-  Pressable,
+  RefreshControl,
   ScrollView,
+  StyleSheet,
   Text,
   View,
 } from "react-native";
 
-import ContinueSection from "@/src/components/home/ContinueSection";
 import ContinueChatCard from "@/src/components/home/ContinueChatCard";
-import MinimumClosetProgressCard from "@/src/components/closet/MinimumClosetProgressCard";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import AuraLookModule from "@/src/components/home/AuraLookModule";
 import HomeHero from "@/src/components/home/HomeHero";
-import InsightCard from "@/src/components/home/InsightCard";
 import QuickActionRail, { type QuickActionItem } from "@/src/components/home/QuickActionRail";
 import SmartToolsGrid, { type SmartTool } from "@/src/components/home/SmartToolsGrid";
+import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
 import { HOME_DEFERRED_FEATURES } from "@/src/components/home/homeDeferredFeatures";
 import { homeTypography } from "@/src/components/home/homeTypography";
 import type { AppColors } from "@/constants/theme";
-import AuraTrainingCard from "@/src/components/aura/AuraTrainingCard";
+import { CTA_HEIGHT, CTA_HORIZONTAL_PADDING, PILL_RADIUS } from "@/src/constants/auraControls";
 import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -33,14 +33,15 @@ import { useNow } from "@/src/hooks/useNow";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { buildVisiblePreferenceHint, loadAssistantProfile } from "@/src/lib/assistantMemory";
 import { loadChatMessages, loadLatestChatThread, type AIChatThread } from "@/src/lib/aiChats";
+import { askAuraStream, isAuraStreamAbortError } from "@/src/lib/aura";
 import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
 import { loadLatestSavedAuraLook } from "@/src/lib/auraLooks";
+import { generateAuraSwipeBatch } from "@/src/lib/auraSwipe";
 import { listenToItems, normalizeLaundryStatus } from "@/src/lib/items";
 import {
+  buildMinimumClosetSummary,
   getMinimumClosetProgress,
   getSuggestedAddItemCategory,
-  MINIMUM_CLOSET_TARGETS,
-  MINIMUM_CLOSET_UNLOCK_ITEM_COUNT,
 } from "@/src/lib/minimumCloset";
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
@@ -55,26 +56,13 @@ import type { AuraLook, AuraLookAction, AuraResponse } from "@/src/types/aura";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 import { subscribeOutfitByDate, type DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
-const FIRST_CLOSET_AURA_PROMPT =
-  "My closet is empty. What should I add first so AURA can build strong outfits? Give me a concise starter plan with tops, bottoms, footwear, one layer, and one accessory.";
-
-const FIRST_CLOSET_TARGETS = [
-  { key: "tops", label: "Tops", target: MINIMUM_CLOSET_TARGETS.tops },
-  { key: "bottoms", label: "Bottoms", target: MINIMUM_CLOSET_TARGETS.bottoms },
-  { key: "footwear", label: "Footwear", target: MINIMUM_CLOSET_TARGETS.footwear },
-  { key: "outerwear", label: "Outerwear", target: MINIMUM_CLOSET_TARGETS.outerwear },
-  { key: "accessories", label: "Accessory", target: MINIMUM_CLOSET_TARGETS.accessories },
-] as const;
-
-function toMillis(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (value instanceof Date) return value.getTime();
-  if (value && typeof value === "object" && typeof (value as { toDate?: () => Date }).toDate === "function") {
-    const date = (value as { toDate: () => Date }).toDate();
-    return Number.isFinite(date?.getTime?.()) ? date.getTime() : 0;
-  }
-  return 0;
-}
+const HOME_BACKGROUND_BASE = "#09000B";
+const HOME_BACKGROUND_GRADIENT = ["#09000B", "#09000B", "#0D000F"] as const;
+const HOME_SECTION_GAP = 24;
+const HOME_SECTION_CONTENT_GAP = 16;
+const HOME_CARD_GAP = 12;
+const HOME_TIGHT_GAP = 4;
+const HOME_BOTTOM_BREATHING_ROOM = 24;
 
 function RevealSection({
   delay,
@@ -110,127 +98,82 @@ function RevealSection({
   );
 }
 
-function BuildFirstClosetSection({
+function labelForNextBestPiece(category?: string | null) {
+  if (category === "footwear") return "versatile shoes";
+  if (category === "outerwear") return "light layer";
+  if (category === "bottoms") return "strong bottom";
+  if (category === "accessories") return "finishing accessory";
+  return "reliable top";
+}
+
+function ImproveClosetCard({
   colors,
-  onAddFirstItem,
-  onAskAura,
+  title,
+  body,
+  onPress,
 }: {
   colors: AppColors;
-  onAddFirstItem: () => void;
-  onAskAura: () => void;
+  title: string;
+  body: string;
+  onPress: () => void;
 }) {
   const layout = useResponsiveLayout();
 
   return (
     <View
       style={{
-        borderRadius: layout.largeRadius,
-        padding: layout.cardPadding + 2,
-        backgroundColor: colors.surfaceElevated,
-        borderWidth: 1,
-        borderColor: colors.border,
-        gap: 16,
+        borderRadius: layout.mediumRadius,
+        padding: layout.cardPadding,
+        ...auraSurfaceTiers.surfaceBase,
+        gap: HOME_CARD_GAP,
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: HOME_CARD_GAP }}>
         <View
           style={{
-            width: 44,
-            height: 44,
+            width: 38,
+            height: 38,
             borderRadius: 999,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: colors.purpleSurface,
-            borderWidth: 1,
-            borderColor: colors.purpleBorder,
-          }}
-        >
-          <Ionicons name="shirt-outline" size={21} color={colors.ctaCream} />
-        </View>
-        <View style={{ flex: 1, gap: 6 }}>
-          <Text style={[homeTypography.label, { color: colors.lightPurple }]}>FIRST VALUE</Text>
-          <Text style={[homeTypography.titleSmall, { color: colors.text }]}>
-            Build your first closet
-          </Text>
-          <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, opacity: 0.84 }]}>
-            Add {MINIMUM_CLOSET_UNLOCK_ITEM_COUNT} core pieces and AURA can start giving sharper outfit ideas from what you actually own.
-          </Text>
-        </View>
-      </View>
-
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {FIRST_CLOSET_TARGETS.map((target) => (
-          <View
-            key={target.key}
-            style={{
-              flexGrow: 1,
-              flexBasis: "30%",
-              minWidth: 104,
-              borderRadius: 8,
-              paddingVertical: 9,
-              paddingHorizontal: 10,
-              backgroundColor: colors.chipBackground,
-              borderWidth: 1,
-              borderColor: colors.border,
-              gap: 2,
-            }}
-          >
-            <Text style={[homeTypography.titleSmall, { color: colors.text, fontSize: 17, lineHeight: 21 }]}>
-              {target.target}
-            </Text>
-            <Text style={[homeTypography.caption, { color: colors.textSecondary }]} numberOfLines={1}>
-              {target.label}
-            </Text>
-          </View>
-        ))}
-      </View>
-
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-        <AuraPressable
-          onPress={onAddFirstItem}
-          haptic="selection"
-          hapticTrigger="press"
-          pressedScale={0.97}
-          style={{
-            minHeight: 44,
-            borderRadius: layout.pillRadius,
-            paddingHorizontal: 14,
-            alignItems: "center",
-            justifyContent: "center",
-            flexDirection: "row",
-            gap: 8,
-            backgroundColor: colors.ctaCream,
-          }}
-        >
-          <Ionicons name="add" size={16} color={colors.ctaText} />
-          <Text style={[homeTypography.caption, { color: colors.ctaText, fontWeight: "900" }]}>
-            Add first item
-          </Text>
-        </AuraPressable>
-        <AuraPressable
-          onPress={onAskAura}
-          haptic="selection"
-          hapticTrigger="press"
-          pressedScale={0.97}
-          style={{
-            minHeight: 44,
-            borderRadius: layout.pillRadius,
-            paddingHorizontal: 14,
-            alignItems: "center",
-            justifyContent: "center",
-            flexDirection: "row",
-            gap: 8,
             backgroundColor: colors.surfaceSoft,
             borderWidth: 1,
-            borderColor: colors.border,
+            borderColor: colors.borderSoft,
           }}
         >
-          <Ionicons name="sparkles-outline" size={15} color={colors.text} />
-          <Text style={[homeTypography.caption, { color: colors.text, fontWeight: "900" }]}>
-            Ask AURA what to add first
+          <Ionicons name="add-circle-outline" size={20} color={colors.ctaCream} />
+        </View>
+        <View style={{ flex: 1, gap: HOME_TIGHT_GAP }}>
+          <Text style={[homeTypography.label, { color: colors.lightPurple }]}>IMPROVE YOUR CLOSET</Text>
+          <Text style={[homeTypography.titleSmall, { color: colors.text }]} numberOfLines={2}>
+            {title}
           </Text>
-        </AuraPressable>
+          <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, opacity: 0.84 }]} numberOfLines={2}>
+            {body}
+          </Text>
+        </View>
       </View>
+
+      <AuraPressable
+        onPress={onPress}
+        haptic="selection"
+        hapticTrigger="press"
+        pressedScale={0.97}
+        style={{
+          alignSelf: "flex-start",
+          ...auraButtonStyle(colors, "primary"),
+          minHeight: CTA_HEIGHT,
+          borderRadius: PILL_RADIUS,
+          paddingHorizontal: CTA_HORIZONTAL_PADDING,
+          flexDirection: "row",
+          gap: 8,
+        }}
+      >
+        <Ionicons name="add" size={16} color={colors.ctaText} />
+        <Text style={[auraButtonTextStyle(colors, "primary"), { fontSize: 13, lineHeight: 17 }]}>
+          Add next best piece
+        </Text>
+      </AuraPressable>
     </View>
   );
 }
@@ -252,6 +195,8 @@ export default function HomeScreen() {
   const [latestSavedLook, setLatestSavedLook] = useState<import("@/src/lib/auraLooks").SavedAuraLookRecord | null>(null);
   const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
   const [renderDeferredHomeSections, setRenderDeferredHomeSections] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [regeneratingLook, setRegeneratingLook] = useState(false);
   const homeCacheRefreshingRef = useRef(false);
 
   useEffect(() => {
@@ -341,54 +286,63 @@ export default function HomeScreen() {
     };
   }, [loading]);
 
+  const loadHomeCompanionData = React.useCallback(
+    async (isActive: () => boolean) => {
+      if (!uid) {
+        setAssistantHint(null);
+        setLatestChatThread(null);
+        setLatestAuraLookResponse(null);
+        return;
+      }
+      try {
+        const cachedProfilePreferences = await getCachedProfilePreferences(uid);
+        if (isActive() && cachedProfilePreferences?.data) {
+          setProfilePreferences(cachedProfilePreferences.data);
+        }
+        const cachedChats = await getCachedChatList(uid);
+        if (isActive() && cachedChats?.data?.[0]) {
+          setLatestChatThread(cachedChats.data[0]);
+        }
+        const [assistantProfile, latestChat, savedLook, userProfilePreferences] = await Promise.all([
+          loadAssistantProfile(uid),
+          loadLatestChatThread(uid),
+          loadLatestSavedAuraLook(uid),
+          loadUserProfilePreferences(uid),
+        ]);
+        if (!isActive()) return;
+        setAssistantHint(buildVisiblePreferenceHint(assistantProfile));
+        setLatestChatThread(latestChat);
+        setLatestSavedLook(savedLook);
+        setProfilePreferences(userProfilePreferences);
+        if (latestChat?.chatId) {
+          const chatMessages = await loadChatMessages(uid, latestChat.chatId);
+          if (!isActive()) return;
+          const latestAura = [...chatMessages]
+            .reverse()
+            .find((message) => message.type === "assistant" && message.aura?.look)?.aura ?? null;
+          setLatestAuraLookResponse(latestAura);
+        } else {
+          setLatestAuraLookResponse(null);
+        }
+      } catch {
+        if (!isActive()) return;
+        setAssistantHint(null);
+      }
+    },
+    [uid],
+  );
+
   useFocusEffect(
     React.useCallback(() => {
       let active = true;
-      void (async () => {
-        if (!uid) {
-          setAssistantHint(null);
-          setLatestChatThread(null);
-          return;
-        }
-        try {
-          const cachedProfilePreferences = await getCachedProfilePreferences(uid);
-          if (active && cachedProfilePreferences?.data) {
-            setProfilePreferences(cachedProfilePreferences.data);
-          }
-          const cachedChats = await getCachedChatList(uid);
-          if (active && cachedChats?.data?.[0]) {
-            setLatestChatThread(cachedChats.data[0]);
-          }
-          const [assistantProfile, latestChat, savedLook, userProfilePreferences] = await Promise.all([
-            loadAssistantProfile(uid),
-            loadLatestChatThread(uid),
-            loadLatestSavedAuraLook(uid),
-            loadUserProfilePreferences(uid),
-          ]);
-          if (!active) return;
-          setAssistantHint(buildVisiblePreferenceHint(assistantProfile));
-          setLatestChatThread(latestChat);
-          setLatestSavedLook(savedLook);
-          setProfilePreferences(userProfilePreferences);
-          if (latestChat?.chatId) {
-            const chatMessages = await loadChatMessages(uid, latestChat.chatId);
-            if (!active) return;
-            const latestAura = [...chatMessages]
-              .reverse()
-              .find((message) => message.type === "assistant" && message.aura?.look)?.aura ?? null;
-            setLatestAuraLookResponse(latestAura);
-          } else {
-            setLatestAuraLookResponse(null);
-          }
-        } catch {
-          if (!active) return;
-          setAssistantHint(null);
-        }
-      })();
+      const task = InteractionManager.runAfterInteractions(() => {
+        void loadHomeCompanionData(() => active);
+      });
       return () => {
         active = false;
+        task.cancel?.();
       };
-    }, [uid])
+    }, [loadHomeCompanionData])
   );
 
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
@@ -396,7 +350,6 @@ export default function HomeScreen() {
     () => getStyleProfileConfig(profilePreferences),
     [profilePreferences]
   );
-
   const displayName = (
     profilePreferences?.firstName ??
     user?.displayName ??
@@ -438,29 +391,9 @@ export default function HomeScreen() {
     [items]
   );
 
-  const recentItems = useMemo(
-    () =>
-      [...items]
-        .sort((a, b) => {
-          const aMs = Math.max(
-            toMillis(a.createdAt),
-            toMillis(a.cleanedUpdatedAt),
-            toMillis(a.colorUpdatedAt)
-          );
-          const bMs = Math.max(
-            toMillis(b.createdAt),
-            toMillis(b.cleanedUpdatedAt),
-            toMillis(b.colorUpdatedAt)
-          );
-          return bMs - aMs;
-        })
-        .slice(0, 8),
-    [items]
-  );
-
   const heroStylistNote = useMemo(() => {
     if (todayRecord?.plannedOutfit || todayRecord?.wornOutfit) {
-      return "Your quickest win is already on deck.";
+      return "Built from pieces ready right now.";
     }
     if (unwornCount > 0) {
       return "Ready to pull ignored pieces back in.";
@@ -506,16 +439,23 @@ export default function HomeScreen() {
 
   const hasMinimalWardrobe = availableCount < 4;
   const minimumClosetProgress = useMemo(() => getMinimumClosetProgress(items), [items]);
-  const showMinimumClosetCard = !minimumClosetProgress.isUnlocked;
-  const hasNoClosetItems = items.length === 0;
   const openAddMissingItem = React.useCallback(() => {
     const suggestedCategory = getSuggestedAddItemCategory(items);
     router.push({
       pathname: "/(tabs)/add",
-      params: suggestedCategory ? { suggestedCategory } : {},
+      params: { ...(suggestedCategory ? { suggestedCategory } : {}), addSession: String(Date.now()) },
     });
   }, [items]);
   const latestLook = latestAuraLookResponse?.look ?? latestSavedLook?.look ?? null;
+  const improveClosetNudge = useMemo(() => {
+    const nextCategory = minimumClosetProgress.suggestedNextCategory;
+    if (!nextCategory) return null;
+    const nextPiece = labelForNextBestPiece(nextCategory);
+    return {
+      title: `Add a ${nextPiece}`,
+      body: `Style core ${minimumClosetProgress.current}/${minimumClosetProgress.target}. This is the next piece AURA can use most.`,
+    };
+  }, [minimumClosetProgress]);
 
   useEffect(() => {
     if (!uid || loading) return;
@@ -656,142 +596,159 @@ export default function HomeScreen() {
     weather.tempC,
   ]);
 
-  const starterPrompts = useMemo<QuickActionItem[]>(() => {
-    const byKey: Record<string, QuickActionItem> = {
-      today: {
-        key: "today",
-        label: "Style me today",
-        prompt: "Build an outfit for today from my wardrobe.",
-      },
-      weather: {
-        key: "weather",
-        label: "Dress for weather",
-        prompt: "Build me a weather-aware outfit using what I own.",
-      },
-      unworn: {
-        key: "unworn",
-        label: "Use unworn items",
-        prompt: "Create a look using pieces I have not worn much.",
-      },
-      closet: {
-        key: "closet",
-        label: "Use only my closet",
-        prompt: "Build a strong outfit using only my closet.",
-      },
-      elevate: {
-        key: "elevate",
-        label: "Dress this up",
+  const handleRegenerateHomeLook = React.useCallback(async () => {
+    if (!uid) {
+      Alert.alert("AURA", "Please sign in to regenerate outfits.");
+      return;
+    }
+    if (regeneratingLook) return;
+
+    const previousLookItemIds = Array.from(
+      new Set(
+        (latestLook?.pieces ?? [])
+          .map((piece) => piece.itemId)
+          .filter((itemId): itemId is string => !!itemId),
+      ),
+    );
+    const previousLookSignature = previousLookItemIds.length
+      ? [...previousLookItemIds].sort().join("|")
+      : "";
+    const previousLookSummary = latestLook
+      ? ` Avoid repeating this current look: ${latestLook.lookTitle}. Current closet pieces: ${(latestLook.fromCloset ?? []).join(", ")}.`
+      : "";
+    const prompt =
+      `Regenerate a fresh closet-first outfit from my wardrobe for today. Make it visually distinct from the current look, use pieces I can wear now, and return one structured visual look.${previousLookSummary}`;
+    const pickFreshLook = (looks: AuraLook[]) =>
+      looks.find((candidate) => {
+        if (!previousLookItemIds.length) return true;
+        const candidateIds = new Set(
+          (candidate.pieces ?? [])
+            .map((piece) => piece.itemId)
+            .filter((itemId): itemId is string => !!itemId),
+        );
+        if (!candidateIds.size) return true;
+        const overlap = previousLookItemIds.filter((itemId) => candidateIds.has(itemId)).length;
+        return overlap <= 1 || overlap < previousLookItemIds.length;
+      }) ?? looks[0] ?? null;
+
+    setRegeneratingLook(true);
+    try {
+      try {
+        const batch = await generateAuraSwipeBatch({
+          items,
+          numOutfits: 3,
+          intentText: prompt,
+          excludeItemIds: previousLookItemIds,
+          recentItemIds: previousLookItemIds,
+          previousLookItemIds,
+          previousLookSignatures: previousLookSignature ? [previousLookSignature] : [],
+          maxOverlap: 1,
+        });
+        const batchLooks = batch.lookOptions.map((option) => option.look).filter(Boolean);
+        const batchLook = pickFreshLook(batchLooks);
+
+        if (batchLook) {
+          const batchReason =
+            batch.lookOptions.find((option) => option.look === batchLook)?.reason ||
+            batchLook.shortExplanation;
+          setLatestAuraLookResponse({
+            presentation: "card",
+            title: batchLook.lookTitle,
+            reply: "I regenerated a fresh closet-first outfit from what is ready now.",
+            reason: batchReason,
+            outfitItems: batchLook.fromCloset,
+            ownedPieces: batchLook.fromCloset,
+            recommendedAdditions: batchLook.addToComplete,
+            swapSuggestion: "",
+            missingPieces: batchLook.addToComplete,
+            upgradeSuggestions: [],
+            upgradeSuggestionItems: [],
+            chips: [],
+            look: batchLook,
+            lookOptions: batchLooks,
+          });
+          return;
+        }
+      } catch {
+        // The structured batch path is preferred, but the chat stream can still return a visual look.
+      }
+
+      const result = await askAuraStream({
+        message: prompt,
+        selectedDate: new Date().toISOString().slice(0, 10),
+        weather:
+          weather.permission === "granted" && weather.state === "ready"
+            ? {
+                tempF:
+                  typeof weather.tempC === "number"
+                    ? Math.round((weather.tempC * 9) / 5 + 32)
+                    : null,
+                condition: weather.label ?? null,
+              }
+            : null,
+        clientIntent: "home_regenerate_look",
+        clientContext: {
+          minimumCloset: buildMinimumClosetSummary(items),
+          outfitDiversity: {
+            shouldAvoidRepeats: previousLookItemIds.length > 0,
+            reason: previousLookItemIds.length > 0 ? "followup" : "none",
+            recentItemIds: previousLookItemIds,
+            previousLookItemIds,
+            excludedItemIds: previousLookItemIds,
+            previousLookSignatures: previousLookSignature ? [previousLookSignature] : [],
+            maxOverlap: 1,
+          },
+        },
+      });
+      const regeneratedLook = pickFreshLook(
+        [result.look, ...(result.lookOptions ?? [])].filter((look): look is AuraLook => !!look),
+      );
+      if (!regeneratedLook) {
+        Alert.alert("AURA", "I couldn't regenerate a visual outfit from the current closet state. Try adding a few more ready pieces.");
+        return;
+      }
+      setLatestAuraLookResponse({
+        ...result,
+        look: regeneratedLook,
+        lookOptions: result.lookOptions?.length ? result.lookOptions : [regeneratedLook],
+      });
+    } catch (error: any) {
+      if (isAuraStreamAbortError(error)) return;
+      Alert.alert("AURA", error?.message ?? "Unable to regenerate this outfit right now.");
+    } finally {
+      setRegeneratingLook(false);
+    }
+  }, [
+    items,
+    latestLook,
+    regeneratingLook,
+    uid,
+    weather.label,
+    weather.permission,
+    weather.state,
+    weather.tempC,
+  ]);
+
+  const refinementActions = useMemo<QuickActionItem[]>(
+    () => [
+      {
+        key: "dressier",
+        label: "Make it dressier",
         prompt: "Elevate one of my casual outfits into something sharper.",
       },
-      shopping: {
-        key: "shopping",
-        label: "Find key gaps",
-        prompt: "Review my wardrobe and suggest the smartest missing pieces to buy next.",
+      {
+        key: "unworn",
+        label: "Use unworn pieces",
+        prompt: "Create a look using pieces I have not worn much.",
       },
-      confidence: {
-        key: "confidence",
-        label: "Build confidence",
-        prompt: "Give me an easy, confidence-boosting outfit from my wardrobe.",
-      },
-      daily: {
-        key: "daily",
-        label: "Today's outfit",
-        prompt: "Build my outfit for today from what I already own.",
-      },
-      options: {
-        key: "options",
-        label: "3 directions",
-        prompt: "Show me three outfit directions: one safe, one balanced, and one bold.",
-      },
-      fix: {
+      {
         key: "fix",
         label: "Fix this outfit",
         prompt: "Fix this outfit. Give me a sharper version, a more wearable version, and a closet-first version.",
       },
-      missing: {
-        key: "missing",
-        label: "What am I missing?",
-        prompt: "What am I missing from my wardrobe based on what I own and the way I like to dress?",
-      },
-      accessories: {
-        key: "accessories",
-        label: "Push accessories",
-        prompt: `Build an outfit that leans into ${styleProfile.emphasizedAccessories.slice(0, 2).join(" and ") || "my accessories"}.`,
-      },
-      date_night: {
-        key: "date_night",
-        label: "Date night",
-        prompt: "Build a date-night look using the categories I actually wear.",
-      },
-      dress_up: {
-        key: "dress_up",
-        label: "Going out",
-        prompt: "Style a more elevated going-out outfit from my wardrobe.",
-      },
-      streetwear: {
-        key: "streetwear",
-        label: "More street",
-        prompt: "Build a streetwear-leaning look using hoodies, sneakers, and other categories I wear most.",
-      },
-      casual: {
-        key: "casual",
-        label: "Casual clean",
-        prompt: "Build an easy casual outfit using the categories I actually wear most.",
-      },
-      office: {
-        key: "office",
-        label: "Office ready",
-        prompt: "Build a smart office-ready outfit using blazers, trousers, and other categories I wear.",
-      },
-      smart_casual: {
-        key: "smart_casual",
-        label: "Smart casual",
-        prompt: "Build a smart casual outfit that feels polished but wearable.",
-      },
-    };
-
-    const goalOrder = styleProfile.prioritizedGoals.flatMap((goal) => {
-      if (goal === "shopping_suggestions") return ["shopping", "today"];
-      if (goal === "packing_help") return ["weather", "closet"];
-      if (goal === "laundry_reminders") return ["closet", "unworn"];
-      if (goal === "styling_confidence") return ["confidence", "today"];
-      return ["today", "elevate"];
-    });
-
-    const aestheticOrder = profilePreferences?.styleAesthetics.includes("luxury")
-      ? ["elevate", "shopping"]
-      : profilePreferences?.styleAesthetics.includes("sporty")
-        ? ["weather", "closet"]
-        : profilePreferences?.styleAesthetics.includes("minimal")
-          ? ["closet", "today"]
-          : [];
-
-    const orderedKeys = Array.from(
-      new Set([
-        "today",
-        "options",
-        "fix",
-        "missing",
-        "unworn",
-        ...styleProfile.starterPromptPresets,
-        ...goalOrder,
-        ...aestheticOrder,
-        "daily",
-        "weather",
-        "closet",
-        "elevate",
-        styleProfile.emphasizedAccessories.length ? "accessories" : "",
-        "shopping",
-      ].filter(Boolean))
-    ).slice(0, 5);
-
-    return orderedKeys.map((key) => byKey[key]).filter(Boolean);
-  }, [
-    profilePreferences?.styleAesthetics,
-    styleProfile.emphasizedAccessories,
-    styleProfile.prioritizedGoals,
-    styleProfile.starterPromptPresets,
-  ]);
+    ],
+    [],
+  );
 
   const openAIWithPrompt = React.useCallback((prompt?: string) => {
     if (prompt) {
@@ -817,6 +774,23 @@ export default function HomeScreen() {
     });
   }, []);
 
+  const handleRefresh = React.useCallback(async () => {
+    if (!uid || refreshing) return;
+    setRefreshing(true);
+    const startedAt = Date.now();
+    let active = true;
+    try {
+      await Promise.allSettled([
+        loadHomeCompanionData(() => active),
+        weather.actions.refresh(),
+      ]);
+    } finally {
+      active = false;
+      const remaining = Math.max(0, 450 - (Date.now() - startedAt));
+      setTimeout(() => setRefreshing(false), remaining);
+    }
+  }, [loadHomeCompanionData, refreshing, uid, weather.actions]);
+
   async function handleAuraLookAction(action: AuraLookAction, selectedLook?: AuraLook) {
     const look = selectedLook ?? latestLook;
     await handleSharedAuraLookAction({
@@ -834,20 +808,6 @@ export default function HomeScreen() {
   const smartTools = useMemo<SmartTool[]>(
     () => [
       {
-        key: "aura",
-        title: "AURA",
-        subtitle: "Ask for a closet-first outfit",
-        icon: "assistant",
-        onPress: () => router.push("/(tabs)/ai"),
-      },
-      {
-        key: "aura-training",
-        title: "AURA Training",
-        subtitle: "Swipe outfit edits so AURA learns your taste",
-        icon: "gesture-swipe-horizontal",
-        onPress: () => router.push(AURA_TRAINING_ROUTE),
-      },
-      {
         key: "closet",
         title: "Closet",
         subtitle: `${availableCount} clean pieces ready`,
@@ -859,7 +819,8 @@ export default function HomeScreen() {
         title: "Add Item",
         subtitle: "Bring a new piece into rotation",
         icon: "plus-circle-outline",
-        onPress: () => router.push("/(tabs)/add"),
+        onPress: () =>
+          router.push({ pathname: "/(tabs)/add", params: { addSession: String(Date.now()) } }),
       },
       {
         key: "studio",
@@ -883,46 +844,23 @@ export default function HomeScreen() {
         badge: laundryCount + needsWashCount > 0 ? String(laundryCount + needsWashCount) : undefined,
         onPress: () => router.push("/(tabs)/laundry"),
       },
+      {
+        key: "insights",
+        title: "Insights",
+        subtitle: "Read rotation, gaps, and closet signals",
+        icon: "chart-box-outline",
+        onPress: () => router.push("/insights"),
+      },
+      {
+        key: "aura-training",
+        title: "AURA Training",
+        subtitle: "Swipe outfit edits so AURA learns your taste",
+        icon: "gesture-swipe-horizontal",
+        onPress: () => router.push(AURA_TRAINING_ROUTE),
+      },
     ],
     [availableCount, laundryCount, needsWashCount]
   );
-
-  const priorityInsight = useMemo(() => {
-    if (hasMinimalWardrobe) {
-      return {
-        eyebrow: "BUILD THE FOUNDATION",
-        title: "A few key pieces will unlock better daily looks",
-        body: "Your closet is still taking shape. Add a few versatile pieces and Home will start giving you much sharper styling, rotation, and gap signals.",
-        ctaLabel: "Add a piece",
-        onPress: () => router.push("/(tabs)/add"),
-      };
-    }
-    if (unwornCount > 0) {
-      return {
-        eyebrow: "SMART ROTATION",
-        title: `${unwornCount} pieces are ready to come back in`,
-        body: "Bring neglected pieces back into a stronger outfit today.",
-        ctaLabel: "Use unworn pieces",
-        onPress: () => openAIWithPrompt("Build a look around pieces I have not worn enough."),
-      };
-    }
-    if (laundryCount > 0) {
-      return {
-        eyebrow: "KEEP TODAY OPEN",
-        title: `${laundryCount} pieces are stuck in laundry`,
-        body: "A few blocked items can narrow the best outfit paths. Clear them out so today’s suggestions stay sharper and easier to execute.",
-        ctaLabel: "Open laundry",
-        onPress: () => router.push("/(tabs)/laundry"),
-      };
-    }
-    return {
-      eyebrow: "IN GOOD SHAPE",
-      title: "Your wardrobe is ready for a stronger look",
-      body: `You have ${availableCount} ready-to-wear pieces available right now. This is a good day to push for a sharper outfit instead of repeating the safe default.`,
-      ctaLabel: "Style what is ready",
-      onPress: () => openAIWithPrompt("Build me an outfit from the pieces that are ready to wear right now."),
-    };
-  }, [availableCount, hasMinimalWardrobe, laundryCount, openAIWithPrompt, unwornCount]);
 
   // Keep the deferred Home feature inventory close to the screen entry point so it is
   // discoverable during future product passes without reintroducing clutter now.
@@ -933,7 +871,7 @@ export default function HomeScreen() {
       <View
         style={{
           flex: 1,
-          backgroundColor: colors.background,
+          backgroundColor: HOME_BACKGROUND_BASE,
           alignItems: "center",
           justifyContent: "center",
           gap: 12,
@@ -946,14 +884,31 @@ export default function HomeScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <View style={{ flex: 1, backgroundColor: HOME_BACKGROUND_BASE }}>
+      <LinearGradient
+        pointerEvents="none"
+        colors={HOME_BACKGROUND_GRADIENT}
+        locations={[0, 0.56, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0.85, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
       <ScrollView
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.ctaCream}
+            colors={[colors.ctaCream]}
+            progressBackgroundColor={HOME_BACKGROUND_BASE}
+          />
+        }
         contentContainerStyle={{
           paddingTop: layout.topContentInset,
           paddingHorizontal: layout.horizontalPadding,
-          paddingBottom: layout.bottomDockPadding + 140,
-          gap: layout.sectionGap + 6,
+          paddingBottom: layout.bottomDockPadding + HOME_BOTTOM_BREATHING_ROOM,
+          gap: HOME_SECTION_GAP,
         }}
       >
         <RevealSection delay={0}>
@@ -971,54 +926,36 @@ export default function HomeScreen() {
           />
         </RevealSection>
 
-        {hasNoClosetItems ? (
-          <RevealSection delay={20}>
-            <BuildFirstClosetSection
-              colors={colors}
-              onAddFirstItem={openAddMissingItem}
-              onAskAura={() => openAIWithPrompt(FIRST_CLOSET_AURA_PROMPT)}
-            />
-          </RevealSection>
-        ) : null}
-
         <RevealSection delay={40}>
-          <View style={{ gap: 10 }}>
-            <View style={{ gap: 2 }}>
-              <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Quick outcomes</Text>
+          <View style={{ gap: HOME_SECTION_CONTENT_GAP }}>
+            <View style={{ gap: HOME_TIGHT_GAP }}>
+              <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Not feeling it?</Text>
               <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, opacity: 0.78 }]}>
-                Start from the result you want, not a blank prompt box.
+                Shift the direction without leaving the styling flow.
               </Text>
             </View>
             <QuickActionRail
+              variant="compact"
               colors={colors}
-              actions={starterPrompts}
+              actions={refinementActions}
               onPressAction={(action) => openAIWithPrompt(action.prompt)}
             />
           </View>
         </RevealSection>
 
-        <RevealSection delay={80}>
-          <InsightCard
-            colors={colors}
-            eyebrow={priorityInsight.eyebrow}
-            title={priorityInsight.title}
-            body={priorityInsight.body}
-            ctaLabel={priorityInsight.ctaLabel}
-            onPress={priorityInsight.onPress}
-          />
-        </RevealSection>
-
         {renderDeferredHomeSections ? (
           <>
-            <RevealSection delay={120}>
+            <RevealSection delay={80}>
               <AuraLookModule
                 colors={colors}
                 look={latestLook}
                 itemsById={itemsById}
                 onAskAura={openAIWithPrompt}
                 onAction={handleAuraLookAction}
-                eyebrow={proactiveLookMeta.eyebrow}
-                title={"title" in proactiveLookMeta ? proactiveLookMeta.title : undefined}
+                onRegenerate={handleRegenerateHomeLook}
+                regenerating={regeneratingLook}
+                eyebrow="BUILT FROM YOUR WARDROBE"
+                title="Built from your wardrobe"
                 subtitle={"subtitle" in proactiveLookMeta ? proactiveLookMeta.subtitle : undefined}
                 fallbackTitle={"fallbackTitle" in proactiveLookMeta ? proactiveLookMeta.fallbackTitle : undefined}
                 fallbackBody={"fallbackBody" in proactiveLookMeta ? proactiveLookMeta.fallbackBody : undefined}
@@ -1027,20 +964,23 @@ export default function HomeScreen() {
               />
             </RevealSection>
 
+            {improveClosetNudge ? (
+              <RevealSection delay={120}>
+                <ImproveClosetCard
+                  colors={colors}
+                  title={improveClosetNudge.title}
+                  body={improveClosetNudge.body}
+                  onPress={openAddMissingItem}
+                />
+              </RevealSection>
+            ) : null}
+
             <RevealSection delay={160}>
-              <SmartToolsGrid colors={colors} tools={smartTools} columns={layout.smartGridColumns} />
+              <SmartToolsGrid compact colors={colors} tools={smartTools} columns={layout.smartGridColumns} />
             </RevealSection>
 
-            <RevealSection delay={200}>
-              <AuraTrainingCard
-                colors={colors}
-                variant="home"
-                onPress={() => router.push(AURA_TRAINING_ROUTE)}
-              />
-            </RevealSection>
-
-            <RevealSection delay={240}>
-              {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (
+            {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (
+              <RevealSection delay={200}>
                 <ContinueChatCard
                   colors={colors}
                   title={latestChatThread.title}
@@ -1048,65 +988,8 @@ export default function HomeScreen() {
                   updatedAt={latestChatThread.updatedAt}
                   onPress={() => openAIChat(latestChatThread.chatId)}
                 />
-              ) : null}
-            </RevealSection>
-
-            <RevealSection delay={280}>
-              {recentItems.length ? (
-                <ContinueSection
-                  colors={colors}
-                  title="Keep the momentum going"
-                  subtitle="Fresh pieces worth styling next before they get lost in the closet."
-                  items={recentItems}
-                  onPressItem={(item) =>
-                    router.push({
-                      pathname: "/(tabs)/item/[id]",
-                      params: { id: item.id, sourceTab: "index" },
-                    })
-                  }
-                />
-              ) : (
-                <InsightCard
-                  colors={colors}
-                  eyebrow="NEXT STEP"
-                  title="Add a few pieces to unlock better daily styling"
-                  body="Once your closet has a bit more depth, Home can give you stronger outfit recommendations, smarter recents, and better rotation cues."
-                  ctaLabel="Add item"
-                  onPress={() => router.push("/(tabs)/add")}
-                />
-              )}
-            </RevealSection>
-
-            {showMinimumClosetCard ? (
-              <RevealSection delay={300}>
-                <MinimumClosetProgressCard
-                  colors={colors}
-                  items={items}
-                  onAddMissingItem={openAddMissingItem}
-                />
               </RevealSection>
             ) : null}
-
-            <RevealSection delay={320}>
-              <Pressable
-                onPress={() => router.push("/(tabs)/add")}
-                style={({ pressed }) => ({
-                  borderRadius: layout.largeRadius,
-                  paddingVertical: layout.cardPadding + 2,
-                  paddingHorizontal: layout.cardPadding,
-                  backgroundColor: "rgba(255,255,255,0.045)",
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.08)",
-                  opacity: pressed ? 0.86 : 1,
-                  gap: 4,
-                })}
-              >
-                <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Bring in something new</Text>
-                <Text style={[homeTypography.bodySmall, { color: colors.textSecondary }]}>
-                  Add a fresh piece, clean the image, and give AURA more to work with tomorrow.
-                </Text>
-              </Pressable>
-            </RevealSection>
           </>
         ) : null}
       </ScrollView>

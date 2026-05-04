@@ -1,6 +1,7 @@
 import AppImage from "@/src/components/common/AppImage";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import React, { useEffect, useMemo, useState } from "react";
 
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
@@ -37,44 +38,115 @@ export function ClosetProcessingSection({
   onRemove: (item: ClosetItem) => void;
 }) {
   const { colors } = useAppTheme();
+  const failedCount = useMemo(
+    () => items.filter((item) => getItemLifecycleStatus(item) === "failed").length,
+    [items],
+  );
+  const reviewCount = useMemo(
+    () => items.filter((item) => getItemLifecycleStatus(item) === "needs_review").length,
+    [items],
+  );
+  const actionableItem = useMemo(
+    () =>
+      items.find((item) => {
+        const lifecycle = getItemLifecycleStatus(item);
+        return lifecycle === "failed" || lifecycle === "needs_review";
+      }) ?? items[0],
+    [items],
+  );
+  const [expanded, setExpanded] = useState(() => failedCount > 0);
+
+  useEffect(() => {
+    if (failedCount > 0) setExpanded(true);
+  }, [failedCount]);
+
   if (!items.length) return null;
 
   return (
-    <View style={{ gap: 12 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <View style={{ gap: 3 }}>
-          <Text style={{ color: colors.text, fontSize: 17, fontWeight: "900" }}>
-            Adding now
-          </Text>
-          <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "600" }}>
-            New pieces appear here while AURA finishes them.
-          </Text>
-        </View>
+    <View style={{ gap: expanded ? 10 : 0 }}>
+      <Pressable
+        onPress={() => {
+          if (expanded && actionableItem) {
+            onPressItem(actionableItem);
+            return;
+          }
+          setExpanded(true);
+        }}
+        style={({ pressed }) => ({
+          minHeight: 58,
+          borderRadius: 18,
+          paddingHorizontal: 13,
+          paddingVertical: 10,
+          backgroundColor: "rgba(251,228,216,0.045)",
+          borderWidth: 1,
+          borderColor: failedCount ? "rgba(255,143,143,0.22)" : "rgba(251,228,216,0.085)",
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 12,
+          opacity: pressed ? 0.82 : 1,
+        })}
+      >
         <View
           style={{
+            width: 34,
+            height: 34,
             borderRadius: 999,
-            paddingHorizontal: 9,
-            paddingVertical: 4,
-            backgroundColor: "rgba(143,216,255,0.12)",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: failedCount ? "rgba(255,143,143,0.12)" : "rgba(223,182,178,0.12)",
           }}
         >
-          <Text style={{ color: colors.aiAccent, fontSize: 11.5, fontWeight: "900" }}>
-            {items.length}
+          {failedCount ? (
+            <Ionicons name="warning-outline" size={17} color="#ff9f9f" />
+          ) : (
+            <Ionicons name="sparkles-outline" size={17} color={colors.ctaCream} />
+          )}
+        </View>
+
+        <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+            <Text style={{ color: colors.text, fontSize: 13.5, lineHeight: 18, fontWeight: "900" }}>
+              Adding now
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "900", fontVariant: ["tabular-nums"] }}>
+              {items.length}
+            </Text>
+            {failedCount ? (
+              <Text style={{ color: "#ff9f9f", fontSize: 11.5, lineHeight: 15, fontWeight: "900" }}>
+                {failedCount} failed
+              </Text>
+            ) : null}
+          </View>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "600" }} numberOfLines={1}>
+            {failedCount
+              ? "Review imports that need attention"
+              : reviewCount
+                ? "Review pending imports"
+                : "Imports are processing quietly"}
           </Text>
         </View>
-      </View>
 
-      <View style={{ gap: 10 }}>
-        {items.map((item) => (
-          <ProcessingItemRow
-            key={item.id}
-            item={item}
-            onPress={() => onPressItem(item)}
-            onRetry={() => onRetry(item)}
-            onRemove={() => onRemove(item)}
-          />
-        ))}
-      </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Text style={{ color: colors.ctaCream, fontSize: 12, lineHeight: 16, fontWeight: "900" }}>
+            Review
+          </Text>
+          <Ionicons name={expanded ? "chevron-up" : "chevron-forward"} size={15} color={colors.ctaCream} />
+        </View>
+      </Pressable>
+
+      {expanded ? (
+        <View style={{ gap: 8 }}>
+          {items.map((item) => (
+            <ProcessingItemRow
+              key={item.id}
+              item={item}
+              onPress={() => onPressItem(item)}
+              onRetry={() => onRetry(item)}
+              onRemove={() => onRemove(item)}
+            />
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }

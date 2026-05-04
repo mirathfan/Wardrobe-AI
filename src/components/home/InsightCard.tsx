@@ -4,6 +4,8 @@ import { Text, View } from "react-native";
 import type { AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { homeTypography } from "@/src/components/home/homeTypography";
+import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
+import { CTA_HEIGHT, CTA_HORIZONTAL_PADDING, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 export default function InsightCard({
@@ -27,9 +29,7 @@ export default function InsightCard({
       style={{
         borderRadius: layout.mediumRadius,
         padding: layout.cardPadding,
-        backgroundColor: colors.surfaceElevated,
-        borderWidth: 1,
-        borderColor: colors.border,
+        ...auraSurfaceTiers.surfaceBase,
         gap: 12,
       }}
     >
@@ -43,13 +43,14 @@ export default function InsightCard({
           style={{
             alignSelf: "flex-start",
             marginTop: 2,
-            borderRadius: layout.pillRadius,
-            backgroundColor: colors.ctaCream,
-            paddingHorizontal: 12,
-            paddingVertical: 8,
+            ...auraButtonStyle(colors, "primary"),
+            borderRadius: PILL_RADIUS,
+            minHeight: CTA_HEIGHT,
+            paddingHorizontal: CTA_HORIZONTAL_PADDING,
+            paddingVertical: 0,
           }}
         >
-          <Text style={[homeTypography.caption, { color: colors.ctaText, fontWeight: "700" }]} numberOfLines={1} ellipsizeMode="tail">{ctaLabel} →</Text>
+          <Text style={[auraButtonTextStyle(colors, "primary"), { fontSize: 13, lineHeight: 17 }]} numberOfLines={1} ellipsizeMode="tail">{ctaLabel} →</Text>
         </View>
       ) : null}
     </View>

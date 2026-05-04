@@ -5,6 +5,7 @@ import { ScrollView, Text, View } from "react-native";
 import type { AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { homeTypography } from "@/src/components/home/homeTypography";
+import { auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -77,16 +78,16 @@ export default function ContinueSection({
   const layout = useResponsiveLayout();
   if (!items.length) return null;
   const cardWidth = layout.continueCardWidth;
-  const imageFrameHeight = Math.round(cardWidth * 0.82);
-  const cardHeight = imageFrameHeight + 112;
+  const imageFrameHeight = Math.round(cardWidth * 0.76);
+  const cardHeight = imageFrameHeight + 104;
 
   return (
-    <View style={{ gap: 12 }}>
+    <View style={{ gap: 16 }}>
       <View style={{ gap: 3 }}>
         <Text style={[homeTypography.titleMedium, { color: colors.text }]}>{title}</Text>
         <Text style={[homeTypography.bodySmall, { color: colors.textSecondary }]}>{subtitle}</Text>
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 8 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 8 }}>
         {items.map((item) => {
           const imageUri = getItemImageUrl(item, { variant: "thumb" });
           const momentumImageStyle = getMomentumImageStyle(item);
@@ -103,9 +104,7 @@ export default function ContinueSection({
                 height: cardHeight,
                 borderRadius: layout.mediumRadius,
                 overflow: "hidden",
-                borderWidth: 1,
-                borderColor: colors.border,
-                backgroundColor: colors.surface,
+                ...auraSurfaceTiers.surfaceInteractive,
               }}
             >
               <View
@@ -115,8 +114,8 @@ export default function ContinueSection({
                   marginBottom: 0,
                   borderRadius: layout.mediumRadius - 4,
                   borderWidth: 1,
-                  borderColor: "rgba(10,10,15,0.06)",
-                  backgroundColor: colors.outfitBoardBackground,
+                  borderColor: colors.borderWarm,
+                  backgroundColor: colors.boardLight,
                   alignItems: "center",
                   justifyContent: "center",
                   overflow: "hidden",
@@ -131,10 +130,10 @@ export default function ContinueSection({
                     resizeMode="contain"
                   />
                 ) : (
-                  <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>No image</Text>
+                  <Text style={[homeTypography.caption, { color: colors.textOnLightSecondary }]}>No image</Text>
                 )}
               </View>
-              <View style={{ flex: 1, padding: 12, gap: 4, justifyContent: "space-between" }}>
+              <View style={{ flex: 1, padding: 10, gap: 3, justifyContent: "space-between" }}>
                 <Text style={[homeTypography.slotTitle, { color: colors.text }]} numberOfLines={2}>
                   {itemTitle(item)}
                 </Text>

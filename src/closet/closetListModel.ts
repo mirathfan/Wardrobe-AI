@@ -32,6 +32,7 @@ export type ClosetListRow =
       key: string;
       items: ClosetItem[];
       animateOffset: number;
+      trailingAddTile?: boolean;
     };
 
 export const CATEGORY_LABELS: Record<CategoryKey, string> = {
@@ -94,8 +95,14 @@ const SUBCATEGORY_GROUPS: Record<CategoryKey, { label: string; matches: string[]
 export function validHttpUrl(value: string) {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) return "";
+  const candidate = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : /^www\d*\./i.test(trimmed)
+      ? `https://${trimmed}`
+      : "";
+  if (!candidate) return "";
   try {
-    const url = new URL(trimmed);
+    const url = new URL(candidate);
     if (url.protocol !== "http:" && url.protocol !== "https:") return "";
     return url.toString();
   } catch {
@@ -132,20 +139,72 @@ function subcategoryBucket(item: ClosetItem, category: CategoryKey) {
   return group?.label ?? "Other";
 }
 
+function searchableValues(values: unknown[]) {
+  return values
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .map((value) => normalizeText(value))
+    .filter(Boolean);
+}
+
+function anyStartsWith(values: unknown[], query: string) {
+  return searchableValues(values).some((value) => value.startsWith(query));
+}
+
+function anyIncludes(values: unknown[], query: string) {
+  return searchableValues(values).some((value) => value.includes(query));
+}
+
+export function searchMatchScore(item: ClosetItem, query: string) {
+  const normalizedQuery = normalizeText(query);
+  if (!normalizedQuery) return 0;
+  const extended = item as ClosetItem & Record<string, unknown>;
+  const titleFields = [item.name, extended.title, extended.productName];
+  const categoryFields = [item.category, item.subCategory, item.type];
+  const colorFields = [
+    item.primaryColor,
+    extended.colorLabel,
+    extended.displayColor,
+    item.colors,
+    extended.displayColors,
+  ];
+  const tagMaterialFields = [
+    extended.tags,
+    extended.material,
+    extended.materials,
+    extended.pattern,
+    extended.style,
+    extended.fit,
+    extended.occasionTags,
+    extended.seasonTags,
+    extended.styleTags,
+  ];
+
+  if (anyStartsWith(titleFields, normalizedQuery)) return 1;
+  if (anyIncludes(titleFields, normalizedQuery)) return 2;
+  if (anyIncludes([item.brand], normalizedQuery)) return 3;
+  if (anyIncludes(categoryFields, normalizedQuery)) return 4;
+  if (anyIncludes(colorFields, normalizedQuery)) return 5;
+  if (anyIncludes(tagMaterialFields, normalizedQuery)) return 6;
+  return null;
+}
+
 export function searchMatches(item: ClosetItem, query: string) {
   if (!query) return true;
-  const haystack = [
-    item.name,
-    item.brand,
-    item.category,
-    item.subCategory,
-    item.type,
-    item.primaryColor,
-    ...(item.colors ?? []),
-  ]
-    .map((value) => normalizeText(value))
-    .join(" ");
-  return haystack.includes(query);
+  return searchMatchScore(item, query) != null;
+}
+
+export function rankSearchItems(items: ClosetItem[], query: string) {
+  const normalizedQuery = normalizeText(query);
+  if (!normalizedQuery) return items;
+  return items
+    .map((item, index) => ({
+      item,
+      index,
+      score: searchMatchScore(item, normalizedQuery),
+    }))
+    .filter((entry): entry is { item: ClosetItem; index: number; score: number } => entry.score != null)
+    .sort((a, b) => a.score - b.score || a.index - b.index)
+    .map((entry) => entry.item);
 }
 
 export function sortItems(items: ClosetItem[], sortMode: SortMode) {

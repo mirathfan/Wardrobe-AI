@@ -3,6 +3,7 @@ import React, { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import { auraButtonStyle, auraButtonTextStyle } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import {
   getClosetUnlockNudge,
@@ -14,8 +15,18 @@ import type { ClothingItem } from "@/src/types/ClothingItem";
 type Props = {
   items: Partial<ClothingItem>[];
   colors: AppColors;
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
   onAddMissingItem: () => void;
 };
+
+function styleInsightSummary(current: number, target: number) {
+  if (current >= target) return "Complete core";
+  if (current >= target - 1) return "Strong base";
+  if (current >= Math.ceil(target * 0.6)) return "Good range";
+  if (current > 0) return "Building base";
+  return "Starter closet";
+}
 
 function ChecklistRow({
   category,
@@ -56,6 +67,8 @@ function ChecklistRow({
 export default function MinimumClosetProgressCard({
   items,
   colors,
+  expanded = false,
+  onToggleExpanded,
   onAddMissingItem,
 }: Props) {
   const layout = useResponsiveLayout();
@@ -64,6 +77,40 @@ export default function MinimumClosetProgressCard({
   const nextBestAdd = progress.categories.find(
     (category) => category.key === progress.suggestedNextCategory,
   )?.label;
+  const summary = `${progress.current}/${progress.target} • ${styleInsightSummary(progress.current, progress.target)}`;
+
+  if (!expanded) {
+    return (
+      <Pressable
+        onPress={onToggleExpanded}
+        style={({ pressed }) => [
+          styles.card,
+          styles.collapsedCard,
+          {
+            borderRadius: layout.mediumRadius,
+            paddingVertical: 12,
+            paddingHorizontal: Math.max(14, layout.cardPadding - 2),
+            opacity: pressed ? 0.82 : 1,
+          },
+        ]}
+      >
+        <View pointerEvents="none" style={styles.glow} />
+        <View style={styles.collapsedText}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+            <Ionicons name="sparkles-outline" size={15} color={colors.iridescentMid} />
+            <Text style={[styles.collapsedTitle, { color: colors.text }]}>Style insights</Text>
+          </View>
+          <Text style={[styles.collapsedSummary, { color: colors.textSecondary }]} numberOfLines={1}>
+            {summary}
+          </Text>
+        </View>
+        <View style={[styles.viewDetailsPill, { borderColor: colors.border, backgroundColor: colors.chipBackground }]}>
+          <Text style={[styles.viewDetailsText, { color: colors.ctaCream }]}>View details</Text>
+          <Ionicons name="chevron-down" size={13} color={colors.ctaCream} />
+        </View>
+      </Pressable>
+    );
+  }
 
   return (
     <View
@@ -71,14 +118,14 @@ export default function MinimumClosetProgressCard({
         styles.card,
         {
           borderRadius: layout.mediumRadius,
-          padding: layout.cardPadding,
+          padding: Math.max(12, layout.cardPadding - 4),
         },
       ]}
     >
       <View pointerEvents="none" style={styles.glow} />
       <View style={styles.headerRow}>
         <View style={{ flex: 1, gap: 5 }}>
-          <Text style={[styles.eyebrow, { color: colors.iridescentStart }]}>STYLE CORE</Text>
+          <Text style={[styles.eyebrow, { color: colors.iridescentStart }]}>STYLE INSIGHTS</Text>
           <Text style={[styles.title, { color: colors.text }]}>
             Build your style core
           </Text>
@@ -86,6 +133,18 @@ export default function MinimumClosetProgressCard({
             {nudge}
           </Text>
         </View>
+        <Pressable
+          onPress={onToggleExpanded}
+          style={({ pressed }) => [
+            styles.collapseButton,
+            {
+              borderColor: colors.border,
+              backgroundColor: pressed ? colors.surfaceInteractive : colors.chipBackground,
+            },
+          ]}
+        >
+          <Ionicons name="chevron-up" size={14} color={colors.textSecondary} />
+        </Pressable>
         <View style={styles.progressBadge}>
           <Text style={[styles.progressText, { color: colors.text }]}>{progress.current}/{progress.target}</Text>
           <Text style={[styles.progressLabel, { color: colors.textSecondary }]}>pieces</Text>
@@ -124,14 +183,17 @@ export default function MinimumClosetProgressCard({
           style={({ pressed }) => [
             styles.cta,
             {
-              borderColor: "rgba(255,255,255,0.14)",
-              backgroundColor: pressed ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.1)",
+              ...auraButtonStyle(colors, "tertiary"),
+              borderRadius: 8,
+              minHeight: 36,
+              borderColor: colors.border,
+              backgroundColor: pressed ? colors.surfaceInteractive : colors.chipBackground,
               opacity: pressed ? 0.88 : 1,
             },
           ]}
         >
           <Ionicons name="add" size={16} color={colors.text} />
-          <Text style={[styles.ctaText, { color: colors.text }]} numberOfLines={1}>
+          <Text style={[styles.ctaText, auraButtonTextStyle(colors, "tertiary"), { fontSize: 12 }]} numberOfLines={1}>
             {nextBestAdd ? `Next best add: ${nextBestAdd}` : "Add variety"}
           </Text>
         </Pressable>
@@ -144,9 +206,46 @@ const styles = StyleSheet.create({
   card: {
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    backgroundColor: "rgba(14,14,20,0.76)",
-    gap: 14,
+    borderColor: "rgba(251,228,216,0.10)",
+    backgroundColor: "rgba(43,18,76,0.46)",
+    gap: 10,
+  },
+  collapsedCard: {
+    minHeight: 68,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  collapsedText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  collapsedTitle: {
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: "900",
+  },
+  collapsedSummary: {
+    fontSize: 12.5,
+    lineHeight: 16,
+    fontWeight: "800",
+  },
+  viewDetailsPill: {
+    minHeight: 34,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 11,
+  },
+  viewDetailsText: {
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: "900",
   },
   glow: {
     position: "absolute",
@@ -155,40 +254,48 @@ const styles = StyleSheet.create({
     width: 180,
     height: 180,
     borderRadius: 90,
-    backgroundColor: "rgba(241,210,255,0.08)",
+    backgroundColor: "rgba(223,182,178,0.035)",
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 14,
+    gap: 10,
   },
   eyebrow: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: "900",
-    letterSpacing: 1.4,
+    letterSpacing: 1.2,
   },
   title: {
-    fontSize: 18,
-    lineHeight: 23,
+    fontSize: 16,
+    lineHeight: 21,
     fontWeight: "900",
   },
   nudge: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12,
+    lineHeight: 17,
     opacity: 0.72,
   },
+  collapseButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   progressBadge: {
-    minWidth: 64,
+    minWidth: 56,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    backgroundColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(251,228,216,0.10)",
+    backgroundColor: "rgba(82,43,91,0.28)",
     borderRadius: 8,
-    paddingVertical: 9,
-    paddingHorizontal: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 9,
   },
   progressText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "900",
   },
   progressLabel: {
@@ -200,7 +307,7 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 999,
     overflow: "hidden",
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "rgba(251,228,216,0.08)",
   },
   progressFill: {
     height: "100%",
@@ -209,26 +316,26 @@ const styles = StyleSheet.create({
   checkGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 7,
   },
   checkRow: {
-    minWidth: 118,
+    minWidth: 108,
     flexGrow: 1,
     flexBasis: "30%",
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
+    gap: 6,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    backgroundColor: "rgba(255,255,255,0.045)",
-    paddingVertical: 8,
-    paddingHorizontal: 9,
+    borderColor: "rgba(251,228,216,0.08)",
+    backgroundColor: "rgba(82,43,91,0.22)",
+    paddingVertical: 6,
+    paddingHorizontal: 8,
   },
   checkIcon: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -245,10 +352,10 @@ const styles = StyleSheet.create({
   footerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
   },
   metricValue: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "900",
   },
   metricLabel: {
@@ -258,14 +365,14 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
   cta: {
-    minHeight: 40,
+    minHeight: 36,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
     borderRadius: 8,
     borderWidth: 1,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
   },
   ctaText: {
     fontSize: 12,

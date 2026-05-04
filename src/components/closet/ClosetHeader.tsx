@@ -1,47 +1,80 @@
+import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
+import { auraTypography } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 export function ClosetHeader({
   totalCount,
-  visibleCount,
-  statusFilter,
+  onOpenOrganize,
+  hasActiveOrganizeState = false,
 }: {
   totalCount: number;
-  visibleCount: number;
-  statusFilter: string;
+  onOpenOrganize: () => void;
+  hasActiveOrganizeState?: boolean;
 }) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
 
   return (
-    <View style={{ gap: 8 }}>
-      <View style={{ gap: 7 }}>
-        <Text style={{ color: colors.text, fontSize: 28 * layout.titleScale, fontWeight: "900", letterSpacing: 0 }}>
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 16,
+      }}
+    >
+      <View style={{ gap: 3, flex: 1 }}>
+        <Text
+          style={[
+            auraTypography.screenTitle,
+            {
+              color: colors.text,
+              fontSize: 27 * layout.titleScale,
+              lineHeight: 32 * layout.titleScale,
+            },
+          ]}
+        >
           Closet
         </Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "700" }}>
-            {totalCount} pieces
-          </Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: "700" }}>
+          {totalCount} piece{totalCount === 1 ? "" : "s"}
+        </Text>
+      </View>
+      <Pressable
+        onPress={onOpenOrganize}
+        accessibilityRole="button"
+        accessibilityLabel="Organize closet"
+        style={({ pressed }) => ({
+          width: 42,
+          height: 42,
+          borderRadius: 999,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: pressed ? "rgba(251,228,216,0.10)" : "rgba(251,228,216,0.055)",
+          borderWidth: 1,
+          borderColor: "rgba(251,228,216,0.12)",
+          opacity: pressed ? 0.82 : 1,
+        })}
+      >
+        <Ionicons name="options-outline" size={19} color={colors.text} />
+        {hasActiveOrganizeState ? (
           <View
             style={{
-              width: 4,
-              height: 4,
+              position: "absolute",
+              top: 9,
+              right: 9,
+              width: 7,
+              height: 7,
               borderRadius: 999,
-              backgroundColor: colors.textSecondary,
-              opacity: 0.6,
+              backgroundColor: colors.ctaCream,
             }}
           />
-          <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "700" }}>
-            {statusFilter === "ALL"
-              ? `${visibleCount} visible`
-              : `${visibleCount} ${statusFilter.replace(/_/g, " ").toLowerCase()}`}
-          </Text>
-        </View>
-      </View>
+        ) : null}
+      </Pressable>
     </View>
   );
 }

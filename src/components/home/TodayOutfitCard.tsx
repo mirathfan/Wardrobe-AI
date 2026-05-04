@@ -6,6 +6,7 @@ import type { AppColors } from "@/constants/theme";
 import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
 import { homeTypography } from "@/src/components/home/homeTypography";
+import { auraButtonStyle, auraButtonTextStyle } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -83,12 +84,12 @@ export default function TodayOutfitCard({
                   style={{
                     height: 92,
                     borderRadius: layout.mediumRadius,
-                    backgroundColor: colors.surface,
+                    backgroundColor: colors.boardLight,
                     alignItems: "center",
                     justifyContent: "center",
                     padding: 8,
                     borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.06)",
+                    borderColor: colors.borderWarm,
                   }}
                 >
                   {imageUri ? (
@@ -134,18 +135,16 @@ export default function TodayOutfitCard({
         <Pressable
           onPress={onAskStylist}
           style={({ pressed }) => ({
+            ...auraButtonStyle(colors, "secondary"),
             flex: 1,
             borderRadius: layout.mediumRadius,
             paddingVertical: 13,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: "rgba(255,255,255,0.04)",
-            borderWidth: 1,
-            borderColor: "rgba(243,223,195,0.14)",
             opacity: pressed ? 0.82 : 1,
           })}
         >
-          <Text style={[homeTypography.buttonText, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">Ask Stylist</Text>
+          <Text style={auraButtonTextStyle(colors, "secondary")} numberOfLines={1} ellipsizeMode="tail">Ask Stylist</Text>
         </Pressable>
       </View>
       </View>

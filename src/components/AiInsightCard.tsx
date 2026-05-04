@@ -261,7 +261,7 @@ export const AiInsightCard = React.memo(function AiInsightCard({
         style={{
           borderRadius: 18,
           borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.08)",
+          borderColor: colors.border,
           backgroundColor: colors.card,
           overflow: "hidden",
         }}
@@ -296,10 +296,12 @@ export const AiInsightCard = React.memo(function AiInsightCard({
                 justifyContent: "center",
                 borderRadius: 12,
                 paddingVertical: 11,
-                backgroundColor: "#0f172a",
+                backgroundColor: colors.ctaCream,
+                borderWidth: 1,
+                borderColor: colors.borderWarm,
               }}
             >
-              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>Build Outfit</Text>
+              <Text style={{ color: colors.ctaText, fontWeight: "800", fontSize: 14 }}>Build Outfit</Text>
             </Pressable>
             <Pressable
               onPress={onPressWhy}
@@ -309,9 +311,9 @@ export const AiInsightCard = React.memo(function AiInsightCard({
                 borderRadius: 12,
                 paddingHorizontal: 14,
                 paddingVertical: 11,
-                backgroundColor: "rgba(255,255,255,0.04)",
+                backgroundColor: colors.secondaryCta,
                 borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.08)",
+                borderColor: colors.border,
               }}
             >
               <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Why?</Text>
@@ -368,12 +370,14 @@ export const AiInsightCard = React.memo(function AiInsightCard({
                 style={{
                   flex: 1,
                   borderRadius: 10,
-                  backgroundColor: "#0f172a",
+                  backgroundColor: colors.ctaCream,
+                  borderWidth: 1,
+                  borderColor: colors.borderWarm,
                   paddingVertical: 10,
                   alignItems: "center",
                 }}
               >
-                <Text style={{ color: "#fff", fontWeight: "800" }}>Got it</Text>
+                <Text style={{ color: colors.ctaText, fontWeight: "800" }}>Got it</Text>
               </Pressable>
             </View>
           </Pressable>

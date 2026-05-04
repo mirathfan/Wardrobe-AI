@@ -23,23 +23,24 @@ export function ClosetSearchBar({
         gap: 10,
         borderRadius: layout.pillRadius + 2,
         borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.surface,
-        paddingHorizontal: 16,
-        height: 50,
+        borderColor: "rgba(251,228,216,0.065)",
+        backgroundColor: "rgba(251,228,216,0.04)",
+        paddingHorizontal: 12,
+        height: 41,
       }}
     >
-      <Ionicons name="search-outline" size={18} color={colors.textSecondary} />
+      <Ionicons name="search-outline" size={17} color="rgba(251,228,216,0.58)" />
       <TextInput
         value={value}
         onChangeText={onChangeText}
         placeholder="Search by item, brand, category, color"
-        placeholderTextColor={colors.textSecondary}
+        placeholderTextColor="rgba(251,228,216,0.50)"
         numberOfLines={1}
         style={{
           flex: 1,
           color: colors.text,
-          fontSize: 15,
+          fontSize: 13.5,
+          fontWeight: "600",
           paddingVertical: 0,
           includeFontPadding: false,
         }}

@@ -12,10 +12,10 @@ import Animated, {
 
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import { auraTypography } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getBestThumbnailImageSource, getItemImagePresentation } from "@/src/lib/itemImage";
-import { LAUNDRY_STATUS_LABELS, normalizeLaundryStatus } from "@/src/lib/items";
 import type { ClosetItem } from "@/src/lib/items";
 import { sanitizeDisplayText } from "@/src/lib/text";
 
@@ -54,12 +54,19 @@ function ClosetItemCardComponent({
   const reduceMotion = useReduceMotion();
   const imageSource = useMemo(() => getBestThumbnailImageSource(item), [item]);
   const imagePresentation = useMemo(() => getItemImagePresentation(item, { surface: "closet_card" }), [item]);
-  const laundryStatus = useMemo(() => normalizeLaundryStatus(item), [item]);
   const title = useMemo(() => titleFor(item), [item]);
+  const brand = useMemo(() => sanitizeDisplayText(item.brand), [item.brand]);
+  const colorLabel = useMemo(
+    () => sanitizeDisplayText(item.primaryColor) || sanitizeDisplayText(item.displayColor),
+    [item.displayColor, item.primaryColor],
+  );
   const cardWidth = width ?? (layout.screenSize === "compact" ? 132 : 144);
-  const imageHeight = width ? cardWidth * 1.2 : layout.screenSize === "compact" ? 150 : 160;
-  const textBlockHeight = 74;
-  const imageSurfaceColor = selected ? "#F8F5EE" : colors.outfitBoardBackground;
+  const imageBoardSize = cardWidth;
+  const titleLineHeight = 16;
+  const titleSlotHeight = titleLineHeight * 2;
+  const metadataLineHeight = 14;
+  const textBlockHeight = 60;
+  const imageSurfaceColor = colors.outfitBoardBackground;
   const opacity = useSharedValue(reduceMotion ? 1 : 0);
   const translateY = useSharedValue(reduceMotion ? 0 : 6);
   const handlePress = useCallback(() => {
@@ -111,34 +118,24 @@ function ClosetItemCardComponent({
         delayLongPress={180}
         style={{
           width: cardWidth,
+          backgroundColor: "transparent",
           borderRadius: 22,
-          backgroundColor: colors.surface,
-          borderWidth: selected ? 1.5 : 1,
-          borderColor: selected ? colors.lightPurple : colors.border,
-          overflow: "hidden",
-          shadowColor: colors.shadow,
-          shadowOpacity: selected ? 0.2 : 0.12,
-          shadowRadius: selected ? 18 : 12,
-          shadowOffset: { width: 0, height: selected ? 10 : 6 },
-          elevation: selected ? 5 : 2,
+          overflow: "visible",
         }}
       >
       <View
         style={{
-          aspectRatio: width ? 1 / 1.2 : imagePresentation.containerAspectRatio,
-          minHeight: imageHeight,
+          width: imageBoardSize,
+          height: imageBoardSize,
           backgroundColor: imageSurfaceColor,
           alignItems: "center",
           justifyContent: "center",
           overflow: "hidden",
-          paddingHorizontal: 14,
-          paddingTop: 14,
-          paddingBottom: 12,
-          margin: 8,
-          marginBottom: 0,
+          padding: 10,
           borderRadius: 18,
           borderWidth: 1,
-          borderColor: selected ? "rgba(124,92,255,0.16)" : "rgba(10,10,15,0.06)",
+          borderColor: selected ? "rgba(223,182,178,0.42)" : "rgba(25,0,25,0.055)",
+          boxShadow: selected ? "0 10px 24px rgba(223,182,178,0.10)" : "0 6px 16px rgba(0,0,0,0.05)",
         }}
       >
         {imageSource ? (
@@ -170,11 +167,11 @@ function ClosetItemCardComponent({
               paddingHorizontal: 12,
             }}
           >
-            <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: "800" }}>
+            <Text style={{ color: colors.textOnLightSecondary, fontSize: 12, fontWeight: "800" }}>
               No image yet
             </Text>
             <Text
-              style={{ color: colors.textMuted, fontSize: 11, textAlign: "center" }}
+              style={{ color: colors.textOnLightSecondary, fontSize: 11, textAlign: "center" }}
               numberOfLines={2}
               ellipsizeMode="tail"
             >
@@ -186,35 +183,51 @@ function ClosetItemCardComponent({
 
       <View
         style={{
-          gap: 3,
-          minHeight: textBlockHeight,
-          paddingHorizontal: 12,
+          height: textBlockHeight,
+          paddingHorizontal: 2,
           paddingTop: 9,
-          paddingBottom: 12,
+          paddingBottom: 5,
         }}
       >
-        <Text
-          style={{ color: colors.text, fontSize: 12.5, lineHeight: 16, fontWeight: "800" }}
-          numberOfLines={width ? 2 : 1}
-          ellipsizeMode="tail"
+        <View style={{ height: titleSlotHeight, justifyContent: "flex-start" }}>
+          <Text
+            style={[auraTypography.chipLabel, { color: colors.text, fontSize: 12.25, lineHeight: titleLineHeight, fontWeight: "700" }]}
+            numberOfLines={2}
+            ellipsizeMode="tail"
+          >
+            {title}
+          </Text>
+        </View>
+        <View
+          style={{
+            height: metadataLineHeight,
+            marginTop: 4,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+          }}
         >
-          {title}
-        </Text>
-        <Text
-          style={{ color: colors.textSecondary, opacity: 0.6, fontSize: 10.5, lineHeight: 16, fontWeight: "700", letterSpacing: 0.2 }}
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {sanitizeDisplayText(item.brand) || "No brand"}
-        </Text>
-        <Text
-          style={{ color: colors.textSecondary, opacity: 0.6, fontSize: 10, lineHeight: 15 }}
-          numberOfLines={1}
-          ellipsizeMode="tail"
-        >
-          {LAUNDRY_STATUS_LABELS[laundryStatus]}
-          {item.primaryColor ? ` · ${sanitizeDisplayText(item.primaryColor)}` : ""}
-        </Text>
+          {brand ? (
+            <Text
+              style={{ flex: 1, color: colors.textSecondary, opacity: 0.74, fontSize: 10.5, lineHeight: metadataLineHeight, fontWeight: "700", letterSpacing: 0 }}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {brand}
+            </Text>
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
+          {colorLabel ? (
+            <Text
+              style={{ color: colors.textSecondary, opacity: 0.78, fontSize: 10.25, lineHeight: metadataLineHeight, fontWeight: "700", maxWidth: cardWidth * 0.46, textAlign: "right" }}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {colorLabel}
+            </Text>
+          ) : null}
+        </View>
       </View>
 
       {selected ? (

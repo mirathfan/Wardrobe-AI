@@ -4,6 +4,7 @@ import { Text, View } from "react-native";
 import type { AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { homeTypography } from "@/src/components/home/homeTypography";
+import { auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { sanitizeDisplayText } from "@/src/lib/text";
 
@@ -20,7 +21,6 @@ function formatRelativeTime(timestamp: number) {
 export default function ContinueChatCard({
   colors,
   preview,
-  title,
   updatedAt,
   onPress,
 }: {
@@ -43,18 +43,16 @@ export default function ContinueChatCard({
       style={{
         borderRadius: layout.largeRadius,
         padding: layout.cardPadding,
-        backgroundColor: colors.surface,
-        borderWidth: 1,
-        borderColor: colors.border,
+        ...auraSurfaceTiers.surfaceInteractive,
         gap: 12,
       }}
     >
       <View style={{ gap: 4 }}>
         <Text style={[homeTypography.label, { color: colors.lightPurple }]}>
-          PICK UP THE THREAD
+          PICK UP WHERE YOU LEFT OFF
         </Text>
         <Text style={[homeTypography.titleMedium, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">
-          {title?.trim() || "Resume your last fitting"}
+          Continue your styling thread
         </Text>
       </View>
 
