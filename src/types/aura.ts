@@ -1,3 +1,6 @@
+import type { WardrobeSuggestion } from "@/src/lib/wardrobeSuggestions";
+import type { StylingIntelligenceSummary } from "@/src/types/StylingIntelligence";
+
 export type AuraLookPiece = {
   role: "top" | "bottom" | "shoes" | "outerwear" | "accessory";
   itemName: string;
@@ -48,6 +51,7 @@ export type AuraLaundryConfirmationAction = {
 export type AuraLookAction =
   | "saveLook"
   | "planForToday"
+  | "wearToday"
   | "likeLook"
   | "notMyVibe"
   | "showMoreLikeThis"
@@ -111,12 +115,14 @@ export type AuraCandidateAction =
   | { type: "add_all_candidates" };
 
 export type AuraLook = {
+  id?: string | null;
   lookTitle: string;
   vibe: string;
   shortExplanation: string;
   stylingNote?: string;
   personalizationLabel?: string;
   personalizationNote?: string;
+  stylingIntelligence?: StylingIntelligenceSummary | null;
   pieces: AuraLookPiece[];
   fromCloset: string[];
   addToComplete: string[];
@@ -142,9 +148,11 @@ export type AuraResponse = {
   missingPieces?: string[];
   upgradeSuggestions?: string[];
   upgradeSuggestionItems?: AuraSuggestionItem[];
+  wardrobeSuggestions?: WardrobeSuggestion[];
   chips: string[];
   look?: AuraLook | null;
   lookOptions?: AuraLook[];
+  stylingIntelligence?: StylingIntelligenceSummary | null;
   candidates?: AuraCandidateItem[];
   candidateItems?: AuraCandidateItem[];
   outfitAnalysis?: AuraOutfitPhotoAnalysis | null;

@@ -1,7 +1,7 @@
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, AppState, Image, Keyboard, KeyboardEvent, Platform, Share, Text, View } from "react-native";
+import { Alert, AppState, Image, Keyboard, KeyboardEvent, Platform, Share, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import AuraHeader from "@/src/components/ai/AuraHeader";
@@ -9,9 +9,10 @@ import AuraChatDrawer from "@/src/components/ai/AuraChatDrawer";
 import AuraQuickChips from "@/src/components/ai/AuraQuickChips";
 import ChatList from "@/src/components/ai/ChatList";
 import InputBar from "@/src/components/ai/InputBar";
+import ShopOptionsSheet from "@/src/components/shop/ShopOptionsSheet";
 import AuraGlowBackground from "@/src/components/aura/AuraGlowBackground";
-import AnimatedAuraRing from "@/src/components/aura/AnimatedAuraRing";
-import AuraPressable from "@/src/components/aura/AuraPressable";
+import { AuraButton, AuraText } from "@/src/components/ui/auraStylePrimitives";
+import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
 import { DOCK_HEIGHT, FLOATING_CONTROL_GAP } from "@/src/constants/dock";
 import type {
@@ -61,7 +62,14 @@ import { runHaptic } from "@/src/lib/haptics";
 import { getItemImageUrl } from "@/src/lib/itemImage";
 import { listenToItems, updateLaundryStatus } from "@/src/lib/items";
 import { buildMinimumClosetSummary } from "@/src/lib/minimumCloset";
+import { loadUserProfilePreferences } from "@/src/lib/userProfile";
+import {
+  buildAdHocWardrobeSuggestion,
+  buildWardrobeSuggestions,
+  type WardrobeSuggestion,
+} from "@/src/lib/wardrobeSuggestions";
 import { Toast } from "@/src/lib/toast";
+import { sanitizeMultilineDisplayText } from "@/src/lib/text";
 import { Colors } from "@/constants/theme";
 import {
   appendMessageToChat,
@@ -89,15 +97,13 @@ import {
 } from "@/src/lib/localCache";
 import type { AuraCandidateAction, AuraCandidateItem, AuraLaundryConfirmationAction, AuraLookAction, AuraLookOptionMeta, AuraResponse } from "@/src/types/aura";
 import type { ClothingItem } from "@/src/types/ClothingItem";
+import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 import { markAnalyzedOutfitWorn } from "@/src/utils/dailyOutfits";
 
 const TRAIN_AURA_CHIP_LABEL = "Train AURA faster";
 const AURA_TOP_CHIPS = [
-  TRAIN_AURA_CHIP_LABEL,
+  "Style me today",
   "Top priorities",
-  "Shopping list",
-  "Dressier options",
-  "Warm-weather",
 ];
 const DEFAULT_CHIPS = AURA_TOP_CHIPS.filter((chip) => chip !== TRAIN_AURA_CHIP_LABEL);
 const AURA_LOGO_SOURCE = require("../../assets/images/aura-tab-mark.png");
@@ -116,12 +122,15 @@ const DEBUG_AURA_CLIENT =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const OUTERWEAR_REQUEST_RE =
   /\b(with jacket|with jackets|jackets?|outerwear|coat|blazer|hoodie|cardigan|overshirt|layered|layers)\b/i;
-const AURA_EMPTY_STATE_CHIPS = [
-  "Style me today",
-  "Build from my closet",
-  "Polish this outfit",
-  "What should I wear tonight?",
-];
+const WARDROBE_BUYING_ADVICE_RE =
+  /\b(what\s+(?:should|do)\s+i\s+(?:buy|add|get)|what(?:'s| is)?\s+missing|closet\s+gaps?|wardrobe\s+gaps?|improve\s+(?:my\s+)?wardrobe|complete\s+(?:my\s+)?wardrobe|shopping\s+list|top\s+priorit(?:y|ies)|smart\s+buys?)\b/i;
+const MANUAL_SELECTED_OUTFIT_RE =
+  /\b(improve|refine|fix|polish|style)\b[\s\S]{0,80}\b(manually built outfit|selected pieces|selected closet|from my closet)\b/i;
+const RECENT_ITEM_ANCHOR_PROMPT_RE =
+  /\b(suggest|recommend|build|make|create|pull|put together|plan|style|dress|what should i wear|outfit|look|fit)\b/i;
+const RECENT_WARDROBE_ADD_RE =
+  /\b(added|saved|imported)\b[\s\S]{0,50}\b(wardrobe|closet)\b/i;
+const AURA_EMPTY_STATE_PROMPT = "Style me today";
 type AskAuraOptions = {
   retryUserMessage?: AIMessage;
   removeMessageId?: string;
@@ -145,11 +154,11 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
         marginBottom: 10,
         borderRadius: 24,
         overflow: "hidden",
-        borderWidth: 0.75,
-        borderColor: colors.border,
-        backgroundColor: colors.surfaceGlass,
+        borderWidth: 1,
+        borderColor: colors.borderSoft,
+        backgroundColor: colors.surface,
         padding: layout.screenSize === "compact" ? 14 : 16,
-        gap: 13,
+        gap: 14,
       }}
     >
       <LinearGradient
@@ -168,51 +177,36 @@ function AuraChatEmptyState({ onPrompt }: { onPrompt: (prompt: string) => void }
           />
         </View>
         <View style={{ flex: 1, gap: 4 }}>
-          <Text
+          <AuraText
+            variant="section"
             style={{
-              color: colors.text,
               fontSize: layout.screenSize === "compact" ? 17 : 18,
               lineHeight: layout.screenSize === "compact" ? 22 : 23,
-              fontWeight: "900",
-              letterSpacing: 0,
             }}
           >
             Ask your stylist
-          </Text>
-          <Text
-            style={{
-              color: colors.textSecondary,
-              fontSize: 12.5,
-              lineHeight: 18,
-              fontWeight: "600",
-            }}
+          </AuraText>
+          <AuraText
+            variant="caption"
+            tone="secondary"
+            style={{ fontSize: 12.5, lineHeight: 18 }}
           >
-            Start with a plan, a photo, or a closet question.
-          </Text>
+            Start with a look for today, or type whatever you need.
+          </AuraText>
         </View>
       </View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
-        {AURA_EMPTY_STATE_CHIPS.map((chip) => (
-          <AuraPressable
-            key={chip}
-            onPress={() => onPrompt(chip)}
-            haptic="selection"
-            hapticTrigger="press"
-            pressedScale={0.96}
-            pressedOpacity={0.88}
-            style={{
-              borderRadius: 999,
-              paddingHorizontal: 10,
-              paddingVertical: 7,
-              backgroundColor: colors.chipBackground,
-              borderWidth: 0.75,
-              borderColor: colors.border,
-            }}
-          >
-            <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "800" }}>{chip}</Text>
-          </AuraPressable>
-        ))}
-      </View>
+      <AuraButton
+        label={AURA_EMPTY_STATE_PROMPT}
+        onPress={() => onPrompt(AURA_EMPTY_STATE_PROMPT)}
+        variant="primary"
+        size="compact"
+        haptic="selection"
+        hapticTrigger="press"
+        pressedScale={0.97}
+        pressedOpacity={0.9}
+        style={{ alignSelf: "flex-start", minHeight: 42 }}
+        textStyle={{ fontSize: 13, lineHeight: 17 }}
+      />
     </View>
   );
 }
@@ -227,21 +221,20 @@ function AuraChatLoadingState() {
         marginBottom: 12,
         borderRadius: 24,
         borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.surfaceGlass,
+        borderColor: colors.borderSoft,
+        backgroundColor: colors.surface,
         padding: 18,
-        flexDirection: "row",
-        alignItems: "center",
         gap: 14,
       }}
     >
-      <AnimatedAuraRing size={44} stroke={2} rotationDuration={4200} />
-      <View style={{ flex: 1, gap: 4 }}>
-        <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900" }}>AURA is getting ready</Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 18 }}>
-          Pulling in your latest closet context.
-        </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <AuraSkeleton width={44} height={44} radius={22} />
+        <View style={{ flex: 1, gap: 7 }}>
+          <AuraSkeletonLine width="46%" height={13} />
+          <AuraSkeletonLine width="76%" height={10} />
+        </View>
       </View>
+      <AuraSkeleton height={74} radius={18} />
     </View>
   );
 }
@@ -273,9 +266,13 @@ function cleanIntroText(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function cleanStructuredText(value: unknown) {
+  return sanitizeMultilineDisplayText(String(value ?? ""));
+}
+
 function buildAssistantCardIntro(data: AuraResponse, userRequest?: string) {
   const request = cleanIntroText(userRequest).toLowerCase();
-  const reply = cleanIntroText(data.reply);
+  const reply = cleanStructuredText(data.reply);
   if (reply) return reply;
 
   const candidateItems = data.candidateItems ?? data.candidates ?? [];
@@ -311,6 +308,10 @@ function buildAssistantCardIntro(data: AuraResponse, userRequest?: string) {
       return "Got you — I built a few looks from your closet that match that direction.";
     }
     return "Got you — I pulled a look together that stays close to that direction.";
+  }
+
+  if (data.wardrobeSuggestions?.length) {
+    return reply || "I found the highest-leverage wardrobe gaps to work on first.";
   }
 
   if (data.presentation === "candidate_preview") {
@@ -379,13 +380,19 @@ function resolveOutfitSourcePhoto(messages: AIMessage[], sourceMessage: AIMessag
     .find((attachment): attachment is ChatImageAttachment => attachment.type === "image");
 }
 
+function hasRenderableAuraLook(look?: AuraResponse["look"] | null) {
+  return Boolean(
+    look?.pieces?.some((piece) => cleanIntroText(piece.itemName)),
+  );
+}
+
 function createAssistantMessage(
   data: AuraResponse,
   overrides?: Partial<AIMessage>,
   options?: { userRequest?: string }
 ): AIMessage {
   const candidateItems = data.candidateItems ?? data.candidates ?? [];
-  const normalizedData = candidateItems.length
+  const surfaceData = candidateItems.length
     ? {
         ...data,
         presentation: "candidate_preview" as const,
@@ -393,6 +400,11 @@ function createAssistantMessage(
         candidates: candidateItems,
       }
     : data;
+  const normalizedData = {
+    ...surfaceData,
+    look: hasRenderableAuraLook(surfaceData.look) ? surfaceData.look : null,
+    lookOptions: surfaceData.lookOptions?.filter(hasRenderableAuraLook),
+  };
   const shouldUseCard =
     normalizedData.presentation === "card" ||
     normalizedData.presentation === "candidate_preview" ||
@@ -401,6 +413,7 @@ function createAssistantMessage(
     !!normalizedData.outfitAnalysis ||
     !!normalizedData.look ||
     !!normalizedData.lookOptions?.length ||
+    !!normalizedData.wardrobeSuggestions?.length ||
     !!candidateItems.length ||
     ((!!normalizedData.outfitItems?.length ||
       !!normalizedData.ownedPieces?.length ||
@@ -425,16 +438,16 @@ function createAssistantMessage(
       rawKeys: Object.keys(data),
     });
   }
-  const assistantIntroText = shouldUseCard
+  const assistantText = shouldUseCard
     ? buildAssistantCardIntro(normalizedData, options?.userRequest)
-    : cleanIntroText(normalizedData.reply);
+    : cleanStructuredText(normalizedData.reply);
   const createdAt = overrides?.createdAt ?? Date.now();
   return {
     id: overrides?.id ?? createMessageId(),
     type: "assistant",
     kind: shouldUseCard ? "aura_card" : "aura_text",
-    text: assistantIntroText || normalizedData.reply,
-    assistantIntroText: assistantIntroText || undefined,
+    text: assistantText || normalizedData.reply,
+    assistantIntroText: shouldUseCard ? assistantText || undefined : undefined,
     streaming: overrides?.streaming,
     aura: shouldUseCard ? normalizedData : undefined,
     createdAt,
@@ -600,61 +613,322 @@ function buildExistingOutfitStylingResponse(
   const base = compactLookBase(look);
   const anchor = top || bottom || look.lookTitle || "the strongest piece";
   const baseLine = base ? `Base: ${base}.` : `Base: ${look.lookTitle}.`;
+  const pieceRelationship =
+    top && bottom
+      ? `Keep ${top} and ${bottom} as the main relationship.`
+      : "Keep the main pieces visually connected.";
 
   let title = "How to style it";
-  let advice =
-    `Wear ${anchor} as the anchor and keep the rest intentional: clean proportions, one clear focal point, and no extra clutter. ` +
-    "If the fit feels flat, sharpen it with a small tuck, cleaner socks, or one refined accessory.";
-  let swaps =
-    "Optional swaps: change one thing only, like cleaner shoes for polish, a relaxed shoe for ease, or a simple layer if the weather needs it.";
+  let reply = [
+    "Quick take:",
+    `${baseLine} Wear ${anchor} as the anchor and keep the rest intentional.`,
+    "",
+    "How to wear it:",
+    "- Keep the proportions clean and avoid adding extra focal points.",
+    `- ${pieceRelationship}`,
+    "- If it feels flat, sharpen it with a small tuck, cleaner socks, or one refined accessory.",
+    "",
+    "Swap / add:",
+    "- Change one thing only: cleaner shoes for polish, a relaxed shoe for ease, or a simple layer if the weather needs it.",
+    "",
+    "Styling note:",
+    "The outfit should feel edited, not busy.",
+  ].join("\n");
 
   if (/\b(dressier|formal|sharper|office|work)\b/.test(normalized)) {
     title = "Make it dressier";
-    advice =
-      `Keep ${anchor} as the base, then make the silhouette cleaner: neater tuck, sharper hem break, and minimal accessories. ` +
-      "The goal is refined, not overdressed.";
-    swaps =
-      `Optional swaps: ${shoes ? `trade ${shoes} for loafers, boots, or your cleanest low-profile shoes` : "use your cleanest low-profile shoes"}; add a watch or simple chain; layer a blazer or structured jacket if you own one.`;
+    reply = [
+      "Keep:",
+      `- ${anchor} as the base.`,
+      `- ${pieceRelationship}`,
+      "",
+      "Swap / add:",
+      `- ${shoes ? `Trade ${shoes} for loafers, boots, or your cleanest low-profile shoes.` : "Use your cleanest low-profile shoes."}`,
+      "- Add a structured jacket, watch, or simple chain if you own one.",
+      "",
+      "Why it works:",
+      "- Cleaner lines make the same outfit read more intentional.",
+      "- One polished swap raises the formality without rebuilding the look.",
+      "",
+      "Styling note:",
+      "The goal is refined, not overdressed.",
+    ].join("\n");
   } else if (/\b(casual|relaxed|easy|everyday)\b/.test(normalized)) {
     title = "Make it more casual";
-    advice =
-      `Soften the outfit around ${anchor}: keep the lines relaxed, let one piece sit slightly loose, and avoid anything too shiny or formal.`;
-    swaps =
-      `Optional swaps: ${shoes ? `keep ${shoes} if they feel easy, or swap to a softer sneaker` : "use a softer sneaker"}; skip heavy accessories; add a light overshirt if it needs shape.`;
+    reply = [
+      "Keep:",
+      `- ${anchor} as the anchor.`,
+      `- ${pieceRelationship}`,
+      "",
+      "Swap / add:",
+      `- ${shoes ? `Keep ${shoes} if they feel easy, or swap to a softer sneaker.` : "Use a softer sneaker."}`,
+      "- Skip heavy accessories and add a light overshirt only if it needs shape.",
+      "",
+      "Why it works:",
+      "- Relaxed lines make the outfit feel more natural for everyday wear.",
+      "- Keeping one clear anchor stops the casual version from looking random.",
+      "",
+      "Styling note:",
+      "Make it easier, not sloppier.",
+    ].join("\n");
   } else if (/\b(streetwear|bold|bolder|statement|edge)\b/.test(normalized)) {
     title = "Push the styling";
-    advice =
-      `Let ${anchor} carry the attitude, then add contrast through proportion: a stronger layer, chunkier shoe, or one statement accessory.`;
-    swaps =
-      "Optional swaps: add headwear or a heavier shoe if it fits the vibe, but keep the color story tight so it does not get crowded.";
+    reply = [
+      "Keep:",
+      `- ${anchor} as the attitude piece.`,
+      `- ${pieceRelationship}`,
+      "",
+      "Swap / add:",
+      "- Add contrast through proportion: a stronger layer, chunkier shoe, or one statement accessory.",
+      "- Keep the color story tight so the bolder styling does not get crowded.",
+      "",
+      "Why it works:",
+      "- Streetwear reads best when the silhouette has confidence.",
+      "- One statement is stronger than several competing ones.",
+      "",
+      "Styling note:",
+      "Push the shape first, then the accessories.",
+    ].join("\n");
   } else if (intent === "MODIFY_OUTFIT") {
     title = "Refine this look";
-    advice =
-      `Keep the core outfit intact, especially ${anchor}. Tighten the styling by changing the mood around it rather than rebuilding from scratch.`;
-    swaps =
-      "Optional swaps: adjust one anchor-adjacent piece, like shoes, outerwear, or one accessory, then leave the rest alone.";
+    reply = [
+      "Keep:",
+      `- The core outfit intact, especially ${anchor}.`,
+      `- ${pieceRelationship}`,
+      "",
+      "Swap / add:",
+      "- Adjust one anchor-adjacent piece: shoes, outerwear, or one accessory.",
+      "- Leave the rest alone so the outfit still feels deliberate.",
+      "",
+      "Why it works:",
+      "- Small edits preserve the strongest parts of the look.",
+      "- Changing one piece gives you a clearer mood shift than rebuilding everything.",
+      "",
+      "Styling note:",
+      "This needs a sharper edit, not a full reset.",
+    ].join("\n");
   }
-
-  const pieceNote =
-    top && bottom
-      ? `Let ${top} and ${bottom} stay as the main relationship.`
-      : "Keep the main pieces visually connected.";
+  const attachedLook: NonNullable<AuraResponse["look"]> = {
+    ...look,
+    lookTitle:
+      title === "Make it dressier"
+        ? `Dressier ${look.lookTitle || "closet look"}`
+        : title === "Make it more casual"
+          ? `Relaxed ${look.lookTitle || "closet look"}`
+          : look.lookTitle || title,
+    vibe:
+      title === "Make it dressier"
+        ? "dressier closet edit"
+        : title === "Make it more casual"
+          ? "casual closet edit"
+          : look.vibe || "closet edit",
+    shortExplanation:
+      title === "Make it dressier"
+        ? "AURA is keeping the same closet pieces visible while styling them in a cleaner direction."
+        : title === "Make it more casual"
+          ? "AURA is keeping the same closet pieces visible while softening the styling."
+          : look.shortExplanation || "AURA is using the current look as the styling context.",
+    stylingNote:
+      title === "Make it dressier"
+        ? "Use cleaner finishing details so the outfit reads sharper without pretending you own different pieces."
+        : title === "Make it more casual"
+          ? "Relax the styling details and keep the outfit easy."
+          : look.stylingNote || "Use the card below as the current outfit context.",
+    pieces: (look.pieces ?? []).map((piece) => ({...piece})),
+    fromCloset: [...(look.fromCloset ?? [])],
+    addToComplete: [...(look.addToComplete ?? [])],
+    alternates: [...(look.alternates ?? [])],
+    actions: look.actions?.length ? look.actions : ["likeLook", "notMyVibe", "showMoreLikeThis", "makeItDressier"],
+  };
 
   return {
     title,
-    presentation: "chat",
-    reply: `${baseLine} ${advice} ${pieceNote} ${swaps}`,
+    presentation: attachedLook.pieces.length ? "card" : "chat",
+    reply,
     reason: "",
-    outfitItems: [],
-    ownedPieces: [],
-    recommendedAdditions: [],
+    outfitItems: attachedLook.fromCloset,
+    ownedPieces: attachedLook.fromCloset,
+    recommendedAdditions: attachedLook.addToComplete,
     swapSuggestion: "",
     chips: ["Make it dressier", "Make it more casual", "Give me another one"],
+    look: attachedLook.pieces.length ? attachedLook : null,
   };
 }
 
 function promptRequestsOuterwear(prompt: string) {
   return OUTERWEAR_REQUEST_RE.test(String(prompt ?? ""));
+}
+
+function promptRequestsWardrobeBuyingAdvice(prompt: string) {
+  return WARDROBE_BUYING_ADVICE_RE.test(String(prompt ?? ""));
+}
+
+function promptHasManualSelectedOutfit(prompt: string) {
+  const text = String(prompt ?? "");
+  return MANUAL_SELECTED_OUTFIT_RE.test(text) && /\bcloset item id:|selected item ids?:/i.test(text);
+}
+
+function timestampMillis(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (!value || typeof value !== "object") return 0;
+  const timestamp = value as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
+  if (typeof timestamp.toMillis === "function") {
+    const millis = timestamp.toMillis();
+    return Number.isFinite(millis) ? millis : 0;
+  }
+  if (typeof timestamp.seconds === "number") {
+    return timestamp.seconds * 1000 + Math.floor((timestamp.nanoseconds ?? 0) / 1000000);
+  }
+  return 0;
+}
+
+function itemFreshnessMillis(item: ClothingItem) {
+  const updatedAt = timestampMillis((item as { updatedAt?: unknown }).updatedAt);
+  const createdAt = timestampMillis(item.createdAt);
+  return Math.max(updatedAt, createdAt);
+}
+
+function hasRecentWardrobeAddSignal(messages: AIMessage[]) {
+  return messages.slice(-12).some((entry) => {
+    if (RECENT_WARDROBE_ADD_RE.test(String(entry.text ?? ""))) return true;
+    const candidates = entry.aura?.candidateItems ?? entry.aura?.candidates ?? [];
+    return candidates.some((candidate) => candidate.status === "added");
+  });
+}
+
+function recentOutfitAnchorItemIds(
+  prompt: string,
+  items: ClothingItem[],
+  messages: AIMessage[],
+) {
+  if (!RECENT_ITEM_ANCHOR_PROMPT_RE.test(String(prompt ?? ""))) return [];
+  const now = Date.now();
+  const sawRecentAdd = hasRecentWardrobeAddSignal(messages);
+  const recentWindowMs = sawRecentAdd ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000;
+  const freshest = items
+    .map((item) => ({
+      itemId: item.id,
+      timestamp: itemFreshnessMillis(item),
+    }))
+    .filter((entry) => entry.itemId && entry.timestamp > 0 && now - entry.timestamp <= recentWindowMs)
+    .sort((a, b) => b.timestamp - a.timestamp)[0];
+  return freshest ? [freshest.itemId] : [];
+}
+
+function buildWardrobeBaseLine(items: ClothingItem[]) {
+  const categoryCounts = items.reduce(
+    (counts, item) => {
+      const category = String(item.category ?? "").toLowerCase();
+      if (/\bhoodie|tee|t-?shirt|shirt|top|sweater|sweatshirt|polo\b/.test(`${category} ${item.name ?? ""} ${item.subCategory ?? ""}`.toLowerCase())) {
+        counts.tops += 1;
+      } else if (/\bjean|denim|pant|trouser|short|bottom|skirt\b/.test(`${category} ${item.name ?? ""} ${item.subCategory ?? ""}`.toLowerCase())) {
+        counts.bottoms += 1;
+      } else if (/\bshoe|sneaker|boot|loafer|footwear\b/.test(`${category} ${item.name ?? ""} ${item.subCategory ?? ""}`.toLowerCase())) {
+        counts.footwear += 1;
+      } else if (/\bjacket|coat|outerwear|hoodie|blazer|overshirt\b/.test(`${category} ${item.name ?? ""} ${item.subCategory ?? ""}`.toLowerCase())) {
+        counts.outerwear += 1;
+      }
+      return counts;
+    },
+    { tops: 0, bottoms: 0, footwear: 0, outerwear: 0 },
+  );
+  const strengths = [
+    categoryCounts.tops > 1 ? "tops" : "",
+    categoryCounts.bottoms > 1 ? "bottoms" : "",
+    categoryCounts.footwear > 1 ? "shoes" : "",
+    categoryCounts.outerwear > 1 ? "layers" : "",
+  ].filter(Boolean);
+
+  if (!items.length) {
+    return "Your closet is still early, which is useful: the next piece can shape the whole system.";
+  }
+  if (strengths.length >= 2) {
+    return `Your closet already has a real base, especially around ${strengths.slice(0, 3).join(", ")}.`;
+  }
+  if (strengths.length === 1) {
+    return `Your closet already has a starting point, especially around ${strengths[0]}.`;
+  }
+  return "Your closet already has a few useful pieces; the next move is making them easier to style together.";
+}
+
+function buildWardrobeSuggestionReply(suggestions: WardrobeSuggestion[], items: ClothingItem[]) {
+  const first = suggestions[0];
+  if (!first) {
+    return [
+      "Quick take:",
+      "Your core wardrobe looks covered right now.",
+      "",
+      "Top priorities:",
+      "1. Wear the strongest pieces you already own.",
+      "2. Repeat the outfits that feel easiest.",
+      "3. Only add a piece when a real outfit keeps asking for it.",
+      "",
+      "Next move:",
+      "Build from your closet first, then shop with a specific gap in mind.",
+    ].join("\n");
+  }
+  const estimate = Math.max(0, Math.round(first.outfitsUnlockedEstimate));
+  const topSuggestions = suggestions.slice(0, 3);
+  const priorityLines = topSuggestions.map((suggestion, index) => `${index + 1}. ${suggestion.itemType}`);
+  const whyLines = topSuggestions.map((suggestion) => {
+    const reason = suggestion.reason.replace(/\s*Estimated impact:.*$/i, "").trim();
+    return `- ${reason || `${suggestion.itemType} unlocks more outfit paths.`}`;
+  });
+  return [
+    "Quick take:",
+    `${buildWardrobeBaseLine(items)} Start with ${first.itemType}; it is the highest-leverage gap.`,
+    "",
+    "Top priorities:",
+    ...priorityLines,
+    "",
+    "Why these help:",
+    ...whyLines,
+    "",
+    "Next move:",
+    estimate > 0
+      ? `Find one strong ${first.itemType} before lower-impact buys; it should unlock about ${estimate} new outfit${estimate === 1 ? "" : "s"}.`
+      : `Find one strong ${first.itemType} before adding anything lower impact.`,
+  ].join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function buildWardrobeSuggestionAuraResponse(suggestions: WardrobeSuggestion[], items: ClothingItem[]): AuraResponse {
+  if (!suggestions.length) {
+    return {
+      title: "Closet gaps",
+      presentation: "chat",
+      reply: buildWardrobeSuggestionReply(suggestions, items),
+      reason: "",
+      outfitItems: [],
+      ownedPieces: [],
+      recommendedAdditions: [],
+      swapSuggestion: "",
+      missingPieces: [],
+      upgradeSuggestions: [],
+      upgradeSuggestionItems: [],
+      wardrobeSuggestions: [],
+      chips: ["Build from my closet", "Use unworn pieces", "Make it dressier"],
+    };
+  }
+
+  const first = suggestions[0];
+  return {
+    title: "What to add next",
+    presentation: "card",
+    reply: buildWardrobeSuggestionReply(suggestions, items),
+    reason: `Start with ${first.itemType}. It is the cleanest gap to fill first, and it gives AURA more range without making the closet feel cluttered.`,
+    outfitItems: [],
+    ownedPieces: [],
+    recommendedAdditions: suggestions.map((suggestion) => suggestion.itemType),
+    swapSuggestion: "",
+    missingPieces: suggestions.map((suggestion) => suggestion.itemType),
+    upgradeSuggestions: suggestions.slice(1).map((suggestion) => suggestion.itemType),
+    upgradeSuggestionItems: suggestions.map((suggestion) => ({
+      label: suggestion.itemType,
+      searchQuery: suggestion.itemType,
+    })),
+    wardrobeSuggestions: suggestions,
+    chips: ["Find options", "Use only my closet", "Build outfits first"],
+  };
 }
 
 function lookHasOuterwear(look?: AuraResponse["look"] | null) {
@@ -763,6 +1037,7 @@ function repairLookForOuterwearRequirement(
   return {
     ...look,
     lookTitle: nextTitle,
+    stylingIntelligence: null,
     stylingNote: look.stylingNote
       ? `${look.stylingNote} Layer in ${outerwearPiece.itemName.toLowerCase()} to complete the silhouette.`
       : `Layer in ${outerwearPiece.itemName.toLowerCase()} to complete the silhouette.`,
@@ -833,6 +1108,7 @@ function buildAuraResponseFromSwipeBatch(
     ownedPieces: primaryLook?.fromCloset ?? [],
     recommendedAdditions: primaryLook?.addToComplete ?? [],
     swapSuggestion: "",
+    stylingIntelligence: primaryLook?.stylingIntelligence ?? null,
     chips: [
       "Show me 3 more",
       "Make them more formal",
@@ -844,13 +1120,48 @@ function buildAuraResponseFromSwipeBatch(
   };
 }
 
+function summarizeAuraLookForHistory(look: NonNullable<AuraResponse["look"]>, index?: number) {
+  const title = cleanIntroText(look.lookTitle || (index ? `Look ${index}` : "Current look"));
+  const pieces = (look.pieces ?? [])
+    .slice(0, 6)
+    .map((piece) => {
+      const role = cleanIntroText(piece.role);
+      const name = cleanIntroText(piece.itemName);
+      const source = piece.source === "closet" ? "owned" : "suggested";
+      const itemId = cleanIntroText(piece.itemId);
+      return [role, name, source, itemId ? `id ${itemId}` : ""].filter(Boolean).join(": ");
+    })
+    .filter(Boolean);
+  return [`${index ? `Look ${index}` : "Current look"}: ${title}`, pieces.length ? `Pieces: ${pieces.join(" | ")}` : ""]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildAssistantHistoryText(message: AIMessage) {
+  const parts = [cleanStructuredText(message.aura?.reply ?? message.text)].filter(Boolean);
+  const looks = message.aura?.lookOptions?.length
+    ? message.aura.lookOptions.slice(0, 3)
+    : message.aura?.look
+      ? [message.aura.look]
+      : [];
+  if (looks.length) {
+    parts.push(
+      [
+        "Rendered outfit context for follow-ups:",
+        ...looks.map((look, index) => summarizeAuraLookForHistory(look, looks.length > 1 ? index + 1 : undefined)),
+      ].join("\n"),
+    );
+  }
+  return parts.join("\n\n").trim();
+}
+
 function buildAuraHistory(messages: AIMessage[]) {
   return messages
     .filter((message) => message.type === "user" || message.type === "assistant")
     .map((message) => {
       const text =
         message.type === "assistant"
-          ? String(message.aura?.reply ?? message.text ?? "").trim()
+          ? buildAssistantHistoryText(message)
           : String(message.text ?? "").trim();
       if (!text) return null;
       return {
@@ -904,6 +1215,7 @@ export default function AIScreen() {
   const uid = user?.uid ?? null;
   const {
     attachmentRole,
+    clearComposer,
     handleAttachmentRoleChange,
     handleMicPress,
     handlePickImages,
@@ -918,6 +1230,8 @@ export default function AIScreen() {
   } = useAuraComposerState({ uid });
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<ClothingItem[]>([]);
+  const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
+  const [activeShopSuggestion, setActiveShopSuggestion] = useState<WardrobeSuggestion | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(DEFAULT_COMPOSER_HEIGHT);
@@ -990,6 +1304,26 @@ export default function AIScreen() {
     };
   }, [uid]);
 
+  useEffect(() => {
+    let active = true;
+    if (!uid) {
+      setProfilePreferences(null);
+      return () => {
+        active = false;
+      };
+    }
+    void loadUserProfilePreferences(uid)
+      .then((preferences) => {
+        if (active) setProfilePreferences(preferences);
+      })
+      .catch(() => {
+        if (active) setProfilePreferences(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [uid]);
+
   const handleShareChatThread = React.useCallback(
     async (thread: AIChatThread) => {
       if (!uid) return;
@@ -1005,10 +1339,6 @@ export default function AIScreen() {
     },
     [uid],
   );
-
-  const handleAddThreadToProject = React.useCallback(async () => {
-    Alert.alert("Projects", "Projects are coming soon.");
-  }, []);
 
   const handleTogglePinnedThread = React.useCallback(
     async (thread: AIChatThread) => {
@@ -1125,6 +1455,10 @@ export default function AIScreen() {
           : pendingAttachments;
       if ((!prompt && outgoingAttachments.length === 0) || loading) return;
       stopStreamingRequestedRef.current = false;
+      if (!isRetry) {
+        clearComposer();
+        setComposerHeight(DEFAULT_COMPOSER_HEIGHT);
+      }
 
       if (DEBUG_AURA_CLIENT) {
         console.log("[AURA_SEND]", "sending message", {
@@ -1216,6 +1550,7 @@ export default function AIScreen() {
         attachmentCount: uploadedAttachments.length,
         hasPreviousLook: !!lastLookForIntent,
       });
+      const isManualSelectedOutfit = promptHasManualSelectedOutfit(prompt);
       const structuredBatchPrompt = buildStructuredOutfitBatchPrompt(prompt, historyMessagesBeforeRequest);
       const shouldForceStructuredBatch = wantsStructuredOutfitBatch(
         prompt,
@@ -1228,7 +1563,8 @@ export default function AIScreen() {
         historyMessagesBeforeRequest,
       );
       const shouldRouteToExistingLook =
-        chatIntent === "STYLE_EXISTING" || chatIntent === "MODIFY_OUTFIT";
+        !isManualSelectedOutfit &&
+        (chatIntent === "STYLE_EXISTING" || chatIntent === "MODIFY_OUTFIT");
       const structuredOutfitPrompt = shouldForceStructuredBatch ? structuredBatchPrompt : prompt;
       const outfitDiversity = buildAuraOutfitDiversityContext(
         options?.forceOutfitDiversity ? "Try again" : prompt,
@@ -1236,6 +1572,11 @@ export default function AIScreen() {
         {
           multiLook: shouldForceStructuredBatch,
         },
+      );
+      const outfitAnchorItemIds = recentOutfitAnchorItemIds(
+        prompt,
+        items,
+        intentContextMessages,
       );
       if (DEBUG_AURA_CLIENT) {
         console.log("[AURA_INTENT]", "chat intent route", {
@@ -1250,6 +1591,7 @@ export default function AIScreen() {
               ? "outfit_generator"
               : "stream_stylist",
           outfitGeneratorWillRun: !shouldRouteToExistingLook && shouldForceStructuredOutfit,
+          anchorItemIds: outfitAnchorItemIds,
         });
       }
       if (DEBUG_AURA_CLIENT && outfitDiversity.shouldAvoidRepeats) {
@@ -1264,10 +1606,6 @@ export default function AIScreen() {
       }
       setMessages(nextLocalMessages);
       setFocusMessageId(userMessage.id);
-      if (!override && !isRetry) {
-        setMessage("");
-        setPendingAttachments([]);
-      }
       const streamingMessageId = createMessageId();
       const streamingMessageCreatedAt = Math.max(Date.now(), messageOrderMillis(userMessage) + 1);
       const streamingMessageLocalSequence = nextLocalMessageSequence();
@@ -1333,6 +1671,49 @@ export default function AIScreen() {
               height: attachment.type === "image" ? attachment.height ?? null : null,
             })),
           });
+        }
+
+        if (promptRequestsWardrobeBuyingAdvice(prompt) && uploadedAttachments.length === 0) {
+          const savedLookSignals = requestHistoryMessages.flatMap((entry) => {
+            const looks = [
+              entry.aura?.look,
+              ...(entry.aura?.lookOptions ?? []),
+            ].filter((look): look is import("@/src/types/aura").AuraLook => !!look);
+            return looks.map((look) => ({
+              addToComplete: look.addToComplete,
+            }));
+          });
+          const suggestions = buildWardrobeSuggestions({
+            items,
+            profilePreferences,
+            savedLooks: savedLookSignals,
+          });
+          const suggestionResponse = buildWardrobeSuggestionAuraResponse(suggestions, items);
+          const assistantMessage = createAssistantMessage(suggestionResponse, {
+            id: streamingMessageId,
+            createdAt: streamingMessageCreatedAt,
+            clientCreatedAt: streamingMessageCreatedAt,
+            localSequence: streamingMessageLocalSequence,
+            replyToMessageId: userMessage.id,
+            streaming: false,
+          }, {
+            userRequest: prompt,
+          });
+          logAuraChatState("message_created", {
+            messageId: assistantMessage.id,
+            type: assistantMessage.type,
+            kind: assistantMessage.kind,
+            source: "wardrobe_suggestions",
+            suggestionCount: suggestions.length,
+          });
+          setMessages(orderChatMessages([...nextLocalMessages, assistantMessage]));
+          setQuickChips(suggestionResponse.chips?.length ? suggestionResponse.chips : DEFAULT_CHIPS);
+          await appendMessageToChat(uid, chatId, assistantMessage);
+          await updateChatThread(uid, chatId, {
+            title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
+          });
+          await refreshRecentThreads();
+          return;
         }
 
         if (shouldRouteToExistingLook) {
@@ -1436,6 +1817,7 @@ export default function AIScreen() {
             intentText: structuredOutfitPrompt,
             numOutfits: desiredLookCount,
             items,
+            anchorItemIds: outfitAnchorItemIds,
             excludeItemIds: outfitDiversity.excludedItemIds,
             recentItemIds: outfitDiversity.recentItemIds,
             previousLookItemIds: outfitDiversity.previousLookItemIds,
@@ -1612,6 +1994,7 @@ export default function AIScreen() {
             intentText: structuredBatchPrompt,
             numOutfits: desiredLookCount,
             items,
+            anchorItemIds: outfitAnchorItemIds,
             excludeItemIds: outfitDiversity.excludedItemIds,
             recentItemIds: outfitDiversity.recentItemIds,
             previousLookItemIds: outfitDiversity.previousLookItemIds,
@@ -1762,17 +2145,17 @@ export default function AIScreen() {
     },
     [
       activeChatId,
+      clearComposer,
       items,
       latestMessagesRef,
       loading,
       message,
       minimumClosetSummary,
       pendingAttachments,
+      profilePreferences,
       refreshRecentThreads,
       setActiveChatId,
-      setMessage,
       setMessages,
-      setPendingAttachments,
       setQuickChips,
       stopStreamingRequestedRef,
       streamAbortControllerRef,
@@ -1829,6 +2212,16 @@ export default function AIScreen() {
       const promptBase = look?.lookTitle || sourceMessage.aura?.title || "this look";
       if (!look || !uid) return;
       if (loading) return;
+      if (action === "shopMissingPieces") {
+        const missingPieces = look.addToComplete.filter(Boolean);
+        const suggestion = missingPieces[0]
+          ? buildAdHocWardrobeSuggestion(missingPieces[0])
+          : buildWardrobeSuggestions({ items, profilePreferences })[0] ?? null;
+        if (suggestion) {
+          setActiveShopSuggestion(suggestion);
+          return;
+        }
+      }
       await handleSharedAuraLookAction({
         uid,
         action,
@@ -1846,9 +2239,10 @@ export default function AIScreen() {
         onAlert: (title, message, buttons) => Alert.alert(title, message, buttons),
         onAfterSave: () => runHaptic("light"),
         onAfterPlan: () => runHaptic("light"),
+        onAfterWear: () => runHaptic("light"),
       });
     },
-    [activeChatId, handleAsk, loading, uid]
+    [activeChatId, handleAsk, items, loading, profilePreferences, uid]
   );
 
   const updateCandidateStatuses = React.useCallback(
@@ -2066,7 +2460,7 @@ export default function AIScreen() {
   }, [handleAsk, isBooting, routePrompt, routePromptKey, uid]);
 
   const chatBackgroundColors = useMemo(
-    () => ["#120014", Colors.dark.backgroundDeep, Colors.dark.backgroundDark] as const,
+    () => ["#111014", Colors.dark.backgroundDeep, Colors.dark.backgroundDark] as const,
     [],
   );
   const chatBottomGlowColors = useMemo(
@@ -2200,7 +2594,10 @@ export default function AIScreen() {
   ]);
   const showEmptyState = orderedMessages.length === 0 && !loading && !isBooting && !message.trim();
   const showKeyboardWatermark = keyboardHeight > 0 && orderedMessages.length < 2 && !showEmptyState;
-  const visibleHeroChips = AURA_TOP_CHIPS;
+  const visibleHeroChips =
+    orderedMessages.length === 0 && !showEmptyState && !loading && !isBooting && !message.trim()
+      ? AURA_TOP_CHIPS.slice(0, 1)
+      : [];
   const emptyChatState = useMemo(
     () =>
       isBooting ? (
@@ -2265,19 +2662,21 @@ export default function AIScreen() {
         }}
       />
 
-        <View style={{ paddingTop: 6, paddingBottom: 4 }}>
-          <AuraQuickChips
-            variant="pills"
-            chips={visibleHeroChips}
-            onPress={(chip) => {
-              if (chip === TRAIN_AURA_CHIP_LABEL) {
-                handleTrainingPress();
-                return;
-              }
-              void handleAsk(chip);
-            }}
-          />
-        </View>
+        {visibleHeroChips.length ? (
+          <View style={{ paddingTop: 6, paddingBottom: 4 }}>
+            <AuraQuickChips
+              variant="pills"
+              chips={visibleHeroChips}
+              onPress={(chip) => {
+                if (chip === TRAIN_AURA_CHIP_LABEL) {
+                  handleTrainingPress();
+                  return;
+                }
+                void handleAsk(chip);
+              }}
+            />
+          </View>
+        ) : null}
 
         <View style={{ flex: 1, marginTop: 2, minHeight: 0 }}>
           <ChatList
@@ -2344,6 +2743,13 @@ export default function AIScreen() {
         onMicPress={() => void handleMicPress()}
         recording={recordingAudio}
         />
+        <ShopOptionsSheet
+          visible={Boolean(activeShopSuggestion)}
+          suggestion={activeShopSuggestion}
+          userId={uid}
+          sourceScreen="outfit_card"
+          onDismiss={() => setActiveShopSuggestion(null)}
+        />
         <AuraChatDrawer
         visible={chatDrawerOpen}
         colors={colors}
@@ -2351,7 +2757,6 @@ export default function AIScreen() {
         threads={recentThreads}
         onClose={() => setChatDrawerOpen(false)}
         onShareChat={handleShareChatThread}
-        onAddToProject={handleAddThreadToProject}
         onTogglePin={handleTogglePinnedThread}
         onRenameChat={handleRenameThread}
         onArchiveChat={handleArchiveThread}

@@ -1,12 +1,11 @@
-import { BlurView } from "expo-blur";
 import React from "react";
-import { Animated, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Animated, ScrollView, StyleSheet, View } from "react-native";
 
-import { Fonts } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import { AuraText, auraDesignTokens } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
-const TOP_CHIP_HEIGHT = 36;
+const TOP_CHIP_HEIGHT = 34;
 const TOP_CHIP_RADIUS = 999;
 const TOP_CHIP_GAP = 7;
 const TOP_CHIP_HORIZONTAL_PADDING = 12;
@@ -91,29 +90,29 @@ function ChipCard({
         style={{
           width: 164,
           minHeight: 46,
-          borderRadius: 15,
-          backgroundColor: colors.chipBackground,
+          borderRadius: auraDesignTokens.radii.sm,
+          backgroundColor: colors.surfaceMuted,
           borderWidth: 1,
-          borderColor: colors.border,
+          borderColor: colors.borderSoft,
           paddingHorizontal: 10,
           paddingVertical: 7,
           justifyContent: "center",
         }}
       >
-        <Text style={{ color: colors.text, fontSize: 12, fontWeight: "700", fontFamily: Fonts.sans }}>
+        <AuraText variant="caption" style={{ fontSize: 12, fontWeight: "600" }}>
           {item.title}
-        </Text>
-        <Text
+        </AuraText>
+        <AuraText
+          variant="metadata"
+          tone="secondary"
           style={{
-            color: colors.textSecondary,
             fontSize: 10.5,
             lineHeight: 13,
             marginTop: 1,
-            fontFamily: Fonts.sans,
           }}
         >
           {item.subtitle}
-        </Text>
+        </AuraText>
       </AuraPressable>
     </Animated.View>
   );
@@ -168,19 +167,19 @@ function Chip({
           paddingHorizontal: TOP_CHIP_HORIZONTAL_PADDING,
           paddingVertical: 0,
           borderRadius: TOP_CHIP_RADIUS,
-          backgroundColor: isTrainingChip ? "rgba(72,36,76,0.44)" : "rgba(31,9,48,0.34)",
+          backgroundColor: isTrainingChip ? colors.surfaceElevated : colors.surfaceMuted,
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: isTrainingChip ? "rgba(251,228,216,0.18)" : "rgba(251,228,216,0.09)",
+          borderColor: isTrainingChip ? colors.borderStrong : colors.borderSoft,
           overflow: "hidden",
         }}
       >
-        <BlurView intensity={16} tint="dark" style={StyleSheet.absoluteFill} />
         <View
           pointerEvents="none"
           style={[
             StyleSheet.absoluteFill,
             {
-              backgroundColor: isTrainingChip ? "rgba(223,182,178,0.035)" : "rgba(251,228,216,0.012)",
+              backgroundColor: isTrainingChip ? colors.accentSoft : colors.surfaceMuted,
+              opacity: isTrainingChip ? 0.24 : 0.12,
             },
           ]}
         />
@@ -199,19 +198,19 @@ function Chip({
               }}
             />
           ) : null}
-          <Text
+          <AuraText
             numberOfLines={1}
             ellipsizeMode="tail"
+            variant="metadata"
+            tone={isTrainingChip ? "accent" : "secondary"}
             style={{
-              color: isTrainingChip ? colors.ctaCream : "rgba(251,228,216,0.72)",
               fontSize: 11.5,
               lineHeight: 16,
-              fontWeight: "800",
-              fontFamily: Fonts.sans,
+              fontWeight: "500",
             }}
           >
             {label}
-          </Text>
+          </AuraText>
         </View>
       </AuraPressable>
     </Animated.View>

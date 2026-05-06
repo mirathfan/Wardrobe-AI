@@ -12,6 +12,7 @@ import type { UserProfilePreferences } from "../types/UserProfilePreferences";
 
 export type UserAccountProfile = {
   name: string | null;
+  displayName?: string | null;
   photoURL?: string | null;
 };
 
@@ -19,6 +20,7 @@ const DEFAULT_DETECTED_CURRENCY = detectDeviceCurrency();
 
 export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
   onboardingCompleted: false,
+  displayName: null,
   firstName: null,
   region: null,
   unitsPreference: "metric",
@@ -29,6 +31,7 @@ export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
   selectedCategories: [],
   styleAesthetics: [],
   preferredFit: null,
+  budgetPreference: null,
   favoriteColors: [],
   avoidedColors: [],
   accessoryPreferences: [],
@@ -116,6 +119,7 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
 
   return {
     onboardingCompleted: typeof root.onboardingCompleted === "boolean" ? root.onboardingCompleted : false,
+    displayName: cleanString(root.displayName),
     firstName: cleanString(root.firstName),
     region: cleanString(root.region),
     unitsPreference:
@@ -143,6 +147,12 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
       root.preferredFit === "relaxed" ||
       root.preferredFit === "oversized"
         ? root.preferredFit
+        : null,
+    budgetPreference:
+      root.budgetPreference === "budget" ||
+      root.budgetPreference === "mid" ||
+      root.budgetPreference === "premium"
+        ? root.budgetPreference
         : null,
     favoriteColors: cleanStringList(root.favoriteColors),
     avoidedColors: cleanStringList(root.avoidedColors),
@@ -298,8 +308,10 @@ export async function loadUserProfilePreferences(uid: string) {
 
 export function normalizeUserAccountProfile(value: unknown): UserAccountProfile {
   const root = readRecord(value);
+  const displayName = cleanString(root.displayName ?? root.name);
   return {
-    name: cleanString(root.name),
+    name: cleanString(root.name ?? root.displayName),
+    displayName,
     photoURL: cleanString(root.photoURL),
   };
 }
@@ -321,6 +333,7 @@ export async function saveUserAccountProfile(uid: string, accountProfile: UserAc
     doc(db, "users", uid),
     {
       ...normalized,
+      displayName: normalized.displayName ?? normalized.name,
       profileUpdatedAt: Date.now(),
     },
     { merge: true },
@@ -338,6 +351,7 @@ export async function saveUserProfilePreferences(
     {
       profilePreferences: {
         ...normalized,
+        displayName: normalized.displayName ?? normalized.firstName ?? null,
         createdAt: normalized.createdAt ?? timestamp,
         updatedAt: timestamp,
         height: normalized.height,

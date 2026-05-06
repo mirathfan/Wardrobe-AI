@@ -31,7 +31,7 @@ export default function AuraTrainingCard({
               style={{
                 color: colors.lightPurple,
                 fontSize: 12.5,
-                fontWeight: "800",
+                fontWeight: "600",
                 letterSpacing: 0,
               }}
             >
@@ -58,7 +58,7 @@ export default function AuraTrainingCard({
               borderColor: colors.purpleBorder,
             }}
           >
-            <Text style={{ color: colors.lightPurple, fontSize: 10.5, fontWeight: "800" }}>
+            <Text style={{ color: colors.lightPurple, fontSize: 10.5, fontWeight: "600" }}>
               TRAIN
             </Text>
           </View>
@@ -85,7 +85,7 @@ export default function AuraTrainingCard({
           style={{
             color: colors.auraChampagne,
             fontSize: 10.5,
-            fontWeight: "800",
+            fontWeight: "600",
             letterSpacing: 1.5,
           }}
         >
@@ -96,7 +96,7 @@ export default function AuraTrainingCard({
             color: colors.text,
             fontSize: 22,
             lineHeight: 27,
-            fontWeight: "900",
+            fontWeight: "600",
             letterSpacing: 0,
           }}
         >
@@ -137,7 +137,7 @@ export default function AuraTrainingCard({
               backgroundColor: colors.lightPurple,
             }}
           />
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700" }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>
             Swipe training
           </Text>
         </View>
@@ -153,7 +153,7 @@ export default function AuraTrainingCard({
             borderColor: colors.purpleBorder,
           })}
         >
-          <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "800" }}>Open</Text>
+          <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "600" }}>Open</Text>
         </Pressable>
       </View>
     </AuraGlassCard>

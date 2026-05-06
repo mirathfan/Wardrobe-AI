@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
+import type { OutfitSnapshot } from "@/src/lib/outfitSnapshot";
 import type { AuraLook } from "@/src/types/aura";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AnalyzedWornOutfit, WornOutfit } from "@/src/utils/dailyOutfits";
@@ -355,6 +356,7 @@ export async function logWornOutfitStyleEvent(uid: string, wornOutfit: WornOutfi
     wornOutfit.itemsByCategory.top,
     wornOutfit.itemsByCategory.bottom,
     wornOutfit.itemsByCategory.shoes,
+    ...(wornOutfit.itemsByCategory.accessories ?? []),
   ].filter(Boolean) as string[];
   const items = await loadItemsByIds(uid, itemIds);
   return logStyleEvent(uid, {
@@ -365,6 +367,9 @@ export async function logWornOutfitStyleEvent(uid: string, wornOutfit: WornOutfi
       top: wornOutfit.itemsByCategory.top,
       bottom: wornOutfit.itemsByCategory.bottom,
       footwear: wornOutfit.itemsByCategory.shoes,
+      accessories: wornOutfit.itemsByCategory.accessories?.length
+        ? wornOutfit.itemsByCategory.accessories
+        : undefined,
     },
     derivedTraits: deriveTraitsFromItems(items, {
       formula: [
@@ -372,12 +377,67 @@ export async function logWornOutfitStyleEvent(uid: string, wornOutfit: WornOutfi
         wornOutfit.itemsByCategory.top ? "top" : null,
         wornOutfit.itemsByCategory.bottom ? "bottom" : null,
         wornOutfit.itemsByCategory.shoes ? "shoes" : null,
+        wornOutfit.itemsByCategory.accessories?.length ? "accessory" : null,
       ]
         .filter(Boolean)
         .join(" + "),
     }),
     source: "planner",
     createdAt: wornOutfit.wornAt,
+  });
+}
+
+export async function logOutfitSnapshotWornStyleEvent(
+  uid: string,
+  snapshot: OutfitSnapshot,
+  options?: {
+    source?: StyleEvent["source"];
+    wornAt?: number;
+  },
+) {
+  const itemIds = Array.from(
+    new Set(
+      [
+        ...(snapshot.itemIds ?? []),
+        ...(snapshot.slots ?? [])
+          .filter((slot) => slot.source === "closet")
+          .map((slot) => slot.itemId),
+      ]
+        .map((itemId) => String(itemId ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const firstItemForSlot = (slot: string) =>
+    snapshot.slots.find((entry) => entry.slot === slot && entry.source === "closet" && entry.itemId)?.itemId;
+  const accessories = snapshot.slots
+    .filter((entry) => entry.slot === "accessory" && entry.source === "closet" && entry.itemId)
+    .map((entry) => entry.itemId as string);
+  const formula = [
+    firstItemForSlot("outerwear") ? "outerwear" : null,
+    firstItemForSlot("top") ? "top" : null,
+    firstItemForSlot("bottom") ? "bottom" : null,
+    firstItemForSlot("shoes") ? "shoes" : null,
+    accessories.length ? "accessory" : null,
+  ]
+    .filter(Boolean)
+    .join(" + ");
+  const items = await loadItemsByIds(uid, itemIds);
+
+  return logStyleEvent(uid, {
+    type: "outfit_worn",
+    itemIds,
+    outfit: {
+      outerwear: firstItemForSlot("outerwear"),
+      top: firstItemForSlot("top"),
+      bottom: firstItemForSlot("bottom"),
+      footwear: firstItemForSlot("shoes"),
+      accessories: accessories.length ? accessories : undefined,
+    },
+    derivedTraits: deriveTraitsFromItems(items, {
+      formula,
+    }),
+    source: options?.source ?? "planner",
+    createdAt: options?.wornAt ?? Date.now(),
   });
 }
 

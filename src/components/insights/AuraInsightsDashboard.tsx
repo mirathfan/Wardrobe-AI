@@ -12,6 +12,7 @@ import type { AppColors } from "@/constants/theme";
 import AppImage from "@/src/components/common/AppImage";
 import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import WardrobeSuggestionCard from "@/src/components/suggestions/WardrobeSuggestionCard";
 import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
 import { auraButtonStyle, auraButtonTextStyle, auraTypography } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -24,6 +25,7 @@ import type {
   WardrobeItemUseInsight,
 } from "@/src/lib/wardrobeInsights";
 import { sanitizeDisplayText } from "@/src/lib/text";
+import type { WardrobeSuggestion } from "@/src/lib/wardrobeSuggestions";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 export type InsightPeriodKey = "30d" | "90d" | "all";
@@ -44,10 +46,13 @@ type AuraInsightsDashboardProps = {
   insights: WardrobeInsights;
   loading?: boolean;
   period: InsightPeriodKey;
+  userId?: string | null;
+  wardrobeSuggestions?: WardrobeSuggestion[];
   onPeriodChange: (period: InsightPeriodKey) => void;
   onBack: () => void;
   onStyleItem: (item: ClothingItem) => void;
   onAskAuraWhatToBuy: (missingPieces: MissingPieceInsight[]) => void;
+  onFindSuggestionOptions?: (suggestion: WardrobeSuggestion) => void;
 };
 
 function percentWidth(value: number): DimensionValue {
@@ -766,78 +771,34 @@ function PiecesCard({
   );
 }
 
-function MissingPiecesCard({
+function ClosetGapsCard({
   insights,
+  userId,
+  wardrobeSuggestions,
+  onFindSuggestionOptions,
   onAskAuraWhatToBuy,
 }: {
   insights: WardrobeInsights;
+  userId?: string | null;
+  wardrobeSuggestions: WardrobeSuggestion[];
+  onFindSuggestionOptions?: (suggestion: WardrobeSuggestion) => void;
   onAskAuraWhatToBuy: (missingPieces: MissingPieceInsight[]) => void;
 }) {
   const { colors } = useAppTheme();
 
   return (
-    <Card title="What would unlock more outfits" eyebrow="MISSING PIECES">
+    <Card title="Closet Gaps" eyebrow="MISSING PIECES">
       <View style={{ gap: 14 }}>
-        {insights.missingPieces.length ? (
-          <View style={{ gap: 9 }}>
-            {insights.missingPieces.map((piece) => (
-              <View
-                key={piece.key}
-                style={{
-                  borderRadius: 18,
-                  paddingVertical: 11,
-                  paddingHorizontal: 12,
-                  backgroundColor: INSIGHTS_SOFT_SURFACE,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 10,
-                }}
-              >
-                <View
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 999,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    backgroundColor: colors.purpleSurface,
-                    borderWidth: 1,
-                    borderColor: colors.purpleBorder,
-                  }}
-                >
-                  <Ionicons name="add" size={16} color={colors.ctaCream} />
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text
-                    style={{
-                      color: colors.text,
-                      fontSize: 13.5,
-                      lineHeight: 18,
-                      fontWeight: "900",
-                      letterSpacing: 0,
-                    }}
-                    numberOfLines={1}
-                  >
-                    {piece.label}
-                  </Text>
-                  <Text
-                    selectable
-                    style={{
-                      color: colors.textSecondary,
-                      fontSize: 12,
-                      lineHeight: 16,
-                      fontWeight: "700",
-                      letterSpacing: 0,
-                      fontVariant: ["tabular-nums"],
-                    }}
-                    numberOfLines={1}
-                  >
-                    {piece.count}/{piece.target} owned - add {piece.missingCount}
-                  </Text>
-                </View>
-              </View>
+        {wardrobeSuggestions.length ? (
+          <View style={{ gap: 10 }}>
+            {wardrobeSuggestions.map((suggestion) => (
+              <WardrobeSuggestionCard
+                key={suggestion.id}
+                suggestion={suggestion}
+                userId={userId}
+                sourceScreen="insights"
+                onFindOptions={onFindSuggestionOptions}
+              />
             ))}
           </View>
         ) : (
@@ -886,10 +847,13 @@ export default function AuraInsightsDashboard({
   insights,
   loading = false,
   period,
+  userId,
+  wardrobeSuggestions = [],
   onPeriodChange,
   onBack,
   onStyleItem,
   onAskAuraWhatToBuy,
+  onFindSuggestionOptions,
 }: AuraInsightsDashboardProps) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
@@ -977,7 +941,13 @@ export default function AuraInsightsDashboard({
           actionLabel="Style this"
           onAction={(entry) => onStyleItem(entry.item)}
         />
-        <MissingPiecesCard insights={insights} onAskAuraWhatToBuy={onAskAuraWhatToBuy} />
+        <ClosetGapsCard
+          insights={insights}
+          userId={userId}
+          wardrobeSuggestions={wardrobeSuggestions}
+          onFindSuggestionOptions={onFindSuggestionOptions}
+          onAskAuraWhatToBuy={onAskAuraWhatToBuy}
+        />
       </ScrollView>
     </View>
   );

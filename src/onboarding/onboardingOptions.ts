@@ -57,6 +57,7 @@ export const OCCASION_OPTIONS = [
 ] as const;
 
 export const FIT_OPTIONS = ["slim", "regular", "relaxed", "oversized"] as const;
+export const BUDGET_OPTIONS = ["budget", "mid", "premium"] as const;
 export const SHOE_SIZES_EU = Array.from({ length: 14 }, (_, index) => 35 + index);
 
 export type StepKey = "wardrobeMode" | "style" | "categories" | "profile";

@@ -46,7 +46,7 @@ export function ClosetCategorySection({
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 9, flex: 1 }}>
-          <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900", letterSpacing: 0 }}>
+          <Text style={{ color: colors.text, fontSize: 18, fontWeight: "600", letterSpacing: 0 }}>
             {title}
           </Text>
           <View
@@ -57,7 +57,7 @@ export function ClosetCategorySection({
               backgroundColor: colors.overlay,
             }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "800" }}>{count}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "600" }}>{count}</Text>
           </View>
         </View>
         <View
@@ -84,10 +84,10 @@ export function ClosetCategorySection({
             <View key={group.label} style={{ gap: 11 }}>
               <View style={{ gap: 9 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "800", letterSpacing: 0.2 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "600", letterSpacing: 0.2 }}>
                     {group.label}
                   </Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "700", opacity: 0.75 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "600", opacity: 0.75 }}>
                     {group.items.length}
                   </Text>
                 </View>

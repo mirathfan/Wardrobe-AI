@@ -70,7 +70,7 @@ function Section({
   return (
     <View style={{ gap: 9 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <Text style={[auraTypography.caption, { color: colors.text, fontSize: 12.5, lineHeight: 16, fontWeight: "900", textTransform: "uppercase" }]}>
+        <Text style={[auraTypography.caption, { color: colors.text, fontSize: 12.5, lineHeight: 16, fontWeight: "600", textTransform: "uppercase" }]}>
           {title}
         </Text>
         {detail ? (
@@ -344,7 +344,7 @@ export function ClosetFilterSheet({
 
             <View style={{ height: 1, backgroundColor: "rgba(251,228,216,0.08)" }} />
 
-            <Text style={[auraTypography.caption, { color: colors.textSecondary, fontSize: 12, lineHeight: 15, fontWeight: "900", textTransform: "uppercase" }]}>
+            <Text style={[auraTypography.caption, { color: colors.textSecondary, fontSize: 12, lineHeight: 15, fontWeight: "600", textTransform: "uppercase" }]}>
               Filters
             </Text>
 

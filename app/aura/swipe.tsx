@@ -309,7 +309,9 @@ export default function AuraSwipeScreen() {
         }
       } catch (e) {
         if (DEBUG_AURA_SWIPE_SCREEN) {
-          console.error("SAVE LOOK ERROR:", e);
+          if (__DEV__) {
+            console.error("SAVE LOOK ERROR:", e);
+          }
         }
         throw e;
       }

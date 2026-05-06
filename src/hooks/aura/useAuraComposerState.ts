@@ -27,8 +27,10 @@ type UseAuraComposerStateOptions = {
 const VOICE_LOCALE = "en-US";
 const VOICE_UNAVAILABLE_MESSAGE = "Voice input is not available in this build.";
 const VOICE_PERMISSION_MESSAGE = "Microphone permission is needed for voice input.";
+const VOICE_INPUT_ENABLED = process.env.EXPO_PUBLIC_AURA_VOICE_ENABLED !== "0";
 
 function ensureNativeVoiceModuleAvailable() {
+  if (!VOICE_INPUT_ENABLED) return false;
   if (Platform.OS === "web") return false;
   const nativeModules = NativeModules as unknown as Record<string, unknown>;
   if (!nativeModules.Voice && nativeModules.RCTVoice) {
@@ -372,8 +374,16 @@ export function useAuraComposerState({ uid: _uid }: UseAuraComposerStateOptions)
     setPendingAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
   }, []);
 
+  const clearComposer = React.useCallback(() => {
+    ignoreSpeechResultsRef.current = true;
+    dictationBaseTextRef.current = "";
+    setMessage("");
+    setPendingAttachments([]);
+  }, []);
+
   return {
     attachmentRole,
+    clearComposer,
     handleAttachmentRoleChange,
     handleMicPress,
     handlePickImages,

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, RefreshControl, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import { AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLookAction, AuraLookOptionMeta, AuraOutfitPhotoAction } from "@/src/types/aura";
 
@@ -16,7 +17,7 @@ const FOCUS_ANCHOR_MIN_SPACER = 560;
 const FOCUS_ANCHOR_LOCK_MS = 680;
 
 const ChatItemSeparator = React.memo(function ChatItemSeparator() {
-  return <View style={{ height: 12 }} />;
+  return <View style={{ height: 16 }} />;
 });
 
 class ChatErrorBoundary extends React.Component<
@@ -50,7 +51,7 @@ class ChatErrorBoundary extends React.Component<
             paddingVertical: 11,
           }}
         >
-          <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "700" }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "600" }}>
             {"Couldn't render this message."}
           </Text>
         </View>
@@ -74,36 +75,37 @@ function TypingBubble({ colors }: { colors: AppColors }) {
   }, [pulse]);
 
   return (
-    <View style={{ alignItems: "flex-start" }}>
+    <View style={{ alignItems: "flex-start", paddingHorizontal: 10 }}>
       <View
         style={{
-          borderRadius: 18,
-          paddingHorizontal: 12,
-          paddingVertical: 9,
-          backgroundColor: colors.surfaceGlass,
+          borderRadius: 20,
+          paddingHorizontal: 14,
+          paddingVertical: 11,
+          backgroundColor: colors.surfaceMuted,
           borderWidth: 0.75,
-          borderColor: colors.border,
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 8,
+          borderColor: colors.borderSoft,
+          gap: 9,
+          width: 178,
         }}
       >
-        <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700" }}>Thinking</Text>
-        {[0, 1, 2].map((index) => (
-          <Animated.View
-            key={index}
-            style={{
-              width: 5,
-              height: 5,
-              borderRadius: 999,
-              backgroundColor: colors.textSecondary,
-              opacity: pulse.interpolate({
-                inputRange: [0.45, 1],
-                outputRange: [0.35 + index * 0.12, 0.95 - index * 0.1],
-              }),
-            }}
-          />
-        ))}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          {[0, 1, 2].map((index) => (
+            <Animated.View
+              key={index}
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 999,
+                backgroundColor: colors.textSecondary,
+                opacity: pulse.interpolate({
+                  inputRange: [0.45, 1],
+                  outputRange: [0.3 + index * 0.12, 0.82 - index * 0.1],
+                }),
+              }}
+            />
+          ))}
+        </View>
+        <AuraSkeletonLine width="72%" height={8} />
       </View>
     </View>
   );
@@ -410,9 +412,9 @@ export default function ChatList({
     () => ({
       flexGrow: 1,
       justifyContent: messageCount ? ("flex-start" as const) : ("flex-end" as const),
-      paddingTop: 0,
-      paddingHorizontal: 4,
-      paddingBottom: Math.max(12, contentBottomPadding),
+      paddingTop: messageCount ? 8 : 0,
+      paddingHorizontal: 6,
+      paddingBottom: Math.max(18, contentBottomPadding),
     }),
     [contentBottomPadding, messageCount],
   );
@@ -507,7 +509,7 @@ export default function ChatList({
       return (
         <View>
           {showTypingBubble ? (
-            <View style={{ marginTop: 10, marginLeft: 10, marginBottom: 8 }}>
+            <View style={{ marginTop: 12, marginBottom: 10 }}>
               <TypingBubble colors={colors} />
             </View>
           ) : null}

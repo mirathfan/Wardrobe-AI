@@ -18,6 +18,7 @@ import {
 
 import { db } from "../lib/firebase";
 import { logAnalyzedOutfitStyleEvent, logWornOutfitStyleEvent } from "../lib/auraMemory";
+import type { OutfitSnapshot } from "../lib/outfitSnapshot";
 import type { AuraDetectedOutfitPiece } from "../types/aura";
 import { toDayKey } from "./date";
 
@@ -26,6 +27,7 @@ export type OutfitItemsByCategory = {
   top?: string;
   bottom?: string;
   shoes?: string;
+  accessories?: string[];
 };
 
 // Canonical saved daily plan shape for Calendar, Today, and AURA "Plan Today".
@@ -47,6 +49,10 @@ export type PlannedOutfit = {
 export type WornOutfit = {
   itemsByCategory: OutfitItemsByCategory;
   wornAt: number;
+  source?: string;
+  title?: string;
+  outfitId?: string;
+  outfitSnapshot?: OutfitSnapshot;
 };
 
 export type AnalyzedWornOutfit = {
@@ -111,6 +117,7 @@ function cleanItemIds(itemsByCategory: OutfitItemsByCategory) {
     itemsByCategory.top,
     itemsByCategory.bottom,
     itemsByCategory.shoes,
+    ...(itemsByCategory.accessories ?? []),
   ].filter(Boolean) as string[];
 }
 

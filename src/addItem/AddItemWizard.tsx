@@ -243,7 +243,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
           </Modal>
 
           <Modal
-            visible={state.showAttributeSheet != null}
+            visible={state.showAttributeSheet === "material" || state.showAttributeSheet === "pattern"}
             transparent
             animationType="slide"
             onRequestClose={() => actions.setShowAttributeSheet(null)}
@@ -270,9 +270,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                 <Text style={[auraTypography.cardTitle, { color: colors.text }]}>
                   {state.showAttributeSheet === "material"
                     ? "Material"
-                    : state.showAttributeSheet === "pattern"
-                      ? "Pattern"
-                      : "Care"}
+                    : "Pattern"}
                 </Text>
                 {state.showAttributeSheet === "material"
                   ? derived.MATERIAL_OPTIONS.map((option: string) => (
@@ -300,11 +298,7 @@ export const AddItemWizard = React.memo(function AddItemWizard({
                           }}
                         />
                       ))
-                    : (
-                        <Text style={{ color: colors.textSecondary }}>
-                          Care tags are coming soon.
-                        </Text>
-                      )}
+                    : null}
               </View>
             </View>
           </Modal>

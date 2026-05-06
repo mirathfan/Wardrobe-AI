@@ -12,13 +12,12 @@ import { Colors } from "@/constants/theme";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
-import { auraLookToPlannedOutfit } from "@/src/lib/auraLooks";
 import {
   markFeedbackLookLiked,
   removeProfileLook,
   type ProfileLookRecord,
 } from "@/src/lib/profileLooks";
-import { savePlannedRecord } from "@/src/utils/dailyOutfits";
+import { markOutfitWorn, planOutfitForToday } from "@/src/lib/wearOutfit";
 
 type Props = {
   visible: boolean;
@@ -51,12 +50,27 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
 
   const savedDate = useMemo(() => formatDate(record?.createdAt), [record?.createdAt]);
 
-  const runAction = async (action: "plan" | "remove" | "like") => {
+  const runAction = async (action: "wear" | "plan" | "remove" | "like") => {
     if (!record || !user?.uid) return;
     try {
       setBusy(true);
-      if (action === "plan") {
-        await savePlannedRecord(user.uid, new Date(), auraLookToPlannedOutfit(record.look));
+      if (action === "wear") {
+        await markOutfitWorn({
+          uid: user.uid,
+          source: "saved_look",
+          outfitId: record.id,
+          title: record.title,
+          look: record.look,
+        });
+        Alert.alert("Marked worn", "This look was marked as worn today.");
+      } else if (action === "plan") {
+        await planOutfitForToday({
+          uid: user.uid,
+          source: "saved_look",
+          outfitId: record.id,
+          title: record.title,
+          look: record.look,
+        });
         Alert.alert("Planned", "This look is planned for today.");
       } else if (action === "like") {
         await markFeedbackLookLiked(user.uid, record);
@@ -123,15 +137,18 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
             </>
           ) : (
             <>
-              <Pressable disabled={busy} onPress={() => runAction("plan")} style={styles.gradientButton}>
+              <Pressable disabled={busy} onPress={() => runAction("wear")} style={styles.gradientButton}>
                 <LinearGradient
                   colors={[colors.ctaCream, colors.ctaCream]}
                   start={{ x: 0, y: 0.5 }}
                   end={{ x: 1, y: 0.5 }}
                   style={styles.gradientFill}
                 >
-                  <Text style={styles.gradientText}>{busy ? "Planning..." : "Plan for today"}</Text>
+                  <Text style={styles.gradientText}>{busy ? "Updating..." : "Wear today"}</Text>
                 </LinearGradient>
+              </Pressable>
+              <Pressable disabled={busy} onPress={() => runAction("plan")} style={styles.darkButton}>
+                <Text style={styles.darkButtonText}>Plan for today</Text>
               </Pressable>
               <Pressable disabled={busy} onPress={() => runAction("remove")} style={styles.darkButton}>
                 <Text style={styles.darkButtonText}>Remove from saved</Text>

@@ -10,7 +10,7 @@ const MULTI_OUTFIT_REQUEST_RE =
 const OUTFIT_REFINEMENT_RE =
   /\b(with|without|more|less|make|push|safer|balanced|bold|dressier|casual|formal|streetwear|jackets?|outerwear|bags?|glasses|watch|accessor(?:y|ies)|heels?|boots?|sneakers?|loafers?)\b/i;
 const SINGLE_OUTFIT_REQUEST_RE =
-  /\b(?:give|build|make|create|pull|put together|plan|style|dress)\s+(?:me\s+)?(?:(?:an?|one|my|the)\s+)?(?:[\w'-]+\s+){0,6}(?:outfit|look)\b|\bbuild\s+(?:me\s+)?(?:from|with|using)\s+(?:my\s+)?(?:closet|wardrobe)\b|\bstyle me (?:today|now)\b|\bwhat should i wear(?: today| tonight| tomorrow)?\b/i;
+  /\b(?:give|build|make|create|pull|put together|plan|style|dress|suggest|recommend)\s+(?:me\s+)?(?:(?:an?|one|my|the)\s+)?(?:[\w'-]+\s+){0,6}(?:outfit|look|fit)\b|\b(?:suggest|recommend)\s+(?:an?|one|some)?\s*(?:outfit|look|fit)\b|\b(?:outfit|look|fit)\s+for\s+(?:today|tonight|tomorrow|date|school|work|rave|vacation|college|class|dinner|party)\b|\bbuild\s+(?:me\s+)?(?:from|with|using)\s+(?:my\s+)?(?:closet|wardrobe)\b|\bstyle me (?:today|now)\b|\bwhat should i wear(?: today| tonight| tomorrow)?\b/i;
 const OUTFIT_DIVERSITY_FOLLOWUP_RE =
   /\b(try again|give me one more|one more|another one|another outfit|another look|different outfit|different look|something different|show me another|show me one more)\b/i;
 const MORE_OUTFIT_REQUEST_RE =

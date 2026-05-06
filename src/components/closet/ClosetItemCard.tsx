@@ -113,7 +113,7 @@ function ClosetItemCardComponent({
         onLongPress={onLongPress || onLongPressItem ? handleLongPress : undefined}
         haptic="light"
         hapticTrigger="press"
-        pressedScale={0.985}
+        pressedScale={0.97}
         pressedOpacity={0.94}
         delayLongPress={180}
         style={{
@@ -134,7 +134,7 @@ function ClosetItemCardComponent({
           padding: 10,
           borderRadius: 18,
           borderWidth: 1,
-          borderColor: selected ? "rgba(223,182,178,0.42)" : "rgba(25,0,25,0.055)",
+          borderColor: selected ? "rgba(223,182,178,0.42)" : "rgba(17,16,20,0.055)",
           boxShadow: selected ? "0 10px 24px rgba(223,182,178,0.10)" : "0 6px 16px rgba(0,0,0,0.05)",
         }}
       >
@@ -167,7 +167,7 @@ function ClosetItemCardComponent({
               paddingHorizontal: 12,
             }}
           >
-            <Text style={{ color: colors.textOnLightSecondary, fontSize: 12, fontWeight: "800" }}>
+            <Text style={{ color: colors.textOnLightSecondary, fontSize: 12, fontWeight: "500" }}>
               No image yet
             </Text>
             <Text
@@ -191,7 +191,7 @@ function ClosetItemCardComponent({
       >
         <View style={{ height: titleSlotHeight, justifyContent: "flex-start" }}>
           <Text
-            style={[auraTypography.chipLabel, { color: colors.text, fontSize: 12.25, lineHeight: titleLineHeight, fontWeight: "700" }]}
+            style={[auraTypography.chipLabel, { color: colors.text, fontSize: 12.25, lineHeight: titleLineHeight, fontWeight: "500" }]}
             numberOfLines={2}
             ellipsizeMode="tail"
           >
@@ -209,7 +209,7 @@ function ClosetItemCardComponent({
         >
           {brand ? (
             <Text
-              style={{ flex: 1, color: colors.textSecondary, opacity: 0.74, fontSize: 10.5, lineHeight: metadataLineHeight, fontWeight: "700", letterSpacing: 0 }}
+              style={{ flex: 1, color: colors.textSecondary, opacity: 0.74, fontSize: 10.5, lineHeight: metadataLineHeight, fontWeight: "400", letterSpacing: 0 }}
               numberOfLines={1}
               ellipsizeMode="tail"
             >
@@ -220,7 +220,7 @@ function ClosetItemCardComponent({
           )}
           {colorLabel ? (
             <Text
-              style={{ color: colors.textSecondary, opacity: 0.78, fontSize: 10.25, lineHeight: metadataLineHeight, fontWeight: "700", maxWidth: cardWidth * 0.46, textAlign: "right" }}
+              style={{ color: colors.textSecondary, opacity: 0.78, fontSize: 10.25, lineHeight: metadataLineHeight, fontWeight: "400", maxWidth: cardWidth * 0.46, textAlign: "right" }}
               numberOfLines={1}
               ellipsizeMode="tail"
             >

@@ -105,14 +105,14 @@ export function ClosetProcessingSection({
 
         <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
-            <Text style={{ color: colors.text, fontSize: 13.5, lineHeight: 18, fontWeight: "900" }}>
+            <Text style={{ color: colors.text, fontSize: 13.5, lineHeight: 18, fontWeight: "600" }}>
               Adding now
             </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "900", fontVariant: ["tabular-nums"] }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "600", fontVariant: ["tabular-nums"] }}>
               {items.length}
             </Text>
             {failedCount ? (
-              <Text style={{ color: "#ff9f9f", fontSize: 11.5, lineHeight: 15, fontWeight: "900" }}>
+              <Text style={{ color: "#ff9f9f", fontSize: 11.5, lineHeight: 15, fontWeight: "600" }}>
                 {failedCount} failed
               </Text>
             ) : null}
@@ -127,7 +127,7 @@ export function ClosetProcessingSection({
         </View>
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Text style={{ color: colors.ctaCream, fontSize: 12, lineHeight: 16, fontWeight: "900" }}>
+          <Text style={{ color: colors.ctaCream, fontSize: 12, lineHeight: 16, fontWeight: "600" }}>
             Review
           </Text>
           <Ionicons name={expanded ? "chevron-up" : "chevron-forward"} size={15} color={colors.ctaCream} />
@@ -213,7 +213,7 @@ function ProcessingItemRow({
       </View>
 
       <View style={{ flex: 1, gap: 4, minWidth: 0 }}>
-        <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: "900" }} numberOfLines={1}>
+        <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: "600" }} numberOfLines={1}>
           {titleFor(item)}
         </Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
@@ -226,7 +226,7 @@ function ProcessingItemRow({
               color={lifecycle === "failed" ? "#ff8f8f" : colors.aiAccent}
             />
           )}
-          <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "700" }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "600" }}>
             {statusText(item)}
           </Text>
         </View>
@@ -269,7 +269,7 @@ function MiniAction({
         style={{
           color: muted ? colors.textSecondary : colors.aiAccent,
           fontSize: 11.5,
-          fontWeight: "900",
+          fontWeight: "600",
         }}
       >
         {label}

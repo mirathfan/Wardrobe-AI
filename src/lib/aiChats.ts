@@ -525,6 +525,7 @@ function isAuraLookAction(value: unknown): value is AuraLookAction {
   return (
     value === "saveLook" ||
     value === "planForToday" ||
+    value === "wearToday" ||
     value === "likeLook" ||
     value === "notMyVibe" ||
     value === "showMoreLikeThis" ||

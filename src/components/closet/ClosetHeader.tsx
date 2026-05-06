@@ -40,7 +40,7 @@ export function ClosetHeader({
         >
           Closet
         </Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: "700" }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: "600" }}>
           {totalCount} piece{totalCount === 1 ? "" : "s"}
         </Text>
       </View>

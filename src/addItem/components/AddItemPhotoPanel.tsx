@@ -1,5 +1,5 @@
 import React from "react";
-import { Alert, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import { PhotoEditorSection } from "../../components/PhotoEditorSection";
 import { SectionCard } from "../ui/SectionCard";
@@ -126,8 +126,6 @@ export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
             onDebugEdgeTightenChange={actions.handleDebugRefineEdgeTightenChange}
             onReplace={() => void actions.pickPhoto("library")}
             onRefineOpen={() => {}}
-            onAdjust={() => {}}
-            onRotate={() => Alert.alert("Coming soon", "Rotate is coming soon.")}
             frameless
           />
         </View>

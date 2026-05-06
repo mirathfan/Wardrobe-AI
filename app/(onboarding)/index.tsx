@@ -35,6 +35,7 @@ import {
 } from "@/src/lib/userProfile";
 import {
   FIT_OPTIONS,
+  BUDGET_OPTIONS,
   OCCASION_OPTIONS,
   SHOE_SIZES_EU,
   STEPS,
@@ -223,6 +224,11 @@ export default function OnboardingScreen() {
       const profileToSave: UserProfilePreferences = {
         ...normalizedSizingDraft,
         onboardingCompleted: true,
+        displayName:
+          (draft.firstName ?? "").trim() ||
+          user.displayName ||
+          user.email?.split("@")[0] ||
+          null,
         region: normalizedSizingDraft.region ?? detected.region,
         unitsPreference: draft.unitsPreference,
         units,
@@ -296,6 +302,11 @@ export default function OnboardingScreen() {
 
       await saveUserAccountProfile(user.uid, {
         name:
+          (draft.firstName ?? "").trim() ||
+          user.displayName ||
+          user.email?.split("@")[0] ||
+          null,
+        displayName:
           (draft.firstName ?? "").trim() ||
           user.displayName ||
           user.email?.split("@")[0] ||
@@ -674,6 +685,19 @@ function QuickProfileStep({
           onDraftChange((prev) => ({
             ...prev,
             preferredFit: value as UserProfilePreferences["preferredFit"],
+          }))
+        }
+        singleSelect
+      />
+
+      <ChipGroup
+        label="Budget preference"
+        values={BUDGET_OPTIONS as unknown as string[]}
+        selected={draft.budgetPreference ? [draft.budgetPreference] : []}
+        onToggle={(value) =>
+          onDraftChange((prev) => ({
+            ...prev,
+            budgetPreference: value as UserProfilePreferences["budgetPreference"],
           }))
         }
         singleSelect

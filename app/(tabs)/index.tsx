@@ -3,7 +3,6 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Animated,
   InteractionManager,
@@ -19,7 +18,9 @@ import AuraPressable from "@/src/components/aura/AuraPressable";
 import AuraLookModule from "@/src/components/home/AuraLookModule";
 import HomeHero from "@/src/components/home/HomeHero";
 import QuickActionRail, { type QuickActionItem } from "@/src/components/home/QuickActionRail";
+import ShopOptionsSheet from "@/src/components/shop/ShopOptionsSheet";
 import SmartToolsGrid, { type SmartTool } from "@/src/components/home/SmartToolsGrid";
+import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
 import { HOME_DEFERRED_FEATURES } from "@/src/components/home/homeDeferredFeatures";
 import { homeTypography } from "@/src/components/home/homeTypography";
@@ -41,10 +42,19 @@ import { listenToItems, normalizeLaundryStatus } from "@/src/lib/items";
 import {
   buildMinimumClosetSummary,
   getMinimumClosetProgress,
-  getSuggestedAddItemCategory,
 } from "@/src/lib/minimumCloset";
+import {
+  trackSuggestionEvent,
+} from "@/src/lib/suggestionAnalytics";
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
+import { Toast } from "@/src/lib/toast";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
+import { markOutfitWorn } from "@/src/lib/wearOutfit";
+import {
+  buildAdHocWardrobeSuggestion,
+  buildWardrobeSuggestions,
+  type WardrobeSuggestion,
+} from "@/src/lib/wardrobeSuggestions";
 import {
   getCachedChatList,
   getCachedHomeSnapshot,
@@ -56,8 +66,8 @@ import type { AuraLook, AuraLookAction, AuraResponse } from "@/src/types/aura";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 import { subscribeOutfitByDate, type DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
-const HOME_BACKGROUND_BASE = "#09000B";
-const HOME_BACKGROUND_GRADIENT = ["#09000B", "#09000B", "#0D000F"] as const;
+const HOME_BACKGROUND_BASE = "#080709";
+const HOME_BACKGROUND_GRADIENT = ["#080709", "#080709", "#111014"] as const;
 const HOME_SECTION_GAP = 24;
 const HOME_SECTION_CONTENT_GAP = 16;
 const HOME_CARD_GAP = 12;
@@ -98,26 +108,17 @@ function RevealSection({
   );
 }
 
-function labelForNextBestPiece(category?: string | null) {
-  if (category === "footwear") return "versatile shoes";
-  if (category === "outerwear") return "light layer";
-  if (category === "bottoms") return "strong bottom";
-  if (category === "accessories") return "finishing accessory";
-  return "reliable top";
-}
-
-function ImproveClosetCard({
+function CompleteWardrobeCard({
   colors,
-  title,
-  body,
+  suggestions,
   onPress,
 }: {
   colors: AppColors;
-  title: string;
-  body: string;
+  suggestions: WardrobeSuggestion[];
   onPress: () => void;
 }) {
   const layout = useResponsiveLayout();
+  const topSuggestion = suggestions[0];
 
   return (
     <View
@@ -141,17 +142,66 @@ function ImproveClosetCard({
             borderColor: colors.borderSoft,
           }}
         >
-          <Ionicons name="add-circle-outline" size={20} color={colors.ctaCream} />
+          <Ionicons name="sparkles-outline" size={20} color={colors.ctaCream} />
         </View>
         <View style={{ flex: 1, gap: HOME_TIGHT_GAP }}>
-          <Text style={[homeTypography.label, { color: colors.lightPurple }]}>IMPROVE YOUR CLOSET</Text>
+          <Text style={[homeTypography.label, { color: colors.lightPurple }]}>COMPLETE YOUR WARDROBE</Text>
           <Text style={[homeTypography.titleSmall, { color: colors.text }]} numberOfLines={2}>
-            {title}
+            {topSuggestion ? `Start with ${topSuggestion.itemType}` : "A few precise pieces would unlock more range"}
           </Text>
           <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, opacity: 0.84 }]} numberOfLines={2}>
-            {body}
+            AURA found the quiet gaps that would create more outfit combinations without clutter.
           </Text>
         </View>
+      </View>
+
+      <View style={{ gap: 8 }}>
+        {suggestions.slice(0, 2).map((suggestion) => (
+          <View
+            key={suggestion.id}
+            style={{
+              minHeight: 42,
+              borderRadius: 16,
+              paddingHorizontal: 11,
+              paddingVertical: 9,
+              backgroundColor: colors.surfaceSoft,
+              borderWidth: 1,
+              borderColor: colors.border,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <View
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: 999,
+                backgroundColor: suggestion.priority === "high" ? colors.ctaCream : colors.textMuted,
+              }}
+            />
+            <Text
+              style={[homeTypography.bodySmall, { flex: 1, color: colors.text }]}
+              numberOfLines={1}
+            >
+              {suggestion.itemType}
+            </Text>
+            <Text
+              selectable
+              style={{
+                color: colors.textSecondary,
+                fontSize: 11.5,
+                lineHeight: 15,
+                fontWeight: "600",
+                letterSpacing: 0,
+                fontVariant: ["tabular-nums"],
+              }}
+              numberOfLines={1}
+            >
+              +{suggestion.outfitsUnlockedEstimate}
+            </Text>
+          </View>
+        ))}
       </View>
 
       <AuraPressable
@@ -169,11 +219,60 @@ function ImproveClosetCard({
           gap: 8,
         }}
       >
-        <Ionicons name="add" size={16} color={colors.ctaText} />
+        <Ionicons name="arrow-forward" size={16} color={colors.ctaText} />
         <Text style={[auraButtonTextStyle(colors, "primary"), { fontSize: 13, lineHeight: 17 }]}>
-          Add next best piece
+          View suggestions
         </Text>
       </AuraPressable>
+    </View>
+  );
+}
+
+function HomeLoadingSkeleton() {
+  const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
+
+  return (
+    <View style={{ flex: 1, backgroundColor: HOME_BACKGROUND_BASE }}>
+      <LinearGradient
+        pointerEvents="none"
+        colors={HOME_BACKGROUND_GRADIENT}
+        locations={[0, 0.56, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0.85, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <View
+        style={{
+          paddingTop: layout.topContentInset,
+          paddingHorizontal: layout.horizontalPadding,
+          gap: 18,
+        }}
+      >
+        <View style={{ gap: 9 }}>
+          <AuraSkeletonLine width="42%" height={13} />
+          <AuraSkeletonLine width="68%" height={30} />
+          <AuraSkeletonLine width="56%" height={12} />
+        </View>
+        <View
+          style={{
+            borderRadius: layout.largeRadius,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surfaceGlass,
+            padding: layout.cardPadding,
+            gap: 14,
+          }}
+        >
+          <AuraSkeletonLine width="35%" height={12} />
+          <AuraSkeletonLine width="70%" height={24} />
+          <AuraSkeletonLine width="88%" height={13} />
+          <AuraSkeleton height={layout.heroHeight * 0.5} radius={layout.mediumRadius} />
+          <AuraSkeletonLine width="100%" height={52} />
+        </View>
+        <AuraSkeleton height={72} radius={layout.mediumRadius} />
+        <AuraSkeleton height={120} radius={layout.mediumRadius} />
+      </View>
     </View>
   );
 }
@@ -194,6 +293,7 @@ export default function HomeScreen() {
   const [latestAuraLookResponse, setLatestAuraLookResponse] = useState<AuraResponse | null>(null);
   const [latestSavedLook, setLatestSavedLook] = useState<import("@/src/lib/auraLooks").SavedAuraLookRecord | null>(null);
   const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
+  const [activeShopSuggestion, setActiveShopSuggestion] = useState<WardrobeSuggestion | null>(null);
   const [renderDeferredHomeSections, setRenderDeferredHomeSections] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [regeneratingLook, setRegeneratingLook] = useState(false);
@@ -439,23 +539,57 @@ export default function HomeScreen() {
 
   const hasMinimalWardrobe = availableCount < 4;
   const minimumClosetProgress = useMemo(() => getMinimumClosetProgress(items), [items]);
-  const openAddMissingItem = React.useCallback(() => {
-    const suggestedCategory = getSuggestedAddItemCategory(items);
-    router.push({
-      pathname: "/(tabs)/add",
-      params: { ...(suggestedCategory ? { suggestedCategory } : {}), addSession: String(Date.now()) },
-    });
-  }, [items]);
+  const wardrobeSuggestions = useMemo(
+    () =>
+      buildWardrobeSuggestions({
+        items,
+        profilePreferences,
+        savedLooks: [
+          {
+            addToComplete: latestAuraLookResponse?.recommendedAdditions ?? [],
+            missingPieces: latestAuraLookResponse?.missingPieces ?? [],
+            upgradeSuggestions: latestAuraLookResponse?.upgradeSuggestions ?? [],
+          },
+          ...(latestAuraLookResponse?.look
+            ? [{ addToComplete: latestAuraLookResponse.look.addToComplete }]
+            : []),
+          ...(latestAuraLookResponse?.lookOptions ?? []).map((look) => ({
+            addToComplete: look.addToComplete,
+          })),
+          ...(latestSavedLook?.look
+            ? [{ addToComplete: latestSavedLook.look.addToComplete }]
+            : []),
+        ],
+      }),
+    [items, latestAuraLookResponse, latestSavedLook?.look, profilePreferences],
+  );
   const latestLook = latestAuraLookResponse?.look ?? latestSavedLook?.look ?? null;
-  const improveClosetNudge = useMemo(() => {
-    const nextCategory = minimumClosetProgress.suggestedNextCategory;
-    if (!nextCategory) return null;
-    const nextPiece = labelForNextBestPiece(nextCategory);
-    return {
-      title: `Add a ${nextPiece}`,
-      body: `Style core ${minimumClosetProgress.current}/${minimumClosetProgress.target}. This is the next piece AURA can use most.`,
-    };
-  }, [minimumClosetProgress]);
+
+  useEffect(() => {
+    if (!uid || !wardrobeSuggestions.length) return;
+    wardrobeSuggestions.forEach((suggestion) => {
+      void trackSuggestionEvent({
+        userId: uid,
+        eventName: "suggestion_viewed",
+        suggestion,
+        sourceScreen: "home",
+      });
+    });
+  }, [uid, wardrobeSuggestions]);
+
+  const openWardrobeSuggestions = React.useCallback(() => {
+    if (uid) {
+      wardrobeSuggestions.forEach((suggestion) => {
+        void trackSuggestionEvent({
+          userId: uid,
+          eventName: "suggestion_clicked",
+          suggestion,
+          sourceScreen: "home",
+        });
+      });
+    }
+    router.push("/insights");
+  }, [uid, wardrobeSuggestions]);
 
   useEffect(() => {
     if (!uid || loading) return;
@@ -793,6 +927,16 @@ export default function HomeScreen() {
 
   async function handleAuraLookAction(action: AuraLookAction, selectedLook?: AuraLook) {
     const look = selectedLook ?? latestLook;
+    if (action === "shopMissingPieces") {
+      const missingPieces = look?.addToComplete?.filter(Boolean) ?? [];
+      const suggestion = missingPieces[0]
+        ? buildAdHocWardrobeSuggestion(missingPieces[0])
+        : wardrobeSuggestions[0] ?? null;
+      if (suggestion) {
+        setActiveShopSuggestion(suggestion);
+        return;
+      }
+    }
     await handleSharedAuraLookAction({
       uid,
       action,
@@ -805,6 +949,38 @@ export default function HomeScreen() {
     });
   }
 
+  async function handleWearTodayFromHome() {
+    const plannedOutfit = todayRecord?.plannedOutfit ?? null;
+    if (!uid || !plannedOutfit) return;
+    try {
+      const wornAt = Date.now();
+      const result = await markOutfitWorn({
+        uid,
+        source: "home",
+        title: "Today's Look",
+        look: plannedOutfit,
+        wornAt: new Date(wornAt),
+      });
+      setTodayRecord((prev) => ({
+        ...(prev ?? { dateKey: result.dateKey }),
+        plannedOutfit,
+        wornOutfit: {
+          itemsByCategory: plannedOutfit.itemsByCategory,
+          wornAt,
+          source: "home",
+          title: "Today's Look",
+          outfitSnapshot: result.outfitSnapshot,
+        },
+      }));
+      Toast.success(
+        result.alreadyMarked ? "Already marked worn today" : "Marked as worn today",
+        result.alreadyMarked ? "AURA will not double-count it." : undefined,
+      );
+    } catch (error: any) {
+      Toast.error("Couldn't mark worn. Try again.", error?.message);
+    }
+  }
+
   const smartTools = useMemo<SmartTool[]>(
     () => [
       {
@@ -815,6 +991,13 @@ export default function HomeScreen() {
         onPress: () => router.push("/(tabs)/closet"),
       },
       {
+        key: "studio",
+        title: "Studio",
+        subtitle: "Build, refine, save, or plan a look",
+        icon: "hanger",
+        onPress: () => router.push("/(tabs)/studio"),
+      },
+      {
         key: "add",
         title: "Add Item",
         subtitle: "Bring a new piece into rotation",
@@ -823,11 +1006,11 @@ export default function HomeScreen() {
           router.push({ pathname: "/(tabs)/add", params: { addSession: String(Date.now()) } }),
       },
       {
-        key: "studio",
-        title: "Studio",
-        subtitle: "Build an outfit by hand from your closet",
-        icon: "view-dashboard-edit-outline",
-        onPress: () => router.push("/(tabs)/studio"),
+        key: "laundry",
+        title: "Laundry",
+        subtitle: `${needsWashCount + laundryCount} pieces need care`,
+        icon: "washing-machine",
+        onPress: () => router.push("/(tabs)/laundry"),
       },
       {
         key: "calendar",
@@ -835,14 +1018,6 @@ export default function HomeScreen() {
         subtitle: "Plan the day around real context",
         icon: "calendar-month-outline",
         onPress: () => router.push("/(tabs)/calendar"),
-      },
-      {
-        key: "laundry",
-        title: "Laundry",
-        subtitle: `${availableCount} clean · ${laundryCount} in laundry`,
-        icon: "washing-machine",
-        badge: laundryCount + needsWashCount > 0 ? String(laundryCount + needsWashCount) : undefined,
-        onPress: () => router.push("/(tabs)/laundry"),
       },
       {
         key: "insights",
@@ -867,20 +1042,7 @@ export default function HomeScreen() {
   void HOME_DEFERRED_FEATURES;
 
   if (loading) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: HOME_BACKGROUND_BASE,
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 12,
-        }}
-      >
-        <ActivityIndicator color={colors.text} />
-        <Text style={[homeTypography.bodySmall, { color: colors.textSecondary }]}>Building your dashboard…</Text>
-      </View>
-    );
+    return <HomeLoadingSkeleton />;
   }
 
   return (
@@ -922,7 +1084,7 @@ export default function HomeScreen() {
             record={todayRecord}
             itemsById={itemsById}
             onPrimaryAction={() => openAIWithPrompt("Build me a strong outfit from my wardrobe for today.")}
-            onSecondaryAction={() => openAIWithPrompt("Show me three outfit directions for today: one safe, one balanced, and one bold.")}
+            onWearToday={handleWearTodayFromHome}
           />
         </RevealSection>
 
@@ -937,7 +1099,7 @@ export default function HomeScreen() {
             <QuickActionRail
               variant="compact"
               colors={colors}
-              actions={refinementActions}
+              actions={refinementActions.slice(0, 1)}
               onPressAction={(action) => openAIWithPrompt(action.prompt)}
             />
           </View>
@@ -964,19 +1126,18 @@ export default function HomeScreen() {
               />
             </RevealSection>
 
-            {improveClosetNudge ? (
+            {wardrobeSuggestions.length ? (
               <RevealSection delay={120}>
-                <ImproveClosetCard
+                <CompleteWardrobeCard
                   colors={colors}
-                  title={improveClosetNudge.title}
-                  body={improveClosetNudge.body}
-                  onPress={openAddMissingItem}
+                  suggestions={wardrobeSuggestions}
+                  onPress={openWardrobeSuggestions}
                 />
               </RevealSection>
             ) : null}
 
             <RevealSection delay={160}>
-              <SmartToolsGrid compact colors={colors} tools={smartTools} columns={layout.smartGridColumns} />
+              <SmartToolsGrid compact colors={colors} tools={smartTools.slice(0, 3)} columns={layout.smartGridColumns} />
             </RevealSection>
 
             {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (
@@ -993,6 +1154,13 @@ export default function HomeScreen() {
           </>
         ) : null}
       </ScrollView>
+      <ShopOptionsSheet
+        visible={Boolean(activeShopSuggestion)}
+        suggestion={activeShopSuggestion}
+        userId={uid}
+        sourceScreen="outfit_card"
+        onDismiss={() => setActiveShopSuggestion(null)}
+      />
     </View>
   );
 }

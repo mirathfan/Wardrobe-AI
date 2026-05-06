@@ -207,7 +207,7 @@ const styles = StyleSheet.create({
   imageFallbackText: {
     color: colors.textSecondary,
     fontSize: 32,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   headerCopy: {
     flex: 1,
@@ -217,13 +217,13 @@ const styles = StyleSheet.create({
   name: {
     color: colors.text,
     fontSize: 20,
-    fontWeight: "800",
+    fontWeight: "600",
     lineHeight: 24,
   },
   brand: {
     color: colors.textSecondary,
     fontSize: 14,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   statusBadge: {
     alignSelf: "flex-start",
@@ -237,7 +237,7 @@ const styles = StyleSheet.create({
   statusText: {
     color: colors.iridescentStart,
     fontSize: 10.5,
-    fontWeight: "900",
+    fontWeight: "600",
     letterSpacing: 0.8,
   },
   detailGrid: {
@@ -258,7 +258,7 @@ const styles = StyleSheet.create({
   detailText: {
     color: colors.text,
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   colorChip: {
     backgroundColor: colors.iridescentStart,
@@ -280,7 +280,7 @@ const styles = StyleSheet.create({
   auraEyebrow: {
     color: colors.iridescentStart,
     fontSize: 10,
-    fontWeight: "900",
+    fontWeight: "600",
     letterSpacing: 1.3,
   },
   auraText: {
@@ -314,12 +314,12 @@ const styles = StyleSheet.create({
   primaryActionText: {
     color: colors.text,
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   secondaryActionText: {
     color: colors.textSecondary,
     fontSize: 14,
-    fontWeight: "800",
+    fontWeight: "600",
   },
 });
 

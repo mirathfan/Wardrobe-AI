@@ -55,7 +55,7 @@ export function ClosetControlsRow({
         }}
       >
         <Text
-          style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "700" }}
+          style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "600" }}
           numberOfLines={1}
           ellipsizeMode="tail"
         >

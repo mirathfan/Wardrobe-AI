@@ -55,7 +55,7 @@ function OutfitMessage({
 
   return (
     <LinearGradient
-      colors={["rgba(43,18,76,0.42)", "rgba(9,0,11,0.96)"]}
+      colors={["rgba(34,31,40,0.72)", "rgba(9,8,10,0.96)"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{
@@ -69,10 +69,10 @@ function OutfitMessage({
     >
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <View style={{ gap: 4 }}>
-          <Text style={{ color: colors.textMuted, fontSize: 11.5, fontWeight: "700", letterSpacing: 0 }}>
+          <Text style={{ color: colors.textMuted, fontSize: 11.5, fontWeight: "600", letterSpacing: 0 }}>
             Stylist edit {index + 1}
           </Text>
-          <Text style={{ color: colors.text, fontSize: 19, lineHeight: 23, fontWeight: "800" }} numberOfLines={1}>
+          <Text style={{ color: colors.text, fontSize: 19, lineHeight: 23, fontWeight: "600" }} numberOfLines={1}>
             Styled for right now
           </Text>
         </View>
@@ -86,7 +86,7 @@ function OutfitMessage({
             borderColor: colors.purpleBorder,
           }}
         >
-          <Text style={{ color: colors.text, fontSize: 11, fontWeight: "800" }}>
+          <Text style={{ color: colors.text, fontSize: 11, fontWeight: "600" }}>
             {Math.round(outfit.score * 100)}% match
           </Text>
         </View>
@@ -172,10 +172,10 @@ function OutfitMessage({
                 )}
               </View>
               <View style={{ gap: 3 }}>
-                <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0 }}>
+                <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: "600", letterSpacing: 0 }}>
                   {slotLabel(slot)}
                 </Text>
-                <Text numberOfLines={2} style={{ color: colors.text, fontSize: 13, fontWeight: "700", lineHeight: 18 }}>
+                <Text numberOfLines={2} style={{ color: colors.text, fontSize: 13, fontWeight: "600", lineHeight: 18 }}>
                   {displayName(item)}
                 </Text>
               </View>
@@ -206,7 +206,7 @@ function OutfitMessage({
             opacity: saving ? 0.6 : 1,
           }}
         >
-          <Text style={{ color: colors.ctaText, fontSize: 12, fontWeight: "800" }}>{saving ? "Saving..." : "Save to Today"}</Text>
+          <Text style={{ color: colors.ctaText, fontSize: 12, fontWeight: "600" }}>{saving ? "Saving..." : "Save to Today"}</Text>
         </AuraPressable>
         <AuraPressable
           onPress={() => onSwap(outfit)}
@@ -227,7 +227,7 @@ function OutfitMessage({
             justifyContent: "center",
           }}
         >
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700" }}>Swap item</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>Swap item</Text>
         </AuraPressable>
         <AuraPressable
           onPress={() => onMoreLikeThis(outfit)}
@@ -247,7 +247,7 @@ function OutfitMessage({
             justifyContent: "center",
           }}
         >
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700" }}>More like this</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>More like this</Text>
         </AuraPressable>
       </View>
     </LinearGradient>

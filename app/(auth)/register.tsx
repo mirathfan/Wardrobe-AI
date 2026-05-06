@@ -42,7 +42,10 @@ export default function RegisterScreen() {
       setLoading(true);
       const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
       await Promise.all([
-        saveUserAccountProfile(credential.user.uid, { name: normalizedName }),
+        saveUserAccountProfile(credential.user.uid, {
+          name: normalizedName,
+          displayName: normalizedName,
+        }),
         saveUserProfilePreferences(credential.user.uid, {
           ...EMPTY_USER_PROFILE_PREFERENCES,
           firstName: normalizedName,
@@ -59,9 +62,9 @@ export default function RegisterScreen() {
 
   return (
     <AuthScaffold
-      eyebrow="NEW ACCOUNT"
-      title="Create your wardrobe profile"
-      subtitle="Set up AURA so your stylist can personalize from day one."
+      eyebrow="YOUR AI WARDROBE STYLIST"
+      title="Create your AURA profile"
+      subtitle="Set up your wardrobe profile so AURA can personalize from day one."
       footer={
         <View style={{ alignItems: "flex-start" }}>
           <AuthInlineLink label="Already have an account? Sign in" onPress={() => router.replace("/(auth)/login")} />

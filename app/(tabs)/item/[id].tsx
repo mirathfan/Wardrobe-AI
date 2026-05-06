@@ -1,11 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
-import { deleteDoc, doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Linking,
   Modal,
@@ -25,17 +23,23 @@ import type { AppColors } from "@/constants/theme";
 import AppImage from "@/src/components/common/AppImage";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { SafeScreen } from "@/src/components/SafeScreen";
-import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
+import AuraBackButton from "@/src/components/ui/AuraBackButton";
+import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import {
-  auraButtonStyle,
-  auraButtonTextStyle,
+  AuraButton,
+  AuraDivider,
+  AuraIconButton,
+  AuraSheetBackdrop,
+  AuraSheetSurface,
+  AuraText,
   auraCardStyle,
-  auraTypography,
+  auraDesignTokens,
 } from "@/src/components/ui/auraStylePrimitives";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { db } from "@/src/lib/firebase";
+import { deleteWardrobeItem } from "@/src/lib/deleteItem";
 import { runHaptic } from "@/src/lib/haptics";
 import { getItemImageUrl } from "@/src/lib/itemImage";
 import {
@@ -48,6 +52,7 @@ import {
 } from "@/src/lib/items";
 import { safeGoBack } from "@/src/lib/navigation";
 import { Toast } from "@/src/lib/toast";
+import { markItemWorn } from "@/src/lib/wearOutfit";
 import type { ClothingItem, LaundryStatus } from "@/src/types/ClothingItem";
 
 type TimestampLike = {
@@ -310,28 +315,6 @@ function detectedColorLabel(item: ItemDetails) {
   return joinLabels([item.aiColorLabel, item.aiColors, item.pixelColors]);
 }
 
-function formatHeroColors(item: ItemDetails) {
-  return dedupeTokens([
-    item.displayColors,
-    item.displayColor,
-    item.primaryColor,
-    item.colorLabel,
-    item.colors,
-  ]).join(" / ");
-}
-
-function formatHeroDescriptor(item: ItemDetails) {
-  return dedupeTokens([
-    item.material,
-    item.fit,
-  ])
-    .join(" \u2022 ");
-}
-
-function buildHeroCategoryLine(item: ItemDetails) {
-  return dedupeTokens([item.category, item.subCategory || item.type]).join(" / ");
-}
-
 function primaryColorForDetail(item: ItemDetails) {
   return dedupeTokens([item.primaryColor, item.colorLabel, item.displayColor])[0] ?? "";
 }
@@ -352,14 +335,6 @@ function isUsefulDetailValue(value: string) {
 
 function filterDetailGroupItems(items: DetailGroupItem[]) {
   return items.filter((item) => isMeaningful(item.value) && isUsefulDetailValue(item.value));
-}
-
-function buildHeroMetadataRows(item: ItemDetails) {
-  return filterDetailGroupItems([
-    { label: "Category", value: buildHeroCategoryLine(item) },
-    { label: "Color", value: formatHeroColors(item) },
-    { label: "Material / Fit", value: formatHeroDescriptor(item) },
-  ]);
 }
 
 function buildDetailGroups(item: ItemDetails) {
@@ -444,6 +419,16 @@ function auraInsightForItem(item: ItemDetails) {
   return "Build around the strongest visual cue, then keep color and proportion balanced.";
 }
 
+function buildUsageRows(item: ItemDetails, status: LaundryStatus) {
+  return filterDetailGroupItems([
+    { label: "Styling read", value: auraInsightForItem(item), multiline: true },
+    { label: "Laundry", value: LAUNDRY_STATUS_LABELS[status] },
+    { label: "Wear count", value: `${Number(item.wearCountSinceWash ?? 0)} since wash` },
+    { label: "Last worn", value: formatDateTime(item.lastWornAt ?? item.lastWornDate) },
+    { label: "Last washed", value: formatDateTime(item.lastWashedAt ?? item.lastWashedDate) },
+  ]);
+}
+
 function auraPromptForItem(item: ItemDetails) {
   const details = uniqueStrings([
     itemTitle(item),
@@ -477,12 +462,12 @@ function createStyles(colors: AppColors) {
       borderRadius: DETAIL_RADIUS,
     },
     heroCard: {
-      ...auraCardStyle(colors, "largeGlass"),
-      borderColor: colors.borderWarm,
+      borderWidth: 1,
+      borderColor: colors.borderSoft,
       borderRadius: 28,
       padding: 5,
       overflow: "hidden",
-      backgroundColor: "rgba(43,18,76,0.30)",
+      backgroundColor: colors.surface,
     },
     heroBlock: {
       gap: 14,
@@ -512,11 +497,19 @@ function createStyles(colors: AppColors) {
     sectionBlock: {
       gap: 10,
     },
+    sectionCard: {
+      borderRadius: DETAIL_RADIUS,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      padding: 16,
+      gap: 14,
+    },
     sectionTitleSmall: {
       color: colors.text,
       fontSize: 15,
       lineHeight: 20,
-      fontWeight: "900",
+      fontWeight: "600",
     },
     row: {
       flexDirection: "row",
@@ -536,7 +529,7 @@ function createStyles(colors: AppColors) {
     secondaryActionRow: {
       flexDirection: "row",
       alignItems: "stretch",
-      gap: 12,
+      gap: 10,
     },
     tertiaryActionRow: {
       flexDirection: "row",
@@ -569,11 +562,11 @@ function createStyles(colors: AppColors) {
     imagePlaceholder: {
       minHeight: 330,
       borderRadius: 22,
-      backgroundColor: colors.chipBackground,
+      backgroundColor: colors.surfaceMuted,
       alignItems: "center",
       justifyContent: "center",
       borderWidth: 1,
-      borderColor: colors.border,
+      borderColor: colors.borderSoft,
       overflow: "hidden",
     },
     selectedStatusSegment: {
@@ -602,12 +595,12 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 6,
     },
     insightCard: {
-      padding: 14,
+      padding: 16,
       gap: 12,
-      borderRadius: 20,
+      borderRadius: DETAIL_RADIUS,
       borderWidth: 1,
-      borderColor: "rgba(223,182,178,0.12)",
-      backgroundColor: "rgba(43,18,76,0.34)",
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
     },
     insightHeader: {
       flexDirection: "row",
@@ -620,9 +613,9 @@ function createStyles(colors: AppColors) {
       borderRadius: 17,
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: "rgba(223,182,178,0.14)",
+      backgroundColor: colors.accentSoft,
       borderWidth: 1,
-      borderColor: "rgba(223,182,178,0.22)",
+      borderColor: colors.borderSoft,
     },
     insightButtonRow: {
       flexDirection: "row",
@@ -634,7 +627,7 @@ function createStyles(colors: AppColors) {
       borderRadius: 16,
     },
     detailGroups: {
-      gap: 18,
+      gap: 20,
     },
     detailGroupCard: {
       borderRadius: 0,
@@ -647,7 +640,7 @@ function createStyles(colors: AppColors) {
     },
     detailGroupItems: {
       borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: "rgba(251,228,216,0.10)",
+      borderTopColor: colors.borderSoft,
     },
     detailValueRow: {
       flexDirection: "row",
@@ -656,7 +649,7 @@ function createStyles(colors: AppColors) {
       gap: 14,
       paddingVertical: 9,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: "rgba(251,228,216,0.08)",
+      borderBottomColor: colors.borderSoft,
     },
     detailValueRowLast: {
       borderBottomWidth: 0,
@@ -666,23 +659,27 @@ function createStyles(colors: AppColors) {
       color: colors.textMuted,
       fontSize: 12.5,
       lineHeight: 18,
-      fontWeight: "800",
+      fontWeight: "500",
     },
     detailValueText: {
       flex: 1,
       color: colors.textPrimary,
       fontSize: 14.5,
       lineHeight: 20,
-      fontWeight: "700",
+      fontWeight: "500",
       textAlign: "right",
     },
     productSourceButton: {
-      ...auraButtonStyle(colors, "secondary"),
       minHeight: 48,
       borderRadius: 16,
       flexDirection: "row",
       alignItems: "center",
+      justifyContent: "space-between",
       gap: 8,
+      paddingHorizontal: 14,
+      borderWidth: 1,
+      borderColor: colors.borderSoft,
+      backgroundColor: colors.surfaceMuted,
     },
     modalRoot: {
       flex: 1,
@@ -691,7 +688,7 @@ function createStyles(colors: AppColors) {
     modalTitle: {
       color: colors.text,
       fontSize: 18,
-      fontWeight: "800",
+      fontWeight: "600",
       textAlign: "center",
     },
     modalCloseButton: {
@@ -737,81 +734,83 @@ function createStyles(colors: AppColors) {
       paddingHorizontal: 10,
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: "rgba(43,18,76,0.42)",
+      backgroundColor: colors.surfaceMuted,
       borderWidth: 1,
-      borderColor: "rgba(251,228,216,0.10)",
+      borderColor: colors.borderSoft,
     },
     actionMenuBackdrop: {
       flex: 1,
       alignItems: "center",
       justifyContent: "flex-end",
       paddingHorizontal: 16,
-      backgroundColor: "rgba(9,0,11,0.68)",
     },
     actionMenuCard: {
       width: "100%",
       maxWidth: 420,
-      ...auraCardStyle(colors, "sheet"),
-      padding: 0,
+      padding: 12,
       overflow: "hidden",
-      borderRadius: 18,
-      borderColor: "rgba(251,228,216,0.12)",
+      borderRadius: auraDesignTokens.radii.xl,
+      borderColor: colors.borderStrong,
+      gap: 8,
     },
     actionMenuSurface: {
-      padding: 12,
       gap: 8,
-      backgroundColor: "rgba(43,18,76,0.60)",
     },
     actionMenuHandle: {
       alignSelf: "center",
       width: 42,
       height: 3,
       borderRadius: 999,
-      backgroundColor: "rgba(251,228,216,0.18)",
+      backgroundColor: colors.borderStrong,
       marginBottom: 4,
     },
     actionMenuButton: {
-      ...auraButtonStyle(colors, "secondary", false, "compact"),
       minHeight: 52,
       paddingHorizontal: 16,
+      paddingVertical: 0,
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
       gap: 10,
-      borderRadius: 14,
-      backgroundColor: "rgba(82,43,91,0.20)",
-      borderColor: "rgba(251,228,216,0.10)",
+      borderRadius: auraDesignTokens.radii.md,
+      borderWidth: 1,
+      backgroundColor: colors.surfaceMuted,
+      borderColor: colors.borderSoft,
     },
   });
 }
 
-function DetailGroupBlock({ group }: { group: DetailGroup }) {
+function DetailRowsBlock({ title, rows }: { title: string; rows: DetailRow[] }) {
   const { colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  if (!rows.length) return null;
   return (
     <View style={styles.detailGroupCard}>
       <View style={styles.detailGroupHeader}>
-        <Text style={{ color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: "900" }}>
-          {group.title}
-        </Text>
+        <AuraText variant="section" style={{ fontSize: 15, lineHeight: 20 }}>
+          {title}
+        </AuraText>
       </View>
       <View style={styles.detailGroupItems}>
-        {group.items.map((item, index) => (
+        {rows.map((item, index) => (
           <View
-            key={`${group.title}-${item.label}`}
+            key={`${title}-${item.label}`}
             style={[
               styles.detailValueRow,
-              index === group.items.length - 1 ? styles.detailValueRowLast : null,
+              index === rows.length - 1 ? styles.detailValueRowLast : null,
             ]}
           >
-            <Text style={styles.detailLabel}>{item.label}</Text>
-            <Text
+            <AuraText variant="caption" tone="muted" style={styles.detailLabel}>
+              {item.label}
+            </AuraText>
+            <AuraText
+              variant="body"
               selectable
               numberOfLines={item.multiline ? undefined : 3}
               style={styles.detailValueText}
             >
               {item.value}
-            </Text>
+            </AuraText>
           </View>
         ))}
       </View>
@@ -819,90 +818,25 @@ function DetailGroupBlock({ group }: { group: DetailGroup }) {
   );
 }
 
-function HeroMetadataSummary({ item }: { item: ItemDetails }) {
-  const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-  const rows = buildHeroMetadataRows(item);
-  if (!rows.length) return null;
-  return (
-    <View style={styles.heroSummary}>
-      {rows.map((row) => (
-        <View key={row.label} style={styles.heroSummaryRow}>
-          <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, fontWeight: "800" }}>
-            {row.label}
-          </Text>
-          <Text
-            selectable
-            numberOfLines={2}
-            style={{
-              flex: 1,
-              color: colors.textPrimary,
-              fontSize: 13.5,
-              lineHeight: 19,
-              fontWeight: "700",
-              textAlign: "right",
-            }}
-          >
-            {row.value}
-          </Text>
-        </View>
-      ))}
-    </View>
-  );
+function DetailGroupBlock({ group }: { group: DetailGroup }) {
+  return <DetailRowsBlock title={group.title} rows={group.items} />;
 }
 
-function ActionButton({
-  label,
-  icon,
-  variant,
-  onPress,
-  accessibilityLabel,
-}: {
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  variant: "primary" | "secondary" | "tertiary";
-  onPress: () => void;
-  accessibilityLabel: string;
-}) {
-  const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-  const isPrimary = variant === "primary";
-  const isTertiary = variant === "tertiary";
+function ItemDetailLoadingSkeleton() {
+  const layout = useResponsiveLayout();
+
   return (
-    <AuraPressable
-      onPress={onPress}
-      haptic="light"
-      hapticTrigger="press"
-      pressedScale={0.97}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      style={[
-        auraButtonStyle(colors, variant),
-        styles.actionButton,
-        isPrimary
-          ? styles.primaryActionButton
-          : isTertiary
-            ? styles.tertiaryActionButton
-            : styles.secondaryActionButton,
-      ]}
-    >
-      <Ionicons
-        name={icon}
-        size={isTertiary ? 16 : 18}
-        color={isPrimary ? colors.ctaText : isTertiary ? colors.textSecondary : colors.textPrimary}
-      />
-      <Text
-        numberOfLines={1}
-        adjustsFontSizeToFit
-        minimumFontScale={0.82}
-        style={[
-          auraButtonTextStyle(colors, variant === "primary" ? "primary" : variant === "tertiary" ? "tertiary" : "secondary"),
-          { fontSize: isTertiary ? 12 : 14, lineHeight: 18 },
-        ]}
-      >
-        {label}
-      </Text>
-    </AuraPressable>
+    <View style={{ gap: 20 }}>
+      <AuraSkeleton height={420} radius={28} />
+      <View style={{ gap: 10 }}>
+        <AuraSkeletonLine width="42%" height={13} />
+        <AuraSkeletonLine width="70%" height={13} />
+        <AuraSkeletonLine width="58%" height={13} />
+      </View>
+      <AuraSkeleton height={52} radius={18} />
+      <AuraSkeleton height={44} radius={16} />
+      <AuraSkeleton height={120} radius={layout.mediumRadius} />
+    </View>
   );
 }
 
@@ -931,13 +865,13 @@ function ProductHeroCard({
       />
       <View style={styles.heroOverlayCopy}>
         {eyebrow ? (
-          <Text style={{ color: "rgba(251,228,216,0.70)", fontSize: 12, lineHeight: 16, fontWeight: "800" }}>
+          <AuraText tone="secondary" variant="caption" style={{ fontSize: 12, lineHeight: 16 }}>
             {eyebrow}
-          </Text>
+          </AuraText>
         ) : null}
-        <Text style={{ color: colors.text, fontSize: 25, lineHeight: 30, fontWeight: "900" }} numberOfLines={2}>
+        <AuraText variant="heading" style={{ fontSize: 25, lineHeight: 30 }} numberOfLines={2}>
           {itemTitle(item)}
-        </Text>
+        </AuraText>
       </View>
     </View>
   );
@@ -955,9 +889,9 @@ function ProductHeroCard({
       ) : (
         <View style={styles.imagePlaceholder}>
           <Ionicons name="image-outline" size={28} color={colors.textSecondary} />
-          <Text style={{ color: colors.textSecondary, fontWeight: "800", marginTop: 8 }}>
-            No photo
-          </Text>
+          <AuraText variant="caption" tone="secondary" style={{ marginTop: 8 }}>
+            Photo unavailable
+          </AuraText>
           {overlay}
         </View>
       )}
@@ -970,6 +904,7 @@ export default function ItemDetailsScreen() {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
   const uid = user?.uid ?? null;
   const { id, sourceTab, sourceRoute } = useLocalSearchParams<{
     id: string;
@@ -1105,6 +1040,29 @@ export default function ItemDetailsScreen() {
     }
   }
 
+  async function onMarkWornToday() {
+    if (!uid || !itemId) return router.replace("/(auth)/login");
+    if (actionLoading) return;
+    try {
+      setActionLoading(true);
+      const result = await markItemWorn({
+        uid,
+        source: "item_detail",
+        itemId,
+      });
+      void runHaptic("light");
+      Toast.success(
+        result.alreadyMarked ? "Already marked worn today" : "Marked as worn today",
+        result.alreadyMarked ? "This item was not double-counted." : undefined,
+      );
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Unable to mark this item worn.";
+      Toast.error("Couldn't mark worn. Try again.", message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   function onConfirmWashed() {
     if (!uid || !itemId) return router.replace("/(auth)/login");
 
@@ -1153,7 +1111,10 @@ export default function ItemDetailsScreen() {
         style: "destructive",
         onPress: async () => {
           try {
-            await deleteDoc(doc(db, "users", uid, "items", itemId));
+            const cleanup = await deleteWardrobeItem(uid, itemId, item);
+            if (cleanup.failed > 0) {
+              Toast.success("Item deleted", "Some image cleanup could not finish.");
+            }
             navigateBackToSource();
           } catch (e: unknown) {
             const message = e instanceof Error ? e.message : "Failed to delete";
@@ -1235,27 +1196,23 @@ export default function ItemDetailsScreen() {
 
   const renderContent = () => {
     if (loading) {
-      return (
-        <View style={{ alignItems: "center", justifyContent: "center", paddingVertical: 64, gap: 12 }}>
-          <ActivityIndicator color={colors.text} />
-          <Text style={{ color: colors.textSecondary, fontWeight: "700" }}>Loading item...</Text>
-        </View>
-      );
+      return <ItemDetailLoadingSkeleton />;
     }
 
     if (!item) {
       return (
         <View style={styles.card}>
-          <Text style={[auraTypography.cardTitle, { color: colors.text }]}>Item not found</Text>
-          <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>
+          <AuraText variant="section">Item not found</AuraText>
+          <AuraText variant="body" tone="secondary">
             This closet item may have been removed.
-          </Text>
+          </AuraText>
         </View>
       );
     }
 
     const status = normalizeLaundryStatus(item);
     const detailGroups = buildDetailGroups(item);
+    const usageRows = buildUsageRows(item, status);
     const productSourceLabel = productUrl ? sourceLabelForItem(item) || domainFromUrl(productUrl) : "";
 
     return (
@@ -1268,138 +1225,58 @@ export default function ItemDetailsScreen() {
             onIndexChange={setActiveImageIndex}
             onPressImage={() => setDetailImageOpen(true)}
           />
-          <HeroMetadataSummary item={item} />
         </View>
 
         <View style={styles.actionStack}>
-          <ActionButton
+          <AuraButton
             label="Style with AURA"
-            icon="sparkles-outline"
+            iconLeft="sparkles-outline"
             variant="primary"
+            fullWidth
             onPress={() => onStyleWithAura(item)}
             accessibilityLabel="Style this item with AURA"
+            style={{ minHeight: BUTTON_HEIGHT }}
           />
-          <ActionButton
-            label="Add to Outfit"
-            icon="shirt-outline"
-            variant="secondary"
-            onPress={onAddToOutfit}
-            accessibilityLabel="Add this item to an outfit"
-          />
-          <View style={styles.tertiaryActionRow}>
-            <ActionButton
-              label="Share"
-              icon="share-outline"
+
+          <View style={styles.secondaryActionRow}>
+            <AuraButton
+              label="Edit"
+              iconLeft="create-outline"
               variant="tertiary"
+              size="compact"
+              onPress={onEdit}
+              accessibilityLabel="Edit this item"
+              style={{ flex: 1 }}
+            />
+            <AuraButton
+              label="Share"
+              iconLeft="share-outline"
+              variant="tertiary"
+              size="compact"
               onPress={() => void onShareItem(item)}
               accessibilityLabel="Share this item"
+              style={{ flex: 1 }}
             />
-            {productUrl ? (
-              <ActionButton
-                label="View product"
-                icon="open-outline"
-                variant="tertiary"
-                onPress={() => void onOpenProductUrl(productUrl)}
-                accessibilityLabel="View original product"
-              />
-            ) : null}
+            <AuraButton
+              label="More"
+              iconLeft="ellipsis-horizontal"
+              variant="tertiary"
+              size="compact"
+              onPress={onOpenOverflowMenu}
+              accessibilityLabel="Open more item actions"
+              style={{ flex: 1 }}
+            />
           </View>
         </View>
 
-        <View style={styles.sectionBlock}>
-          <View style={styles.statusControl}>
-            {STATUS_OPTIONS.map((option) => {
-              const selected = status === option;
-              return (
-                <AuraPressable
-                  key={option}
-                  onPress={() => onLaundryStatusPress(option)}
-                  disabled={actionLoading || selected}
-                  haptic="selection"
-                  hapticTrigger="press"
-                  pressedScale={0.97}
-                  disabledOpacity={selected ? 1 : 0.58}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Set status to ${LAUNDRY_STATUS_LABELS[option]}`}
-                  accessibilityState={{ selected, disabled: actionLoading || selected }}
-                  style={[
-                    styles.statusSegment,
-                    selected ? styles.selectedStatusSegment : styles.unselectedStatusSegment,
-                  ]}
-                >
-                  <Text
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.78}
-                    style={{
-                      color: selected ? colors.primaryText : colors.textSecondary,
-                      fontSize: 12,
-                      fontWeight: "900",
-                    }}
-                  >
-                    {LAUNDRY_STATUS_LABELS[option]}
-                  </Text>
-                </AuraPressable>
-              );
-            })}
+        {usageRows.length ? (
+          <View style={styles.sectionCard}>
+            <DetailRowsBlock title="Styling / usage" rows={usageRows} />
           </View>
-        </View>
-
-        <View style={styles.insightCard}>
-          <View style={styles.insightHeader}>
-            <View style={styles.insightIcon}>
-              <Ionicons name="sparkles-outline" size={16} color={colors.ctaCream} />
-            </View>
-            <View style={{ flex: 1, gap: 4 }}>
-              <Text style={{ color: colors.text, fontSize: 15.5, lineHeight: 20, fontWeight: "900" }}>
-                Styling read
-              </Text>
-              <Text
-                numberOfLines={2}
-                style={{ color: colors.textSecondary, fontSize: 13.5, lineHeight: 19, fontWeight: "600" }}
-              >
-                {auraInsightForItem(item)}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.insightButtonRow}>
-            <AuraPressable
-              onPress={() => onStyleWithAura(item)}
-              haptic="light"
-              hapticTrigger="press"
-              pressedScale={0.98}
-              accessibilityRole="button"
-              accessibilityLabel="Ask AURA about this item"
-              style={[
-                auraButtonStyle(colors, "primary"),
-                styles.insightButton,
-              ]}
-            >
-              <Text style={[auraButtonTextStyle(colors, "primary"), { fontSize: 13 }]}>
-                Ask AURA
-              </Text>
-            </AuraPressable>
-            <AuraPressable
-              onPress={onAddToOutfit}
-              haptic="light"
-              hapticTrigger="press"
-              pressedScale={0.98}
-              accessibilityRole="button"
-              accessibilityLabel="Build an outfit with this item"
-              style={[
-                auraButtonStyle(colors, "secondary", false, "compact"),
-                styles.insightButton,
-              ]}
-            >
-              <Text style={[auraButtonTextStyle(colors, "secondary"), { fontSize: 13 }]}>
-                Build outfit
-              </Text>
-            </AuraPressable>
-          </View>
-        </View>
+        ) : null}
 
         {detailGroups.length ? (
-          <View style={styles.detailGroups}>
+          <View style={[styles.sectionCard, styles.detailGroups]}>
             {detailGroups.map((group) => (
               <DetailGroupBlock key={group.title} group={group} />
             ))}
@@ -1407,28 +1284,29 @@ export default function ItemDetailsScreen() {
         ) : null}
 
         {productUrl ? (
-          <View style={styles.sectionBlock}>
-            <View style={{ gap: 10 }}>
-              {productSourceLabel ? (
-                <Text selectable style={{ color: colors.textPrimary, fontSize: 14.5, lineHeight: 20, fontWeight: "800" }}>
-                  {productSourceLabel}
-                </Text>
-              ) : null}
-              <AuraPressable
-                onPress={() => void onOpenProductUrl(productUrl)}
-                haptic="light"
-                hapticTrigger="press"
-                pressedScale={0.98}
-                accessibilityRole="button"
-                accessibilityLabel="View original product"
-                style={styles.productSourceButton}
-              >
-                <Text style={auraButtonTextStyle(colors, "secondary")}>
-                  View original product
-                </Text>
-                <Ionicons name="arrow-forward" size={16} color={colors.textPrimary} />
-              </AuraPressable>
-            </View>
+          <View style={styles.sectionCard}>
+            <AuraText variant="section" style={{ fontSize: 15, lineHeight: 20 }}>
+              Product link
+            </AuraText>
+            <AuraPressable
+              onPress={() => void onOpenProductUrl(productUrl)}
+              haptic="light"
+              hapticTrigger="press"
+              pressedScale={0.98}
+              accessibilityRole="button"
+              accessibilityLabel="View original product"
+              style={styles.productSourceButton}
+            >
+              <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+                <AuraText variant="metadata" tone="muted" numberOfLines={1} style={{ textTransform: "uppercase" }}>
+                  Original source
+                </AuraText>
+                <AuraText variant="bodyStrong" selectable numberOfLines={1}>
+                  {productSourceLabel || "View original product"}
+                </AuraText>
+              </View>
+              <Ionicons name="arrow-forward" size={16} color={colors.textSecondary} />
+            </AuraPressable>
           </View>
         ) : null}
       </>
@@ -1445,16 +1323,23 @@ export default function ItemDetailsScreen() {
       />
       <ActionMenuModal
         visible={actionMenuVisible}
+        currentLaundryStatus={item ? normalizeLaundryStatus(item) : "clean"}
+        actionLoading={actionLoading}
         onClose={() => setActionMenuVisible(false)}
-        onEdit={() => {
+        onAddToOutfit={() => {
           setActionMenuVisible(false);
-          onEdit();
+          setTimeout(onAddToOutfit, 120);
         }}
-        onShare={() => {
-          if (!item) return;
+        onMarkWorn={() => {
           setActionMenuVisible(false);
           setTimeout(() => {
-            void onShareItem(item);
+            void onMarkWornToday();
+          }, 120);
+        }}
+        onLaundryStatusPress={(status) => {
+          setActionMenuVisible(false);
+          setTimeout(() => {
+            onLaundryStatusPress(status);
           }, 120);
         }}
         onDelete={() => {
@@ -1464,41 +1349,32 @@ export default function ItemDetailsScreen() {
           }, 160);
         }}
       />
-      <AuraSubpageHeader
-        title="Item"
-        eyebrow="CLOSET"
-        onBack={navigateBackToSource}
-        fallbackRoute="/(tabs)/closet"
-        rightAction={
-          <Pressable
-            onPress={onOpenOverflowMenu}
-            accessibilityRole="button"
-            accessibilityLabel="Open item actions"
-            style={({ pressed }) => [
-              {
-                minWidth: 44,
-                minHeight: 44,
-                borderRadius: 999,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: colors.surface,
-                borderWidth: 1,
-                borderColor: colors.border,
-                opacity: pressed ? 0.72 : 1,
-              },
-            ]}
-          >
-            <Ionicons name="ellipsis-horizontal" size={22} color={colors.text} />
-          </Pressable>
-        }
-      />
+      <View
+        style={{
+          paddingTop: insets.top + 8,
+          paddingHorizontal: layout.horizontalPadding,
+          paddingBottom: 6,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <AuraBackButton onPress={navigateBackToSource} size={42} />
+        <AuraIconButton
+          icon="ellipsis-horizontal"
+          label="Open item actions"
+          variant="tertiary"
+          size="compact"
+          onPress={onOpenOverflowMenu}
+        />
+      </View>
       <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           paddingHorizontal: layout.horizontalPadding,
           paddingTop: 8,
-          paddingBottom: layout.bottomDockPadding + 56,
+          paddingBottom: layout.bottomDockPadding + 72,
           gap: 24,
         }}
       >
@@ -1510,15 +1386,21 @@ export default function ItemDetailsScreen() {
 
 function ActionMenuModal({
   visible,
+  currentLaundryStatus,
+  actionLoading,
   onClose,
-  onEdit,
-  onShare,
+  onAddToOutfit,
+  onMarkWorn,
+  onLaundryStatusPress,
   onDelete,
 }: {
   visible: boolean;
+  currentLaundryStatus: LaundryStatus;
+  actionLoading: boolean;
   onClose: () => void;
-  onEdit: () => void;
-  onShare: () => void;
+  onAddToOutfit: () => void;
+  onMarkWorn: () => void;
+  onLaundryStatusPress: (status: LaundryStatus) => void;
   onDelete: () => void;
 }) {
   const { colors } = useAppTheme();
@@ -1532,82 +1414,136 @@ function ActionMenuModal({
     onClose();
   }
 
+  function renderMenuRow({
+    icon,
+    label,
+    onPress,
+    destructive = false,
+    disabled = false,
+    selected = false,
+    accessory = "chevron-forward",
+    accessibilityLabel,
+  }: {
+    icon: keyof typeof Ionicons.glyphMap;
+    label: string;
+    onPress: () => void;
+    destructive?: boolean;
+    disabled?: boolean;
+    selected?: boolean;
+    accessory?: keyof typeof Ionicons.glyphMap | null;
+    accessibilityLabel?: string;
+  }) {
+    const tone = destructive ? "destructive" : selected ? "accent" : "primary";
+    const iconColor = destructive
+      ? colors.destructive
+      : selected
+        ? colors.accent
+        : colors.textSecondary;
+
+    return (
+      <AuraPressable
+        onPress={() => {
+          void runHaptic(destructive ? "warning" : "light");
+          onPress();
+        }}
+        disabled={disabled}
+        haptic="selection"
+        hapticTrigger="press"
+        pressedScale={0.98}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? label}
+        accessibilityState={{ selected, disabled }}
+        style={[
+          styles.actionMenuButton,
+          selected
+            ? {
+                backgroundColor: colors.accentSoft,
+                borderColor: colors.borderStrong,
+              }
+            : null,
+          destructive
+            ? {
+                backgroundColor: colors.dangerSurface,
+                borderColor: colors.dangerBorder,
+              }
+            : null,
+        ]}
+      >
+        <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <Ionicons name={icon} size={17} color={iconColor} />
+          <AuraText variant="button" tone={tone} numberOfLines={1} style={{ fontSize: 14.5 }}>
+            {label}
+          </AuraText>
+        </View>
+        {accessory ? (
+          <Ionicons
+            name={selected ? "checkmark" : accessory}
+            size={15}
+            color={selected ? colors.accent : colors.textMuted}
+          />
+        ) : null}
+      </AuraPressable>
+    );
+  }
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={closeWithHaptic}>
-      <View style={[styles.actionMenuBackdrop, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+      <AuraSheetBackdrop style={[styles.actionMenuBackdrop, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={closeWithHaptic} />
-        <View style={[styles.actionMenuCard, { width: menuWidth }]}>
-          <BlurView intensity={34} tint="dark" style={StyleSheet.absoluteFill} />
+        <AuraSheetSurface style={[styles.actionMenuCard, { width: menuWidth }]}>
           <View style={styles.actionMenuSurface}>
             <View style={styles.actionMenuHandle} />
 
-            <AuraPressable
-              onPress={() => {
-                void runHaptic("light");
-                onEdit();
-              }}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.98}
-              accessibilityRole="button"
-              accessibilityLabel="Edit item"
-              style={styles.actionMenuButton}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <Ionicons name="create-outline" size={17} color={colors.ctaCream} />
-                <Text style={{ color: colors.textPrimary, fontSize: 14.5, fontWeight: "900" }}>
-                  Edit Item
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={15} color="rgba(251,228,216,0.36)" />
-            </AuraPressable>
+            <View style={{ gap: 8 }}>
+              <AuraText variant="metadata" tone="muted" style={{ paddingHorizontal: 4, textTransform: "uppercase" }}>
+                Styling actions
+              </AuraText>
+              {renderMenuRow({
+                icon: "shirt-outline",
+                label: "Add to outfit",
+                onPress: onAddToOutfit,
+              })}
+              {renderMenuRow({
+                icon: "checkmark-circle-outline",
+                label: "Mark worn today",
+                onPress: onMarkWorn,
+                disabled: actionLoading,
+              })}
+            </View>
 
-            <AuraPressable
-              onPress={() => {
-                void runHaptic("light");
-                onShare();
-              }}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.98}
-              accessibilityRole="button"
-              accessibilityLabel="Share item"
-              style={styles.actionMenuButton}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <Ionicons name="share-outline" size={17} color={colors.ctaCream} />
-                <Text style={{ color: colors.textPrimary, fontSize: 14.5, fontWeight: "900" }}>
-                  Share Item
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={15} color="rgba(251,228,216,0.36)" />
-            </AuraPressable>
+            <AuraDivider />
 
-            <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: "rgba(251,228,216,0.08)" }} />
+            <View style={{ gap: 8 }}>
+              <AuraText variant="metadata" tone="muted" style={{ paddingHorizontal: 4, textTransform: "uppercase" }}>
+                Laundry
+              </AuraText>
+              {STATUS_OPTIONS.map((status) =>
+                renderMenuRow({
+                  icon:
+                    status === "clean"
+                      ? "sparkles-outline"
+                      : status === "in_laundry"
+                        ? "water-outline"
+                        : "alert-circle-outline",
+                  label: LAUNDRY_STATUS_LABELS[status],
+                  onPress: () => onLaundryStatusPress(status),
+                  selected: currentLaundryStatus === status,
+                  disabled: actionLoading || currentLaundryStatus === status,
+                  accessory: currentLaundryStatus === status ? "checkmark" : null,
+                  accessibilityLabel: `Set laundry status to ${LAUNDRY_STATUS_LABELS[status]}`,
+                }),
+              )}
+            </View>
 
-            <AuraPressable
-              onPress={() => {
-                void runHaptic("warning");
-                onDelete();
-              }}
-              pressedScale={0.98}
-              accessibilityRole="button"
-              accessibilityLabel="Delete item"
-              style={[
-                styles.actionMenuButton,
-                {
-                  backgroundColor: "rgba(255,77,79,0.08)",
-                  borderColor: "rgba(255,77,79,0.18)",
-                },
-              ]}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <Ionicons name="trash-outline" size={17} color="rgba(239,163,163,0.86)" />
-                <Text style={{ color: "rgba(239,163,163,0.92)", fontSize: 14.5, fontWeight: "900" }}>
-                  Delete Item
-                </Text>
-              </View>
-            </AuraPressable>
+            <AuraDivider />
+
+            {renderMenuRow({
+              icon: "trash-outline",
+              label: "Delete item",
+              onPress: onDelete,
+              destructive: true,
+              accessory: null,
+            })}
 
             <AuraPressable
               onPress={closeWithHaptic}
@@ -1623,13 +1559,13 @@ function ActionMenuModal({
                 },
               ]}
             >
-              <Text style={{ color: colors.textSecondary, fontSize: 14.5, fontWeight: "900" }}>
+              <AuraText variant="button" tone="secondary" style={{ fontSize: 14.5 }}>
                 Cancel
-              </Text>
+              </AuraText>
             </AuraPressable>
           </View>
-        </View>
-      </View>
+        </AuraSheetSurface>
+      </AuraSheetBackdrop>
     </Modal>
   );
 }
@@ -1673,7 +1609,7 @@ function ItemImageModal({
           accessibilityLabel="Close photo viewer"
           style={[styles.modalCloseButton, { top: insets.top + 12 }]}
         >
-          <Text style={{ color: colors.text, fontWeight: "800" }}>Close</Text>
+          <Text style={{ color: colors.text, fontWeight: "600" }}>Close</Text>
         </Pressable>
         <ScrollView
           style={{ flex: 1 }}
@@ -1726,7 +1662,7 @@ function ItemImageModal({
                   }}
                 />
               ))}
-              <Text style={{ color: colors.textSecondary, fontWeight: "700", marginLeft: 8 }}>
+              <Text style={{ color: colors.textSecondary, fontWeight: "500", marginLeft: 8 }}>
                 {activeIndex + 1} / {images.length}
               </Text>
             </View>
@@ -1830,7 +1766,7 @@ function DetailImageCarousel({
             ))}
           </View>
           <View style={styles.carouselCounter}>
-            <Text style={{ color: colors.textPrimary, fontSize: 12.5, fontWeight: "900" }}>
+            <Text style={{ color: colors.textPrimary, fontSize: 12.5, fontWeight: "500" }}>
               {activeIndex + 1} / {images.length}
             </Text>
           </View>

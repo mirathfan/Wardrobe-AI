@@ -1,13 +1,13 @@
-import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Image, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
 import { SafeScreen } from "@/src/components/SafeScreen";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { LookDetailModal } from "@/src/components/profile/LookDetailModal";
 import { MyLookSkeleton, MyLookThumbnail } from "@/src/components/profile/MyLookThumbnail";
+import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import {
   auraButtonStyle,
   auraButtonTextStyle,
@@ -25,7 +25,6 @@ import {
   formatBodyFitSummary,
   formatClosetSummary,
   formatDefaultSizesSummary,
-  formatNotificationsSummary,
   formatStyleSummary,
   formatUnitsSummary,
   useProfilePreferencesState,
@@ -38,18 +37,11 @@ type StatCardProps = {
   onPress: () => void;
 };
 
-type QuickActionProps = {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-};
-
 const SETTINGS_GROUPS = [
   {
     label: "ACCOUNT",
     rows: [
       { title: "Account", route: "/profile/account", summary: "account" },
-      { title: "Notifications", route: "/profile/notifications", summary: "notifications" },
     ],
   },
   {
@@ -209,35 +201,34 @@ function StatCard({ label, value, onPress }: StatCardProps) {
   );
 }
 
-function QuickAction({ icon, label, onPress }: QuickActionProps) {
-  const { colors } = useAppTheme();
-  return (
-    <AuraPressable
-      onPress={onPress}
-      haptic="selection"
-      hapticTrigger="press"
-      pressedScale={0.97}
-      pressedOpacity={0.88}
-      style={{
-        ...auraButtonStyle(colors, "tertiary"),
-        minHeight: 44,
-        paddingHorizontal: 14,
-        gap: 8,
-        flexDirection: "row",
-      }}
-    >
-      <Ionicons name={icon} size={18} color={colors.iridescentStart} />
-      <Text style={[auraButtonTextStyle(colors, "tertiary"), { color: colors.text, fontSize: 14 }]}>{label}</Text>
-    </AuraPressable>
-  );
-}
-
 function SectionLabel({ children }: { children: React.ReactNode }) {
   const { colors } = useAppTheme();
   return (
     <Text style={[auraTypography.eyebrow, { color: colors.iridescentStart }]}>
       {children}
     </Text>
+  );
+}
+
+function ProfileLoadingSkeleton() {
+  const layout = useResponsiveLayout();
+  return (
+    <View style={{ gap: 18 }}>
+      <AuraSkeleton height={156} radius={layout.largeRadius} />
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        {Array.from({ length: 4 }).map((_, index) => (
+          <AuraSkeleton key={index} height={74} radius={layout.mediumRadius} style={{ flex: 1 }} />
+        ))}
+      </View>
+      <AuraSkeletonLine width="32%" height={12} />
+      <AuraSkeleton height={150} radius={layout.mediumRadius} />
+      <AuraSkeletonLine width="28%" height={12} />
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        {Array.from({ length: 3 }).map((_, index) => (
+          <AuraSkeleton key={index} width={112} height={136} radius={18} />
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -278,7 +269,6 @@ export default function ProfileScreen() {
   const summaries = useMemo(
     () => ({
       account: accountSummary,
-      notifications: formatNotificationsSummary(profile),
       bodyFit: formatBodyFitSummary(profile),
       defaultSizes: formatDefaultSizesSummary(profile),
       style: formatStyleSummary(profile),
@@ -398,9 +388,7 @@ export default function ProfileScreen() {
         </View>
 
         {loading ? (
-          <View style={{ paddingVertical: 40, alignItems: "center" }}>
-            <ActivityIndicator color={colors.accent} />
-          </View>
+          <ProfileLoadingSkeleton />
         ) : (
           <>
             <LinearGradient
@@ -431,7 +419,7 @@ export default function ProfileScreen() {
                   {user?.photoURL ? (
                     <Image source={{ uri: user.photoURL }} style={{ width: 68, height: 68 }} />
                   ) : (
-                    <Text style={{ color: colors.text, fontSize: 22, fontWeight: "900" }}>
+                    <Text style={{ color: colors.text, fontSize: 22, fontWeight: "700" }}>
                       {getInitials(displayName)}
                     </Text>
                   )}
@@ -439,7 +427,7 @@ export default function ProfileScreen() {
                 <View style={{ flex: 1, gap: 8 }}>
                   <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
                     <View style={{ flex: 1, gap: 5 }}>
-                      <Text style={{ color: colors.text, fontSize: 23, fontWeight: "900" }} numberOfLines={1}>
+                      <Text style={{ color: colors.text, fontSize: 23, fontWeight: "700" }} numberOfLines={1}>
                         {displayName}
                       </Text>
                       <Text style={{ color: colors.textSecondary, fontSize: 13 }} numberOfLines={1}>
@@ -457,7 +445,7 @@ export default function ProfileScreen() {
                       <Text style={[auraButtonTextStyle(colors, "tertiary"), { color: colors.text, fontSize: 12 }]}>Edit</Text>
                     </Pressable>
                   </View>
-                  <Text style={{ color: colors.auraLavender, fontSize: 14, fontWeight: "800" }} numberOfLines={1}>
+                  <Text style={{ color: colors.auraLavender, fontSize: 14, fontWeight: "600" }} numberOfLines={1}>
                     {summarizeStyleIdentity(profile)}
                   </Text>
                 </View>
@@ -483,26 +471,6 @@ export default function ProfileScreen() {
             </View>
 
             <View style={{ gap: 12 }}>
-              <SectionLabel>QUICK ACTIONS</SectionLabel>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 10, paddingRight: 2 }}
-              >
-                <QuickAction
-                  icon="add"
-                  label="Add item"
-                  onPress={() =>
-                    router.push({ pathname: "/(tabs)/add", params: { addSession: String(Date.now()) } })
-                  }
-                />
-                <QuickAction icon="sparkles-outline" label="Build outfit" onPress={() => router.push("/(tabs)/studio")} />
-                <QuickAction icon="chatbubble-ellipses-outline" label="Ask AURA" onPress={() => router.push("/(tabs)/ai")} />
-                <QuickAction icon="calendar-outline" label="Plan week" onPress={() => router.push("/(tabs)/calendar")} />
-              </ScrollView>
-            </View>
-
-            <View style={{ gap: 12 }}>
               <SectionLabel>AURA PROFILE</SectionLabel>
               <View
                 style={{
@@ -512,18 +480,18 @@ export default function ProfileScreen() {
                 }}
               >
                 <View style={{ gap: 4 }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }}>Style preferences</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>Style preferences</Text>
                   <Text style={{ color: colors.text, fontSize: 15, fontWeight: "700", lineHeight: 21 }}>
                     {profileFacts.styleSummary}
                   </Text>
                 </View>
                 <View style={{ flexDirection: "row", gap: 10 }}>
                   <View style={{ flex: 1, gap: 4 }}>
-                    <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }}>Fit</Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>Fit</Text>
                     <Text style={{ color: colors.text, fontSize: 14, fontWeight: "700" }}>{profileFacts.fitSummary}</Text>
                   </View>
                   <View style={{ flex: 1, gap: 4 }}>
-                    <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }}>Top signal</Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>Top signal</Text>
                     <Text style={{ color: colors.text, fontSize: 14, fontWeight: "700" }}>{profileFacts.colorOrCategory}</Text>
                   </View>
                 </View>
@@ -550,7 +518,7 @@ export default function ProfileScreen() {
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                 <SectionLabel>MY LOOKS</SectionLabel>
                 <Pressable onPress={openMyLooks} style={{ minHeight: 44, justifyContent: "center" }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "800" }}>See all →</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "600" }}>See all →</Text>
                 </Pressable>
               </View>
 
@@ -619,7 +587,7 @@ export default function ProfileScreen() {
                 color: colors.text,
                 fontSize: 11,
                 opacity: 0.15,
-                fontWeight: "800",
+                fontWeight: "600",
               }}
             >
               AURA

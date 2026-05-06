@@ -9,8 +9,8 @@ export const auraTheme = {
   gradientAura: palette.gradients.aura,
   surface: palette.colors.surfaceGlass,
   surfaceStrong: palette.colors.surfaceElevated,
-  surfaceSoft: palette.colors.chipBackground,
-  surfaceSofter: "rgba(255,255,255,0.03)",
+  surfaceSoft: palette.colors.surfaceMuted,
+  surfaceSofter: palette.colors.surfaceMuted,
   border: palette.colors.border,
   borderSoft: palette.colors.borderSoft,
   borderAccent: palette.colors.purpleBorder,
@@ -21,10 +21,10 @@ export const auraTheme = {
   glow: palette.colors.purpleGlow,
   textMuted: palette.colors.textSecondary,
   textFaint: palette.colors.textMuted,
-  userBubble: palette.colors.purpleSurface,
-  userBubbleEdge: palette.colors.purpleBorder,
-  danger: "rgba(255,77,79,0.16)",
-  dangerBorder: "rgba(255,77,79,0.26)",
+  userBubble: palette.colors.surfaceElevated,
+  userBubbleEdge: palette.colors.borderStrong,
+  danger: palette.colors.dangerSurface,
+  dangerBorder: palette.colors.dangerBorder,
 };
 
 export function auraShadow(opacity = 0.22) {

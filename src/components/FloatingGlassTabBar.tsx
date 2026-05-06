@@ -38,8 +38,6 @@ const ACTIVE_BUBBLE_WIDTH = 64;
 const ACTIVE_BUBBLE_HEIGHT = 52;
 const TAB_PRESS_THROTTLE_MS = 260;
 const AURA_TAB_MARK = require("../../assets/images/aura-tab-mark.png");
-const DOCK_GLASS_FILL = "rgba(9,0,11,0.48)";
-const DOCK_GLASS_BORDER = "rgba(251,228,216,0.08)";
 
 type ExpoRouterTabOptions = {
   href?: string | null;
@@ -104,17 +102,17 @@ export default function FloatingGlassTabBar({
   const scrimColors = useMemo(
     () =>
       [
-        "rgba(9,0,11,0)",
-        "rgba(9,0,11,0.03)",
-        "rgba(9,0,11,0.08)",
+        colors.dockScrimTop,
+        colors.dockScrimMid,
+        colors.dockScrimBottom,
       ] as const,
-    [],
+    [colors.dockScrimBottom, colors.dockScrimMid, colors.dockScrimTop],
   );
   const materialFillStyle = useMemo(
     () => ({
-      backgroundColor: DOCK_GLASS_FILL,
+      backgroundColor: colors.glass,
     }),
-    [],
+    [colors.glass],
   );
 
   useEffect(() => {
@@ -222,7 +220,7 @@ export default function FloatingGlassTabBar({
         style={[styles.scrim, { bottom: dockBottom }]}
       />
 
-      <View style={[styles.container, { bottom: dockBottom }]}>
+      <View style={[styles.container, { bottom: dockBottom, backgroundColor: colors.dockBackground }]}>
         <BlurView
           intensity={42}
           tint="dark"
@@ -242,7 +240,7 @@ export default function FloatingGlassTabBar({
           style={[
             styles.glassBorder,
             {
-              borderColor: DOCK_GLASS_BORDER,
+              borderColor: colors.borderSoft,
             },
           ]}
         />
@@ -258,6 +256,8 @@ export default function FloatingGlassTabBar({
               activeBubbleStyle,
               {
                 opacity: visibleRoutes.length ? 1 : 0,
+                backgroundColor: colors.surfaceMuted,
+                borderColor: colors.borderStrong,
               },
             ]}
           />
@@ -338,6 +338,7 @@ const TabBarItem = React.memo(function TabBarItem({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
       accessibilityState={isFocused ? { selected: true } : {}}
       onPress={onPress}
       onPressIn={() => {
@@ -365,7 +366,7 @@ const TabBarItem = React.memo(function TabBarItem({
           {
             color,
             opacity: 1,
-            fontWeight: isFocused ? "600" : "500",
+            fontWeight: isFocused ? "500" : "400",
           },
         ]}
         numberOfLines={1}
@@ -459,8 +460,8 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   label: {
-    fontSize: 10.3,
-    letterSpacing: 0,
+    fontSize: 11,
+    letterSpacing: 0.1,
     zIndex: 1,
   },
   auraMarkWrap: {

@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
-import { Fonts, type AppColors } from "@/constants/theme";
-import AuraPressable from "@/src/components/aura/AuraPressable";
+import type { AppColors } from "@/constants/theme";
+import { AuraIconButton, AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 import { auraTheme } from "./aiTheme";
@@ -63,25 +63,25 @@ export default function AuraHeader({
           >
             <View
               style={{
-                width: 6,
-                height: 6,
+                width: 5,
+                height: 5,
                 borderRadius: 999,
                 backgroundColor: streaming ? auraTheme.accentStrong : colors.textSecondary,
-                opacity: streaming ? 1 : 0.72,
+                opacity: streaming ? 1 : 0.62,
               }}
             />
-            <Text
+            <AuraText
+              variant="metadata"
               style={{
                 color: streaming ? auraTheme.accentStrong : colors.text,
                 fontSize: 12 * layout.titleScale,
                 lineHeight: 14 * layout.titleScale,
-                fontWeight: "600",
+                fontWeight: "500",
                 letterSpacing: 2.1,
-                fontFamily: Fonts.sans,
               }}
             >
               AURA
-            </Text>
+            </AuraText>
           </View>
         </View>
         <HeaderAction colors={colors} icon="create-outline" label="New chat" onPress={onReset} />
@@ -102,35 +102,24 @@ function HeaderAction({
   onPress: () => void;
 }) {
   return (
-    <AuraPressable
+    <AuraIconButton
+      icon={icon}
+      label={label}
       onPress={onPress}
+      variant="tertiary"
+      size="small"
       haptic="selection"
       hapticTrigger="press"
       pressedScale={0.96}
       pressedOpacity={0.88}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 6,
-        borderRadius: 999,
-        paddingHorizontal: 8,
-        paddingVertical: 5,
-        backgroundColor: pressed ? colors.surfaceSoft : colors.surfaceGlass,
+      accessibilityLabel={label}
+      style={{
+        width: 32,
+        height: 32,
+        backgroundColor: colors.surfaceGlass,
         borderWidth: 1,
-        borderColor: colors.border,
-      })}
-    >
-      <Ionicons name={icon} size={13} color={colors.textSecondary} />
-      <Text
-        style={{
-          color: colors.textSecondary,
-          fontSize: 10.5,
-          fontWeight: "600",
-          fontFamily: Fonts.sans,
-        }}
-      >
-        {label}
-      </Text>
-    </AuraPressable>
+        borderColor: colors.borderSoft,
+      }}
+    />
   );
 }

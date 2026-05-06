@@ -229,6 +229,7 @@ function outfitItemIds(itemsByCategory?: OutfitItemsByCategory | null) {
     itemsByCategory.top,
     itemsByCategory.bottom,
     itemsByCategory.shoes,
+    ...(itemsByCategory.accessories ?? []),
   ].filter((id): id is string => typeof id === "string" && id.trim().length > 0);
 }
 

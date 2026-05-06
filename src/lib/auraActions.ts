@@ -1,9 +1,9 @@
 import { logAuraLookStyleEvent } from "@/src/lib/auraMemory";
-import { auraLookToPlannedOutfit, saveAuraLook, type SavedAuraLookRecord } from "@/src/lib/auraLooks";
+import { saveAuraLook, type SavedAuraLookRecord } from "@/src/lib/auraLooks";
 import { saveAuraOutfitFeedback } from "@/src/lib/auraOutfitFeedback";
 import { Toast } from "@/src/lib/toast";
+import { markOutfitWorn, planOutfitForToday } from "@/src/lib/wearOutfit";
 import type { AuraLook, AuraLookAction, AuraLookOptionMeta } from "@/src/types/aura";
-import { savePlannedRecord } from "@/src/utils/dailyOutfits";
 
 type AuraAlertButton = {
   text: string;
@@ -29,6 +29,7 @@ export type HandleAuraLookActionOptions = {
   onSavedLook?: (saved: SavedAuraLookRecord) => void;
   onAfterSave?: () => void | Promise<void>;
   onAfterPlan?: () => void | Promise<void>;
+  onAfterWear?: () => void | Promise<void>;
 };
 
 export function buildAuraLookFeedbackPrompt(action: AuraLookAction, promptBase: string) {
@@ -73,6 +74,7 @@ export async function handleSharedAuraLookAction({
   onSavedLook,
   onAfterSave,
   onAfterPlan,
+  onAfterWear,
 }: HandleAuraLookActionOptions) {
   if (!uid || !look) return false;
 
@@ -85,18 +87,45 @@ export async function handleSharedAuraLookAction({
       void onAfterSave?.();
       Toast.saved();
     } catch (error: any) {
-      Toast.error("Save failed", error?.message ?? "Unable to save this look.");
+      if (__DEV__) {
+        console.error("SAVE LOOK UI ERROR:", error);
+      }
+      Toast.error("Save failed", "Couldn’t save this look. Please try again.");
     }
     return true;
   }
 
   if (action === "planForToday") {
     try {
-      await savePlannedRecord(uid, new Date(), auraLookToPlannedOutfit(look));
+      await planOutfitForToday({
+        uid,
+        source: "aura",
+        title: base,
+        look,
+      });
       void onAfterPlan?.();
       Toast.success("Planned", "This look is now attached to today.");
     } catch (error: any) {
       Toast.error("Plan failed", error?.message ?? "Unable to plan this look for today.");
+    }
+    return true;
+  }
+
+  if (action === "wearToday") {
+    try {
+      const result = await markOutfitWorn({
+        uid,
+        source: "aura",
+        title: base,
+        look,
+      });
+      void onAfterWear?.();
+      Toast.success(
+        result.alreadyMarked ? "Already marked worn today" : "Marked as worn today",
+        result.alreadyMarked ? "AURA will not double-count it." : undefined,
+      );
+    } catch (error: any) {
+      Toast.error("Couldn't mark worn. Try again.", error?.message);
     }
     return true;
   }

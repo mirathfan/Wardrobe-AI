@@ -1,12 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { homeTypography } from "@/src/components/home/homeTypography";
-import { auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
+import { AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { ACTION_GAP, CHIP_BORDER_WIDTH, CHIP_HEIGHT, CHIP_HORIZONTAL_PADDING, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
@@ -64,7 +64,7 @@ export default function QuickActionRail({
               paddingVertical: 0,
               backgroundColor: colors.chipBackground,
               borderWidth: CHIP_BORDER_WIDTH,
-              borderColor: "rgba(251,228,216,0.075)",
+              borderColor: colors.borderSoft,
             }}
           >
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -73,9 +73,9 @@ export default function QuickActionRail({
                 size={13}
                 color={colors.textSecondary}
               />
-              <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, fontSize: 13, fontWeight: "800" }]}>
+              <AuraText variant="caption" tone="secondary" style={[homeTypography.bodySmall, { fontSize: 13, fontWeight: "500" }]}>
                 {action.label}
-              </Text>
+              </AuraText>
             </View>
           </AuraPressable>
         ))}
@@ -94,7 +94,9 @@ export default function QuickActionRail({
         style={{
           borderRadius: layout.largeRadius,
           overflow: "hidden",
-          ...auraSurfaceTiers.surfaceRaised,
+          backgroundColor: colors.surfaceElevated,
+          borderColor: colors.borderStrong,
+          borderWidth: 1,
           shadowColor: colors.ctaCream,
           shadowOpacity: 0.035,
           shadowRadius: 10,
@@ -107,14 +109,14 @@ export default function QuickActionRail({
           end={{ x: 1, y: 1 }}
           style={{ paddingHorizontal: 18, paddingVertical: 15, gap: 8 }}
         >
-          <Text style={[homeTypography.label, { color: colors.ctaCream, letterSpacing: 0.95, opacity: 0.78 }]}>
+          <AuraText variant="metadata" tone="accent" style={[homeTypography.label, { letterSpacing: 0.95, opacity: 0.78 }]}>
             START HERE
-          </Text>
+          </AuraText>
           <View style={{ flexDirection: "row", alignItems: "center", gap: ACTION_GAP }}>
             <Ionicons name={iconForAction(primaryAction.key, primaryAction.label)} size={17} color={colors.textPrimary} />
-            <Text style={[homeTypography.titleSmall, { color: colors.textPrimary }]}>
+            <AuraText variant="section" style={homeTypography.titleSmall}>
               {primaryAction.label}
-            </Text>
+            </AuraText>
           </View>
         </LinearGradient>
       </AuraPressable>
@@ -139,7 +141,7 @@ export default function QuickActionRail({
                 paddingVertical: 0,
                 backgroundColor: colors.chipBackground,
                 borderWidth: CHIP_BORDER_WIDTH,
-                borderColor: "rgba(251,228,216,0.075)",
+                borderColor: colors.borderSoft,
               }}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: ACTION_GAP }}>
@@ -148,9 +150,9 @@ export default function QuickActionRail({
                   size={14}
                   color={colors.textSecondary}
                 />
-                <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, fontSize: 13, fontWeight: "800" }]}>
+                <AuraText variant="caption" tone="secondary" style={[homeTypography.bodySmall, { fontSize: 13, fontWeight: "500" }]}>
                   {action.label}
-                </Text>
+                </AuraText>
               </View>
             </AuraPressable>
           ))}

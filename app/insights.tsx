@@ -5,14 +5,21 @@ import { Alert } from "react-native";
 import AuraInsightsDashboard, {
   type InsightPeriodKey,
 } from "@/src/components/insights/AuraInsightsDashboard";
+import ShopOptionsSheet from "@/src/components/shop/ShopOptionsSheet";
 import { useAuth } from "@/src/hooks/useAuth";
 import { listenToItems } from "@/src/lib/items";
+import { loadUserProfilePreferences } from "@/src/lib/userProfile";
 import {
   buildWardrobeInsights,
   type MissingPieceInsight,
 } from "@/src/lib/wardrobeInsights";
 import { safeGoBack } from "@/src/lib/navigation";
+import {
+  buildWardrobeSuggestions,
+  type WardrobeSuggestion,
+} from "@/src/lib/wardrobeSuggestions";
 import type { ClothingItem } from "@/src/types/ClothingItem";
+import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 import { addDays, toDayKey } from "@/src/utils/date";
 import {
   subscribeOutfitsInRange,
@@ -52,6 +59,8 @@ export default function InsightsScreen() {
   const [period, setPeriod] = useState<InsightPeriodKey>("30d");
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [outfitRecords, setOutfitRecords] = useState<DailyOutfitRecord[]>([]);
+  const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
+  const [activeShopSuggestion, setActiveShopSuggestion] = useState<WardrobeSuggestion | null>(null);
   const [loadingItems, setLoadingItems] = useState(true);
 
   useEffect(() => {
@@ -81,6 +90,26 @@ export default function InsightsScreen() {
     );
 
     return () => unsubscribe();
+  }, [uid]);
+
+  useEffect(() => {
+    let active = true;
+    if (!uid) {
+      setProfilePreferences(null);
+      return () => {
+        active = false;
+      };
+    }
+    void loadUserProfilePreferences(uid)
+      .then((preferences) => {
+        if (active) setProfilePreferences(preferences);
+      })
+      .catch(() => {
+        if (active) setProfilePreferences(null);
+      });
+    return () => {
+      active = false;
+    };
   }, [uid]);
 
   useEffect(() => {
@@ -121,6 +150,15 @@ export default function InsightsScreen() {
     () => buildWardrobeInsights({ items, outfitRecords }),
     [items, outfitRecords]
   );
+  const wardrobeSuggestions = useMemo(
+    () =>
+      buildWardrobeSuggestions({
+        items,
+        profilePreferences,
+        savedLooks: outfitRecords.map(() => ({})),
+      }),
+    [items, outfitRecords, profilePreferences],
+  );
 
   const openAuraWithPrompt = useCallback((prompt: string) => {
     router.push({
@@ -157,14 +195,26 @@ export default function InsightsScreen() {
   );
 
   return (
-    <AuraInsightsDashboard
-      insights={insights}
-      loading={loadingItems}
-      period={period}
-      onPeriodChange={setPeriod}
-      onBack={() => safeGoBack("/")}
-      onStyleItem={handleStyleItem}
-      onAskAuraWhatToBuy={handleAskAuraWhatToBuy}
-    />
+    <>
+      <AuraInsightsDashboard
+        insights={insights}
+        loading={loadingItems}
+        period={period}
+        userId={uid}
+        wardrobeSuggestions={wardrobeSuggestions}
+        onPeriodChange={setPeriod}
+        onBack={() => safeGoBack("/")}
+        onStyleItem={handleStyleItem}
+        onAskAuraWhatToBuy={handleAskAuraWhatToBuy}
+        onFindSuggestionOptions={setActiveShopSuggestion}
+      />
+      <ShopOptionsSheet
+        visible={Boolean(activeShopSuggestion)}
+        suggestion={activeShopSuggestion}
+        userId={uid}
+        sourceScreen="insights"
+        onDismiss={() => setActiveShopSuggestion(null)}
+      />
+    </>
   );
 }

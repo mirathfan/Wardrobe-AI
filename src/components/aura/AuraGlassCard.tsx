@@ -25,7 +25,7 @@ function CardBackdrop({ intensity, warmHero }: { intensity: number; warmHero?: b
           StyleSheet.absoluteFill,
           {
             backgroundColor: warmHero
-              ? "rgba(43,18,76,0.16)"
+              ? "rgba(24,22,30,0.36)"
               : intensity >= 26
                 ? palette.colors.surfaceBase
                 : palette.colors.surfaceSoft,
@@ -97,7 +97,7 @@ export default function AuraGlassCard({
       ]
     : [
         "rgba(223,182,178,0.22)",
-        "rgba(82,43,91,0.18)",
+        "rgba(34,31,40,0.22)",
         "rgba(251,228,216,0.12)",
       ];
 

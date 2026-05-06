@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
   label: {
     color: Colors.dark.ctaText,
     fontSize: 16,
-    fontWeight: "700",
+    fontWeight: "600",
     fontFamily: Fonts.sans,
     letterSpacing: 0.4,
   },

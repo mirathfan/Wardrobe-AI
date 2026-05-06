@@ -39,7 +39,7 @@ type MenuAnchor = {
 
 type DrawerActionHandlers = {
   onShareChat: (thread: AIChatThread) => Promise<void> | void;
-  onAddToProject: (thread: AIChatThread) => Promise<void> | void;
+  onAddToProject?: (thread: AIChatThread) => Promise<void> | void;
   onTogglePin: (thread: AIChatThread) => Promise<void> | void;
   onRenameChat: (thread: AIChatThread, title: string) => Promise<void> | void;
   onArchiveChat: (thread: AIChatThread) => Promise<void> | void;
@@ -428,14 +428,16 @@ export default function AuraChatDrawer({
                 busy={busyAction === "share"}
                 onPress={() => void runMenuAction("share", () => onShareChat(menuThread))}
               />
-              <MenuActionRow
-                icon="folder-open-outline"
-                label="Add to project"
-                suffix=">"
-                colors={colors}
-                busy={busyAction === "project"}
-                onPress={() => void runMenuAction("project", () => onAddToProject(menuThread))}
-              />
+              {onAddToProject ? (
+                <MenuActionRow
+                  icon="folder-open-outline"
+                  label="Add to project"
+                  suffix=">"
+                  colors={colors}
+                  busy={busyAction === "project"}
+                  onPress={() => void runMenuAction("project", () => onAddToProject(menuThread))}
+                />
+              ) : null}
               <MenuActionRow
                 icon={menuThread.pinned ? "pin-outline" : "pin"}
                 label={menuThread.pinned ? "Unpin" : "Pin"}
@@ -721,7 +723,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
     fontSize: 27,
     lineHeight: 30,
-    fontWeight: "700",
+    fontWeight: "600",
     letterSpacing: 0,
   },
   searchShell: {
@@ -757,7 +759,7 @@ const styles = StyleSheet.create({
     color: auraTheme.textFaint,
     fontFamily: Fonts.sans,
     fontSize: 11,
-    fontWeight: "700",
+    fontWeight: "600",
     letterSpacing: 0.8,
     textTransform: "uppercase",
   },
@@ -850,7 +852,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
     fontSize: 15,
     lineHeight: 19,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   menuSubtitle: {
     fontFamily: Fonts.sans,
@@ -880,7 +882,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
     fontSize: 14,
     lineHeight: 18,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   renameRoot: {
     flex: 1,
@@ -902,7 +904,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
     fontSize: 17,
     lineHeight: 22,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   renameInput: {
     borderWidth: 1,
@@ -930,6 +932,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
     fontSize: 13.5,
     lineHeight: 18,
-    fontWeight: "700",
+    fontWeight: "600",
   },
 });

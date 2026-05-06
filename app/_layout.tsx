@@ -1,8 +1,9 @@
 import { DarkTheme, ThemeProvider } from "@react-navigation/native";
 import { router, Stack, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { signOut } from "firebase/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Platform, StyleSheet, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import LottieView from "lottie-react-native";
 import Animated, {
   Easing,
@@ -16,12 +17,14 @@ import Animated, {
 import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
 import { isVisionBackgroundRemovalAvailable } from "../src/bg/removeBackground";
 import { loadUserProfilePreferences } from "../src/lib/userProfile";
+import { getCachedProfilePreferences } from "../src/lib/localCache";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Colors } from "@/constants/theme";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import AuraRing, { RING_SIZE_LG } from "@/src/components/brand/AuraRing";
 import { configureGoogleSignIn } from "@/src/auth/googleAuth";
 import { logDeviceSecurityContext } from "@/src/lib/security";
+import { auth } from "@/src/lib/firebase";
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -33,6 +36,8 @@ const LOADING_MESSAGES = [
   "Calibrating your AURA...",
   "Almost ready...",
 ];
+
+type ProfileGateState = "idle" | "loading" | "onboarded" | "needs_onboarding" | "error";
 
 function BrandedLoadingScreen() {
   const reducedMotion = useReducedMotion();
@@ -76,12 +81,55 @@ function BrandedLoadingScreen() {
   );
 }
 
+function ProfileLoadErrorScreen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <View style={loadingStyles.container}>
+      <View style={loadingStyles.errorPanel}>
+        <Text style={loadingStyles.errorTitle}>Couldn&apos;t load your profile</Text>
+        <Text style={loadingStyles.errorCopy}>
+          Check your connection and try again. Your account is still signed in.
+        </Text>
+        <Pressable accessibilityRole="button" onPress={onRetry} style={loadingStyles.retryButton}>
+          <Text style={loadingStyles.retryText}>Retry</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function AuthLoadTimeoutScreen({
+  onRetry,
+  onSignInAgain,
+}: {
+  onRetry: () => void;
+  onSignInAgain: () => void;
+}) {
+  return (
+    <View style={loadingStyles.container}>
+      <View style={loadingStyles.errorPanel}>
+        <Text style={loadingStyles.errorTitle}>Still checking your session…</Text>
+        <Text style={loadingStyles.errorCopy}>
+          Your connection may be offline or Firebase is taking longer than usual.
+        </Text>
+        <View style={loadingStyles.errorActions}>
+          <Pressable accessibilityRole="button" onPress={onRetry} style={loadingStyles.retryButton}>
+            <Text style={loadingStyles.retryText}>Retry</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={onSignInAgain} style={loadingStyles.secondaryButton}>
+            <Text style={loadingStyles.secondaryText}>Sign in again</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function AuthGate() {
-  const { user, loading } = useAuth();
+  const { user, loading, authCheckTimedOut, retryAuthCheck } = useAuth();
   const segments = useSegments();
-  const [profileLoading, setProfileLoading] = useState(true);
-  const [onboardingCompleted, setOnboardingCompleted] = useState(false);
-  const isRevalidatingOnboarding = useRef(false);
+  const [profileState, setProfileState] = useState<ProfileGateState>("loading");
+  const [profileRetryKey, setProfileRetryKey] = useState(0);
+  const routedRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,77 +137,82 @@ function AuthGate() {
     if (loading) return () => { cancelled = true; };
 
     if (!user?.uid) {
-      setOnboardingCompleted(false);
-      setProfileLoading(false);
+      setProfileState("idle");
       return () => {
         cancelled = true;
       };
     }
 
-    setProfileLoading(true);
-    void loadUserProfilePreferences(user.uid)
-      .then((profile) => {
+    setProfileState("loading");
+    void (async () => {
+      const cached = await getCachedProfilePreferences(user.uid).catch(() => null);
+      const cachedOnboarded = Boolean(cached?.data?.onboardingCompleted);
+      if (cachedOnboarded && !cancelled) {
+        setProfileState("onboarded");
+      }
+      try {
+        const profile = await loadUserProfilePreferences(user.uid);
         if (cancelled) return;
-        setOnboardingCompleted(Boolean(profile.onboardingCompleted));
-      })
-      .catch(() => {
+        setProfileState(profile.onboardingCompleted ? "onboarded" : "needs_onboarding");
+      } catch {
         if (cancelled) return;
-        setOnboardingCompleted(false);
-      })
-      .finally(() => {
-        if (!cancelled) setProfileLoading(false);
-      });
+        setProfileState(cachedOnboarded ? "onboarded" : "error");
+      }
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [loading, user?.uid]);
+  }, [loading, profileRetryKey, user?.uid]);
 
   useEffect(() => {
-    if (loading || profileLoading) return;
+    if (loading || profileState === "loading" || profileState === "error") return;
     const inAuthGroup = segments[0] === "(auth)";
     const inOnboardingGroup = segments[0] === "(onboarding)";
 
     if (!user && !inAuthGroup) {
-      router.replace("/(auth)/welcome");
+      if (routedRef.current !== "auth") {
+        routedRef.current = "auth";
+        router.replace("/(auth)/welcome");
+      }
       return;
     }
 
-    if (user && !onboardingCompleted && !inOnboardingGroup && !isRevalidatingOnboarding.current) {
-      let cancelled = false;
-      isRevalidatingOnboarding.current = true;
-      setProfileLoading(true);
-      void loadUserProfilePreferences(user.uid)
-        .then((profile) => {
-          if (cancelled) return;
-          const completed = Boolean(profile.onboardingCompleted);
-          setOnboardingCompleted(completed);
-          if (!completed) {
-            router.replace("/(onboarding)");
-          }
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setOnboardingCompleted(false);
-          router.replace("/(onboarding)");
-        })
-        .finally(() => {
-          if (!cancelled) setProfileLoading(false);
-          isRevalidatingOnboarding.current = false;
-        });
-      return () => {
-        cancelled = true;
-        isRevalidatingOnboarding.current = false;
-      };
+    if (user && profileState === "needs_onboarding" && !inOnboardingGroup) {
+      if (routedRef.current !== "onboarding") {
+        routedRef.current = "onboarding";
+        router.replace("/(onboarding)");
+      }
+      return;
     }
 
-    if (user && onboardingCompleted && (inAuthGroup || inOnboardingGroup)) {
-      router.replace("/(tabs)");
+    if (user && profileState === "onboarded" && (inAuthGroup || inOnboardingGroup)) {
+      if (routedRef.current !== "tabs") {
+        routedRef.current = "tabs";
+        router.replace("/(tabs)");
+      }
     }
-  }, [loading, onboardingCompleted, profileLoading, segments, user]);
+  }, [loading, profileState, segments, user]);
 
-  if (loading || profileLoading) {
+  if (loading && authCheckTimedOut) {
+    return (
+      <AuthLoadTimeoutScreen
+        onRetry={retryAuthCheck}
+        onSignInAgain={() => {
+          void signOut(auth).finally(() => {
+            retryAuthCheck();
+            router.replace("/(auth)/login");
+          });
+        }}
+      />
+    );
+  }
+
+  if (loading || (user && profileState === "loading")) {
     return <BrandedLoadingScreen />;
+  }
+  if (user && profileState === "error") {
+    return <ProfileLoadErrorScreen onRetry={() => setProfileRetryKey((value) => value + 1)} />;
   }
 
   return (
@@ -168,6 +221,7 @@ function AuthGate() {
       <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="aura/swipe" options={{ headerShown: false }} />
+      <Stack.Screen name="dev/analytics" options={{ headerShown: false }} />
     </Stack>
   );
 }
@@ -196,6 +250,62 @@ const loadingStyles = StyleSheet.create({
   lottie: {
     width: 40,
     height: 40,
+  },
+  errorPanel: {
+    position: "absolute",
+    top: "38%",
+    width: "82%",
+    maxWidth: 360,
+    alignItems: "center",
+    gap: 14,
+    transform: [{ translateY: -60 }],
+  },
+  errorTitle: {
+    color: Colors.dark.textPrimary,
+    fontSize: 20,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  errorCopy: {
+    color: Colors.dark.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  retryButton: {
+    minHeight: 44,
+    minWidth: 120,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    backgroundColor: Colors.dark.tint,
+    paddingHorizontal: 18,
+  },
+  retryText: {
+    color: Colors.dark.background,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  errorActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 10,
+  },
+  secondaryButton: {
+    minHeight: 44,
+    minWidth: 120,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+    paddingHorizontal: 18,
+  },
+  secondaryText: {
+    color: Colors.dark.textPrimary,
+    fontSize: 14,
+    fontWeight: "800",
   },
 });
 

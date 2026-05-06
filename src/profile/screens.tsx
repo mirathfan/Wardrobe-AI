@@ -101,6 +101,7 @@ type DeleteAccountDataResult = {
   ok: boolean;
   firestoreDocumentsDeleted: number;
   storageFilesDeleted: number;
+  rateLimitDocumentsDeleted?: number;
   authUserDeleted: boolean;
 };
 
@@ -755,10 +756,6 @@ export function AccountScreen() {
     });
   }, [user?.uid]);
 
-  const manageSubscription = useCallback(() => {
-    Alert.alert("Subscriptions are coming soon.", "Your current plan is Free.");
-  }, []);
-
   const confirmDeleteAccount = useCallback(() => {
     Alert.alert(
       "Delete account?",
@@ -918,12 +915,6 @@ export function AccountScreen() {
               />
             </AccountSection>
 
-            <AccountSection title="PLAN">
-              <ProfileValueRow label="Current plan" value="Free" />
-              <AccountActionRow title="Manage subscription" subtitle="Subscriptions are coming soon." onPress={manageSubscription} />
-              <AccountActionRow title="Billing history" subtitle="Billing history is not available on the Free plan." onPress={manageSubscription} />
-            </AccountSection>
-
             <AccountSection title="ADVANCED">
               <AccountActionRow
                 title={showAdvanced ? "Hide advanced details" : "Show advanced details"}
@@ -948,7 +939,7 @@ export function AccountScreen() {
               />
               <AccountActionRow
                 title="Delete account"
-                subtitle="Requires recent login. Backend closet-data deletion is not implemented here."
+                subtitle="Permanently deletes your account data and owned uploads."
                 onPress={confirmDeleteAccount}
                 disabled={workingAction === "Delete account"}
                 danger
@@ -1594,7 +1585,7 @@ export function NotificationsScreen() {
   return (
     <ProfileSectionScreen
       title="Notifications"
-      subtitle="Saved now for later. Not yet wired into reminders."
+      subtitle="Notification preferences"
       onSave={save}
       saving={saving}
     >
@@ -1602,16 +1593,6 @@ export function NotificationsScreen() {
         <ActivityIndicator color={colors.accent} />
       ) : (
         <>
-          <ProfileBooleanRow
-            label="Laundry reminders"
-            value={!!profile.notifications.laundryReminders}
-            onSet={(value) =>
-              setProfile((prev) => ({
-                ...prev,
-                notifications: { ...prev.notifications, laundryReminders: value },
-              }))
-            }
-          />
           <ProfileBooleanRow
             label="Outfit reminders"
             value={!!profile.notifications.outfitReminders}

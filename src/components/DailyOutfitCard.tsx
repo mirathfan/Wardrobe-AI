@@ -98,11 +98,9 @@ export default function DailyOutfitCard({
   thinking,
   onSelectLook,
   onUseOutfit,
-  onWhy,
   onMarkWorn,
   onClearPlan,
   onCopyPlan,
-  onSwapSlot,
 }: Props) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
@@ -153,7 +151,7 @@ export default function DailyOutfitCard({
         </View>
       ) : null}
 
-      {thinking ? <Text style={[homeTypography.caption, styles.thinking, { color: colors.textSecondary }]}>✨ Thinking…</Text> : null}
+      {thinking ? <Text style={[homeTypography.caption, styles.thinking, { color: colors.textSecondary }]}>Thinking...</Text> : null}
       <View style={{ height: 10 }} />
       <FlatLayCanvas items={gridItems} />
 
@@ -161,7 +159,7 @@ export default function DailyOutfitCard({
         <View style={styles.scoreWrap}>
           <Text style={[homeTypography.bodySmall, styles.score, { color: colors.text }]}>Outfit score: {activeLook.score}%</Text>
           {(activeLook.reasons ?? []).slice(0, 2).map((reason) => (
-            <Text key={reason} style={[homeTypography.caption, styles.reason, { color: colors.textSecondary }]}>• {reason}</Text>
+            <Text key={reason} style={[homeTypography.caption, styles.reason, { color: colors.textSecondary }]}>{reason}</Text>
           ))}
         </View>
       ) : null}
@@ -170,19 +168,9 @@ export default function DailyOutfitCard({
         {hasWorn ? (
           <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Outfit already marked worn.</Text>
         ) : hasPlanned ? (
-          <>
-            <PrimaryActionButton label="Mark Worn" colors={colors} onPress={onMarkWorn} />
-            <Pressable style={[styles.secondaryBtn, auraButtonStyle(colors, "secondary", false, "compact")]} onPress={() => Alert.alert("Edit", "Tap a slot to swap an item.") }>
-              <Text style={[homeTypography.caption, auraButtonTextStyle(colors, "secondary"), { fontSize: 13 }]}>Edit/Swap</Text>
-            </Pressable>
-          </>
+          <PrimaryActionButton label="Mark Worn" colors={colors} onPress={onMarkWorn} />
         ) : (
-          <>
-            <PrimaryActionButton label="Use this outfit" colors={colors} onPress={onUseOutfit} />
-            <Pressable style={[styles.secondaryBtn, auraButtonStyle(colors, "secondary", false, "compact")]} onPress={onWhy}>
-              <Text style={[homeTypography.caption, auraButtonTextStyle(colors, "secondary"), { fontSize: 13 }]}>Why?</Text>
-            </Pressable>
-          </>
+          <PrimaryActionButton label="Use this outfit" colors={colors} onPress={onUseOutfit} />
         )}
       </View>
 

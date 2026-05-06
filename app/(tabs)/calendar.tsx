@@ -1,6 +1,5 @@
 import { router } from "expo-router";
 import { BlurView } from "expo-blur";
-import { doc, increment, serverTimestamp, writeBatch } from "firebase/firestore";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -27,6 +26,7 @@ import {
   auraSheetBackdropStyle,
   auraTypography,
 } from "@/src/components/ui/auraStylePrimitives";
+import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import { useDayEvents } from "@/src/hooks/useDayEvents";
 import { useDayWeather } from "@/src/hooks/useDayWeather";
 import { useNow } from "@/src/hooks/useNow";
@@ -40,7 +40,6 @@ import {
   clearPlan,
   copyPlan,
   setPlanned,
-  setWorn,
   subscribeOutfitByDate,
   subscribeOutfitsInRange,
 } from "@/src/utils/dailyOutfits";
@@ -50,15 +49,15 @@ import { getLoggedOutfitDays, getOutfitStreak } from "@/src/utils/streak";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
-import { db } from "@/src/lib/firebase";
-import { MAX_WEARS_BEFORE_WASH, listenToItems, normalizeLaundryStatus, toCanonicalCategory } from "@/src/lib/items";
+import { listenToItems, normalizeLaundryStatus, toCanonicalCategory } from "@/src/lib/items";
 import { impactLight } from "@/src/lib/haptics";
 import { Toast } from "@/src/lib/toast";
+import { markOutfitWorn, planOutfitForToday } from "@/src/lib/wearOutfit";
 import { FLOATING_TAB_BAR_HEIGHT } from "@/src/constants/dock";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 type SectionIconName = "calendar" | "sparkles" | "chart.bar.xaxis";
-type SlotKey = keyof OutfitItemsByCategory;
+type SlotKey = Exclude<keyof OutfitItemsByCategory, "accessories">;
 type RailWeather = { high?: number; low?: number; label?: string };
 
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;
@@ -77,6 +76,23 @@ function SectionHeader({ icon, title }: { icon: SectionIconName; title: string }
     <View style={styles.sectionHeader}>
       <Ionicons name={iconFallback(icon)} size={17} color={colors.iridescentStart} />
       <Text style={[styles.sectionTitle, { color: colors.iridescentStart }]}>{title}</Text>
+    </View>
+  );
+}
+
+function CalendarStatusSkeleton() {
+  const layout = useResponsiveLayout();
+  return (
+    <View
+      style={{
+        gap: 10,
+        padding: layout.cardPadding,
+        borderRadius: layout.mediumRadius,
+        overflow: "hidden",
+      }}
+    >
+      <AuraSkeletonLine width="42%" height={12} />
+      <AuraSkeleton height={56} radius={14} />
     </View>
   );
 }
@@ -646,25 +662,41 @@ export default function CalendarScreen() {
     if (record?.plannedOutfit) return record.plannedOutfit;
     if (!selectedLook) return null;
     const planned = lookToPlanned(selectedLook);
-    const next = await setPlanned(uid, selectedDayKey, planned);
+    await planOutfitForToday({
+      uid,
+      source: "calendar",
+      title: selectedLook.label,
+      look: planned,
+      date: day.selectedDate,
+    });
+    const next = {
+      dateKey: selectedDayKey,
+      plannedOutfit: planned,
+    };
     if (!next) return null;
-    setRecord(next);
+    setRecord((prev) => ({ ...(prev ?? { dateKey: selectedDayKey }), plannedOutfit: planned }));
     return next.plannedOutfit ?? null;
-  }, [record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
+  }, [day.selectedDate, record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
 
   const onUseOutfit = useCallback(async () => {
     if (!uid || !selectedLook) return;
     try {
       const planned = lookToPlanned(selectedLook);
-      const next = await setPlanned(uid, selectedDayKey, planned);
-      setRecord(next);
+      await planOutfitForToday({
+        uid,
+        source: "calendar",
+        title: selectedLook.label,
+        look: planned,
+        date: day.selectedDate,
+      });
+      setRecord((prev) => ({ ...(prev ?? { dateKey: selectedDayKey }), plannedOutfit: planned }));
       setSelectedLookId(selectedLook.id);
       Toast.success("Planned", "Outfit attached to this day.");
       await hapticLight();
     } catch (error: any) {
       Toast.error("Plan failed", error?.message ?? "Unable to plan this outfit.");
     }
-  }, [selectedDayKey, selectedLook, uid]);
+  }, [day.selectedDate, selectedDayKey, selectedLook, uid]);
 
   const onClearPlan = useCallback(async () => {
     if (!uid) return;
@@ -755,56 +787,42 @@ export default function CalendarScreen() {
       return;
     }
 
-    const wornItems = planned.itemsByCategory;
-    if (toDayKey(day.selectedDate) === toDayKey(new Date()) && uid) {
-      const ids = [wornItems.outerwear, wornItems.top, wornItems.bottom, wornItems.shoes].filter(Boolean) as string[];
-      for (const itemId of ids) {
-        const item = itemsById.get(itemId);
-        if (!item) continue;
-        if (normalizeLaundryStatus(item) === "in_laundry") {
-          Alert.alert("Cannot mark outfit worn", `${item.name || item.category} is in laundry.`);
-          return;
-        }
-        if ((item.wearCountSinceWash ?? 0) >= MAX_WEARS_BEFORE_WASH) {
-          Alert.alert("Wash required", `${item.name || item.category} reached the wear limit.`);
-          return;
-        }
-      }
-
-      try {
-        setSaving(true);
-        const batch = writeBatch(db);
-        ids.forEach((itemId) => {
-          const itemRef = doc(db, "users", uid, "items", itemId);
-          batch.update(itemRef, {
-            status: "WORN",
-            laundryStatus: "needs_wash",
-            wearCountSinceWash: increment(1),
-            lastWornDate: serverTimestamp(),
-            lastWornAt: serverTimestamp(),
-            laundryUpdatedAt: serverTimestamp(),
-          });
-        });
-        await batch.commit();
-      } catch (e: unknown) {
-        const err = e as { message?: string };
-        Toast.error("Error", err.message ?? "Failed to update worn status");
-      } finally {
-        setSaving(false);
-      }
-    }
-
     if (!uid) return;
-
-    const next = await setWorn(uid, selectedDayKey, {
-      itemsByCategory: wornItems,
-      wornAt: Date.now(),
-    });
-    setRecord(next);
-    Toast.worn();
-    await loadStreakData();
-    await hapticLight();
-  }, [day.selectedDate, itemsById, loadStreakData, record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
+    try {
+      setSaving(true);
+      const result = await markOutfitWorn({
+        uid,
+        source: "calendar",
+        title: selectedLook?.label ?? "Calendar outfit",
+        look: planned,
+        wornAt: day.selectedDate,
+        updateItemWearCounts: toDayKey(day.selectedDate) === toDayKey(new Date()),
+      });
+      setRecord((prev) => ({
+        ...(prev ?? { dateKey: selectedDayKey }),
+        plannedOutfit: planned ?? prev?.plannedOutfit,
+        wornOutfit: {
+          itemsByCategory: planned.itemsByCategory,
+          wornAt: day.selectedDate.getTime(),
+          source: "calendar",
+          title: selectedLook?.label ?? "Calendar outfit",
+          outfitSnapshot: result.outfitSnapshot,
+        },
+      }));
+      if (result.alreadyMarked) {
+        Toast.success("Already marked worn today", "This outfit was not double-counted.");
+      } else {
+        Toast.worn();
+      }
+      await loadStreakData();
+      await hapticLight();
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      Toast.error("Couldn't mark worn. Try again.", err.message);
+    } finally {
+      setSaving(false);
+    }
+  }, [day.selectedDate, loadStreakData, record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
 
   const swapOptions = useMemo(() => {
     if (!swapSlot) return [];
@@ -904,7 +922,7 @@ export default function CalendarScreen() {
           <View style={[themedStyles.card, themedStyles.emptyDayCard]}>
             <Text style={themedStyles.emptyDayTitle}>No outfit logged</Text>
             <Text style={themedStyles.muted}>
-              Nothing was marked worn for {selectedDateLabel}. You can still plan a look if you want this day filled in.
+              Nothing was marked worn for {selectedDateLabel}.
             </Text>
             <Pressable style={themedStyles.planCta} onPress={() => setSelectedLookId("casual")}>
               <Text style={themedStyles.planCtaText}>Plan an outfit</Text>
@@ -941,14 +959,12 @@ export default function CalendarScreen() {
           </View>
           <View style={themedStyles.insightsList}>
             {weeklyInsights.map((line) => (
-              <Pressable key={line} onPress={() => router.push("/(tabs)")}>
-                <Text style={themedStyles.muted}>• {line}</Text>
-              </Pressable>
+              <Text key={line} style={themedStyles.muted}>{line}</Text>
             ))}
           </View>
         </View>
 
-        {loadingItems ? <Text style={themedStyles.muted}>Loading wardrobe…</Text> : null}
+        {loadingItems ? <CalendarStatusSkeleton /> : null}
         {saving ? <Text style={themedStyles.muted}>Saving worn status…</Text> : null}
       </ScrollView>
 
@@ -1058,7 +1074,7 @@ return StyleSheet.create({
   monthPickerText: {
     color: colors.lightPurple,
     fontSize: 12,
-    fontWeight: "900",
+    fontWeight: "700",
   },
   sectionGap: {
     height: layout.sectionGap - 4,
@@ -1077,7 +1093,7 @@ return StyleSheet.create({
     color: colors.text,
     fontSize: 18,
     lineHeight: 24,
-    fontWeight: "900",
+    fontWeight: "700",
     marginBottom: 4,
   },
   muted: {
@@ -1182,7 +1198,7 @@ return StyleSheet.create({
     color: colors.text,
     fontSize: 17,
     lineHeight: 22,
-    fontWeight: "900",
+    fontWeight: "700",
     textAlign: "center",
   },
   weekdayRow: {
@@ -1195,7 +1211,7 @@ return StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 11,
     lineHeight: 14,
-    fontWeight: "900",
+    fontWeight: "600",
     textAlign: "center",
   },
   calendarGrid: {
@@ -1224,7 +1240,7 @@ return StyleSheet.create({
   dateText: {
     fontSize: 14,
     lineHeight: 18,
-    fontWeight: "900",
+    fontWeight: "700",
     textAlign: "center",
   },
   todayMarker: {

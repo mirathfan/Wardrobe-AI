@@ -143,7 +143,7 @@ export default function LoginScreen() {
 
   return (
     <AuthScaffold
-      eyebrow="WARDROBE AI"
+      eyebrow="YOUR AI WARDROBE STYLIST"
       title="Welcome back"
       subtitle="Sign in to pick up your wardrobe, planner, and AURA recommendations."
       footer={

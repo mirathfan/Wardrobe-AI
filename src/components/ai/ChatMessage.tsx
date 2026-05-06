@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, Easing, Text, View } from "react-native";
+import { Animated, Easing, Text, View, type DimensionValue } from "react-native";
 import Reanimated, {
   Easing as ReanimatedEasing,
   useAnimatedStyle,
@@ -12,9 +12,10 @@ import { Fonts, type AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import AppImage from "@/src/components/common/AppImage";
+import { AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { formatUrlForDisplay, isUrlOnlyMessage } from "@/src/lib/formatChatText";
-import { sanitizeDisplayText } from "@/src/lib/text";
+import { sanitizeDisplayText, sanitizeMultilineDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLook, AuraLookAction, AuraLookOptionMeta, AuraOutfitPhotoAction } from "@/src/types/aura";
 
@@ -30,6 +31,30 @@ const USER_MULTI_IMAGE_MAX_GRID_WIDTH = 248;
 const USER_MULTI_IMAGE_MIN_GRID_WIDTH = 196;
 const USER_IMAGE_RADIUS = 20;
 const STREAM_TAIL_REVEAL_MS = 130;
+
+function TypingDots({ colors, pulse }: { colors: AppColors; pulse: Animated.Value }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 7, minHeight: 24 }}>
+      {[0, 1, 2].map((index) => (
+        <Animated.View
+          key={index}
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 999,
+            backgroundColor: colors.textSecondary,
+            opacity:
+              index === 0
+                ? pulse
+                : index === 1
+                  ? pulse.interpolate({ inputRange: [0.45, 1], outputRange: [0.65, 0.42] })
+                  : pulse.interpolate({ inputRange: [0.45, 1], outputRange: [0.42, 0.75] }),
+          }}
+        />
+      ))}
+    </View>
+  );
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -55,7 +80,7 @@ function getMultiImageGridWidth(layoutWidth: number, screenSize: string) {
 }
 
 function cleanIntroText(value?: string | null) {
-  return sanitizeDisplayText(value)?.replace(/\s+/g, " ").trim() ?? "";
+  return sanitizeMultilineDisplayText(value) ?? "";
 }
 
 function fallbackStructuredIntro(message: AIMessage) {
@@ -145,12 +170,12 @@ function SmoothStreamingText({
     <Text
       style={{
         color: colors.text,
-        fontSize: 14.5,
-        lineHeight: 21,
-        fontWeight: "500",
+        fontSize: 15,
+        lineHeight: 23,
+        fontWeight: "400",
         fontFamily: Fonts.sans,
-        marginLeft: 2,
-        maxWidth: "92%",
+        marginLeft: 0,
+        maxWidth: "94%",
       }}
     >
       {baseText}
@@ -165,6 +190,61 @@ function SmoothStreamingText({
         </Animated.Text>
       ) : null}
     </Text>
+  );
+}
+
+function FormattedAuraText({
+  text,
+  colors,
+  marginLeft = 0,
+  marginRight = 20,
+  maxWidth = "94%",
+}: {
+  text: string;
+  colors: AppColors;
+  marginLeft?: number;
+  marginRight?: number;
+  maxWidth?: DimensionValue;
+}) {
+  const blocks = text
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  if (!blocks.length) return null;
+
+  return (
+    <View style={{ gap: 12, marginLeft, marginRight, maxWidth }}>
+      {blocks.map((block, blockIndex) => {
+        const lines = block
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        return (
+          <View key={`${blockIndex}-${lines[0] ?? "block"}`} style={{ gap: lines.length > 1 ? 6 : 0 }}>
+            {lines.map((line, lineIndex) => {
+              const isListLine = /^[-•]\s+/.test(line) || /^\d+[.)]\s+/.test(line);
+              const isHeaderLine = !isListLine && line.endsWith(":") && line.length <= 64;
+              return (
+                <AuraText
+                  key={`${blockIndex}-${lineIndex}-${line}`}
+                  variant={isHeaderLine ? "bodyStrong" : "body"}
+                  tone="primary"
+                  style={{
+                    color: isHeaderLine ? colors.textPrimary : colors.textSecondary,
+                    fontSize: isHeaderLine ? 14.5 : 15,
+                    lineHeight: isHeaderLine ? 20 : 23,
+                    paddingLeft: isListLine ? 8 : 0,
+                  }}
+                >
+                  {line}
+                </AuraText>
+              );
+            })}
+          </View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -212,16 +292,16 @@ function ChatMessage({
   const structuredIntroText = cleanIntroText(message.assistantIntroText ?? message.text) || fallbackStructuredIntro(message);
   const isUser = message.kind === "user_text" || message.type === "user";
   const isAuraText = message.kind === "aura_text";
-  const displayText = isUser ? message.text : sanitizeDisplayText(message.text);
+  const displayText = isUser ? message.text : sanitizeMultilineDisplayText(message.text);
   const isStreamingPlaceholder = !isUser && !!message.streaming && !displayText;
   const isUserUrlOnly = isUser && isUrlOnlyMessage(displayText);
   const formattedUserText = isUserUrlOnly ? formatUrlForDisplay(String(displayText ?? "")) : displayText;
   const messageAttachments = message.attachments ?? [];
   const labelTextColor = colors.textMuted;
-  const assistantSurface = colors.surfaceGlass;
-  const assistantBorder = colors.border;
-  const userBubbleSurface = colors.purpleSurface;
-  const userBubbleBorder = colors.purpleBorder;
+  const assistantSurface = colors.surfaceMuted;
+  const assistantBorder = colors.borderSoft;
+  const userBubbleSurface = colors.surfaceElevated;
+  const userBubbleBorder = colors.borderStrong;
   const imageAttachments = messageAttachments.filter(
     (attachment): attachment is ChatImageAttachment => attachment.type === "image",
   );
@@ -326,12 +406,12 @@ function ChatMessage({
 
   if (message.type === "outfit" && message.outfits?.length) {
     return (
-      <View style={{ gap: 6 }}>
+      <View style={{ gap: 10 }}>
         <Animated.View style={{ opacity: introFade, transform: [{ translateY: rise }, { scale }] }}>
           <StructuredAuraIntro colors={colors} text={structuredIntroText} compact />
         </Animated.View>
         <OutfitCardEntry>
-          <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }], gap: 10 }}>
+          <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }], gap: 12 }}>
             {message.outfits.map((outfit, index) => (
               <OutfitMessage
                 key={`${message.id}-${outfit.id}`}
@@ -360,7 +440,7 @@ function ChatMessage({
           alignItems: "stretch",
           marginLeft: 0,
           marginRight: isLookSurface ? 0 : 8,
-          gap: 6,
+          gap: 10,
         }}
       >
         <Animated.View style={{ opacity: introFade, transform: [{ translateY: rise }, { scale }] }}>
@@ -368,7 +448,7 @@ function ChatMessage({
         </Animated.View>
         <OutfitCardEntry>
           <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }] }}>
-            <View style={{ maxWidth: "100%", marginLeft: 0 }}>
+            <View style={{ maxWidth: "100%", marginLeft: 0, marginTop: 2 }}>
               <AuraReplyCard
                 data={message.aura}
                 itemsById={itemsById}
@@ -411,7 +491,7 @@ function ChatMessage({
             paddingHorizontal: isSuggestion || isError ? 13 : 14,
             paddingVertical: isSuggestion || isError ? 12 : 8,
             backgroundColor: isError
-              ? colors.surfaceGlass
+              ? colors.surfaceMuted
               : isSuggestion
                 ? assistantSurface
                 : colors.surfaceSoft,
@@ -423,10 +503,10 @@ function ChatMessage({
         >
           {isSuggestion || isError ? (
             <View style={{ gap: 8 }}>
-              <Text style={{ color: labelTextColor, fontSize: 10.5, fontWeight: "800", letterSpacing: 0 }}>
-                {isError ? "AURA couldn't finish" : "AURA note"}
+              <Text style={{ color: labelTextColor, fontSize: 10.5, fontWeight: "500", letterSpacing: 1.2, textTransform: "uppercase" }}>
+                {isError ? "Couldn't finish" : "Stylist note"}
               </Text>
-              <Text selectable={isError} style={{ color: isError ? colors.textSecondary : colors.text, fontSize: 13.5, lineHeight: 20, fontWeight: "600" }}>
+              <Text selectable={isError} style={{ color: isError ? colors.textSecondary : colors.text, fontSize: 13.5, lineHeight: 20, fontWeight: "400" }}>
                 {displayText}
               </Text>
               {canRetry ? (
@@ -453,14 +533,14 @@ function ChatMessage({
                   }}
                 >
                   <Ionicons name="refresh-outline" size={13} color={colors.text} />
-                  <Text style={{ color: colors.text, fontSize: 11.5, fontWeight: "800", fontFamily: Fonts.sans }}>
+                  <Text style={{ color: colors.text, fontSize: 11.5, fontWeight: "600", fontFamily: Fonts.sans }}>
                     Retry
                   </Text>
                 </AuraPressable>
               ) : null}
             </View>
           ) : (
-            <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "600" }}>{displayText}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "500" }}>{displayText}</Text>
           )}
         </View>
       </Animated.View>
@@ -474,82 +554,18 @@ function ChatMessage({
           opacity: fade,
           transform: [{ translateY: rise }, { scale }],
           alignItems: "stretch",
-          marginRight: 10,
+          marginRight: 8,
           marginLeft: 0,
-          gap: 4,
+          gap: 6,
         }}
       >
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 6,
-            marginLeft: 2,
-          }}
-        >
-          <Animated.View
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: 999,
-              backgroundColor: colors.auraLavender,
-              shadowColor: colors.auraLavender,
-              shadowOpacity: 0.24,
-              shadowRadius: 4,
-              shadowOffset: { width: 0, height: 0 },
-              opacity: isStreamingPlaceholder ? pulse : 1,
-            }}
-          />
-          <Text
-            style={{
-              color: labelTextColor,
-              fontSize: 10,
-              fontWeight: "700",
-              letterSpacing: 0.75,
-              fontFamily: Fonts.sans,
-            }}
-          >
-            AURA
-          </Text>
-        </View>
-
         {isStreamingPlaceholder ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 7, marginLeft: 2, minHeight: 24 }}>
-            {[0, 1, 2].map((index) => (
-              <Animated.View
-                key={index}
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: 999,
-                  backgroundColor: colors.textSecondary,
-                  opacity:
-                    index === 0
-                      ? pulse
-                      : index === 1
-                        ? pulse.interpolate({ inputRange: [0.45, 1], outputRange: [0.7, 0.45] })
-                        : pulse.interpolate({ inputRange: [0.45, 1], outputRange: [0.45, 0.8] }),
-                }}
-              />
-            ))}
-          </View>
+          <TypingDots colors={colors} pulse={pulse} />
         ) : displayText ? (
           message.streaming ? (
             <SmoothStreamingText text={displayText} colors={colors} />
           ) : (
-            <Text
-              style={{
-                color: colors.text,
-                fontSize: 14.5,
-                lineHeight: 21,
-                fontWeight: "500",
-                fontFamily: Fonts.sans,
-                marginLeft: 2,
-                maxWidth: "92%",
-              }}
-            >
-              {displayText}
-            </Text>
+            <FormattedAuraText text={displayText} colors={colors} />
           )
         ) : null}
       </Animated.View>
@@ -584,7 +600,7 @@ function ChatMessage({
               borderColor: userBubbleBorder,
               marginLeft: 74,
               marginRight: 6,
-              ...auraShadow(0.18),
+              ...auraShadow(0.06),
             }}
           >
             <AttachmentPreviews attachments={nonImageAttachments} colors={colors} isUser />
@@ -602,7 +618,7 @@ function ChatMessage({
               borderColor: userBubbleBorder,
               marginLeft: 74,
               marginRight: 6,
-              ...auraShadow(0.18),
+              ...auraShadow(0.06),
             }}
           >
             <Text
@@ -612,7 +628,7 @@ function ChatMessage({
                 color: colors.text,
                 fontSize: 14.5,
                 lineHeight: 21,
-                fontWeight: "700",
+                fontWeight: "400",
                 fontFamily: Fonts.sans,
               }}
             >
@@ -628,42 +644,6 @@ function ChatMessage({
     <Animated.View
       style={{ opacity: fade, transform: [{ translateY: rise }, { scale }], alignItems: isUser ? "flex-end" : "flex-start" }}
     >
-      {!isUser ? (
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 6,
-            marginBottom: 4,
-            marginLeft: 10,
-          }}
-        >
-          <View
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: 999,
-              backgroundColor: colors.auraLavender,
-              shadowColor: colors.auraLavender,
-              shadowOpacity: 0.24,
-              shadowRadius: 4,
-              shadowOffset: { width: 0, height: 0 },
-            }}
-          />
-          <Text
-            style={{
-              color: labelTextColor,
-              fontSize: 10,
-              fontWeight: "700",
-              letterSpacing: 0.75,
-              fontFamily: Fonts.sans,
-            }}
-          >
-            AURA
-          </Text>
-        </View>
-      ) : null}
-
       <View
           style={{
             maxWidth: isUserUrlOnly ? "68%" : isUser ? "74%" : isAuraText ? "76%" : "78%",
@@ -673,26 +653,13 @@ function ChatMessage({
             backgroundColor: isUser ? userBubbleSurface : assistantSurface,
             borderWidth: 1,
             borderColor: isUser ? userBubbleBorder : assistantBorder,
-            marginLeft: isUser ? 74 : layout.screenSize === "compact" ? 6 : 8,
+            marginLeft: isUser ? 74 : layout.screenSize === "compact" ? 4 : 6,
             marginRight: isUser ? 6 : 28,
-            ...auraShadow(isUser ? 0.18 : 0.14),
+            ...auraShadow(isUser ? 0.06 : 0.04),
           }}
       >
         {isStreamingPlaceholder ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
-            {[0, 1, 2].map((index) => (
-              <Animated.View
-                key={index}
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: 999,
-                  backgroundColor: colors.textSecondary,
-                  opacity: fade,
-                }}
-              />
-            ))}
-          </View>
+          <TypingDots colors={colors} pulse={pulse} />
         ) : (
           <>
             {messageAttachments.length ? (
@@ -708,7 +675,7 @@ function ChatMessage({
                   color: isUser ? colors.text : colors.text,
                   fontSize: 14.5,
                   lineHeight: 21,
-                  fontWeight: isUser ? "700" : "500",
+                  fontWeight: "400",
                   fontFamily: Fonts.sans,
                 }}
               >
@@ -805,7 +772,7 @@ function UserImageAttachmentMedia({
                   backgroundColor: colors.overlay,
                 }}
               >
-                <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900", fontFamily: Fonts.sans }}>
+                <Text style={{ color: colors.text, fontSize: 18, fontWeight: "600", fontFamily: Fonts.sans }}>
                   +{remainingCount}
                 </Text>
               </View>
@@ -847,7 +814,7 @@ function AttachmentPreviews({
             />
           ) : (
             <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-              <Text style={{ color: colors.text, fontWeight: "800" }}>Voice note</Text>
+              <Text style={{ color: colors.text, fontWeight: "600" }}>Voice note</Text>
             </View>
           )}
         </View>
@@ -917,54 +884,13 @@ function StructuredAuraIntro({
 }) {
   return (
     <View style={{ alignItems: "flex-start" }}>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 6,
-          marginBottom: 4,
-          marginLeft: compact ? 2 : 10,
-        }}
-      >
-        <View
-          style={{
-            width: 7,
-            height: 7,
-            borderRadius: 999,
-            backgroundColor: colors.auraLavender,
-            shadowColor: colors.auraLavender,
-            shadowOpacity: 0.24,
-            shadowRadius: 4,
-            shadowOffset: { width: 0, height: 0 },
-          }}
-        />
-        <Text
-          style={{
-            color: colors.textMuted,
-            fontSize: 10,
-            fontWeight: "700",
-            letterSpacing: 0.75,
-            fontFamily: Fonts.sans,
-          }}
-        >
-          AURA
-        </Text>
-      </View>
-
-      <Text
-        style={{
-          color: colors.text,
-          fontSize: 14.5,
-          lineHeight: 21,
-          fontWeight: "500",
-          fontFamily: Fonts.sans,
-          marginLeft: compact ? 2 : 8,
-          marginRight: 20,
-          maxWidth: compact ? "96%" : "84%",
-        }}
-      >
-        {text}
-      </Text>
+      <FormattedAuraText
+        text={text}
+        colors={colors}
+        marginLeft={compact ? 0 : 6}
+        marginRight={20}
+        maxWidth={compact ? "96%" : "84%"}
+      />
     </View>
   );
 }

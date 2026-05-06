@@ -25,23 +25,24 @@ import {
 
 import { Colors, Fonts, type AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import { AuraText, auraDesignTokens } from "@/src/components/ui/auraStylePrimitives";
 import { getAttachmentGroupingLabel } from "@/src/lib/auraIntent";
 
 import type { ChatAttachment, ChatAttachmentGroupRole } from "./chatTypes";
 
-const BASE_COMPOSER_HEIGHT = 50;
-const BASE_INPUT_HEIGHT = 34;
+const BASE_COMPOSER_HEIGHT = 48;
+const BASE_INPUT_HEIGHT = 32;
 const MAX_INPUT_LINES = 5;
 const INPUT_LINE_HEIGHT = 19;
 const INPUT_PADDING_TOP = Platform.OS === "ios" ? 7 : 5;
 const INPUT_PADDING_BOTTOM = Platform.OS === "ios" ? 1 : 1;
 const INPUT_VERTICAL_PADDING = INPUT_PADDING_TOP + INPUT_PADDING_BOTTOM;
 const MAX_INPUT_HEIGHT = INPUT_LINE_HEIGHT * MAX_INPUT_LINES + INPUT_VERTICAL_PADDING;
-const INPUT_SLOT_VERTICAL_PADDING = 8;
+const INPUT_SLOT_VERTICAL_PADDING = 7;
 const BASE_ROW_HEIGHT = BASE_COMPOSER_HEIGHT - 8;
 const MAX_INPUT_SLOT_HEIGHT = MAX_INPUT_HEIGHT + INPUT_SLOT_VERTICAL_PADDING;
 const ATTACHMENT_THUMB_SIZE = 76;
-const COMPOSER_RADIUS = 25;
+const COMPOSER_RADIUS = 24;
 const ATTACHMENT_COMPOSER_RADIUS = 24;
 const ATTACHMENT_MENU_WIDTH = 216;
 const ATTACHMENT_MENU_LEFT = 0;
@@ -103,7 +104,7 @@ export default function InputBar({
 }) {
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !loading;
   const canStop = loading && !!onStop;
-  const composerSideInset = 10;
+  const composerSideInset = 12;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [composerHeight, setComposerHeight] = React.useState(BASE_COMPOSER_HEIGHT);
   const [inputSlotHeight, setInputSlotHeight] = React.useState(BASE_ROW_HEIGHT);
@@ -114,7 +115,6 @@ export default function InputBar({
   const sendVisibilityAnim = React.useRef(new Animated.Value(canSend ? 1 : 0)).current;
   const sendMotionAnim = React.useRef(new Animated.Value(0)).current;
   const inputRef = React.useRef<TextInput>(null);
-  const initialValueRef = React.useRef(value);
   const lastAppliedHeightRef = React.useRef(BASE_ROW_HEIGHT);
   const nativeValueRef = React.useRef(value);
   const mirroredPropValueRef = React.useRef(value);
@@ -223,19 +223,17 @@ export default function InputBar({
   }, [attachmentRailHeight, reportComposerHeight]);
 
   React.useEffect(() => {
-    const isExternalValueChange =
-      value !== mirroredPropValueRef.current && value !== nativeValueRef.current;
+    const previousPropValue = mirroredPropValueRef.current;
     mirroredPropValueRef.current = value;
-    if (!isExternalValueChange) return;
-
-    nativeValueRef.current = value;
-    inputRef.current?.setNativeProps({ text: value });
-    if (!value) {
-      resetInputHeight();
+    if (value !== nativeValueRef.current) {
+      nativeValueRef.current = value;
+      if (!value && previousPropValue) {
+        inputRef.current?.clear();
+        inputRef.current?.setNativeProps({ text: "" });
+      } else {
+        inputRef.current?.setNativeProps({ text: value });
+      }
     }
-  }, [resetInputHeight, value]);
-
-  React.useEffect(() => {
     if (!value) {
       resetInputHeight();
     }
@@ -269,22 +267,22 @@ export default function InputBar({
     borderRadius: shellRadius,
     backgroundColor: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: ["rgba(31,8,45,0.16)", "rgba(42,13,58,0.24)"],
+      outputRange: ["rgba(18,17,22,0.78)", "rgba(24,22,30,0.88)"],
     }),
     shadowOpacity: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [0.04, 0.08],
+      outputRange: [0.05, 0.09],
     }),
     shadowRadius: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [10, 16],
+      outputRange: [12, 18],
     }),
   } as const;
 
   const glassTintStyle = {
     backgroundColor: focusAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: ["rgba(251,228,216,0.028)", "rgba(223,182,178,0.045)"],
+      outputRange: ["rgba(251,228,216,0.014)", "rgba(223,182,178,0.024)"],
     }),
   } as const;
 
@@ -319,8 +317,8 @@ export default function InputBar({
   });
   const sendIconColor = canSend ? colors.ctaText : colors.text;
   const showPlaceholder = !value;
-  const idleIconColor = "rgba(251,228,216,0.62)";
-  const plusIconColor = menuOpen ? colors.ctaCream : "rgba(251,228,216,0.78)";
+  const idleIconColor = colors.textSecondary;
+  const plusIconColor = menuOpen ? colors.ctaCream : colors.textSecondary;
   const inputShouldScroll = inputSlotHeight >= MAX_INPUT_SLOT_HEIGHT - 1;
   const micOpacity = sendVisibilityAnim.interpolate({
     inputRange: [0, 1],
@@ -418,12 +416,12 @@ export default function InputBar({
           <BlurView intensity={Platform.OS === "ios" ? 76 : 58} tint="dark" style={StyleSheet.absoluteFill} />
           <LinearGradient
             pointerEvents="none"
-            colors={[
-              "rgba(255,255,255,0.095)",
-              "rgba(251,228,216,0.035)",
-              "rgba(75,26,96,0.10)",
-              "rgba(0,0,0,0.14)",
-            ]}
+        colors={[
+          "rgba(255,255,255,0.075)",
+          "rgba(251,228,216,0.028)",
+          "rgba(34,31,40,0.18)",
+          "rgba(0,0,0,0.14)",
+        ]}
             locations={[0, 0.34, 0.7, 1]}
             start={{ x: 0.08, y: 0 }}
             end={{ x: 1, y: 1 }}
@@ -457,9 +455,9 @@ export default function InputBar({
       <LinearGradient
         pointerEvents="none"
         colors={[
-          "rgba(255,255,255,0.105)",
-          "rgba(251,228,216,0.035)",
-          "rgba(89,35,121,0.075)",
+          "rgba(255,255,255,0.080)",
+          "rgba(251,228,216,0.026)",
+          "rgba(34,31,40,0.18)",
           "rgba(0,0,0,0.10)",
         ]}
         locations={[0, 0.32, 0.68, 1]}
@@ -505,6 +503,8 @@ export default function InputBar({
                     onPress={() => onRemoveAttachment(attachment.id)}
                     pressedScale={0.92}
                     pressedOpacity={0.86}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove attachment"
                     style={styles.removeAttachmentButton}
                   >
                     <Ionicons name="close" size={12} color={colors.text} />
@@ -554,6 +554,8 @@ export default function InputBar({
                   hapticTrigger="press"
                   pressedScale={0.97}
                   pressedOpacity={0.88}
+                  accessibilityRole="button"
+                  accessibilityLabel="Use automatic attachment grouping"
                   style={[
                     styles.attachmentRoleChip,
                     !hasAttachmentModeOverride ? styles.attachmentRoleChipActive : null,
@@ -576,6 +578,8 @@ export default function InputBar({
                     hapticTrigger="press"
                     pressedScale={0.97}
                     pressedOpacity={0.88}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Use ${getAttachmentGroupingLabel(role)} attachment grouping`}
                     style={[
                       styles.attachmentRoleChip,
                       hasAttachmentModeOverride && attachmentRole === role ? styles.attachmentRoleChipActive : null,
@@ -605,6 +609,8 @@ export default function InputBar({
               hapticTrigger="press"
               pressedScale={0.95}
               pressedOpacity={0.9}
+              accessibilityRole="button"
+              accessibilityLabel={menuOpen ? "Close attachment options" : "Add attachment"}
               style={[
                 styles.sideButton,
                 menuOpen ? styles.sideButtonActive : null,
@@ -624,7 +630,7 @@ export default function InputBar({
             ) : null}
             <TextInput
               ref={inputRef}
-              defaultValue={initialValueRef.current}
+              value={value}
               onChangeText={handleTextChange}
               onFocus={() => onFocusChange(true)}
               onBlur={() => onFocusChange(false)}
@@ -732,10 +738,12 @@ function AttachmentOption({
       hapticTrigger="press"
       pressedScale={0.96}
       pressedOpacity={0.88}
+      accessibilityRole="button"
+      accessibilityLabel={label}
       style={styles.attachmentOption}
     >
       <Ionicons name={icon} size={16} color={colors.text} />
-      <Text style={styles.attachmentOptionText}>{label}</Text>
+      <AuraText variant="caption" style={styles.attachmentOptionText}>{label}</AuraText>
     </AuraPressable>
   );
 }
@@ -758,9 +766,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   chrome: {
-    paddingHorizontal: 6,
-    paddingTop: 4,
-    paddingBottom: 4,
+    paddingHorizontal: 7,
+    paddingTop: 5,
+    paddingBottom: 5,
   },
   chromeWithAttachments: {
     paddingHorizontal: 7,
@@ -776,9 +784,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    backgroundColor: inputPalette.chipBackground,
+    backgroundColor: inputPalette.surfaceMuted,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(251,228,216,0.10)",
+    borderColor: inputPalette.borderSoft,
   },
   attachmentRoleChipActive: {
     backgroundColor: inputPalette.purpleSurface,
@@ -787,7 +795,7 @@ const styles = StyleSheet.create({
   attachmentRoleText: {
     color: "rgba(251,228,216,0.68)",
     fontSize: 10,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   attachmentRoleTextActive: {
     color: inputPalette.ctaCream,
@@ -802,9 +810,9 @@ const styles = StyleSheet.create({
     height: ATTACHMENT_THUMB_SIZE,
     borderRadius: 18,
     overflow: "hidden",
-    backgroundColor: inputPalette.chipBackground,
+    backgroundColor: inputPalette.surfaceMuted,
     borderWidth: 1,
-    borderColor: "rgba(251,228,216,0.10)",
+    borderColor: inputPalette.borderSoft,
   },
   attachmentFallback: {
     flex: 1,
@@ -838,9 +846,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: inputPalette.chipBackground,
+    backgroundColor: inputPalette.surfaceMuted,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(251,228,216,0.10)",
+    borderColor: inputPalette.borderSoft,
   },
   autoDetectChipActive: {
     backgroundColor: inputPalette.purpleSurface,
@@ -849,7 +857,7 @@ const styles = StyleSheet.create({
   autoDetectText: {
     color: "rgba(251,228,216,0.68)",
     fontSize: 10.5,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   autoDetectTextActive: {
     color: inputPalette.ctaCream,
@@ -878,15 +886,16 @@ const styles = StyleSheet.create({
   },
   menuPopoverCard: {
     overflow: "hidden",
-    borderRadius: 24,
+    borderRadius: auraDesignTokens.radii.lg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(251,228,216,0.16)",
-    backgroundColor: "rgba(38,16,54,0.74)",
+    backgroundColor: inputPalette.surfaceRaised,
     padding: 5,
   },
   menuPopoverTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(223,182,178,0.025)",
+    backgroundColor: inputPalette.accentSoft,
+    opacity: 0.22,
   },
   menuCaret: {
     position: "absolute",
@@ -895,7 +904,7 @@ const styles = StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 3,
-    backgroundColor: "rgba(38,16,54,0.92)",
+    backgroundColor: inputPalette.surfaceRaised,
     borderRightWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(251,228,216,0.13)",
@@ -908,7 +917,7 @@ const styles = StyleSheet.create({
   },
   attachmentOption: {
     minHeight: 44,
-    borderRadius: 16,
+    borderRadius: auraDesignTokens.radii.sm,
     paddingHorizontal: 12,
     paddingVertical: 8,
     backgroundColor: "transparent",
@@ -917,46 +926,45 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   attachmentOptionText: {
-    color: inputPalette.text,
     fontSize: 12.5,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   row: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 5,
+    gap: 4,
     borderRadius: COMPOSER_RADIUS,
     borderWidth: 0,
     paddingHorizontal: 0,
     minHeight: BASE_COMPOSER_HEIGHT - 8,
   },
   iconLane: {
-    width: 34,
+    width: 32,
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "flex-end",
     height: BASE_ROW_HEIGHT,
   },
   sideButton: {
-    width: 32,
-    height: 32,
+    width: 31,
+    height: 31,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(251,228,216,0.065)",
+    backgroundColor: inputPalette.surfaceMuted,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(251,228,216,0.12)",
+    borderColor: inputPalette.borderSoft,
   },
   sideButtonActive: {
-    backgroundColor: "rgba(223,182,178,0.16)",
-    borderColor: "rgba(251,228,216,0.22)",
+    backgroundColor: inputPalette.accentSoft,
+    borderColor: inputPalette.borderStrong,
   },
   trailingButton: {
     position: "relative",
   },
   trailingButtonSend: {
     backgroundColor: inputPalette.ctaCream,
-    borderColor: "rgba(251,228,216,0.18)",
+    borderColor: inputPalette.borderStrong,
     shadowColor: inputPalette.ctaCream,
     shadowOpacity: 0.06,
     shadowRadius: 4,
@@ -965,7 +973,7 @@ const styles = StyleSheet.create({
   },
   trailingButtonStop: {
     backgroundColor: inputPalette.secondaryCta,
-    borderColor: "rgba(251,228,216,0.16)",
+    borderColor: inputPalette.borderSoft,
   },
   trailingButtonRecording: {
     backgroundColor: "rgba(255,99,99,0.18)",
@@ -1018,7 +1026,7 @@ const styles = StyleSheet.create({
     paddingBottom: INPUT_PADDING_BOTTOM,
     marginTop: 0,
     fontFamily: Fonts.sans,
-    fontSize: 14.25,
+    fontSize: 14.5,
     lineHeight: INPUT_LINE_HEIGHT,
     letterSpacing: 0.1,
     color: inputPalette.text,
@@ -1033,7 +1041,7 @@ const styles = StyleSheet.create({
     top: 4 + INPUT_PADDING_TOP,
     opacity: 0,
     fontFamily: Fonts.sans,
-    fontSize: 14.25,
+    fontSize: 14.5,
     lineHeight: INPUT_LINE_HEIGHT,
     letterSpacing: 0.1,
     includeFontPadding: false,

@@ -57,11 +57,6 @@ export const FabricContentRow = React.memo(function FabricContentRow({ controlle
       <View style={{ gap: 12 }}>
         <PickerRow label="Material" value={derived.displayedMaterial} onPress={() => actions.setShowAttributeSheet("material")} />
         <PickerRow label="Pattern" value={derived.displayedPattern} onPress={() => actions.setShowAttributeSheet("pattern")} />
-        <PickerRow
-          label="Care"
-          value={state.careTags.length ? state.careTags.join(", ") : "Coming soon"}
-          onPress={() => actions.setShowAttributeSheet("care")}
-        />
       </View>
     </SectionCard>
   );

@@ -19,22 +19,22 @@ import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers, auraTypography 
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import {
-  detectOutfitLayoutType,
-  resolveOutfitLayout,
-  type BoardPiece,
-} from "@/src/lib/auraLookLayouts";
-import { auraLookToPlannedOutfit, saveAuraLook } from "@/src/lib/auraLooks";
+import { saveAuraLook } from "@/src/lib/auraLooks";
 import { getItemImageUrl } from "@/src/lib/itemImage";
-import { listenToItems, toCanonicalCategory } from "@/src/lib/items";
+import { listenToItems, normalizeLaundryStatus, toCanonicalCategory } from "@/src/lib/items";
 import { Toast } from "@/src/lib/toast";
+import { planOutfitForToday } from "@/src/lib/wearOutfit";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook, AuraLookPiece } from "@/src/types/aura";
 import { toDayKey } from "@/src/utils/date";
-import { savePlannedRecord } from "@/src/utils/dailyOutfits";
 
 type StudioCategory = "top" | "bottom" | "footwear" | "outerwear" | "accessory" | "one_piece";
 type StudioFilter = "all" | StudioCategory;
+type StudioIssue = {
+  key: string;
+  label: string;
+  severity: "info" | "warning";
+};
 
 const CATEGORY_LIMITS: Record<StudioCategory, number> = {
   outerwear: 2,
@@ -110,6 +110,10 @@ function imageUrlForItem(item: ClothingItem) {
   return getItemImageUrl(item, { variant: "thumb" });
 }
 
+function isCleanItem(item: ClothingItem) {
+  return normalizeLaundryStatus(item) === "clean";
+}
+
 function buildManualLook(selection: ClothingItem[]): AuraLook {
   const pieces = selection.map((item) => {
     const category = categoryForItem(item);
@@ -142,63 +146,69 @@ function buildManualLook(selection: ClothingItem[]): AuraLook {
   };
 }
 
-function buildAuraPrompt(selection: ClothingItem[]) {
+function getStudioIssues(selection: ClothingItem[]): StudioIssue[] {
+  if (!selection.length) {
+    return [{ key: "empty", label: "Choose at least one closet item to start.", severity: "info" }];
+  }
+
+  const counts = selection.reduce<Record<StudioCategory, number>>(
+    (acc, item) => {
+      acc[categoryForItem(item)] += 1;
+      return acc;
+    },
+    {
+      top: 0,
+      bottom: 0,
+      footwear: 0,
+      outerwear: 0,
+      accessory: 0,
+      one_piece: 0,
+    },
+  );
+  const issues: StudioIssue[] = [];
+  const hasOnePiece = counts.one_piece > 0;
+  if (!hasOnePiece && counts.top === 0) {
+    issues.push({ key: "top", label: "Add a top or one-piece.", severity: "warning" });
+  }
+  if (!hasOnePiece && counts.bottom === 0) {
+    issues.push({ key: "bottom", label: "Add a bottom or one-piece.", severity: "warning" });
+  }
+  if (counts.footwear === 0) {
+    issues.push({ key: "footwear", label: "Add shoes before planning.", severity: "warning" });
+  }
+  const unavailableCount = selection.filter((item) => !isCleanItem(item)).length;
+  if (unavailableCount > 0) {
+    issues.push({
+      key: "laundry",
+      label: `${unavailableCount} selected piece${unavailableCount === 1 ? " is" : "s are"} not clean.`,
+      severity: "warning",
+    });
+  }
+  if (!issues.length) {
+    issues.push({ key: "ready", label: "Complete outfit: ready to save, refine, or plan.", severity: "info" });
+  }
+  return issues;
+}
+
+function buildAuraPrompt(selection: ClothingItem[], issues: StudioIssue[]) {
   const lines = selection.map((item) => {
     const label = categoryLabel(categoryForItem(item));
-    return `${label}: ${itemDescriptor(item)} (closet item id: ${item.id})`;
+    return `${label}: ${itemDescriptor(item)}; availability=${normalizeLaundryStatus(item)} (closet item id: ${item.id})`;
   });
+  const issueLines = issues
+    .filter((issue) => issue.key !== "ready")
+    .map((issue) => `- ${issue.label}`);
 
   return [
     "Improve this manually built outfit from my closet.",
-    "Keep the selected pieces as the starting point, explain what works, and suggest the smallest swaps or styling additions if needed.",
+    "Return a concrete refinement with: what to keep, what to swap or add, and one styling note.",
+    "Keep the selected pieces as the starting point unless a piece is unavailable or the outfit is incomplete.",
+    issueLines.length ? "Current Studio checklist:" : "",
+    ...issueLines,
     "",
+    "Selected pieces:",
     ...lines,
   ].join("\n");
-}
-
-function buildStudioBoardPieces(selection: ClothingItem[]): BoardPiece[] {
-  return selection.map((item, index) => {
-    const category = categoryForItem(item);
-    const searchTokens = [
-      category,
-      itemTitle(item),
-      item.brand,
-      item.category,
-      item.subCategory,
-      item.type,
-      item.style,
-      item.fit,
-    ]
-      .map((part) => String(part ?? "").trim().toLowerCase())
-      .filter(Boolean)
-      .join(" ");
-
-    return {
-      key: `${item.id}-${category}-${index}`,
-      itemId: item.id,
-      role: category === "footwear" ? "footwear" : category,
-      itemName: itemTitle(item),
-      source: "closet",
-      imageUrl: item.originalImageUrl ?? item.photoUrl ?? null,
-      cleanedImageUrl: item.cleanedImageUrl ?? item.photos?.cleanedUrl ?? null,
-      image: imageUrlForItem(item),
-      brand: item.brand ?? null,
-      category: item.category ?? null,
-      subCategory: item.subCategory ?? null,
-      type: item.type ?? null,
-      style: item.style ?? null,
-      fit: item.fit ?? null,
-      size: item.size ?? null,
-      status: item.status ?? null,
-      colors: item.colors ?? item.displayColors ?? null,
-      colorLabel: item.colorLabel ?? item.displayColor ?? null,
-      primaryColor: item.primaryColor ?? null,
-      lastWornDate: item.lastWornDate ?? null,
-      layerRole: item.layerRole ?? null,
-      visualNormalization: item.visualNormalization ?? null,
-      searchTokens,
-    };
-  });
 }
 
 const StudioPickerItem = React.memo(function StudioPickerItem({
@@ -272,6 +282,7 @@ export default function StudioScreen() {
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<StudioFilter>("all");
+  const [cleanOnly, setCleanOnly] = useState(true);
   const [selection, setSelection] = useState<ClothingItem[]>([]);
   const [saving, setSaving] = useState(false);
   const consumedRouteItemRef = React.useRef<string | null>(null);
@@ -334,11 +345,11 @@ export default function StudioScreen() {
       ),
     [selection],
   );
-  const resolvedStudioLayout = useMemo(() => {
-    const pieces = buildStudioBoardPieces(selection);
-    if (!pieces.length) return [];
-    return resolveOutfitLayout(pieces, detectOutfitLayoutType(pieces), "studio");
-  }, [selection]);
+  const studioIssues = useMemo(() => getStudioIssues(selection), [selection]);
+  const blockingIssues = useMemo(
+    () => studioIssues.filter((issue) => issue.severity === "warning"),
+    [studioIssues],
+  );
   const filteredItems = useMemo(
     () =>
       items.filter((item) => {
@@ -346,16 +357,16 @@ export default function StudioScreen() {
         if (hasOnePieceSelected && (category === "top" || category === "bottom")) {
           return false;
         }
+        if (cleanOnly && !isCleanItem(item)) return false;
         return activeFilter === "all" || category === activeFilter;
       }),
-    [activeFilter, hasOnePieceSelected, items],
+    [activeFilter, cleanOnly, hasOnePieceSelected, items],
   );
   const gridGap = 12;
   const availableWidth = layout.width - layout.horizontalPadding * 2;
   const columns = layout.screenSize === "large" ? 4 : 2;
   const cardWidth = Math.floor((availableWidth - gridGap * (columns - 1)) / columns);
   const todayKey = useMemo(() => toDayKey(new Date()), []);
-  void resolvedStudioLayout;
 
   React.useEffect(() => {
     if (!routeItemId || loading || consumedRouteItemRef.current === routeItemId) return;
@@ -404,48 +415,101 @@ export default function StudioScreen() {
     setSelection((prev) => [...prev, item]);
   }, [hasOnePieceSelected, selectedCounts, selectedIds, selection.length]);
 
+  const confirmIncompleteOutfit = React.useCallback(
+    (actionLabel: string) =>
+      new Promise<boolean>((resolve) => {
+        if (!blockingIssues.length) {
+          resolve(true);
+          return;
+        }
+        Alert.alert(
+          "Review this outfit?",
+          `${blockingIssues.map((issue) => `• ${issue.label}`).join("\n")}\n\nYou can still ${actionLabel.toLowerCase()}, but AURA may need to refine it first.`,
+          [
+            { text: "Keep editing", style: "cancel", onPress: () => resolve(false) },
+            { text: actionLabel, onPress: () => resolve(true) },
+          ],
+        );
+      }),
+    [blockingIssues],
+  );
+
   const handleSaveLook = React.useCallback(async () => {
     if (!uid || !hasSelection || saving) return;
+    const shouldContinue = await confirmIncompleteOutfit("Save anyway");
+    if (!shouldContinue) return;
     setSaving(true);
     try {
       await saveAuraLook(uid, look, { title: "Studio Build" });
       Toast.saved();
+      Alert.alert("Look saved", "Studio Build is in My Looks.", [
+        { text: "Keep building", style: "cancel" },
+        { text: "View My Looks", onPress: () => router.push("/profile/my-looks") },
+      ]);
     } catch (error: any) {
-      Toast.error("Save failed", error?.message ?? "Unable to save this look.");
+      if (__DEV__) {
+        console.error("SAVE LOOK UI ERROR:", error);
+      }
+      Toast.error("Save failed", "Couldn’t save this look. Please try again.");
     } finally {
       setSaving(false);
     }
-  }, [hasSelection, look, saving, uid]);
+  }, [confirmIncompleteOutfit, hasSelection, look, saving, uid]);
 
   const handlePlanLook = React.useCallback(async () => {
     if (!uid || !hasSelection || saving) return;
+    const shouldContinue = await confirmIncompleteOutfit("Plan anyway");
+    if (!shouldContinue) return;
     setSaving(true);
     try {
-      await savePlannedRecord(uid, todayKey, auraLookToPlannedOutfit(look));
+      await planOutfitForToday({
+        uid,
+        source: "studio",
+        title: "Studio Build",
+        look,
+        date: new Date(`${todayKey}T12:00:00`),
+      });
       Toast.success("Planned", "This outfit is now attached to today.");
+      Alert.alert("Planned for today", "This Studio build is on your calendar.", [
+        { text: "Keep building", style: "cancel" },
+        { text: "Open Calendar", onPress: () => router.push("/(tabs)/calendar") },
+      ]);
     } catch (error: any) {
       Toast.error("Plan failed", error?.message ?? "Unable to plan this outfit.");
     } finally {
       setSaving(false);
     }
-  }, [hasSelection, look, saving, todayKey, uid]);
+  }, [confirmIncompleteOutfit, hasSelection, look, saving, todayKey, uid]);
 
   const handleAskAura = React.useCallback(() => {
     if (!hasSelection) return;
     router.push({
       pathname: "/(tabs)/ai",
       params: {
-        prompt: buildAuraPrompt(selection),
+        prompt: buildAuraPrompt(selection, studioIssues),
         promptKey: `studio-${Date.now()}`,
       },
     });
-  }, [hasSelection, selection]);
+  }, [hasSelection, selection, studioIssues]);
 
   const clearSelection = React.useCallback(() => {
     if (!selection.length) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelection([]);
   }, [selection.length]);
+
+  const removeSelectedItem = React.useCallback((itemId: string) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelection((prev) => prev.filter((entry) => entry.id !== itemId));
+  }, []);
+
+  const swapSelectedItem = React.useCallback((item: ClothingItem) => {
+    const category = categoryForItem(item);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelection((prev) => prev.filter((entry) => entry.id !== item.id));
+    setActiveFilter(category);
+    Toast.success("Choose a swap", `Showing ${categoryLabel(category)} options.`);
+  }, []);
 
   const renderStudioItem = React.useCallback(
     ({ item, index }: { item: ClothingItem; index: number }) => (
@@ -521,6 +585,90 @@ export default function StudioScreen() {
               ) : null}
             </View>
 
+            {hasSelection ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 10, paddingRight: 8 }}
+              >
+                {selection.map((item) => {
+                  const status = normalizeLaundryStatus(item);
+                  const unavailable = status !== "clean";
+                  return (
+                    <View
+                      key={`selected-${item.id}`}
+                      style={{
+                        minWidth: 178,
+                        maxWidth: 230,
+                        borderRadius: 18,
+                        padding: 11,
+                        gap: 8,
+                        ...auraSurfaceTiers.surfaceBase,
+                        borderColor: unavailable ? colors.warning : colors.border,
+                      }}
+                    >
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <View
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 999,
+                            alignItems: "center",
+                            justifyContent: "center",
+                            backgroundColor: colors.purpleSurface,
+                          }}
+                        >
+                          <Ionicons
+                            name={unavailable ? "warning-outline" : "checkmark"}
+                            size={15}
+                            color={unavailable ? colors.warning : colors.lightPurple}
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: colors.text, fontSize: 13, fontWeight: "900" }} numberOfLines={1}>
+                            {itemTitle(item)}
+                          </Text>
+                          <Text style={{ color: unavailable ? colors.warning : colors.textMuted, fontSize: 11.5 }} numberOfLines={1}>
+                            {categoryLabel(categoryForItem(item))} · {status === "clean" ? "ready" : status.replace("_", " ")}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <Pressable
+                          onPress={() => swapSelectedItem(item)}
+                          style={({ pressed }) => ({
+                            flex: 1,
+                            ...auraButtonStyle(colors, "tertiary", false),
+                            minHeight: 34,
+                            borderRadius: 999,
+                            paddingHorizontal: 10,
+                            opacity: pressed ? 0.78 : 1,
+                          })}
+                        >
+                          <Text style={[auraButtonTextStyle(colors, "tertiary", false), { fontSize: 12 }]}>Swap</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => removeSelectedItem(item.id)}
+                          hitSlop={8}
+                          style={({ pressed }) => ({
+                            width: 34,
+                            height: 34,
+                            borderRadius: 17,
+                            alignItems: "center",
+                            justifyContent: "center",
+                            backgroundColor: colors.chipBackground,
+                            opacity: pressed ? 0.7 : 1,
+                          })}
+                        >
+                          <Ionicons name="close" size={16} color={colors.textSecondary} />
+                        </Pressable>
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            ) : null}
+
             <AuraLookCard
               look={look}
               itemsById={itemsById}
@@ -575,6 +723,42 @@ export default function StudioScreen() {
               </Pressable>
             </View>
 
+            <View
+              style={{
+                borderRadius: layout.mediumRadius,
+                padding: 14,
+                gap: 10,
+                ...auraSurfaceTiers.surfaceBase,
+                borderColor: blockingIssues.length ? colors.warning : colors.purpleBorder,
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons
+                  name={blockingIssues.length ? "alert-circle-outline" : "sparkles-outline"}
+                  size={18}
+                  color={blockingIssues.length ? colors.warning : colors.lightPurple}
+                />
+                <Text style={[auraTypography.chipLabel, { color: colors.text }]}>
+                  Studio checklist
+                </Text>
+              </View>
+              <View style={{ gap: 7 }}>
+                {studioIssues.map((issue) => (
+                  <View key={issue.key} style={{ flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
+                    <Ionicons
+                      name={issue.severity === "warning" ? "ellipse-outline" : "checkmark-circle-outline"}
+                      size={15}
+                      color={issue.severity === "warning" ? colors.warning : colors.lightPurple}
+                      style={{ marginTop: 1 }}
+                    />
+                    <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12.5, lineHeight: 18 }}>
+                      {issue.label}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+
             <View style={{ gap: 12 }}>
               <View style={{ gap: 10 }}>
                 <ScrollView
@@ -606,6 +790,24 @@ export default function StudioScreen() {
                       </Pressable>
                     );
                   })}
+                  <Pressable
+                    onPress={() => setCleanOnly((value) => !value)}
+                    style={({ pressed }) => ({
+                      borderRadius: layout.pillRadius,
+                      paddingHorizontal: 13,
+                      paddingVertical: 9,
+                      backgroundColor: cleanOnly ? colors.purpleSurface : colors.chipBackground,
+                      borderWidth: 1,
+                      borderColor: cleanOnly ? colors.purpleBorder : colors.border,
+                      opacity: pressed ? 0.82 : 1,
+                    })}
+                  >
+                    <Text
+                      style={[auraTypography.chipLabel, { color: cleanOnly ? colors.ctaCream : colors.textSecondary }]}
+                    >
+                      Clean only
+                    </Text>
+                  </Pressable>
                 </ScrollView>
               </View>
 
@@ -615,7 +817,11 @@ export default function StudioScreen() {
                     Choose wardrobe items
                   </Text>
                   <Text style={{ color: colors.textSecondary, fontSize: 12.5 }}>
-                    {filteredItems.length ? `${filteredItems.length} closet items` : "No matching items yet"}
+                    {filteredItems.length
+                      ? `${filteredItems.length} closet items${cleanOnly ? " ready" : ""}`
+                      : items.length
+                        ? "No matching ready items"
+                        : "No closet items yet"}
                   </Text>
                 </View>
                 {hasSelection ? (
@@ -648,8 +854,48 @@ export default function StudioScreen() {
           >
             <Text style={[auraTypography.cardTitle, { color: colors.text, fontSize: 16, lineHeight: 21 }]}>Nothing here yet</Text>
             <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary, fontSize: 13, lineHeight: 20 }]}>
-              Add or recategorize closet items to make them available for this role.
+              {items.length
+                ? cleanOnly
+                  ? "Turn off Clean only or mark pieces washed in Laundry."
+                  : "Add or recategorize closet items to make them available for this role."
+                : "Add your first closet items, then return to Studio to build a look."}
             </Text>
+            {items.length ? (
+              <Pressable
+                onPress={() => {
+                  setCleanOnly(false);
+                  setActiveFilter("all");
+                }}
+                style={({ pressed }) => ({
+                  ...auraButtonStyle(colors, "secondary", false),
+                  alignSelf: "flex-start",
+                  borderRadius: layout.pillRadius,
+                  paddingHorizontal: 13,
+                  paddingVertical: 9,
+                  opacity: pressed ? 0.82 : 1,
+                })}
+              >
+                <Text style={[auraButtonTextStyle(colors, "secondary", false), { fontSize: 12 }]}>
+                  Show all items
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => router.push({ pathname: "/(tabs)/add", params: { addSession: String(Date.now()) } })}
+                style={({ pressed }) => ({
+                  ...auraButtonStyle(colors, "primary", false),
+                  alignSelf: "flex-start",
+                  borderRadius: layout.pillRadius,
+                  paddingHorizontal: 13,
+                  paddingVertical: 9,
+                  opacity: pressed ? 0.82 : 1,
+                })}
+              >
+                <Text style={[auraButtonTextStyle(colors, "primary", false), { fontSize: 12 }]}>
+                  Add item
+                </Text>
+              </Pressable>
+            )}
           </View>
         }
         showsVerticalScrollIndicator={false}
@@ -659,7 +905,7 @@ export default function StudioScreen() {
         maxToRenderPerBatch={8}
         updateCellsBatchingPeriod={40}
         windowSize={7}
-        extraData={selectedIds}
+        extraData={`${Array.from(selectedIds).join(",")}:${cleanOnly}:${activeFilter}`}
         contentContainerStyle={{
           paddingTop: 12,
           paddingHorizontal: layout.horizontalPadding,

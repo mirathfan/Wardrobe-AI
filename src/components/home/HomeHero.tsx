@@ -1,8 +1,7 @@
 import { LinearGradient } from "expo-linear-gradient";
 import AppImage from "@/src/components/common/AppImage";
 import React, { useEffect } from "react";
-import { Ionicons } from "@expo/vector-icons";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -15,10 +14,9 @@ import type { AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
-import AuraPressable from "@/src/components/aura/AuraPressable";
 import { homeTypography } from "@/src/components/home/homeTypography";
-import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
-import { ACTION_GAP, CTA_HORIZONTAL_PADDING, HOME_CTA_HEIGHT, PILL_RADIUS } from "@/src/constants/auraControls";
+import { AuraText } from "@/src/components/ui/auraStylePrimitives";
+import { ACTION_GAP, HOME_CTA_HEIGHT, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -104,7 +102,7 @@ export default function HomeHero({
   record,
   itemsById,
   onPrimaryAction,
-  onSecondaryAction,
+  onWearToday,
 }: {
   colors: AppColors;
   greeting: string;
@@ -115,7 +113,7 @@ export default function HomeHero({
   record: DailyOutfitRecord | null;
   itemsById: Map<string, ClothingItem>;
   onPrimaryAction: () => void;
-  onSecondaryAction: () => void;
+  onWearToday?: () => void;
 }) {
   const layout = useResponsiveLayout();
   const hasPlan = !!record?.plannedOutfit;
@@ -123,12 +121,15 @@ export default function HomeHero({
   const slots: SlotKey[] = ["outerwear", "top", "bottom", "shoes"];
   const previewTileHeight = layout.screenSize === "compact" ? 100 : layout.screenSize === "large" ? 116 : 108;
   const cardPadding = layout.screenSize === "compact" ? 14 : 16;
-  const visibleGuidancePhrases = guidancePhrases.slice(0, 2);
-  const primaryLabel = "Style me today";
-  const secondaryLabel = "Show 3 options";
+  const visibleGuidancePhrases = guidancePhrases.slice(0, 1);
+  const canWearPlannedLook = hasPlan && !hasWorn && !!onWearToday;
+  const primaryLabel = canWearPlannedLook ? "Wear this today" : "Style me today";
   const statusEyebrow = hasWorn ? "ON YOU TODAY" : hasPlan ? "PLANNED FOR TODAY" : "AURA READY";
-  const title = hasWorn ? "Your outfit is ready." : "Ready when you are.";
-  const subtitle = "Your look is set. Wear it now, refine the vibe, or ask AURA for another direction.";
+  const title = hasWorn || hasPlan ? "Your outfit is ready." : "Ready when you are.";
+  const subtitle =
+    hasWorn || hasPlan
+      ? "Wear it, or ask AURA for a new direction when the mood changes."
+      : "Start with one strong outfit built from what is wearable now.";
 
   const previewSlots = slots
     .map((slot) => ({ slot, item: itemForSlot(record, itemsById, slot) }))
@@ -138,14 +139,14 @@ export default function HomeHero({
   return (
     <View style={{ gap: HERO_SECTION_GAP }}>
       <View style={{ gap: HERO_TIGHT_GAP }}>
-        <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, fontWeight: "700" }]} numberOfLines={1} ellipsizeMode="tail">
+        <AuraText variant="caption" tone="secondary" style={[homeTypography.bodySmall, { fontWeight: "500", opacity: 0.88 }]} numberOfLines={1} ellipsizeMode="tail">
           {greeting}
-        </Text>
-        <Text
+        </AuraText>
+        <AuraText
+          variant="title"
           style={[
             homeTypography.titleLarge,
             {
-              color: colors.text,
               fontSize: 34 * layout.titleScale,
               lineHeight: 40 * layout.titleScale,
             },
@@ -154,10 +155,10 @@ export default function HomeHero({
           ellipsizeMode="tail"
         >
           Today&apos;s Look
-        </Text>
-        <Text style={[homeTypography.bodySmall, { color: colors.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">
+        </AuraText>
+        <AuraText variant="caption" tone="secondary" style={homeTypography.bodySmall} numberOfLines={1} ellipsizeMode="tail">
           {weatherLabel}
-        </Text>
+        </AuraText>
       </View>
 
       <AuraGlassCard
@@ -171,7 +172,7 @@ export default function HomeHero({
           shadowOffset: { width: 0, height: 18 },
         }}
         contentStyle={{
-          backgroundColor: "rgba(9,0,11,0.34)",
+          backgroundColor: colors.surface,
           borderColor: "rgba(251,228,216,0.05)",
           borderWidth: 1,
         }}
@@ -179,7 +180,7 @@ export default function HomeHero({
         <IridecentHeroLine colors={colors} />
         <LinearGradient
           pointerEvents="none"
-          colors={["rgba(251,228,216,0.040)", "rgba(82,43,91,0.024)", "rgba(9,0,11,0.12)"]}
+          colors={["rgba(251,228,216,0.030)", "rgba(34,31,40,0.025)", "rgba(9,8,10,0.12)"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ position: "absolute", inset: 0 }}
@@ -222,16 +223,16 @@ export default function HomeHero({
         />
         <View style={{ minHeight: layout.heroHeight + 4, padding: cardPadding, gap: HERO_CARD_GAP, justifyContent: "space-between" }}>
           <View style={{ gap: HERO_STACK_GAP }}>
-            <Text style={[homeTypography.label, { color: colors.lightPurple, opacity: 0.7, fontSize: 11.5, lineHeight: 15, letterSpacing: 1.2 }]}>
+            <AuraText variant="metadata" tone="accent" style={[homeTypography.label, { opacity: 0.7, fontSize: 11.5, lineHeight: 15, letterSpacing: 1.5 }]}>
               {statusEyebrow}
-            </Text>
+            </AuraText>
 
             <View style={{ gap: HERO_TIGHT_GAP }}>
-              <Text
+              <AuraText
+                variant="title"
                 style={[
                   homeTypography.titleMedium,
                   {
-                    color: colors.text,
                     fontSize: 30 * layout.titleScale,
                     lineHeight: 36 * layout.titleScale,
                   },
@@ -240,14 +241,14 @@ export default function HomeHero({
                 ellipsizeMode="tail"
               >
                 {title}
-              </Text>
-              <Text style={[homeTypography.body, { color: colors.textSecondary, opacity: 0.76 }]} numberOfLines={2} ellipsizeMode="tail">
+              </AuraText>
+              <AuraText variant="body" tone="secondary" style={[homeTypography.body, { opacity: 0.8 }]} numberOfLines={2} ellipsizeMode="tail">
                 {subtitle}
-              </Text>
+              </AuraText>
               {stylistNote ? (
-                <Text style={[homeTypography.accentNote, { color: colors.lightPurple, opacity: 0.74 }]} numberOfLines={1} ellipsizeMode="tail">
+                <AuraText variant="caption" tone="accent" style={[homeTypography.accentNote, { opacity: 0.72 }]} numberOfLines={1} ellipsizeMode="tail">
                   {stylistNote}
-                </Text>
+                </AuraText>
               ) : null}
             </View>
 
@@ -282,7 +283,7 @@ export default function HomeHero({
                       >
                         <LinearGradient
                           pointerEvents="none"
-                          colors={["rgba(255,255,255,0.10)", "rgba(251,228,216,0.00)", "rgba(25,0,25,0.05)"]}
+                          colors={["rgba(255,255,255,0.10)", "rgba(251,228,216,0.00)", "rgba(17,16,20,0.05)"]}
                           start={{ x: 0, y: 0 }}
                           end={{ x: 0, y: 1 }}
                           style={{ position: "absolute", inset: 0 }}
@@ -318,15 +319,15 @@ export default function HomeHero({
                         borderColor: colors.border,
                       }}
                     >
-                      <Text style={[homeTypography.chipText, { color: colors.text }]}>
+                      <AuraText variant="caption" style={homeTypography.chipText}>
                         {phrase}
-                      </Text>
+                      </AuraText>
                     </View>
                   ))}
                 </View>
-                <Text style={[homeTypography.caption, { color: colors.textSecondary, opacity: 0.82 }]} numberOfLines={1}>
+                <AuraText variant="caption" tone="secondary" style={[homeTypography.caption, { opacity: 0.86 }]} numberOfLines={1}>
                   AURA starts with what is wearable now.
-                </Text>
+                </AuraText>
               </View>
             )}
 
@@ -337,12 +338,14 @@ export default function HomeHero({
                   paddingHorizontal: 11,
                   paddingVertical: 6,
                   borderRadius: layout.pillRadius,
-                  ...auraSurfaceTiers.surfaceInteractive,
+                  backgroundColor: colors.surfaceMuted,
+                  borderColor: colors.borderSoft,
+                  borderWidth: 1,
                 }}
               >
-                <Text style={[homeTypography.caption, { color: colors.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">
+                <AuraText variant="caption" tone="secondary" style={homeTypography.caption} numberOfLines={1} ellipsizeMode="tail">
                   {personalHint}
-                </Text>
+                </AuraText>
               </View>
             ) : null}
           </View>
@@ -351,12 +354,12 @@ export default function HomeHero({
             <View style={{ flex: 1 }}>
               <AuraGradientButton
                 label={primaryLabel}
-                onPress={onPrimaryAction}
+                onPress={canWearPlannedLook ? onWearToday : onPrimaryAction}
                 gradientColors={[colors.ctaCream, colors.ctaCream]}
                 labelColor={colors.ctaText}
                 innerBackgroundColor={colors.ctaCream}
                 innerOverlayColors={["rgba(255,255,255,0.14)", "rgba(255,255,255,0.04)"]}
-                labelStyle={{ fontSize: 16.5, lineHeight: 21, fontWeight: "900" }}
+                labelStyle={{ fontSize: 16.5, lineHeight: 21, fontWeight: "600", letterSpacing: 0.1 }}
                 style={{
                   height: HOME_CTA_HEIGHT,
                   minHeight: HOME_CTA_HEIGHT,
@@ -367,33 +370,6 @@ export default function HomeHero({
                 }}
               />
             </View>
-            <AuraPressable
-              onPress={onSecondaryAction}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.97}
-              pressedOpacity={0.9}
-              containerStyle={{ flex: 1 }}
-              style={{
-                ...auraButtonStyle(colors, "secondary"),
-                borderRadius: PILL_RADIUS,
-                height: HOME_CTA_HEIGHT,
-                minHeight: HOME_CTA_HEIGHT,
-                paddingHorizontal: CTA_HORIZONTAL_PADDING,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "rgba(9,0,11,0.22)",
-                borderWidth: 1,
-                borderColor: "rgba(251,228,216,0.20)",
-              }}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                <Ionicons name="git-branch-outline" size={15} color={colors.text} />
-                <Text style={auraButtonTextStyle(colors, "secondary")} numberOfLines={1}>
-                  {secondaryLabel}
-                </Text>
-              </View>
-            </AuraPressable>
           </View>
         </View>
       </AuraGlassCard>

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Pressable, Text, View } from "react-native";
 
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
@@ -21,8 +21,15 @@ import {
 import { sanitizeDisplayText } from "@/src/lib/text";
 import { Toast } from "@/src/lib/toast";
 import type { ClosetItem, LaundryStatus } from "@/src/lib/items";
+import { parseDateValue } from "@/src/utils/date";
 
 type LaundryTab = LaundryStatus;
+type LaundryUndo = {
+  key: string;
+  label: string;
+  itemIds: string[];
+  previousStatus: LaundryStatus;
+};
 
 const TABS: { key: LaundryTab; label: string; helper: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: "needs_wash", label: "Needs wash", helper: "Ready for care", icon: "alert-circle-outline" },
@@ -38,6 +45,41 @@ function itemTitle(item: ClosetItem) {
   );
 }
 
+function statusSentence(status: LaundryStatus) {
+  if (status === "clean") return "clean and ready";
+  if (status === "in_laundry") return "in laundry";
+  return "needs wash";
+}
+
+function formatRelativeDate(value: unknown) {
+  const date = parseDateValue(value);
+  if (!date) return "";
+  const today = new Date();
+  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDelta = Math.round((startToday - startDate) / 86400000);
+  if (dayDelta === 0) return "today";
+  if (dayDelta === 1) return "yesterday";
+  if (dayDelta > 1 && dayDelta < 7) return `${dayDelta}d ago`;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
+
+function laundryMeta(item: ClosetItem, activeStatus: LaundryStatus) {
+  const wears = Number(item.wearCountSinceWash ?? 0);
+  const lastWorn = formatRelativeDate(item.lastWornAt ?? item.lastWornDate);
+  const lastWashed = formatRelativeDate(item.lastWashedAt ?? item.lastWashedDate);
+  const lastMoved = formatRelativeDate(item.laundryUpdatedAt);
+
+  if (activeStatus === "clean") {
+    return lastWashed ? `Washed ${lastWashed}` : "Clean and ready";
+  }
+  if (activeStatus === "in_laundry") {
+    return lastMoved ? `Moved to laundry ${lastMoved}` : "Out of outfit rotation";
+  }
+  const wearLabel = `${wears} wear${wears === 1 ? "" : "s"} since wash`;
+  return lastWorn ? `${wearLabel} · worn ${lastWorn}` : wearLabel;
+}
+
 export default function LaundryScreen() {
   const { user } = useAuth();
   const { colors } = useAppTheme();
@@ -47,6 +89,7 @@ export default function LaundryScreen() {
   const [tab, setTab] = useState<LaundryTab>("in_laundry");
   const [loading, setLoading] = useState(true);
   const [savingStatus, setSavingStatus] = useState<string | null>(null);
+  const [undo, setUndo] = useState<LaundryUndo | null>(null);
 
   useEffect(() => {
     if (!uid) {
@@ -90,9 +133,18 @@ export default function LaundryScreen() {
 
   const setItemLaundryStatus = useCallback(async (itemId: string, status: LaundryStatus) => {
     if (!uid) return router.replace("/(auth)/login");
+    const item = allItems.find((entry) => entry.id === itemId);
+    const previousStatus = normalizeLaundryStatus(item);
+    if (previousStatus === status) return;
     try {
       setSavingStatus(`${itemId}:${status}`);
       await updateLaundryStatus(uid, itemId, status);
+      setUndo({
+        key: `${itemId}:${previousStatus}:${Date.now()}`,
+        label: `${item ? itemTitle(item) : "Piece"} is now ${statusSentence(status)}.`,
+        itemIds: [itemId],
+        previousStatus,
+      });
       void runHaptic("light");
       Toast.laundryUpdated(
         status === "clean"
@@ -106,7 +158,7 @@ export default function LaundryScreen() {
     } finally {
       setSavingStatus(null);
     }
-  }, [uid]);
+  }, [allItems, uid]);
 
   const bulkUpdate = useCallback(async (from: LaundryTab, to: LaundryStatus) => {
     if (!uid) return router.replace("/(auth)/login");
@@ -117,6 +169,12 @@ export default function LaundryScreen() {
       await updateLaundryStatuses(uid, source.map((item) => item.id), to);
       if (to === "in_laundry") setTab("in_laundry");
       if (to === "clean") setTab("clean");
+      setUndo({
+        key: `bulk:${from}:${to}:${Date.now()}`,
+        label: `${source.length} piece${source.length === 1 ? "" : "s"} moved to ${statusSentence(to)}.`,
+        itemIds: source.map((item) => item.id),
+        previousStatus: from,
+      });
       void runHaptic("light");
       Toast.laundryUpdated(
         to === "clean" ? "Batch marked clean." : "Batch moved to laundry.",
@@ -127,6 +185,37 @@ export default function LaundryScreen() {
       setSavingStatus(null);
     }
   }, [buckets, uid]);
+
+  const confirmBulkUpdate = useCallback((from: LaundryTab, to: LaundryStatus) => {
+    const source = buckets[from];
+    if (!source.length) return;
+    const preview = source.slice(0, 4).map((item) => `• ${itemTitle(item)}`).join("\n");
+    const more = source.length > 4 ? `\n• +${source.length - 4} more` : "";
+    Alert.alert(
+      `Update ${source.length} piece${source.length === 1 ? "" : "s"}?`,
+      `This will move everything from "${TABS.find((entry) => entry.key === from)?.label}" to "${TABS.find((entry) => entry.key === to)?.label}".\n\n${preview}${more}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Update", onPress: () => void bulkUpdate(from, to) },
+      ],
+    );
+  }, [buckets, bulkUpdate]);
+
+  const undoLastLaundryChange = useCallback(async () => {
+    if (!uid || !undo || savingStatus) return;
+    try {
+      setSavingStatus(`undo:${undo.key}`);
+      await updateLaundryStatuses(uid, undo.itemIds, undo.previousStatus);
+      setTab(undo.previousStatus);
+      setUndo(null);
+      void runHaptic("light");
+      Toast.laundryUpdated("Change undone.");
+    } catch (error: any) {
+      Toast.error("Undo failed", error?.message ?? "Could not restore those items.");
+    } finally {
+      setSavingStatus(null);
+    }
+  }, [savingStatus, uid, undo]);
 
   const renderLaundryItem = useCallback(
     ({ item }: { item: ClosetItem }) => (
@@ -162,14 +251,14 @@ export default function LaundryScreen() {
             label="Move needs wash"
             icon="arrow-forward"
             disabled={!canMoveNeedsWash || !!savingStatus}
-            onPress={() => bulkUpdate("needs_wash", "in_laundry")}
+            onPress={() => confirmBulkUpdate("needs_wash", "in_laundry")}
           />
           <ActionButton
             label="Mark laundry clean"
             icon="sparkles-outline"
             disabled={!canMarkLaundryClean || !!savingStatus}
             primary
-            onPress={() => bulkUpdate("in_laundry", "clean")}
+            onPress={() => confirmBulkUpdate("in_laundry", "clean")}
           />
         </View>
         <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17 }}>
@@ -178,6 +267,42 @@ export default function LaundryScreen() {
             : "Batch actions only apply when that status has items."}
         </Text>
       </View>
+
+      {undo ? (
+        <View
+          style={{
+            borderRadius: 16,
+            padding: 12,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10,
+            ...auraSurfaceTiers.surfaceBase,
+            borderColor: colors.purpleBorder,
+          }}
+        >
+          <Ionicons name="return-up-back" size={18} color={colors.lightPurple} />
+          <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12.5, lineHeight: 18 }}>
+            {undo.label}
+          </Text>
+          <AuraPressable
+            onPress={undoLastLaundryChange}
+            disabled={!!savingStatus}
+            haptic="selection"
+            hapticTrigger="press"
+            pressedScale={0.96}
+            disabledOpacity={0.5}
+            style={{
+              ...auraButtonStyle(colors, "tertiary", !!savingStatus),
+              minHeight: 34,
+              borderRadius: 999,
+              paddingHorizontal: 12,
+              paddingVertical: 7,
+            }}
+          >
+            <Text style={[auraButtonTextStyle(colors, "tertiary", !!savingStatus), { fontSize: 12 }]}>Undo</Text>
+          </AuraPressable>
+        </View>
+      ) : null}
 
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text style={[auraTypography.cardTitle, { color: colors.text }]}>
@@ -192,12 +317,13 @@ export default function LaundryScreen() {
     buckets,
     canMarkLaundryClean,
     canMoveNeedsWash,
-    colors.text,
-    colors.textSecondary,
+    colors,
     listItems.length,
     savingStatus,
     tab,
-    bulkUpdate,
+    confirmBulkUpdate,
+    undo,
+    undoLastLaundryChange,
   ]);
 
   if (loading) {
@@ -233,7 +359,7 @@ export default function LaundryScreen() {
           gap: 10,
         }}
         ListHeaderComponent={Header}
-        ListEmptyComponent={<PremiumEmptyState />}
+        ListEmptyComponent={<PremiumEmptyState tab={tab} />}
         renderItem={renderLaundryItem}
         removeClippedSubviews
         initialNumToRender={10}
@@ -322,8 +448,23 @@ function ActionButton(props: {
   );
 }
 
-function PremiumEmptyState() {
+function PremiumEmptyState({ tab }: { tab: LaundryTab }) {
   const { colors } = useAppTheme();
+  const copy =
+    tab === "needs_wash"
+      ? {
+          title: "Nothing needs a wash",
+          body: "When you mark an outfit worn, pieces will land here before laundry day.",
+        }
+      : tab === "in_laundry"
+        ? {
+            title: "No items in laundry",
+            body: "Move worn pieces here when they are actually out of rotation.",
+          }
+        : {
+            title: "No clean pieces yet",
+            body: "Mark laundry as washed or add closet items to build ready outfits.",
+          };
   return (
     <View
       style={{
@@ -335,9 +476,9 @@ function PremiumEmptyState() {
       }}
     >
       <View style={{ gap: 6 }}>
-        <Text style={[auraTypography.cardTitle, { color: colors.text }]}>No items in laundry</Text>
+        <Text style={[auraTypography.cardTitle, { color: colors.text }]}>{copy.title}</Text>
         <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>
-          Tell AURA what you washed or move items from Closet.
+          {copy.body}
         </Text>
       </View>
       <View style={{ flexDirection: "row", gap: 10 }}>
@@ -362,6 +503,7 @@ const LaundryRow = React.memo(function LaundryRow({
   const { colors } = useAppTheme();
   const imageSource = getBestThumbnailImageSource(item);
   const statusLabel = TABS.find((entry) => entry.key === activeStatus)?.label ?? "Clean";
+  const meta = laundryMeta(item, activeStatus);
   return (
     <View
       style={{
@@ -402,11 +544,18 @@ const LaundryRow = React.memo(function LaundryRow({
             {[sanitizeDisplayText(item.brand), sanitizeDisplayText(item.primaryColor)].filter(Boolean).join(" · ") || "No brand"}
           </Text>
           <Text style={{ color: colors.lightPurple, fontSize: 11.5, fontWeight: "800" }}>{statusLabel}</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 11.5 }} numberOfLines={1}>
+            {meta}
+          </Text>
         </Pressable>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
         <RowAction label="Needs wash" disabled={disabled || activeStatus === "needs_wash"} onPress={() => onStatus(item.id, "needs_wash")} />
-        <RowAction label="Move to laundry" disabled={disabled || activeStatus === "in_laundry"} onPress={() => onStatus(item.id, "in_laundry")} />
+        <RowAction
+          label={activeStatus === "in_laundry" ? "Already in laundry" : "Move to laundry"}
+          disabled={disabled || activeStatus === "in_laundry"}
+          onPress={() => onStatus(item.id, "in_laundry")}
+        />
         <RowAction label="Mark as washed" disabled={disabled || activeStatus === "clean"} primary onPress={() => onStatus(item.id, "clean")} />
       </View>
     </View>

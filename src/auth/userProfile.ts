@@ -17,9 +17,13 @@ export async function saveNewUserProfile(
   const firstName = firstNameFromDisplayName(normalizedDisplayName) ?? email?.split("@")[0]?.trim() ?? null;
 
   await Promise.all([
-    saveUserAccountProfile(uid, { name: normalizedDisplayName }),
+    saveUserAccountProfile(uid, {
+      name: normalizedDisplayName,
+      displayName: normalizedDisplayName,
+    }),
     saveUserProfilePreferences(uid, {
       ...EMPTY_USER_PROFILE_PREFERENCES,
+      displayName: normalizedDisplayName,
       firstName,
       onboardingCompleted: false,
     }),

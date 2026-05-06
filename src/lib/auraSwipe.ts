@@ -6,6 +6,7 @@ import { generateOutfits } from "@/src/lib/outfitGenerator";
 import { toCanonicalCategory } from "@/src/lib/items";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook } from "@/src/types/aura";
+import type { StylingIntelligenceSummary } from "@/src/types/StylingIntelligence";
 
 const DEBUG_AURA_SWIPE =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
@@ -22,6 +23,8 @@ export type AuraSwipeBatchLook = {
   position: number;
   score: number;
   reason: string;
+  stylingScore?: number;
+  stylingIntelligence?: StylingIntelligenceSummary | null;
   directionLabel: "safe" | "balanced" | "bold" | null;
   itemIds: string[];
   look: AuraLook;
@@ -30,6 +33,7 @@ export type AuraSwipeBatchLook = {
 type GenerateAuraSwipeBatchArgs = {
   intentText?: string;
   numOutfits?: number;
+  anchorItemIds?: string[];
   excludeItemIds?: string[];
   recentItemIds?: string[];
   previousLookItemIds?: string[];
@@ -42,6 +46,8 @@ type OutfitResult = {
   picks?: { slot: "top" | "bottom" | "footwear" | "outerwear" | "accessory"; itemId: string }[];
   score?: number;
   reason?: string;
+  stylingScore?: number;
+  stylingIntelligence?: StylingIntelligenceSummary | null;
 };
 
 type SwipeBackendResponse = {
@@ -108,9 +114,12 @@ function buildLookFromOutfitResult(
     position: index,
     score: typeof outfit.score === "number" ? outfit.score : 0,
     reason: cleanString(outfit.reason),
+    stylingScore: outfit.stylingScore,
+    stylingIntelligence: outfit.stylingIntelligence ?? null,
     directionLabel,
     itemIds: pieces.map((piece) => piece.itemId),
     look: {
+      id: `swipe_${index + 1}_${pieces.map((piece) => piece.itemId).join("_").slice(0, 80)}`,
       lookTitle:
         outerwearPiece && topPiece
           ? `${outerwearPiece.itemName} + ${topPiece.itemName}`
@@ -122,11 +131,13 @@ function buildLookFromOutfitResult(
       vibe: directionLabel ? `${directionLabel} direction` : "wardrobe direction",
       shortExplanation: cleanString(outfit.reason) || "AURA built this from your wardrobe.",
       stylingNote:
-        pieces.length > 0
+        outfit.stylingIntelligence?.stylingNotes?.[0] ??
+        (pieces.length > 0
           ? `Lean into ${pieces.slice(0, 3).map((piece) => piece.itemName.toLowerCase()).join(", ")} for a clean, wearable finish.`
-          : "Keep the proportions clean and let the outfit breathe.",
+          : "Keep the proportions clean and let the outfit breathe."),
       personalizationLabel: directionLabel ? directionLabel.toUpperCase() : undefined,
       personalizationNote: undefined,
+      stylingIntelligence: outfit.stylingIntelligence ?? null,
       pieces,
       fromCloset: pieces.map((piece) => piece.itemName),
       addToComplete: [],
@@ -216,6 +227,7 @@ function localSwipeBatchFromCloset(
       directionLabel,
       itemIds: pieces.flatMap((piece) => (piece.itemId ? [piece.itemId] : [])),
       look: {
+        id: `local_swipe_${index + 1}_${pieces.map((piece) => piece.itemId).join("_").slice(0, 80)}`,
         lookTitle: pieces.length >= 2 ? `${firstPiece} + ${secondPiece}` : suggestion.title,
         vibe: directionLabel ? `${directionLabel} closet direction` : "closet-first direction",
         shortExplanation: suggestion.reason,
@@ -268,6 +280,7 @@ export async function generateAuraSwipeBatch(
       args?.intentText ??
       "Build a varied batch of outfit directions from my wardrobe. Keep them polished, wearable, and distinct.",
     numOutfits: args?.numOutfits ?? 8,
+    anchorItemIds: args?.anchorItemIds ?? [],
     excludeItemIds: args?.excludeItemIds ?? [],
     recentItemIds: args?.recentItemIds ?? [],
     previousLookItemIds: args?.previousLookItemIds ?? [],

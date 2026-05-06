@@ -6,6 +6,9 @@ import { Fonts } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
 import AppImage from "@/src/components/common/AppImage";
+import ShopOptionsSheet from "@/src/components/shop/ShopOptionsSheet";
+import WardrobeSuggestionCard from "@/src/components/suggestions/WardrobeSuggestionCard";
+import { AuraButton, AuraText } from "@/src/components/ui/auraStylePrimitives";
 import {
   ACTION_GAP,
   CHIP_BORDER_WIDTH,
@@ -16,11 +19,12 @@ import {
   PILL_RADIUS,
 } from "@/src/constants/auraControls";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { useAuth } from "@/src/hooks/useAuth";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { formatMoney } from "@/src/lib/currency";
-import { runHaptic } from "@/src/lib/haptics";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
+import type { WardrobeSuggestion } from "@/src/lib/wardrobeSuggestions";
 import type { AuraCandidateAction, AuraCandidateItem, AuraLaundryConfirmationAction, AuraLook, AuraLookOptionMeta, AuraOutfitPhotoAction, AuraResponse } from "@/src/types/aura";
 
 import { auraShadow, auraTheme } from "./aiTheme";
@@ -28,8 +32,6 @@ import { auraShadow, auraTheme } from "./aiTheme";
 const DEBUG_AURA_CLIENT =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<AuraLook>);
-const FEEDBACK_BUTTON_HEIGHT = 30;
-const FEEDBACK_BUTTON_PADDING = 9;
 const SMART_BUY_CHIP_HEIGHT = 28;
 const CARD_SECTION_RADIUS = 18;
 
@@ -58,6 +60,7 @@ function AuraReplyCard({
   onLaundryAction,
 }: AuraReplyCardProps) {
   const { colors } = useAppTheme();
+  const { user } = useAuth();
   const layout = useResponsiveLayout();
   const { width: windowWidth } = useWindowDimensions();
   const ownedPieces = React.useMemo(() => data.ownedPieces?.filter(Boolean) ?? [], [data.ownedPieces]);
@@ -75,10 +78,14 @@ function AuraReplyCard({
   );
   const candidateItems = React.useMemo(() => data.candidateItems ?? data.candidates ?? [], [data.candidateItems, data.candidates]);
   const lookOptions = React.useMemo(() => data.lookOptions?.filter(Boolean) ?? [], [data.lookOptions]);
+  const wardrobeSuggestions = React.useMemo(
+    () => data.wardrobeSuggestions?.filter(Boolean) ?? [],
+    [data.wardrobeSuggestions],
+  );
   const outfitAnalysis = data.outfitAnalysis ?? null;
   const laundryAction = data.laundryAction ?? null;
   const [selectedLookIndex, setSelectedLookIndex] = React.useState(0);
-  const [feedbackState, setFeedbackState] = React.useState<Record<string, "like" | "dislike" | null>>({});
+  const [activeShopSuggestion, setActiveShopSuggestion] = React.useState<WardrobeSuggestion | null>(null);
   const scrollX = React.useRef(new Animated.Value(0)).current;
 
   React.useEffect(() => {
@@ -131,7 +138,7 @@ function AuraReplyCard({
           gap: 10,
         }}
       >
-        <Text style={{ color: colors.text, fontSize: 14, fontWeight: "900", fontFamily: Fonts.sans }}>
+        <Text style={{ color: colors.text, fontSize: 14, fontWeight: "600", fontFamily: Fonts.sans }}>
           {sanitizeDisplayText(data.reply) || "Which item did you mean?"}
         </Text>
         {laundryAction.matches.map((match) => {
@@ -155,7 +162,7 @@ function AuraReplyCard({
                 gap: 3,
               }}
             >
-              <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: "900", fontFamily: Fonts.sans }}>
+              <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: "600", fontFamily: Fonts.sans }}>
                 {sanitizeDisplayText(item?.name) || sanitizeDisplayText(match.label) || "Wardrobe item"}
               </Text>
               <Text style={{ color: colors.textSecondary, fontSize: 12, fontFamily: Fonts.sans }} numberOfLines={1}>
@@ -184,9 +191,9 @@ function AuraReplyCard({
               borderColor: colors.borderWarm,
             })}
           >
-            <Text style={{ color: colors.ctaText, fontSize: 11.5, fontWeight: "800", fontFamily: Fonts.sans }}>
+            <AuraText variant="button" style={{ color: colors.ctaText, fontSize: 11.5, lineHeight: 15 }}>
               Add All
-            </Text>
+            </AuraText>
           </Pressable>
         ) : null}
 
@@ -214,9 +221,67 @@ function AuraReplyCard({
           width: "100%",
         }}
       >
-        <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
+        <Text style={{ color: colors.text, fontSize: 13, fontWeight: "600", fontFamily: Fonts.sans }}>
           Candidate preview expected but no candidate items were delivered.
         </Text>
+      </View>
+    );
+  }
+
+  if (wardrobeSuggestions.length) {
+    return (
+      <View style={{ gap: 10, width: "100%" }}>
+        <View
+          style={{
+            paddingHorizontal: 2,
+            gap: 5,
+            width: "100%",
+          }}
+        >
+          <Text
+            style={{
+              color: colors.text,
+              fontSize: 15.5,
+              lineHeight: 20,
+              fontWeight: "600",
+              letterSpacing: 0,
+              fontFamily: Fonts.sans,
+            }}
+          >
+            {sanitizeDisplayText(data.title) || "What to add next"}
+          </Text>
+          {!!data.reason ? (
+            <Text
+              style={{
+                color: colors.textSecondary,
+                fontSize: 12.5,
+                lineHeight: 18,
+                fontWeight: "600",
+                fontFamily: Fonts.sans,
+              }}
+              numberOfLines={3}
+            >
+              {sanitizeDisplayText(data.reason)}
+            </Text>
+          ) : null}
+        </View>
+        {wardrobeSuggestions.slice(0, 3).map((suggestion) => (
+          <WardrobeSuggestionCard
+            key={suggestion.id}
+            suggestion={suggestion}
+            userId={user?.uid ?? null}
+            sourceScreen="aura_chat"
+            compact
+            onFindOptions={setActiveShopSuggestion}
+          />
+        ))}
+        <ShopOptionsSheet
+          visible={Boolean(activeShopSuggestion)}
+          suggestion={activeShopSuggestion}
+          userId={user?.uid ?? null}
+          sourceScreen="aura_chat"
+          onDismiss={() => setActiveShopSuggestion(null)}
+        />
       </View>
     );
   }
@@ -234,25 +299,6 @@ function AuraReplyCard({
     const selectedLook = looks[effectiveLookIndex] ?? looks[0];
     const selectedMeta = getLookOptionMeta(effectiveLookIndex, selectedLook);
     const horizontalInset = Math.max(0, (windowWidth - railWidth) / 2 - layout.horizontalPadding - sidePeek);
-    const feedbackKey = String(selectedMeta.optionId ?? `look-option-${selectedLookIndex + 1}`);
-    const selectedFeedback = feedbackState[feedbackKey] ?? null;
-
-    function handleFeedback(next: "like" | "dislike") {
-      setFeedbackState((prev) => ({
-        ...prev,
-        [feedbackKey]: prev[feedbackKey] === next ? null : next,
-      }));
-      if (next === "like") {
-        onAction?.("likeLook", selectedLook, selectedMeta);
-      } else {
-        onAction?.("notMyVibe", selectedLook, selectedMeta);
-      }
-    }
-
-    function handleTryAgain() {
-      onAction?.("showMoreLikeThis", selectedLook, selectedMeta);
-    }
-
     function handleLookScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
       if (!lookOptions.length) return;
       const nextIndex = Math.round(event.nativeEvent.contentOffset.x / railStride);
@@ -347,9 +393,9 @@ function AuraReplyCard({
                   colors={colors}
                   onAction={onAction}
                 />
-                <Text style={{ color: auraTheme.textMuted, fontSize: 11, fontFamily: Fonts.sans, marginLeft: 2, textAlign: "center" }}>
-                  Swipe to compare options. Actions apply to {selectedMeta.optionLabel?.toLowerCase() ?? "this look"}.
-                </Text>
+                <AuraText variant="metadata" tone="secondary" style={{ marginLeft: 2, textAlign: "center" }}>
+                  Swipe to compare options.
+                </AuraText>
               </>
             ) : null}
           </View>
@@ -373,16 +419,6 @@ function AuraReplyCard({
             />
           </View>
         )}
-        <LevelThisUpSection suggestions={levelUpSuggestions} colors={colors} />
-        {selectedLook ? (
-          <FeedbackRail
-            colors={colors}
-            selected={selectedFeedback}
-            onDislike={() => handleFeedback("dislike")}
-            onTryAgain={handleTryAgain}
-            onLike={() => handleFeedback("like")}
-          />
-        ) : null}
       </View>
     );
   }
@@ -407,7 +443,7 @@ function AuraReplyCard({
             color: colors.text,
             fontSize: 15.5,
             lineHeight: 20,
-            fontWeight: "800",
+            fontWeight: "600",
             letterSpacing: 0,
             fontFamily: Fonts.sans,
           }}
@@ -421,7 +457,7 @@ function AuraReplyCard({
       ) : null}
 
       {!!ownedPieces.length && !data.look ? (
-        <Group title="From your closet" tone="owned">
+        <Group title="From your closet" tone="owned" colors={colors}>
           {ownedPieces.slice(0, 5).map((item) => (
             <Tag key={`owned-${item}`} label={sanitizeDisplayText(item)} colors={colors} tone="owned" />
           ))}
@@ -429,7 +465,7 @@ function AuraReplyCard({
       ) : null}
 
       {!!recommendedAdditions.length && !data.look ? (
-        <Group title="Add to complete it" tone="suggested">
+        <Group title="Add to complete it" tone="suggested" colors={colors}>
           {recommendedAdditions.slice(0, 5).map((item) => (
             <Tag key={`add-${item}`} label={sanitizeDisplayText(item)} colors={colors} tone="suggested" />
           ))}
@@ -479,7 +515,7 @@ function buildLevelUpSuggestions(data: AuraResponse) {
         item,
       ])
     ).values()
-  ).slice(0, 3);
+  ).slice(0, 2);
 }
 
 function LevelThisUpSection({
@@ -503,29 +539,12 @@ function LevelThisUpSection({
       }}
     >
       <View style={{ gap: 2 }}>
-        <Text
-          style={{
-            color: colors.text,
-            fontSize: 13.25,
-            lineHeight: 17,
-            fontWeight: "800",
-            letterSpacing: 0,
-            fontFamily: Fonts.sans,
-          }}
-        >
+        <AuraText variant="bodyStrong" style={{ fontSize: 13.25, lineHeight: 17 }}>
           Smart buys
-        </Text>
-        <Text
-          style={{
-            color: auraTheme.textFaint,
-            fontSize: 11.25,
-            lineHeight: 15,
-            fontWeight: "600",
-            fontFamily: Fonts.sans,
-          }}
-        >
+        </AuraText>
+        <AuraText variant="metadata" tone="muted" style={{ fontSize: 11.25, lineHeight: 15 }}>
           Small additions that make this easier to finish.
-        </Text>
+        </AuraText>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
         {suggestions.map((item) => (
@@ -536,24 +555,16 @@ function LevelThisUpSection({
               minHeight: SMART_BUY_CHIP_HEIGHT,
               paddingHorizontal: 9,
               paddingVertical: 0,
-              backgroundColor: colors.surfaceSoft,
+              backgroundColor: colors.surfaceMuted,
               borderWidth: CHIP_BORDER_WIDTH,
-              borderColor: colors.border,
+              borderColor: colors.borderSoft,
               justifyContent: "center",
               maxWidth: "100%",
             }}
           >
-            <Text
-              style={{
-                color: colors.textSecondary,
-                fontSize: 11.25,
-                lineHeight: 14,
-                fontWeight: "700",
-                fontFamily: Fonts.sans,
-              }}
-            >
+            <AuraText variant="metadata" tone="secondary" style={{ fontSize: 11.25, lineHeight: 14 }}>
               {item.label}
-            </Text>
+            </AuraText>
           </View>
         ))}
       </View>
@@ -585,133 +596,6 @@ function getLookOptionMeta(index: number, look?: AuraLook | null): AuraLookOptio
   };
 }
 
-function FeedbackRail({
-  colors,
-  selected,
-  onDislike,
-  onTryAgain,
-  onLike,
-}: {
-  colors: ReturnType<typeof useAppTheme>["colors"];
-  selected: "like" | "dislike" | null;
-  onDislike: () => void;
-  onTryAgain: () => void;
-  onLike: () => void;
-}) {
-  return (
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "flex-end",
-        alignSelf: "flex-end",
-        gap: 6,
-        paddingTop: 2,
-        paddingHorizontal: 0,
-        paddingBottom: 0,
-        marginTop: 1,
-        backgroundColor: "transparent",
-      }}
-    >
-      <FeedbackChip
-        label="Not it"
-        icon="thumbs-down-outline"
-        active={selected === "dislike"}
-        colors={colors}
-        onPress={onDislike}
-      />
-      <FeedbackChip
-        label="Try again"
-        icon="refresh-outline"
-        active={false}
-        colors={colors}
-        onPress={onTryAgain}
-      />
-      <FeedbackChip
-        label="Like"
-        icon="thumbs-up-outline"
-        active={selected === "like"}
-        colors={colors}
-        onPress={onLike}
-      />
-    </View>
-  );
-}
-
-function FeedbackChip({
-  label,
-  icon,
-  active,
-  colors,
-  onPress,
-}: {
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  active: boolean;
-  colors: ReturnType<typeof useAppTheme>["colors"];
-  onPress: () => void;
-}) {
-  const scale = React.useRef(new Animated.Value(1)).current;
-
-  function animateTo(value: number) {
-    Animated.timing(scale, {
-      toValue: value,
-      duration: 120,
-      useNativeDriver: true,
-    }).start();
-  }
-
-  function handlePress() {
-    void runHaptic("selection");
-    onPress();
-  }
-
-  return (
-    <Animated.View style={{ transform: [{ scale }] }}>
-      <Pressable
-        hitSlop={8}
-        onPress={handlePress}
-        onPressIn={() => animateTo(0.96)}
-        onPressOut={() => animateTo(1)}
-        style={({ pressed }) => ({
-          minHeight: FEEDBACK_BUTTON_HEIGHT,
-          borderRadius: PILL_RADIUS,
-          paddingHorizontal: FEEDBACK_BUTTON_PADDING,
-          paddingVertical: 0,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 5,
-          backgroundColor: active
-            ? label === "Not it"
-              ? "rgba(255,77,79,0.075)"
-              : colors.purpleSurface
-            : colors.chipBackground,
-          borderWidth: CHIP_BORDER_WIDTH,
-          borderColor: active ? (label === "Not it" ? "rgba(255,77,79,0.18)" : colors.purpleBorder) : colors.border,
-          opacity: pressed ? 0.88 : 1,
-        })}
-      >
-        <Ionicons
-          name={icon}
-          size={13}
-          color={active ? (label === "Not it" ? colors.danger : colors.ctaCream) : auraTheme.textMuted}
-        />
-        <Text
-          style={{
-            color: active ? (label === "Not it" ? colors.danger : colors.ctaCream) : auraTheme.textMuted,
-            fontSize: 10.5,
-            fontWeight: "700",
-            fontFamily: Fonts.sans,
-          }}
-        >
-          {label}
-        </Text>
-      </Pressable>
-    </Animated.View>
-  );
-}
-
 function LookActionRow({
   look,
   option,
@@ -733,19 +617,9 @@ function LookActionRow({
         backgroundColor={colors.ctaCream}
         borderColor={colors.ctaCream}
       >
-        <Text style={{ color: colors.ctaText, fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
+        <AuraText variant="button" style={{ color: colors.ctaText, fontSize: 13, lineHeight: 18 }}>
           Save look
-        </Text>
-      </ActionButton>
-      <ActionButton
-        onPress={() => onAction("planForToday", look, option)}
-        pressedBackground={colors.surfaceElevated}
-        backgroundColor={colors.surfaceSoft}
-        borderColor={colors.border}
-      >
-        <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
-          Plan today
-        </Text>
+        </AuraText>
       </ActionButton>
     </View>
   );
@@ -779,7 +653,7 @@ function OutfitAnalysisCard({
       }}
     >
       <View style={{ gap: 4 }}>
-        <Text style={{ color: colors.text, fontSize: 16, lineHeight: 20, fontWeight: "800", fontFamily: Fonts.sans }}>
+        <Text style={{ color: colors.text, fontSize: 16, lineHeight: 20, fontWeight: "600", fontFamily: Fonts.sans }}>
           I found this outfit
         </Text>
         {analysis.outfitVibe ? (
@@ -803,11 +677,11 @@ function OutfitAnalysisCard({
               maxWidth: "100%",
             }}
           >
-            <Text style={{ color: auraTheme.textFaint, fontSize: 10, fontWeight: "800", letterSpacing: 0.8, fontFamily: Fonts.sans }}>
+            <Text style={{ color: auraTheme.textFaint, fontSize: 10, fontWeight: "600", letterSpacing: 0.8, fontFamily: Fonts.sans }}>
               {displayOutfitRole(piece.role)}
               {typeof piece.confidence === "number" ? ` · ${Math.round(piece.confidence * 100)}%` : ""}
             </Text>
-            <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: "800", fontFamily: Fonts.sans }}>
+            <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: "600", fontFamily: Fonts.sans }}>
               {[piece.color, piece.label].filter(Boolean).map(sanitizeDisplayText).join(" ")}
             </Text>
             {piece.notes ? (
@@ -841,9 +715,9 @@ function OutfitAnalysisCard({
             backgroundColor={colors.ctaCream}
             borderColor={colors.borderWarm}
           >
-            <Text style={{ color: colors.ctaText, fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
+            <AuraText variant="button" style={{ color: colors.ctaText, fontSize: 13, lineHeight: 18 }}>
               Save as worn
-            </Text>
+            </AuraText>
           </ActionButton>
           <ActionButton
             onPress={() => onAction?.({ type: "add_pieces_to_closet" })}
@@ -851,16 +725,11 @@ function OutfitAnalysisCard({
             backgroundColor={auraTheme.surfaceStrong}
             borderColor={auraTheme.borderSoft}
           >
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800", fontFamily: Fonts.sans }}>
+            <AuraText variant="button" style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>
               Add pieces
-            </Text>
+            </AuraText>
           </ActionButton>
         </View>
-        <CandidateButton
-          label="Ask AURA to improve this outfit"
-          tone="secondary"
-          onPress={() => onAction?.({ type: "improve_outfit" })}
-        />
       </View>
     </View>
   );
@@ -926,15 +795,17 @@ function ActionButton({
 function Group({
   title,
   tone,
+  colors,
   children,
 }: {
   title: string;
   tone: "owned" | "suggested";
+  colors: ReturnType<typeof useAppTheme>["colors"];
   children: React.ReactNode;
 }) {
-  const titleColor = tone === "owned" ? "rgba(223,182,178,0.92)" : "rgba(251,228,216,0.68)";
-  const sectionBackground = tone === "owned" ? "rgba(223,182,178,0.12)" : "rgba(43,18,76,0.42)";
-  const sectionBorder = tone === "owned" ? "rgba(223,182,178,0.22)" : "rgba(251,228,216,0.10)";
+  const titleTone = tone === "owned" ? "accent" : "secondary";
+  const sectionBackground = tone === "owned" ? colors.accentSoft : colors.surfaceMuted;
+  const sectionBorder = tone === "owned" ? colors.purpleBorder : colors.borderSoft;
 
   return (
     <View
@@ -947,18 +818,9 @@ function Group({
         borderColor: sectionBorder,
       }}
     >
-      <Text
-        style={{
-          color: titleColor,
-          fontSize: 12.5,
-          lineHeight: 15,
-          fontWeight: "800",
-          letterSpacing: 0,
-          fontFamily: Fonts.sans,
-        }}
-      >
+      <AuraText variant="caption" tone={titleTone} style={{ fontSize: 12.5, lineHeight: 15, fontWeight: "600" }}>
         {title}
-      </Text>
+      </AuraText>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>{children}</View>
     </View>
   );
@@ -977,20 +839,20 @@ function MetaRow({
 }) {
   return (
     <View style={{ gap: 5 }}>
-      <Text style={{ color: auraTheme.textMuted, fontSize: 11.5, lineHeight: 15, fontWeight: "800", letterSpacing: 0, fontFamily: Fonts.sans }}>
+      <AuraText variant="metadata" tone="secondary" style={{ fontSize: 11.5, lineHeight: 15 }}>
         {label}
-      </Text>
-      <Text
+      </AuraText>
+      <AuraText
+        variant={emphasis ? "bodyStrong" : "body"}
+        tone={emphasis ? "primary" : "secondary"}
         style={{
           color: emphasis ? colors.text : colors.textSecondary,
           fontSize: 13.25,
           lineHeight: 20,
-          fontWeight: emphasis ? "700" : "500",
-          fontFamily: Fonts.sans,
         }}
       >
         {sanitizeDisplayText(value)}
-      </Text>
+      </AuraText>
     </View>
   );
 }
@@ -1024,7 +886,7 @@ function CandidateCard({
     ["Material", candidate.material ?? candidate.materials?.[0]],
     ["Pattern", candidate.pattern],
     ["Price", priceText && !candidate.priceDisplay ? priceText : null],
-  ].filter((entry): entry is [string, string] => !!entry[1]).slice(0, 6);
+  ].filter((entry): entry is [string, string] => !!entry[1]).slice(0, 3);
   const needsReview = candidate.status === "needs_review";
   const previewImageUrl = candidate.primaryImageUrl ?? candidate.imageUrls[0] ?? "";
 
@@ -1078,7 +940,7 @@ function CandidateCard({
                 color: colors.text,
                 fontSize: 14,
                 lineHeight: 17,
-                fontWeight: "800",
+                fontWeight: "600",
                 fontFamily: Fonts.sans,
               }}
               numberOfLines={2}
@@ -1091,7 +953,7 @@ function CandidateCard({
                   color: colors.textSecondary,
                   fontSize: 12,
                   lineHeight: 16,
-                  fontWeight: "700",
+                  fontWeight: "600",
                   fontFamily: Fonts.sans,
                 }}
                 numberOfLines={1}
@@ -1103,7 +965,7 @@ function CandidateCard({
               style={{
                 color: auraTheme.textMuted,
                 fontSize: 10,
-                fontWeight: "800",
+                fontWeight: "600",
                 letterSpacing: 1.05,
                 fontFamily: Fonts.sans,
               }}
@@ -1120,12 +982,12 @@ function CandidateCard({
             </Text>
           </View>
           {needsReview ? (
-            <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "700", lineHeight: 17 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "600", lineHeight: 17 }}>
               I couldn&apos;t fully read this item. Review the details before adding.
             </Text>
           ) : null}
           {candidate.status === "failed" ? (
-            <Text style={{ color: "#ffb6b6", fontSize: 12.5, fontWeight: "700", lineHeight: 17 }}>
+            <Text style={{ color: colors.destructive, fontSize: 12.5, fontWeight: "600", lineHeight: 17 }}>
               Could not save this item. Retry, edit, or cancel.
             </Text>
           ) : null}
@@ -1140,7 +1002,7 @@ function CandidateCard({
                   backgroundColor: colors.chipBackground,
                 }}
               >
-                <Text style={{ color: colors.textSecondary, fontSize: 10.5, fontWeight: "700" }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 10.5, fontWeight: "600" }}>
                   {label}: <Text style={{ color: colors.text }}>{sanitizeDisplayText(value)}</Text>
                 </Text>
               </View>
@@ -1202,46 +1064,24 @@ function CandidateButton({
   disabled?: boolean;
   onPress: () => void;
 }) {
-  const { colors } = useAppTheme();
-  const backgroundColor =
-    tone === "primary" ? colors.ctaCream : tone === "secondary" ? colors.secondaryCta : "transparent";
-  const borderColor =
-    tone === "primary" ? colors.borderWarm : tone === "secondary" ? colors.border : colors.border;
-  const textColor = tone === "primary" ? colors.ctaText : colors.textSecondary;
-  const scale = React.useRef(new Animated.Value(1)).current;
-
-  function animateTo(value: number) {
-    Animated.timing(scale, {
-      toValue: value,
-      duration: 100,
-      useNativeDriver: true,
-    }).start();
-  }
+  const variant = tone === "primary" ? "primary" : tone === "secondary" ? "tertiary" : "ghost";
 
   return (
-    <Animated.View style={{ transform: [{ scale }] }}>
-      <Pressable
-        disabled={disabled}
-        hitSlop={6}
-        onPress={onPress}
-        onPressIn={() => animateTo(0.97)}
-        onPressOut={() => animateTo(1)}
-        style={({ pressed }) => ({
-          minHeight: CHIP_HEIGHT,
-          borderRadius: PILL_RADIUS,
-          paddingHorizontal: CHIP_HORIZONTAL_PADDING,
-          paddingVertical: 0,
-          backgroundColor: pressed ? (tone === "primary" ? colors.ctaCream : colors.surfaceElevated) : backgroundColor,
-          borderWidth: CHIP_BORDER_WIDTH,
-          borderColor,
-          alignItems: "center",
-          justifyContent: "center",
-          opacity: disabled ? 0.42 : pressed ? 0.94 : 1,
-        })}
-      >
-        <Text style={{ color: textColor, fontSize: 11.25, fontWeight: "800", fontFamily: Fonts.sans }}>{label}</Text>
-      </Pressable>
-    </Animated.View>
+    <AuraButton
+      label={label}
+      disabled={disabled}
+      onPress={onPress}
+      variant={variant}
+      size="small"
+      haptic="selection"
+      hapticTrigger="press"
+      hitSlop={6}
+      style={{
+        minHeight: CHIP_HEIGHT,
+        paddingHorizontal: CHIP_HORIZONTAL_PADDING,
+      }}
+      textStyle={{ fontSize: 11.25, lineHeight: 15 }}
+    />
   );
 }
 
@@ -1280,17 +1120,17 @@ function Tag({
         maxWidth: "100%",
       }}
     >
-      <Text
+      <AuraText
+        variant="metadata"
         style={{
           color: textColor,
           fontSize: 11,
           lineHeight: 14,
-          fontWeight: "700",
-          fontFamily: Fonts.sans,
+          fontWeight: "500",
         }}
       >
         {label}
-      </Text>
+      </AuraText>
     </View>
   );
 }

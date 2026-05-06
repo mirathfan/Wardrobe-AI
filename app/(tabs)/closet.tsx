@@ -22,7 +22,7 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { deleteDoc, doc, getDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { doc, getDoc, updateDoc, writeBatch } from "firebase/firestore";
 
 import {
   ClosetFilterSheet,
@@ -47,6 +47,7 @@ import {
   auraSurfaceTiers,
   auraTypography,
 } from "@/src/components/ui/auraStylePrimitives";
+import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import type { ChatImageAttachment } from "@/src/components/ai/chatTypes";
 import {
   type CategoryKey,
@@ -66,6 +67,7 @@ import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { FLOATING_CONTROL_GAP } from "@/src/constants/dock";
 import { db } from "@/src/lib/firebase";
+import { deleteWardrobeItem } from "@/src/lib/deleteItem";
 import {
   createAuraItemDraftsFromCandidates,
   createAuraItemDraftsFromImages,
@@ -85,8 +87,6 @@ import { logItemStyleEvent } from "@/src/lib/auraMemory";
 import {
   getMinimumClosetProgress,
   getSuggestedAddItemCategory,
-  MINIMUM_CLOSET_TARGETS,
-  MINIMUM_CLOSET_UNLOCK_ITEM_COUNT,
 } from "@/src/lib/minimumCloset";
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
 import { Toast } from "@/src/lib/toast";
@@ -159,17 +159,6 @@ const CLOSET_FAB_SIZE = 66;
 const CLOSET_FAB_DOCK_GAP = 22;
 const CLOSET_ADD_MENU_GAP = 8;
 const DEBUG_CLOSET_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
-const FIRST_CLOSET_AURA_PROMPT =
-  "My closet is empty. What should I add first so AURA can build strong outfits? Give me a concise starter plan with tops, bottoms, footwear, one layer, and one accessory.";
-
-const FIRST_CLOSET_TARGETS = [
-  { key: "tops", label: "Tops", target: MINIMUM_CLOSET_TARGETS.tops },
-  { key: "bottoms", label: "Bottoms", target: MINIMUM_CLOSET_TARGETS.bottoms },
-  { key: "footwear", label: "Footwear", target: MINIMUM_CLOSET_TARGETS.footwear },
-  { key: "outerwear", label: "Outerwear", target: MINIMUM_CLOSET_TARGETS.outerwear },
-  { key: "accessories", label: "Accessory", target: MINIMUM_CLOSET_TARGETS.accessories },
-] as const;
-
 function debugClosetLog(...args: Parameters<typeof console.log>) {
   if (DEBUG_CLOSET_CLIENT) {
     console.log(...args);
@@ -365,7 +354,7 @@ const ClosetSearchResultsHeader = React.memo(function ClosetSearchResultsHeader(
 
   return (
     <View style={{ marginBottom: 12, gap: 8 }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 17, fontWeight: "800" }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 17, fontWeight: "600" }}>
         Showing {shownCount} of {totalCount} result{totalCount === 1 ? "" : "s"} for {query.trim()}.
       </Text>
       {hasMore ? (
@@ -408,8 +397,26 @@ const ClosetSearchEmptyState = React.memo(function ClosetSearchEmptyState() {
         No exact match
       </Text>
       <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>
-        Try brand, category, or color.
+        Try a broader search.
       </Text>
+    </View>
+  );
+});
+
+const ClosetLoadingSkeleton = React.memo(function ClosetLoadingSkeleton() {
+  const layout = useResponsiveLayout();
+
+  return (
+    <View style={{ gap: 18, paddingTop: 10 }}>
+      <View style={{ flexDirection: "row", gap: 12 }}>
+        <AuraSkeleton height={218} radius={layout.mediumRadius} style={{ flex: 1 }} />
+        <AuraSkeleton height={218} radius={layout.mediumRadius} style={{ flex: 1 }} />
+      </View>
+      <AuraSkeletonLine width="44%" height={14} />
+      <View style={{ flexDirection: "row", gap: 12 }}>
+        <AuraSkeleton height={218} radius={layout.mediumRadius} style={{ flex: 1 }} />
+        <AuraSkeleton height={218} radius={layout.mediumRadius} style={{ flex: 1 }} />
+      </View>
     </View>
   );
 });
@@ -417,12 +424,10 @@ const ClosetSearchEmptyState = React.memo(function ClosetSearchEmptyState() {
 const ClosetEmptyState = React.memo(function ClosetEmptyState({
   filtered,
   onAddItem,
-  onAskAura,
   onClearFilters,
 }: {
   filtered: boolean;
   onAddItem: () => void;
-  onAskAura: () => void;
   onClearFilters: () => void;
 }) {
   const { colors } = useAppTheme();
@@ -453,47 +458,14 @@ const ClosetEmptyState = React.memo(function ClosetEmptyState({
       </View>
       <View style={{ gap: 7 }}>
         <Text style={[auraTypography.sectionTitle, { color: colors.text }]}>
-          {filtered ? "No pieces match these filters" : "Your closet is ready for its first pieces"}
+          {filtered ? "No pieces match" : "Start your closet"}
         </Text>
         <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>
           {filtered
-            ? "Broaden the view and Closet will get back to the category-first browser."
-            : "Add a few clean photos so AURA can start building outfits from what you actually own."}
+            ? "Clear the filters to return to your full wardrobe."
+            : "Add a few clean photos so AURA can build from what you own."}
         </Text>
       </View>
-      {!filtered ? (
-        <View style={{ gap: 10 }}>
-          <Text style={{ color: colors.lightPurple, fontSize: 11, fontWeight: "900", letterSpacing: 1 }}>
-            {MINIMUM_CLOSET_UNLOCK_ITEM_COUNT}-PIECE STYLE CORE
-          </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            {FIRST_CLOSET_TARGETS.map((target) => (
-              <View
-                key={target.key}
-                style={{
-                  flexGrow: 1,
-                  flexBasis: "30%",
-                  minWidth: 104,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  backgroundColor: colors.surfaceInteractive,
-                  paddingHorizontal: 10,
-                  paddingVertical: 9,
-                  gap: 2,
-                }}
-              >
-                <Text style={{ color: colors.text, fontSize: 17, lineHeight: 21, fontWeight: "900" }}>
-                  {target.target}
-                </Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }} numberOfLines={1}>
-                  {target.label}
-                </Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      ) : null}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
         <AuraPressable
           onPress={filtered ? onClearFilters : onAddItem}
@@ -509,22 +481,6 @@ const ClosetEmptyState = React.memo(function ClosetEmptyState({
         >
           <Text style={[auraButtonTextStyle(colors, "primary"), { fontSize: 13, lineHeight: 17 }]}>
             {filtered ? "Clear filters" : "Add item"}
-          </Text>
-        </AuraPressable>
-        <AuraPressable
-          onPress={onAskAura}
-          haptic="selection"
-          hapticTrigger="press"
-          pressedScale={0.97}
-          style={{
-            ...auraButtonStyle(colors, "secondary"),
-            minHeight: 40,
-            borderRadius: 999,
-            paddingHorizontal: 14,
-          }}
-        >
-          <Text style={[auraButtonTextStyle(colors, "secondary"), { fontSize: 13, lineHeight: 17 }]}>
-            {filtered ? "Ask AURA" : "Ask AURA what to add first"}
           </Text>
         </AuraPressable>
       </View>
@@ -560,7 +516,7 @@ const ClosetSectionHeader = React.memo(function ClosetSectionHeader({
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 9, flex: 1 }}>
-          <Text style={{ color: colors.text, fontSize: 19, lineHeight: 24, fontWeight: "900", letterSpacing: 0 }}>
+          <Text style={{ color: colors.text, fontSize: 19, lineHeight: 24, fontWeight: "600", letterSpacing: 0 }}>
             {section.title}
           </Text>
           <View
@@ -571,7 +527,7 @@ const ClosetSectionHeader = React.memo(function ClosetSectionHeader({
               backgroundColor: "rgba(251,228,216,0.06)",
             }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "800", fontVariant: ["tabular-nums"] }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "600", fontVariant: ["tabular-nums"] }}>
               {section.itemCount}
             </Text>
           </View>
@@ -605,10 +561,10 @@ const ClosetSubcategoryHeader = React.memo(function ClosetSubcategoryHeader({
   return (
     <View style={{ gap: 8, paddingTop: 0 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 13.5, lineHeight: 18, fontWeight: "900", letterSpacing: 0 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 13.5, lineHeight: 18, fontWeight: "600", letterSpacing: 0 }}>
           {label}
         </Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "800", opacity: 0.78, fontVariant: ["tabular-nums"] }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "600", opacity: 0.86, fontVariant: ["tabular-nums"] }}>
           {count}
         </Text>
       </View>
@@ -652,7 +608,7 @@ const ClosetAddItemTile = React.memo(function ClosetAddItemTile({
       onPress={onPress}
       haptic="selection"
       hapticTrigger="press"
-      pressedScale={0.985}
+      pressedScale={0.97}
       pressedOpacity={0.9}
       style={{
         width,
@@ -697,11 +653,11 @@ const ClosetAddItemTile = React.memo(function ClosetAddItemTile({
           paddingBottom: 5,
         }}
       >
-        <Text style={{ color: colors.text, fontSize: 12.25, lineHeight: 16, fontWeight: "700" }} numberOfLines={1}>
+        <Text style={{ color: colors.text, fontSize: 12.25, lineHeight: 16, fontWeight: "600" }} numberOfLines={1}>
           Add item
         </Text>
         <Text
-          style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 15, fontWeight: "700", opacity: 0.66, marginTop: 4 }}
+          style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 15, fontWeight: "600", opacity: 0.66, marginTop: 4 }}
           numberOfLines={1}
         >
           Quick capture
@@ -1320,7 +1276,7 @@ export default function ClosetScreen() {
           onPress: () => {
             void runBulkAction("Delete", async () => {
               await Promise.all(
-                selectedItems.map((item) => deleteDoc(doc(db, "users", uid, "items", item.id)))
+                selectedItems.map((item) => deleteWardrobeItem(uid, item.id, item))
               );
               clearSelection();
             });
@@ -1377,11 +1333,11 @@ export default function ClosetScreen() {
 
   const handleBulkShare = React.useCallback(() => {
     void runBulkAction("Share", async () => {
-      const title = selectedItems.length === 1 ? "Wardrobe AI item" : "Wardrobe AI selection";
+      const title = selectedItems.length === 1 ? "AURA item" : "AURA selection";
       const message =
         selectedItems.length === 1
           ? `${sanitizeDisplayText(selectedItems[0]?.name) || "Wardrobe item"}`
-          : `Wardrobe AI selection (${selectedItems.length} items): ${selectedItems
+          : `AURA selection (${selectedItems.length} items): ${selectedItems
               .map((item) => sanitizeDisplayText(item.name) || sanitizeDisplayText(item.subCategory) || item.id)
               .join(", ")}`;
       await Share.share({ title, message });
@@ -1713,7 +1669,7 @@ export default function ClosetScreen() {
           removedAt: Date.now(),
           updatedAt: Date.now(),
         });
-        await deleteDoc(itemRef);
+        await deleteWardrobeItem(uid, item.id, item);
         const afterDelete = await getDoc(itemRef);
         debugClosetLog("[ITEM_REMOVE_SUCCESS]", {
           uid,
@@ -1845,11 +1801,7 @@ export default function ClosetScreen() {
 
   const closetListEmpty = useMemo(() => {
     if (loading) {
-      return (
-        <View style={{ paddingVertical: 48, alignItems: "center" }}>
-          <ActivityIndicator color={colors.accent} />
-        </View>
-      );
+      return <ClosetLoadingSkeleton />;
     }
 
     if (isSearchMode) {
@@ -1860,23 +1812,10 @@ export default function ClosetScreen() {
       <ClosetEmptyState
         filtered={visibleItems.length > 0}
         onAddItem={openQuickAdd}
-        onAskAura={() => {
-          if (visibleItems.length > 0) {
-            router.push("/(tabs)/ai");
-            return;
-          }
-          router.push({
-            pathname: "/(tabs)/ai",
-            params: {
-              prompt: FIRST_CLOSET_AURA_PROMPT,
-              promptKey: `closet-empty-${Date.now()}`,
-            },
-          });
-        }}
         onClearFilters={clearFilters}
       />
     );
-  }, [clearFilters, colors.accent, isSearchMode, loading, openQuickAdd, visibleItems.length]);
+  }, [clearFilters, isSearchMode, loading, openQuickAdd, visibleItems.length]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -1919,7 +1858,7 @@ export default function ClosetScreen() {
               }}
             >
               <View style={{ gap: 2, flex: 1 }}>
-                <Text style={{ color: colors.text, fontSize: 14, fontWeight: "900" }}>
+                <Text style={{ color: colors.text, fontSize: 14, fontWeight: "600" }}>
                   {selectedVisibleCount} selected
                 </Text>
                 <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
@@ -1939,7 +1878,7 @@ export default function ClosetScreen() {
                   opacity: bulkActionLoading ? 0.5 : pressed ? 0.78 : 1,
                 })}
               >
-                <Text style={{ color: colors.text, fontSize: 12, fontWeight: "800" }}>
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: "600" }}>
                   {allFilteredItemsSelected ? "Clear" : "Select all"}
                 </Text>
               </Pressable>
@@ -1956,7 +1895,7 @@ export default function ClosetScreen() {
                   opacity: bulkActionLoading ? 0.5 : pressed ? 0.78 : 1,
                 })}
               >
-                <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800" }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>
                   Cancel
                 </Text>
               </Pressable>
@@ -1979,18 +1918,6 @@ export default function ClosetScreen() {
                 label="Laundry"
                 disabled={bulkActionLoading}
                 onPress={() => void runBulkAction("Move to laundry", async () => applyBulkStatus("IN_LAUNDRY"))}
-              />
-              <BulkActionPill
-                icon="refresh-outline"
-                label="Available"
-                disabled={bulkActionLoading}
-                onPress={() => void runBulkAction("Mark available", async () => applyBulkStatus("AVAILABLE"))}
-              />
-              <BulkActionPill
-                icon="star-outline"
-                label="Favorite"
-                disabled={bulkActionLoading}
-                onPress={handleBulkFavorite}
               />
               <BulkActionPill
                 icon="sparkles-outline"
@@ -2159,28 +2086,16 @@ export default function ClosetScreen() {
               onPress={handleBulkMarkWorn}
             />
             <QuickAddAction
-              icon="pricetags-outline"
-              label="Edit Tags / Bulk Edit"
-              disabled
-              onPress={() => {}}
+              icon="refresh-outline"
+              label="Mark Available"
+              disabled={bulkActionLoading}
+              onPress={() => void runBulkAction("Mark available", async () => applyBulkStatus("AVAILABLE"))}
             />
             <QuickAddAction
-              icon="albums-outline"
-              label="Add to Collection"
-              disabled
-              onPress={() => {}}
-            />
-            <QuickAddAction
-              icon="calendar-outline"
-              label="Plan to Calendar"
-              disabled
-              onPress={() => {}}
-            />
-            <QuickAddAction
-              icon="archive-outline"
-              label="Archive / Hide"
-              disabled
-              onPress={() => {}}
+              icon="star-outline"
+              label="Favorite"
+              disabled={bulkActionLoading}
+              onPress={handleBulkFavorite}
             />
           </Pressable>
         </Pressable>
@@ -2370,16 +2285,16 @@ export default function ClosetScreen() {
                     borderWidth: 1,
                     borderColor: colors.border,
                     fontSize: 14,
-                    fontWeight: "700",
+                    fontWeight: "600",
                   }}
                 />
                 {productLinkInlineError ? (
-                  <Text selectable style={{ color: "#ffb2b2", fontSize: 12, lineHeight: 16, fontWeight: "700" }}>
+                  <Text selectable style={{ color: "#ffb2b2", fontSize: 12, lineHeight: 16, fontWeight: "600" }}>
                     {productLinkInlineError}
                   </Text>
                 ) : null}
                 {productLinkError ? (
-                  <Text selectable style={{ color: "#ffb2b2", fontSize: 12, lineHeight: 16, fontWeight: "700" }}>
+                  <Text selectable style={{ color: "#ffb2b2", fontSize: 12, lineHeight: 16, fontWeight: "600" }}>
                     {productLinkError}
                   </Text>
                 ) : null}
@@ -2401,7 +2316,7 @@ export default function ClosetScreen() {
                         color: colors.text,
                         fontSize: 12.5,
                         lineHeight: 16,
-                        fontWeight: "900",
+                        fontWeight: "600",
                       }}
                     >
                       {productLinkChipLabel}
@@ -2459,10 +2374,10 @@ export default function ClosetScreen() {
                   }}
                 >
                   <View style={{ gap: 5 }}>
-                    <Text style={{ color: colors.text, fontSize: 15, lineHeight: 19, fontWeight: "900" }}>
+                    <Text style={{ color: colors.text, fontSize: 15, lineHeight: 19, fontWeight: "600" }}>
                       {productLinkRecoverableError.title}
                     </Text>
-                    <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 17, fontWeight: "700" }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 17, fontWeight: "600" }}>
                       {productLinkRecoverableError.message}
                     </Text>
                   </View>
@@ -2482,7 +2397,7 @@ export default function ClosetScreen() {
                         opacity: productLinkBusy || !normalizedProductLink ? 0.5 : pressed ? 0.78 : 1,
                       })}
                     >
-                      <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "900" }}>Try again</Text>
+                      <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "600" }}>Try again</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => void handleAddProductLinkFromScreenshot()}
@@ -2499,7 +2414,7 @@ export default function ClosetScreen() {
                         opacity: productLinkBusy ? 0.5 : pressed ? 0.78 : 1,
                       })}
                     >
-                      <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "900" }}>Add from screenshot</Text>
+                      <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "600" }}>Add from screenshot</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => void handleOpenProductLinkManually()}
@@ -2516,7 +2431,7 @@ export default function ClosetScreen() {
                         opacity: !normalizedProductLink ? 0.5 : pressed ? 0.78 : 1,
                       })}
                     >
-                      <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "900" }}>Open link</Text>
+                      <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "600" }}>Open link</Text>
                     </Pressable>
                     <Pressable
                       onPress={closeProductLinkSheet}
@@ -2533,7 +2448,7 @@ export default function ClosetScreen() {
                         opacity: productLinkBusy ? 0.5 : pressed ? 0.78 : 1,
                       })}
                     >
-                      <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "900" }}>Cancel</Text>
+                      <Text style={{ color: colors.textSecondary, fontSize: 12.5, fontWeight: "600" }}>Cancel</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -2553,7 +2468,7 @@ export default function ClosetScreen() {
                   }}
                 >
                   <ActivityIndicator color={colors.ctaCream} />
-                  <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: "700" }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>
                     Reading product details...
                   </Text>
                 </View>
@@ -2596,7 +2511,7 @@ export default function ClosetScreen() {
                       <Text
                         selectable
                         numberOfLines={3}
-                        style={{ color: colors.text, fontSize: 16, lineHeight: 20, fontWeight: "900" }}
+                        style={{ color: colors.text, fontSize: 16, lineHeight: 20, fontWeight: "600" }}
                       >
                         {productLinkDraft.name || "Untitled item"}
                       </Text>
@@ -2648,7 +2563,7 @@ export default function ClosetScreen() {
                         }
                       />
                       <View style={{ gap: 7 }}>
-                        <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "900", textTransform: "uppercase" }}>
+                        <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "600", textTransform: "uppercase" }}>
                           Category
                         </Text>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
@@ -2755,13 +2670,13 @@ function ProductLinkPreviewLine({
   const { colors } = useAppTheme();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-      <Text style={{ width: 58, color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "900" }}>
+      <Text style={{ width: 58, color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "600" }}>
         {label}
       </Text>
       <Text
         selectable
         numberOfLines={1}
-        style={{ flex: 1, color: colors.text, fontSize: 12, lineHeight: 15, fontWeight: "800" }}
+        style={{ flex: 1, color: colors.text, fontSize: 12, lineHeight: 15, fontWeight: "600" }}
       >
         {value}
       </Text>
@@ -2785,7 +2700,7 @@ function ProductLinkReviewField({
   const { colors } = useAppTheme();
   return (
     <View style={[{ gap: 6 }, style]}>
-      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "900", textTransform: "uppercase" }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "600", textTransform: "uppercase" }}>
         {label}
       </Text>
       <TextInput
@@ -2805,7 +2720,7 @@ function ProductLinkReviewField({
           borderWidth: 1,
           borderColor: colors.border,
           fontSize: 13,
-          fontWeight: "800",
+          fontWeight: "600",
         }}
       />
     </View>
@@ -2841,7 +2756,7 @@ function QuickAddAction({
       })}
     >
       <Ionicons name={icon} size={19} color={colors.text} />
-      <Text style={[auraButtonTextStyle(colors, "secondary", disabled), { fontSize: 14.5 }]}>
+          <Text style={[auraButtonTextStyle(colors, "secondary", disabled), { fontSize: 14.5, fontWeight: "600" }]}>
         {label}
       </Text>
     </Pressable>
@@ -2887,7 +2802,7 @@ function BulkActionPill({
         style={{
           color: tone === "destructive" ? colors.danger : colors.text,
           fontSize: 11.5,
-          fontWeight: "800",
+          fontWeight: "600",
         }}
         numberOfLines={1}
       >

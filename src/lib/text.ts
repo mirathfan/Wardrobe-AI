@@ -37,3 +37,31 @@ export function sanitizeDisplayText(value: string | null | undefined) {
 
   return text || original;
 }
+
+function sanitizeDisplayLine(value: string) {
+  const compact = String(value ?? "").replace(/[ \t]+/g, " ").trim();
+  if (!compact) return "";
+
+  // Section headers such as "Quick take:" and field prompts such as "- Top:"
+  // are part of AURA's structured styling format, so keep the trailing colon.
+  if (compact.endsWith(":") && compact.length <= 80) {
+    return compact;
+  }
+
+  return sanitizeDisplayText(compact);
+}
+
+export function sanitizeMultilineDisplayText(value: string | null | undefined) {
+  const original = String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+  if (!original.trim()) return "";
+
+  return original
+    .split("\n")
+    .map(sanitizeDisplayLine)
+    .join("\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}

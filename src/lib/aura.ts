@@ -54,7 +54,7 @@ const ENABLE_CLIENT_LINK_PREVIEW =
   process.env.EXPO_PUBLIC_AURA_CLIENT_LINK_PREVIEW === "1" ||
   (Platform.OS !== "web" && process.env.EXPO_PUBLIC_AURA_CLIENT_LINK_PREVIEW !== "0");
 const DEBUG_AURA_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
-const AURA_STREAM_TIMEOUT_MS = 30_000;
+const AURA_STREAM_TIMEOUT_MS = 45_000;
 const AURA_STREAM_WITH_IMAGE_TIMEOUT_MS = 90_000;
 
 function sanitizeUserInput(input: string): string {
@@ -805,6 +805,20 @@ export async function askAuraStream(
   const url = getAskAuraStreamUrl();
   logAuraRequest("fetch_send", enrichedArgs, url);
   const body = JSON.stringify(enrichedArgs);
+  const streamController = new AbortController();
+  let streamTimedOut = false;
+  const streamTimeout = setTimeout(() => {
+    streamTimedOut = true;
+    streamController.abort();
+  }, auraStreamTimeoutMs(enrichedArgs));
+  const handleExternalAbort = () => streamController.abort();
+  callbacks.signal?.addEventListener("abort", handleExternalAbort, { once: true });
+
+  const clearStreamTimeout = () => {
+    clearTimeout(streamTimeout);
+    callbacks.signal?.removeEventListener("abort", handleExternalAbort);
+  };
+
   let response: Response;
   try {
     if (callbacks.signal?.aborted) throw createAuraStreamAbortError();
@@ -815,13 +829,14 @@ export async function askAuraStream(
         Authorization: `Bearer ${token}`,
       },
       body,
-      signal: callbacks.signal ?? undefined,
+      signal: streamController.signal,
     });
   } catch (error) {
-    if (isAuraStreamAbortError(error)) throw error;
+    clearStreamTimeout();
+    if (callbacks.signal?.aborted && isAuraStreamAbortError(error)) throw error;
     if (DEBUG_AURA_CLIENT) {
       console.log("[AURA_STREAM_FALLBACK]", "fetch stream failed before response, using callable fallback", {
-        error: error instanceof Error ? error.message : String(error),
+        error: streamTimedOut ? "AURA stream request timed out." : error instanceof Error ? error.message : String(error),
       });
     }
     const fallback = await askAura(enrichedArgs);
@@ -839,6 +854,7 @@ export async function askAuraStream(
     }
     const fallback = await askAura(enrichedArgs);
     callbacks.onFinal?.(fallback);
+    clearStreamTimeout();
     return fallback;
   }
 
@@ -846,6 +862,7 @@ export async function askAuraStream(
     logAuraRequest("callable_fallback_no_reader", args);
     const fallback = await askAura(enrichedArgs);
     callbacks.onFinal?.(fallback);
+    clearStreamTimeout();
     return fallback;
   }
 
@@ -889,15 +906,25 @@ export async function askAuraStream(
       });
     }
   } catch (error) {
-    if (isAuraStreamAbortError(error)) throw error;
+    clearStreamTimeout();
+    if (callbacks.signal?.aborted && isAuraStreamAbortError(error)) throw error;
     if (finalData) return finalData;
     const partial = partialStreamResponse();
     if (partial) {
       callbacks.onFinal?.(partial);
       return partial;
     }
-    throw error;
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_STREAM_FALLBACK]", "fetch stream failed while reading, using callable fallback", {
+        error: streamTimedOut ? "AURA stream request timed out." : error instanceof Error ? error.message : String(error),
+      });
+    }
+    const fallback = await askAura(enrichedArgs);
+    callbacks.onFinal?.(fallback);
+    return fallback;
   }
+
+  clearStreamTimeout();
 
   if (finalData) return finalData;
 

@@ -207,7 +207,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(251,228,216,0.10)",
-    backgroundColor: "rgba(43,18,76,0.46)",
+    backgroundColor: "rgba(24,22,30,0.72)",
     gap: 10,
   },
   collapsedCard: {
@@ -225,12 +225,12 @@ const styles = StyleSheet.create({
   collapsedTitle: {
     fontSize: 15,
     lineHeight: 19,
-    fontWeight: "900",
+    fontWeight: "600",
   },
   collapsedSummary: {
     fontSize: 12.5,
     lineHeight: 16,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   viewDetailsPill: {
     minHeight: 34,
@@ -245,7 +245,7 @@ const styles = StyleSheet.create({
   viewDetailsText: {
     fontSize: 12,
     lineHeight: 15,
-    fontWeight: "900",
+    fontWeight: "600",
   },
   glow: {
     position: "absolute",
@@ -263,13 +263,13 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     fontSize: 9.5,
-    fontWeight: "900",
+    fontWeight: "600",
     letterSpacing: 1.2,
   },
   title: {
     fontSize: 16,
     lineHeight: 21,
-    fontWeight: "900",
+    fontWeight: "600",
   },
   nudge: {
     fontSize: 12,
@@ -289,18 +289,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: "rgba(251,228,216,0.10)",
-    backgroundColor: "rgba(82,43,91,0.28)",
+    backgroundColor: "rgba(34,31,40,0.72)",
     borderRadius: 8,
     paddingVertical: 7,
     paddingHorizontal: 9,
   },
   progressText: {
     fontSize: 16,
-    fontWeight: "900",
+    fontWeight: "600",
   },
   progressLabel: {
     fontSize: 10,
-    fontWeight: "700",
+    fontWeight: "600",
     marginTop: 1,
   },
   progressTrack: {
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "rgba(251,228,216,0.08)",
-    backgroundColor: "rgba(82,43,91,0.22)",
+    backgroundColor: "rgba(42,36,50,0.58)",
     paddingVertical: 6,
     paddingHorizontal: 8,
   },
@@ -343,11 +343,11 @@ const styles = StyleSheet.create({
   checkLabel: {
     flex: 1,
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   checkCount: {
     fontSize: 11,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   footerRow: {
     flexDirection: "row",
@@ -356,12 +356,12 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     fontSize: 18,
-    fontWeight: "900",
+    fontWeight: "600",
   },
   metricLabel: {
     marginTop: 1,
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
     opacity: 0.72,
   },
   cta: {
@@ -376,6 +376,6 @@ const styles = StyleSheet.create({
   },
   ctaText: {
     fontSize: 12,
-    fontWeight: "900",
+    fontWeight: "600",
   },
 });

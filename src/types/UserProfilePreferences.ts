@@ -6,9 +6,11 @@ export type UnitsPreference = "imperial" | "metric";
 export type WardrobeMode = "masculine" | "feminine" | "neutral" | "mixed" | "custom";
 export type PreferredFit = "slim" | "regular" | "relaxed" | "oversized";
 export type CurrencyMode = "auto" | "manual";
+export type BudgetPreference = "budget" | "mid" | "premium";
 
 export type UserProfilePreferences = {
   onboardingCompleted: boolean;
+  displayName?: string | null;
   firstName?: string | null;
   region?: string | null;
   unitsPreference: UnitsPreference;
@@ -19,6 +21,7 @@ export type UserProfilePreferences = {
   selectedCategories: string[];
   styleAesthetics: string[];
   preferredFit?: PreferredFit | null;
+  budgetPreference?: BudgetPreference | null;
   favoriteColors: string[];
   avoidedColors: string[];
   accessoryPreferences: string[];

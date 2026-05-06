@@ -8,6 +8,7 @@ import {
 } from "@/src/lib/auraLookDocument";
 import { logAuraLookStyleEvent } from "@/src/lib/auraMemory";
 import { auth, db } from "@/src/lib/firebase";
+import { auraLookToOutfitSnapshot, outfitSnapshotToPlannedOutfit } from "@/src/lib/outfitSnapshot";
 import type { AuraLook } from "@/src/types/aura";
 import type { PlannedOutfit } from "@/src/utils/dailyOutfits";
 
@@ -44,6 +45,7 @@ function cleanAuraLookForFirestore(look: AuraLook): AuraLook {
     stylingNote: cleanAuraString(look.stylingNote),
     personalizationLabel: cleanAuraString(look.personalizationLabel),
     personalizationNote: cleanAuraString(look.personalizationNote),
+    stylingIntelligence: look.stylingIntelligence ?? null,
     pieces: (look.pieces ?? []).map((piece) => ({
       role: piece.role,
       itemName: cleanAuraString(piece.itemName),
@@ -59,21 +61,14 @@ function cleanAuraLookForFirestore(look: AuraLook): AuraLook {
 }
 
 export function auraLookToPlannedOutfit(look: AuraLook): PlannedOutfit {
-  const roleMap = look.pieces.reduce<Record<string, string>>((acc, piece) => {
-    if (piece.source !== "closet" || !piece.itemId) return acc;
-    if (piece.role === "outerwear") acc.outerwear = piece.itemId;
-    if (piece.role === "top") acc.top = piece.itemId;
-    if (piece.role === "bottom") acc.bottom = piece.itemId;
-    if (piece.role === "shoes") acc.shoes = piece.itemId;
-    return acc;
-  }, {});
-
-  return {
-    itemsByCategory: roleMap,
-    score: 0.86,
+  return outfitSnapshotToPlannedOutfit(auraLookToOutfitSnapshot(look, "aura"), {
+    score:
+      typeof look.stylingIntelligence?.overallScore === "number"
+        ? Math.round(look.stylingIntelligence.overallScore)
+        : 0.86,
     reasons: [look.shortExplanation, cleanAuraString(look.stylingNote)].filter(Boolean),
     createdAt: Date.now(),
-  };
+  });
 }
 
 export async function saveAuraLook(
@@ -90,7 +85,14 @@ export async function saveAuraLook(
     createdAt: now,
     updatedAt: now,
   };
-  await setDoc(ref, payload, { merge: true });
+  try {
+    await setDoc(ref, payload, { merge: true });
+  } catch (error) {
+    if (__DEV__) {
+      console.error("SAVE LOOK ERROR:", error);
+    }
+    throw error;
+  }
   void logAuraLookStyleEvent(uid, "outfit_saved", savedLook, { source: "aura" });
   return { id: ref.id, ...payload } satisfies SavedAuraLookRecord;
 }

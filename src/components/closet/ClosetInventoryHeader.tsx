@@ -1,7 +1,8 @@
 import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 
 import type { CategoryKey } from "@/src/closet/closetListModel";
+import { AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
@@ -50,17 +51,19 @@ export function ClosetInventoryHeader({
                 opacity: pressed ? 0.76 : 1,
               })}
             >
-              <Text
+              <AuraText
                 numberOfLines={1}
+                variant="metadata"
+                tone={active ? "accent" : "secondary"}
                 style={{
-                  color: active ? colors.ctaCream : colors.textSecondary,
                   fontSize: tabFontSize,
                   lineHeight: tabLineHeight,
-                  fontWeight: active ? "800" : "700",
+                  fontWeight: active ? "500" : "400",
+                  letterSpacing: 1.2,
                 }}
               >
                 {tab.label}
-              </Text>
+              </AuraText>
               <View
                 style={{
                   height: 2,

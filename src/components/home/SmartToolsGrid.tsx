@@ -1,10 +1,11 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { homeTypography } from "@/src/components/home/homeTypography";
+import { AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 export type SmartTool = {
@@ -90,7 +91,7 @@ export default function SmartToolsGrid({
               justifyContent: "center",
               backgroundColor: compact ? colors.chipBackground : colors.surfaceSoft,
               borderWidth: compact ? 0.75 : 1,
-              borderColor: compact ? "rgba(251,228,216,0.08)" : colors.borderSoft,
+              borderColor: colors.borderSoft,
             }}
           >
             <MaterialCommunityIcons name={tool.icon} size={compact ? 30 : 22} color={isSoon ? colors.textSecondary : colors.text} />
@@ -106,24 +107,30 @@ export default function SmartToolsGrid({
                 borderColor: isSoon ? colors.border : colors.purpleBorder,
               }}
             >
-              <Text style={[homeTypography.label, { color: isSoon ? colors.textSecondary : colors.lightPurple }]} numberOfLines={1} ellipsizeMode="tail">
+              <AuraText variant="metadata" tone={isSoon ? "secondary" : "accent"} style={homeTypography.label} numberOfLines={1} ellipsizeMode="tail">
                 {tool.badge}
-              </Text>
+              </AuraText>
             </View>
           ) : null}
         </View>
         <View style={{ gap: compact ? 0 : 4, alignItems: compact ? "center" : "flex-start" }}>
-          <Text style={[homeTypography.titleSmall, { color: isSoon ? colors.textSecondary : colors.text, fontSize: compact ? 12.5 : 16, lineHeight: compact ? 16 : 21, textAlign: compact ? "center" : "left" }]} numberOfLines={1} ellipsizeMode="tail">
+          <AuraText
+            variant="section"
+            tone={isSoon ? "secondary" : "primary"}
+            style={[homeTypography.titleSmall, { fontSize: compact ? 12.5 : 16, lineHeight: compact ? 16 : 21, textAlign: compact ? "center" : "left" }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
             {tool.title}
-          </Text>
+          </AuraText>
           {compact ? null : (
             <>
-              <Text style={[homeTypography.caption, { color: colors.textSecondary, opacity: 0.68 }]} numberOfLines={2} ellipsizeMode="tail">
+              <AuraText variant="caption" tone="secondary" style={[homeTypography.caption, { opacity: 0.68 }]} numberOfLines={2} ellipsizeMode="tail">
                 {tool.subtitle}
-              </Text>
-              <Text style={[homeTypography.caption, { color: isSoon ? colors.textSecondary : colors.text, fontWeight: "600", marginTop: 2 }]} numberOfLines={1}>
+              </AuraText>
+              <AuraText variant="caption" tone={isSoon ? "secondary" : "primary"} style={[homeTypography.caption, { fontWeight: "500", marginTop: 2 }]} numberOfLines={1}>
                 Open →
-              </Text>
+              </AuraText>
             </>
           )}
         </View>
@@ -135,12 +142,11 @@ export default function SmartToolsGrid({
     <View style={{ gap: compact ? GRID_GAP : 16 }}>
       <View style={{ gap: HEADER_GAP }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Support tools</Text>
-          <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Secondary</Text>
+          <AuraText variant="section" style={homeTypography.titleSmall}>Support tools</AuraText>
         </View>
-        <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>
-          Care, gaps, and planning support when you want to tighten the system around the look.
-        </Text>
+        <AuraText variant="caption" tone="secondary" style={homeTypography.caption}>
+          Care, gaps, and planning when you need them.
+        </AuraText>
       </View>
       {compact ? (
         <View style={{ gap: GRID_GAP }}>

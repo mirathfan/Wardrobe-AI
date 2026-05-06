@@ -31,6 +31,14 @@ import AuraPressable from "@/src/components/aura/AuraPressable";
 import { ItemDetailSheet } from "@/src/components/aura/ItemDetailSheet";
 import { AccessoryStrip } from "@/src/components/outfit/AccessoryStrip";
 import {
+  AuraButton,
+  AuraIconButton,
+  AuraSheetBackdrop,
+  AuraSheetSurface,
+  AuraText,
+  auraDesignTokens,
+} from "@/src/components/ui/auraStylePrimitives";
+import {
   ACTION_GAP,
   CHIP_BORDER_WIDTH,
   CHIP_HEIGHT,
@@ -80,7 +88,6 @@ const BOARD_MAX_WIDTH = 760;
 const HOME_BOARD_MAX_WIDTH = 520;
 const BOARD_ASPECT_RATIO = 1;
 const HOME_BOARD_ASPECT_RATIO = 0.72;
-const ACTION_HIT_SLOP = 6;
 
 type AccessoryImageSlot =
   | "top-left-chain"
@@ -253,8 +260,203 @@ function deriveEditorialSubtitle(look: AuraLook) {
   return `${source.slice(0, 85).trimEnd()}...`;
 }
 
-function getItemLabel(item?: AuraLayoutItem | null) {
-  return item?.itemName ?? "";
+function labelFromStyleIdentity(value?: string | null) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  return titleCase(normalized.replace(/_/g, " "));
+}
+
+function colorBalanceLabel(score?: number) {
+  if (typeof score !== "number" || !Number.isFinite(score)) {
+    return "Color balance";
+  }
+  if (score >= 82) return "Strong color balance";
+  if (score >= 68) return "Balanced color";
+  return "Needs color edit";
+}
+
+function deriveStylingIntelligenceLine(look: AuraLook) {
+  const intelligence = look.stylingIntelligence;
+  const score = intelligence?.overallScore;
+  if (typeof score !== "number" || !Number.isFinite(score)) return "";
+  const styleLabel =
+    labelFromStyleIdentity(intelligence?.styleIdentity) ||
+    cleanShortLabel(look.vibe);
+  const colorLabel = colorBalanceLabel(intelligence?.colorScore);
+  return [styleLabel, colorLabel, String(Math.round(score))]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function formatListSummary(values: string[], limit = 2) {
+  const visible = values.slice(0, limit);
+  const hiddenCount = Math.max(0, values.length - visible.length);
+  if (!visible.length) return "";
+  return `${visible.join(", ")}${hiddenCount ? ` +${hiddenCount}` : ""}`;
+}
+
+function deriveOwnershipSummary(closetItems: string[], missingPieces: string[], totalPieces: number) {
+  const ownedLabel =
+    closetItems.length > 0
+      ? `${closetItems.length} closet ${closetItems.length === 1 ? "piece" : "pieces"}`
+      : totalPieces > 0
+        ? `${totalPieces} styled ${totalPieces === 1 ? "piece" : "pieces"}`
+        : "";
+  const missingLabel = missingPieces.length
+    ? `Missing: ${formatListSummary(missingPieces)}`
+    : closetItems.length
+      ? "Complete from your closet"
+      : "";
+  return [ownedLabel, missingLabel].filter(Boolean).join(" · ");
+}
+
+type OverflowLookAction = {
+  key: string;
+  label: string;
+  detail?: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  disabled?: boolean;
+  loading?: boolean;
+  destructive?: boolean;
+  onPress: () => void;
+};
+
+function buildOverflowActions({
+  look,
+  option,
+  onAction,
+  onPressPlan,
+  onPressRegenerate,
+  regenerating,
+  missingPiecesCount,
+  primaryAction,
+}: {
+  look: AuraLook;
+  option?: AuraLookOptionMeta;
+  onAction?: Props["onAction"];
+  onPressPlan?: () => void;
+  onPressRegenerate?: () => void;
+  regenerating: boolean;
+  missingPiecesCount: number;
+  primaryAction: AuraLookAction;
+}): OverflowLookAction[] {
+  const supportedActions = new Set(look.actions ?? []);
+  const actions: OverflowLookAction[] = [];
+  const callAction = (action: AuraLookAction) => () => onAction?.(action, look, option);
+
+  if (primaryAction !== "saveLook" && onAction) {
+    actions.push({
+      key: "saveLook",
+      label: "Save look",
+      detail: "Keep this edit in your looks",
+      icon: "bookmark-outline",
+      onPress: callAction("saveLook"),
+    });
+  }
+
+  if (primaryAction !== "planForToday" && (onPressPlan || onAction)) {
+    actions.push({
+      key: "planForToday",
+      label: "Plan for today",
+      detail: "Attach it to today",
+      icon: "calendar-outline",
+      onPress: onPressPlan ?? callAction("planForToday"),
+    });
+  }
+
+  if (primaryAction !== "wearToday" && onAction && supportedActions.has("wearToday")) {
+    actions.push({
+      key: "wearToday",
+      label: "Mark worn today",
+      detail: "Log this outfit",
+      icon: "checkmark-circle-outline",
+      onPress: callAction("wearToday"),
+    });
+  }
+
+  if (missingPiecesCount > 0 && onAction) {
+    actions.push({
+      key: "shopMissingPieces",
+      label: "Shop missing pieces",
+      detail: "Turn gaps into a shopping brief",
+      icon: "search-outline",
+      onPress: callAction("shopMissingPieces"),
+    });
+  }
+
+  if (onPressRegenerate) {
+    actions.push({
+      key: "regenerate",
+      label: regenerating ? "Trying another edit" : "Try another edit",
+      detail: "Regenerate this outfit",
+      icon: "refresh-outline",
+      disabled: regenerating,
+      loading: regenerating,
+      onPress: onPressRegenerate,
+    });
+  }
+
+  const feedbackActions: {
+    action: AuraLookAction;
+    label: string;
+    detail: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    destructive?: boolean;
+  }[] = [
+    {
+      action: "likeLook",
+      label: "More like this",
+      detail: "Teach AURA what works",
+      icon: "heart-outline",
+    },
+    {
+      action: "showMoreLikeThis",
+      label: "Show similar edits",
+      detail: "Keep this direction",
+      icon: "albums-outline",
+    },
+    {
+      action: "lessLikeThis",
+      label: "Less like this",
+      detail: "Move away from this lane",
+      icon: "remove-circle-outline",
+    },
+    {
+      action: "notMyVibe",
+      label: "Not my vibe",
+      detail: "Ask AURA to redirect",
+      icon: "close-circle-outline",
+      destructive: true,
+    },
+    {
+      action: "useOnlyMyCloset",
+      label: "Use only my closet",
+      detail: "Remove suggested pieces",
+      icon: "shirt-outline",
+    },
+    {
+      action: "makeItDressier",
+      label: "Make it dressier",
+      detail: "Elevate the same intent",
+      icon: "diamond-outline",
+    },
+  ];
+
+  if (onAction) {
+    feedbackActions.forEach((entry) => {
+      if (!supportedActions.has(entry.action)) return;
+      actions.push({
+        key: entry.action,
+        label: entry.label,
+        detail: entry.detail,
+        icon: entry.icon,
+        destructive: entry.destructive,
+        onPress: callAction(entry.action),
+      });
+    });
+  }
+
+  return actions;
 }
 
 function getCategoryPadding(
@@ -412,6 +614,8 @@ function BoardImage({
       <TouchableOpacity
         activeOpacity={0.85}
         hitSlop={16}
+        accessibilityRole="button"
+        accessibilityLabel={`View ${item.itemName || item.role} details`}
         style={[
           styles.absolutePiece,
           Platform.OS === "android" ? styles.absolutePieceAndroid : null,
@@ -494,17 +698,9 @@ export const AuraLookCard = memo(function AuraLookCard({
   const colors = providedColors ?? appColors;
   const { width: screenWidth } = useWindowDimensions();
   const [selectedItem, setSelectedItem] = useState<AuraLayoutItem | null>(null);
-  const [closetExpanded, setClosetExpanded] = useState(false);
   const [closetSheetVisible, setClosetSheetVisible] = useState(false);
+  const [actionSheetVisible, setActionSheetVisible] = useState(false);
   const reduceMotion = useReduceMotion();
-  const canLikeLook = look.actions.includes("likeLook");
-  const canNotMyVibe = look.actions.includes("notMyVibe");
-  const canShowMoreLikeThis = look.actions.includes("showMoreLikeThis");
-  const canLessLikeThis = look.actions.includes("lessLikeThis");
-  const canShopMissingPieces = look.actions.includes("shopMissingPieces");
-  const canUseOnlyMyCloset = look.actions.includes("useOnlyMyCloset");
-  const canMakeItDressier = look.actions.includes("makeItDressier");
-
   const effectiveVariant = boardVariant ?? (swipeVariant ? "swipe" : "chat");
   const isStudio = effectiveVariant === "studio";
   const isHome = effectiveVariant === "home";
@@ -526,6 +722,7 @@ export const AuraLookCard = memo(function AuraLookCard({
   );
   const displayTitle = deriveEditorialLookTitle(look);
   const displayReason = deriveEditorialSubtitle(look);
+  const stylingIntelligenceLine = deriveStylingIntelligenceLine(look);
   const directionLabel = normalizeDirectionLabel(
     option?.optionLabel,
     look.personalizationLabel,
@@ -540,16 +737,6 @@ export const AuraLookCard = memo(function AuraLookCard({
     () => Array.from(new Set((look.fromCloset ?? []).filter(Boolean))),
     [look.fromCloset],
   );
-  const visibleClosetLimit = isCondensed ? (swipeVariant ? 2 : 3) : 5;
-  const visibleClosetItems =
-    closetExpanded && !swipeVariant
-      ? closetItems
-      : closetItems.slice(0, visibleClosetLimit);
-  const hiddenClosetCount = Math.max(
-    0,
-    closetItems.length - visibleClosetLimit,
-  );
-  const showClosetToggle = closetItems.length > visibleClosetLimit;
 
   const renderPlan = useMemo(
     () => buildRenderPlan(look, itemsById, { variant: effectiveVariant }),
@@ -569,19 +756,63 @@ export const AuraLookCard = memo(function AuraLookCard({
   }, [look]);
 
   useEffect(() => {
-    setClosetExpanded(false);
     setClosetSheetVisible(false);
+    setActionSheetVisible(false);
   }, [animationKey]);
-  const overflowLabels = Array.from(
-    new Set(
-      renderPlan.overflowItems
-        .map((item) => getItemLabel(item))
-        .filter(Boolean),
-    ),
-  ).slice(0, isCondensed ? 2 : 3);
+  const missingPieces = useMemo(
+    () => Array.from(new Set((look.addToComplete ?? []).filter(Boolean))),
+    [look.addToComplete],
+  );
+  const ownershipSummary = deriveOwnershipSummary(
+    closetItems,
+    missingPieces,
+    look.pieces?.length ?? 0,
+  );
+  const editorialMeta = [directionLabel, vibeLabel].filter(Boolean).join(" / ");
+  const primaryAction: AuraLookAction =
+    look.actions?.includes("wearToday") && onAction && !onPressSave
+      ? "wearToday"
+      : "saveLook";
+  const primaryLabel = primaryAction === "wearToday" ? "Wear this" : "Save look";
+  const primaryPress =
+    primaryAction === "wearToday"
+      ? onAction
+        ? () => onAction("wearToday", look, option ?? undefined)
+        : undefined
+      : onPressSave ??
+        (onAction
+          ? () => onAction("saveLook", look, option ?? undefined)
+          : undefined);
+  const overflowActions = useMemo(
+    () =>
+      buildOverflowActions({
+        look,
+        option: option ?? undefined,
+        onAction,
+        onPressPlan,
+        onPressRegenerate,
+        regenerating,
+        missingPiecesCount: missingPieces.length,
+        primaryAction,
+      }),
+    [
+      look,
+      missingPieces.length,
+      onAction,
+      onPressPlan,
+      onPressRegenerate,
+      option,
+      primaryAction,
+      regenerating,
+    ],
+  );
+  const hasActionRow = Boolean(primaryPress) || overflowActions.length > 0;
+  const isBoardEmpty =
+    !renderPlan.placedItems.length && !renderPlan.stripItems.length;
 
   const boardContent = (
     <View
+      accessibilityLabel={`${displayTitle} outfit preview`}
       style={[
         styles.board,
         compact ? styles.boardCompact : null,
@@ -626,6 +857,14 @@ export const AuraLookCard = memo(function AuraLookCard({
           homeScale={isHome}
         />
       ))}
+      {isBoardEmpty ? (
+        <View pointerEvents="none" style={styles.emptyBoardState}>
+          <Ionicons name="images-outline" size={22} color={colors.textOnLightSecondary} />
+          <Text style={[styles.emptyBoardText, { color: colors.textOnLightSecondary }]}>
+            Outfit preview unavailable
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 
@@ -648,158 +887,109 @@ export const AuraLookCard = memo(function AuraLookCard({
         style,
       ]}
     >
-      <View style={styles.topRow}>
-        <View style={styles.labelRow}>
-          {!!directionLabel && (
-            <View
-              style={[
-                styles.headerChip,
-                isHome ? styles.headerChipHome : null,
-                styles.directionChip,
-                {
-                  backgroundColor: colors.purpleSurface,
-                  borderColor: colors.purpleBorder,
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.directionDot,
-                  isHome ? styles.directionDotHome : null,
-                  { backgroundColor: colors.softPurple },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.directionChipText,
-                  { color: colors.lightPurple },
-                ]}
-              >
-                {directionLabel}
-              </Text>
-            </View>
-          )}
-          {!!vibeLabel && (
-            <View
-              style={[
-                styles.headerChip,
-                isHome ? styles.headerChipHome : null,
-                {
-                  backgroundColor: colors.surfaceSoft,
-                  borderColor: colors.border,
-                },
-              ]}
-            >
-              <Text
-                style={[styles.vibeChipText, { color: colors.textSecondary }]}
-              >
-                {vibeLabel}
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
-
       {boardContent}
 
       <View
         style={[
-          styles.copyBlock,
-          isHome ? styles.copyBlockHome : null,
-          swipeVariant ? styles.copyBlockSwipe : null,
-          isStudio ? styles.copyBlockStudio : null,
+          styles.editorialBlock,
+          isHome ? styles.editorialBlockHome : null,
+          swipeVariant ? styles.editorialBlockSwipe : null,
+          isStudio ? styles.editorialBlockStudio : null,
         ]}
       >
+        {!!editorialMeta && (
+          <AuraText
+            variant="metadata"
+            tone="accent"
+            numberOfLines={1}
+            style={[
+              styles.editorialMeta,
+              isHome ? styles.editorialMetaHome : null,
+            ]}
+          >
+            {editorialMeta}
+          </AuraText>
+        )}
+
         {!!displayTitle && (
-          <Text
+          <AuraText
+            variant="heading"
             numberOfLines={1}
             style={[
               styles.title,
               compact ? styles.titleCompact : null,
               isHome ? styles.titleHome : null,
               swipeVariant ? styles.titleSwipe : null,
-              { color: colors.textPrimary },
             ]}
           >
             {displayTitle}
-          </Text>
+          </AuraText>
         )}
 
         {!!displayReason && (
-          <Text
+          <AuraText
+            variant="body"
+            tone="secondary"
             numberOfLines={swipeVariant ? 2 : isHome ? 1 : 2}
             style={[
               styles.subtitle,
               compact ? styles.subtitleCompact : null,
               isHome ? styles.subtitleHome : null,
               swipeVariant ? styles.subtitleSwipe : null,
-              { color: colors.textSecondary },
             ]}
           >
             {displayReason}
-          </Text>
+          </AuraText>
+        )}
+
+        {!!stylingIntelligenceLine && (
+          <AuraText
+            variant="metadata"
+            tone="accent"
+            numberOfLines={1}
+            style={[
+              styles.stylingIntelligenceLine,
+              isHome ? styles.stylingIntelligenceLineHome : null,
+              swipeVariant ? styles.stylingIntelligenceLineSwipe : null,
+            ]}
+          >
+            {stylingIntelligenceLine}
+          </AuraText>
+        )}
+
+        {!!ownershipSummary && (
+          closetItems.length ? (
+            <AuraPressable
+              accessibilityRole="button"
+              accessibilityLabel="View included closet pieces"
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.99}
+              pressedOpacity={0.82}
+              onPress={() => setClosetSheetVisible(true)}
+              style={styles.summaryPressable}
+            >
+              <AuraText
+                variant="caption"
+                tone="secondary"
+                numberOfLines={2}
+                style={styles.summaryText}
+              >
+                {ownershipSummary}
+              </AuraText>
+            </AuraPressable>
+          ) : (
+            <AuraText
+              variant="caption"
+              tone="secondary"
+              numberOfLines={2}
+              style={styles.summaryText}
+            >
+              {ownershipSummary}
+            </AuraText>
+          )
         )}
       </View>
-
-      {!!visibleClosetItems.length && (
-        <View style={[styles.metaBlock, isHome ? styles.metaBlockHome : null]}>
-          <Text style={[styles.metaLabel, { color: colors.softPurple }]}>
-            From your closet
-          </Text>
-          <View style={styles.closetChips}>
-            {visibleClosetItems.map((item, index) => (
-              <View
-                key={`${look.lookTitle}-${item}-${index}`}
-                style={[
-                  styles.closetChip,
-                  isHome ? styles.closetChipHome : null,
-                  {
-                    backgroundColor: colors.purpleSurface,
-                    borderColor: colors.purpleBorder,
-                  },
-                ]}
-              >
-                <Text
-                  numberOfLines={1}
-                  style={[styles.closetChipText, { color: colors.textPrimary }]}
-                >
-                  {item}
-                </Text>
-              </View>
-            ))}
-            {showClosetToggle ? (
-              <AuraPressable
-                onPress={() => {
-                  if (swipeVariant) {
-                    setClosetSheetVisible(true);
-                    return;
-                  }
-                  setClosetExpanded((value) => !value);
-                }}
-                haptic="selection"
-                hapticTrigger="press"
-                pressedScale={0.96}
-                pressedOpacity={0.88}
-                style={[
-                  styles.closetChip,
-                  isHome ? styles.closetChipHome : null,
-                  styles.moreChip,
-                  {
-                    backgroundColor: colors.purpleSurface,
-                    borderColor: colors.purpleBorder,
-                  },
-                ]}
-              >
-                <Text
-                  style={[styles.closetChipText, { color: colors.lightPurple }]}
-                >
-                  {closetExpanded ? "Show less" : `+${hiddenClosetCount} more`}
-                </Text>
-              </AuraPressable>
-            ) : null}
-          </View>
-        </View>
-      )}
 
       <Modal
         visible={closetSheetVisible}
@@ -807,45 +997,29 @@ export const AuraLookCard = memo(function AuraLookCard({
         animationType="fade"
         onRequestClose={() => setClosetSheetVisible(false)}
       >
-        <View style={styles.closetSheetRoot}>
+        <AuraSheetBackdrop style={styles.sheetRoot}>
           <Pressable
             accessibilityLabel="Close closet items"
             style={StyleSheet.absoluteFill}
             onPress={() => setClosetSheetVisible(false)}
           />
-          <View
-            style={[
-              styles.closetSheetCard,
-              {
-                backgroundColor: colors.surfaceElevated,
-                borderColor: colors.border,
-              },
-            ]}
-          >
+          <AuraSheetSurface style={styles.closetSheetCard}>
             <View style={styles.closetSheetHeader}>
               <View>
-                <Text style={[styles.closetSheetEyebrow, { color: colors.softPurple }]}>
+                <AuraText variant="metadata" tone="accent" style={styles.closetSheetEyebrow}>
                   From your closet
-                </Text>
-                <Text style={[styles.closetSheetTitle, { color: colors.textPrimary }]}>
+                </AuraText>
+                <AuraText variant="section" style={styles.closetSheetTitle}>
                   Included pieces
-                </Text>
+                </AuraText>
               </View>
-              <Pressable
-                accessibilityLabel="Close included pieces"
+              <AuraIconButton
+                icon="close"
+                label="Close included pieces"
                 onPress={() => setClosetSheetVisible(false)}
-                style={[
-                  styles.closetSheetClose,
-                  {
-                    backgroundColor: colors.surfaceSoft,
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <Text style={[styles.closetSheetCloseText, { color: colors.textPrimary }]}>
-                  Close
-                </Text>
-              </Pressable>
+                variant="tertiary"
+                size="small"
+              />
             </View>
             <ScrollView
               style={styles.closetSheetScroll}
@@ -858,407 +1032,66 @@ export const AuraLookCard = memo(function AuraLookCard({
                   style={[
                     styles.closetSheetRow,
                     {
-                      backgroundColor: colors.surfaceSoft,
-                      borderColor: colors.border,
+                      backgroundColor: colors.surfaceMuted,
+                      borderColor: colors.borderSoft,
                     },
                   ]}
                 >
-                  <Text style={[styles.closetSheetIndex, { color: colors.softPurple }]}>
+                  <AuraText variant="metadata" tone="accent" style={styles.closetSheetIndex}>
                     {String(index + 1).padStart(2, "0")}
-                  </Text>
-                  <Text
+                  </AuraText>
+                  <AuraText
+                    variant="bodyStrong"
                     numberOfLines={1}
-                    style={[styles.closetSheetItem, { color: colors.textPrimary }]}
+                    style={styles.closetSheetItem}
                   >
                     {item}
-                  </Text>
+                  </AuraText>
                 </View>
               ))}
             </ScrollView>
-          </View>
-        </View>
+          </AuraSheetSurface>
+        </AuraSheetBackdrop>
       </Modal>
 
-      {!!overflowLabels.length && (
-        <View style={[styles.metaBlock, isHome ? styles.metaBlockHome : null]}>
-          <Text style={[styles.metaLabel, { color: colors.softPurple }]}>
-            Also included
-          </Text>
-          <View style={styles.closetChips}>
-            {overflowLabels.map((item) => (
-              <View
-                key={`${look.lookTitle}-extra-${item}`}
-                style={[
-                  styles.closetChip,
-                  isHome ? styles.closetChipHome : null,
-                  {
-                    backgroundColor: colors.chipBackground,
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <Text
-                  numberOfLines={1}
-                  style={[styles.closetChipText, { color: colors.textPrimary }]}
-                >
-                  {item}
-                </Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {!hideActions ? (
+      {!hideActions && hasActionRow ? (
         <View style={[styles.actions, isHome ? styles.actionsHome : null]}>
-          <AuraPressable
-            hitSlop={ACTION_HIT_SLOP}
-            style={[
-              styles.actionButton,
-              isHome ? styles.actionButtonHome : null,
-              styles.primaryButton,
-              { backgroundColor: colors.ctaCream, borderColor: "transparent" },
-            ]}
+          <AuraButton
+            label={primaryLabel}
+            iconLeft={primaryAction === "wearToday" ? "checkmark-circle-outline" : "bookmark-outline"}
+            onPress={primaryPress}
+            disabled={!primaryPress}
+            variant="primary"
+            size="default"
             haptic="light"
             hapticTrigger="press"
-            pressedScale={0.97}
-            pressedOpacity={0.92}
-            onPress={
-              onPressSave ??
-              (onAction
-                ? () => onAction("saveLook", look, option ?? undefined)
-                : undefined)
-            }
-          >
-            <Text style={[styles.primaryButtonText, { color: colors.ctaText }]}>
-              Save look
-            </Text>
-          </AuraPressable>
-
-          <AuraPressable
-            hitSlop={ACTION_HIT_SLOP}
             style={[
-              styles.actionButton,
-              isHome ? styles.actionButtonHome : null,
-              styles.secondaryButton,
-              {
-                backgroundColor: isHome
-                  ? "rgba(9,0,11,0.22)"
-                  : colors.surfaceSoft,
-                borderColor: "rgba(251,228,216,0.14)",
-              },
+              styles.primaryCta,
+              isHome ? styles.primaryCtaHome : null,
+              { flex: 1 },
             ]}
-            haptic="light"
-            hapticTrigger="press"
-            pressedScale={0.97}
-            pressedOpacity={0.92}
-            onPress={
-              onPressPlan ??
-              (onAction
-                ? () => onAction("planForToday", look, option ?? undefined)
-                : undefined)
-            }
-          >
-            <Text
-              style={[
-                styles.secondaryButtonText,
-                { color: colors.textPrimary },
-              ]}
-            >
-              Plan for today
-            </Text>
-          </AuraPressable>
-
-          {onPressRegenerate ? (
-            <AuraPressable
-              hitSlop={ACTION_HIT_SLOP}
-              disabled={regenerating}
-              style={[
-                styles.actionButton,
-                isHome ? styles.actionButtonHome : null,
-                styles.secondaryButton,
-                styles.regenerateButton,
-                {
-                  backgroundColor: isHome
-                    ? "rgba(9,0,11,0.22)"
-                    : colors.surfaceSoft,
-                  borderColor: "rgba(251,228,216,0.14)",
-                  opacity: regenerating ? 0.72 : 1,
-                },
-              ]}
+            textStyle={styles.primaryCtaText}
+          />
+          {overflowActions.length ? (
+            <AuraIconButton
+              icon="ellipsis-horizontal"
+              label="More outfit actions"
+              onPress={() => setActionSheetVisible(true)}
+              variant="secondary"
+              size="default"
               haptic="selection"
               hapticTrigger="press"
-              pressedScale={0.97}
-              pressedOpacity={0.92}
-              onPress={onPressRegenerate}
-            >
-              {regenerating ? (
-                <ActivityIndicator size="small" color={colors.textPrimary} />
-              ) : (
-                <Ionicons
-                  name="refresh-outline"
-                  size={14}
-                  color={colors.textPrimary}
-                />
-              )}
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.secondaryButtonText,
-                  styles.regenerateButtonText,
-                  { color: colors.textPrimary },
-                ]}
-              >
-                {regenerating ? "Regenerating" : "Regenerate"}
-              </Text>
-            </AuraPressable>
+              style={isHome ? styles.overflowButtonHome : undefined}
+            />
           ) : null}
         </View>
       ) : null}
 
-      {!hideActions &&
-      (canLikeLook ||
-        canNotMyVibe ||
-        canShowMoreLikeThis ||
-        canLessLikeThis) ? (
-        <View
-          style={[
-            styles.tertiaryActions,
-            isHome ? styles.tertiaryActionsHome : null,
-          ]}
-        >
-          {canLikeLook ? (
-            <AuraPressable
-              hitSlop={ACTION_HIT_SLOP}
-              style={[
-                styles.tertiaryAction,
-                isHome ? styles.tertiaryActionHome : null,
-                {
-                  backgroundColor: colors.surfaceSoft,
-                  borderColor: colors.border,
-                },
-              ]}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.96}
-              pressedOpacity={0.88}
-              onPress={
-                onAction
-                  ? () => onAction("likeLook", look, option ?? undefined)
-                  : undefined
-              }
-            >
-              <Text
-                style={[
-                  styles.tertiaryActionText,
-                  { color: colors.textSecondary },
-                ]}
-              >
-                Like
-              </Text>
-            </AuraPressable>
-          ) : null}
-          {canNotMyVibe ? (
-            <AuraPressable
-              hitSlop={ACTION_HIT_SLOP}
-              style={[
-                styles.tertiaryAction,
-                isHome ? styles.tertiaryActionHome : null,
-                {
-                  backgroundColor: colors.surfaceSoft,
-                  borderColor: colors.border,
-                },
-              ]}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.96}
-              pressedOpacity={0.88}
-              onPress={
-                onAction
-                  ? () => onAction("notMyVibe", look, option ?? undefined)
-                  : undefined
-              }
-            >
-              <Text
-                style={[
-                  styles.tertiaryActionText,
-                  { color: colors.textSecondary },
-                ]}
-              >
-                Not my vibe
-              </Text>
-            </AuraPressable>
-          ) : null}
-          {canShowMoreLikeThis ? (
-            <AuraPressable
-              hitSlop={ACTION_HIT_SLOP}
-              style={[
-                styles.tertiaryAction,
-                isHome ? styles.tertiaryActionHome : null,
-                {
-                  backgroundColor: colors.surfaceSoft,
-                  borderColor: colors.border,
-                },
-              ]}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.96}
-              pressedOpacity={0.88}
-              onPress={
-                onAction
-                  ? () =>
-                      onAction("showMoreLikeThis", look, option ?? undefined)
-                  : undefined
-              }
-            >
-              <Text
-                style={[
-                  styles.tertiaryActionText,
-                  { color: colors.textSecondary },
-                ]}
-              >
-                More like this
-              </Text>
-            </AuraPressable>
-          ) : null}
-          {canLessLikeThis ? (
-            <AuraPressable
-              hitSlop={ACTION_HIT_SLOP}
-              style={[
-                styles.tertiaryAction,
-                isHome ? styles.tertiaryActionHome : null,
-                {
-                  backgroundColor: colors.surfaceSoft,
-                  borderColor: colors.border,
-                },
-              ]}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.96}
-              pressedOpacity={0.88}
-              onPress={
-                onAction
-                  ? () => onAction("lessLikeThis", look, option ?? undefined)
-                  : undefined
-              }
-            >
-              <Text
-                style={[
-                  styles.tertiaryActionText,
-                  { color: colors.textSecondary },
-                ]}
-              >
-                Less like this
-              </Text>
-            </AuraPressable>
-          ) : null}
-        </View>
-      ) : null}
-
-      {!hideActions &&
-      (canShopMissingPieces || canUseOnlyMyCloset || canMakeItDressier) ? (
-        <View
-          style={[
-            styles.tertiaryActions,
-            isHome ? styles.tertiaryActionsHome : null,
-          ]}
-        >
-          {canUseOnlyMyCloset ? (
-            <AuraPressable
-              hitSlop={ACTION_HIT_SLOP}
-              style={[
-                styles.tertiaryAction,
-                isHome ? styles.tertiaryActionHome : null,
-                {
-                  backgroundColor: colors.surfaceSoft,
-                  borderColor: colors.border,
-                },
-              ]}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.96}
-              pressedOpacity={0.88}
-              onPress={
-                onAction
-                  ? () => onAction("useOnlyMyCloset", look, option ?? undefined)
-                  : undefined
-              }
-            >
-              <Text
-                style={[
-                  styles.tertiaryActionText,
-                  { color: colors.textSecondary },
-                ]}
-              >
-                Use only my closet
-              </Text>
-            </AuraPressable>
-          ) : null}
-          {canMakeItDressier ? (
-            <AuraPressable
-              hitSlop={ACTION_HIT_SLOP}
-              style={[
-                styles.tertiaryAction,
-                isHome ? styles.tertiaryActionHome : null,
-                {
-                  backgroundColor: colors.surfaceSoft,
-                  borderColor: colors.border,
-                },
-              ]}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.96}
-              pressedOpacity={0.88}
-              onPress={
-                onAction
-                  ? () => onAction("makeItDressier", look, option ?? undefined)
-                  : undefined
-              }
-            >
-              <Text
-                style={[
-                  styles.tertiaryActionText,
-                  { color: colors.textSecondary },
-                ]}
-              >
-                Make it dressier
-              </Text>
-            </AuraPressable>
-          ) : null}
-          {canShopMissingPieces ? (
-            <AuraPressable
-              hitSlop={ACTION_HIT_SLOP}
-              style={[
-                styles.tertiaryAction,
-                isHome ? styles.tertiaryActionHome : null,
-                {
-                  backgroundColor: colors.surfaceSoft,
-                  borderColor: colors.border,
-                },
-              ]}
-              haptic="selection"
-              hapticTrigger="press"
-              pressedScale={0.96}
-              pressedOpacity={0.88}
-              onPress={
-                onAction
-                  ? () =>
-                      onAction("shopMissingPieces", look, option ?? undefined)
-                  : undefined
-              }
-            >
-              <Text
-                style={[
-                  styles.tertiaryActionText,
-                  { color: colors.textSecondary },
-                ]}
-              >
-                What am I missing?
-              </Text>
-            </AuraPressable>
-          ) : null}
-        </View>
-      ) : null}
+      <ActionOverflowSheet
+        visible={actionSheetVisible}
+        actions={overflowActions}
+        onDismiss={() => setActionSheetVisible(false)}
+      />
 
       <ItemDetailSheet
         item={selectedItem}
@@ -1280,44 +1113,154 @@ export const AuraLookCard = memo(function AuraLookCard({
   );
 });
 
+function ActionOverflowSheet({
+  visible,
+  actions,
+  onDismiss,
+}: {
+  visible: boolean;
+  actions: OverflowLookAction[];
+  onDismiss: () => void;
+}) {
+  const { colors } = useAppTheme();
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onDismiss}
+    >
+      <AuraSheetBackdrop style={styles.sheetRoot}>
+        <Pressable
+          accessibilityLabel="Close outfit actions"
+          style={StyleSheet.absoluteFill}
+          onPress={onDismiss}
+        />
+        <AuraSheetSurface style={styles.actionSheetCard}>
+          <View style={styles.actionSheetHeader}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <AuraText variant="metadata" tone="accent" style={styles.closetSheetEyebrow}>
+                Outfit actions
+              </AuraText>
+              <AuraText variant="section">More options</AuraText>
+            </View>
+            <AuraIconButton
+              icon="close"
+              label="Close outfit actions"
+              onPress={onDismiss}
+              variant="tertiary"
+              size="small"
+            />
+          </View>
+
+          <View style={styles.actionSheetList}>
+            {actions.map((action) => (
+              <AuraPressable
+                key={action.key}
+                disabled={action.disabled}
+                accessibilityRole="button"
+                accessibilityLabel={action.label}
+                onPress={() => {
+                  if (action.disabled) return;
+                  onDismiss();
+                  action.onPress();
+                }}
+                haptic="selection"
+                hapticTrigger="press"
+                pressedScale={0.99}
+                pressedOpacity={0.86}
+                style={({ pressed }) => [
+                  styles.actionSheetRow,
+                  {
+                    backgroundColor: pressed ? colors.surfaceElevated : colors.surfaceMuted,
+                    borderColor: colors.borderSoft,
+                    opacity: action.disabled ? 0.56 : 1,
+                  },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.actionSheetIcon,
+                    {
+                      backgroundColor: action.destructive ? colors.dangerSurface : colors.accentSoft,
+                      borderColor: action.destructive ? colors.dangerBorder : colors.borderSoft,
+                    },
+                  ]}
+                >
+                  {action.loading ? (
+                    <ActivityIndicator size="small" color={colors.textSecondary} />
+                  ) : (
+                    <Ionicons
+                      name={action.icon}
+                      size={17}
+                      color={action.destructive ? colors.destructive : colors.accent}
+                    />
+                  )}
+                </View>
+                <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                  <AuraText
+                    variant="bodyStrong"
+                    tone={action.destructive ? "destructive" : "primary"}
+                    numberOfLines={1}
+                    style={styles.actionSheetTitle}
+                  >
+                    {action.label}
+                  </AuraText>
+                  {!!action.detail && (
+                    <AuraText variant="caption" tone="secondary" numberOfLines={1}>
+                      {action.detail}
+                    </AuraText>
+                  )}
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              </AuraPressable>
+            ))}
+          </View>
+        </AuraSheetSurface>
+      </AuraSheetBackdrop>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
   card: {
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingTop: 14,
+    gap: 14,
+    paddingHorizontal: 12,
+    paddingTop: 12,
     paddingBottom: 13,
-    borderRadius: 24,
+    borderRadius: auraDesignTokens.radii.xl,
     backgroundColor: auraColors.surface,
     borderWidth: CHIP_BORDER_WIDTH,
     borderColor: auraColors.borderDark,
   },
   cardCompact: {
-    gap: 7,
+    gap: 11,
     paddingHorizontal: 12,
     paddingTop: 12,
-    paddingBottom: 10,
-    borderRadius: 22,
+    paddingBottom: 12,
+    borderRadius: auraDesignTokens.radii.lg,
   },
   cardHome: {
-    gap: 8,
+    gap: 12,
     paddingHorizontal: 12,
     paddingTop: 12,
-    paddingBottom: 10,
-    borderRadius: 24,
+    paddingBottom: 12,
+    borderRadius: auraDesignTokens.radii.lg,
   },
   cardSwipe: {
-    gap: 7,
+    gap: 11,
     paddingHorizontal: 12,
     paddingTop: 12,
-    paddingBottom: 10,
-    borderRadius: 22,
+    paddingBottom: 12,
+    borderRadius: auraDesignTokens.radii.lg,
   },
   cardStudio: {
-    gap: 14,
+    gap: 15,
     paddingHorizontal: 12,
     paddingTop: 16,
     paddingBottom: 16,
-    borderRadius: 30,
+    borderRadius: auraDesignTokens.radii.xxl,
     backgroundColor: auraColors.surfaceRaised,
     borderColor: "rgba(223,182,178,0.18)",
   },
@@ -1372,7 +1315,7 @@ const styles = StyleSheet.create({
     color: auraColors.accentRose,
     fontSize: 11,
     lineHeight: 14,
-    fontWeight: "800",
+    fontWeight: "600",
     letterSpacing: 0,
   },
   vibeChipText: {
@@ -1385,22 +1328,36 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     position: "relative",
     overflow: "hidden",
-    borderRadius: 16,
+    borderRadius: 22,
     backgroundColor: auraColors.boardLight,
     borderWidth: 1,
     borderColor: auraColors.borderWarm,
   },
   boardCompact: {
-    borderRadius: 16,
+    borderRadius: 18,
   },
   boardHome: {
-    borderRadius: 14,
+    borderRadius: 18,
   },
   boardSwipe: {
-    borderRadius: 16,
+    borderRadius: 18,
   },
   boardStudio: {
-    borderRadius: 16,
+    borderRadius: 20,
+  },
+  emptyBoardState: {
+    position: "absolute",
+    inset: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 24,
+  },
+  emptyBoardText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "500",
+    textAlign: "center",
   },
   animatedPiece: {
     position: "absolute",
@@ -1455,60 +1412,87 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
   },
-  copyBlock: {
-    gap: 5,
-  },
-  copyBlockHome: {
-    gap: 3,
-  },
-  copyBlockSwipe: {
-    gap: 3,
-  },
-  copyBlockStudio: {
-    gap: 6,
+  editorialBlock: {
+    gap: 7,
     paddingHorizontal: 2,
   },
+  editorialBlockHome: {
+    gap: 5,
+  },
+  editorialBlockSwipe: {
+    gap: 5,
+  },
+  editorialBlockStudio: {
+    gap: 7,
+    paddingHorizontal: 2,
+  },
+  editorialMeta: {
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  editorialMetaHome: {
+    fontSize: 10.5,
+    lineHeight: 14,
+  },
   title: {
-    color: "#FAFBFC",
-    fontSize: 22,
-    lineHeight: 26,
-    fontWeight: "800",
-    letterSpacing: 0,
+    fontSize: 23,
+    lineHeight: 29,
+    fontWeight: "600",
+    letterSpacing: -0.25,
   },
   titleCompact: {
-    fontSize: 19,
-    lineHeight: 23,
-    letterSpacing: 0,
+    fontSize: 20,
+    lineHeight: 25,
+    letterSpacing: -0.2,
   },
   titleHome: {
-    fontSize: 20,
-    lineHeight: 24,
+    fontSize: 21,
+    lineHeight: 26,
   },
   titleSwipe: {
     fontSize: 18,
-    lineHeight: 22,
-    letterSpacing: 0,
+    lineHeight: 23,
+    letterSpacing: -0.15,
   },
   subtitle: {
-    color: "rgba(223, 231, 241, 0.78)",
-    fontSize: 13.5,
-    lineHeight: 19,
-    fontWeight: "500",
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: "400",
   },
   subtitleCompact: {
-    color: "rgba(223, 231, 241, 0.7)",
-    fontSize: 12.5,
-    lineHeight: 17,
+    fontSize: 13,
+    lineHeight: 18,
   },
   subtitleHome: {
-    color: "rgba(223, 231, 241, 0.72)",
-    fontSize: 12.5,
-    lineHeight: 17,
+    fontSize: 13,
+    lineHeight: 18,
   },
   subtitleSwipe: {
-    color: "rgba(223, 231, 241, 0.66)",
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  stylingIntelligenceLine: {
     fontSize: 11.5,
-    lineHeight: 16,
+    lineHeight: 15,
+    fontWeight: "500",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  stylingIntelligenceLineHome: {
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  stylingIntelligenceLineSwipe: {
+    fontSize: 10.5,
+    lineHeight: 14,
+  },
+  summaryPressable: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+  },
+  summaryText: {
+    fontSize: 12.25,
+    lineHeight: 18,
   },
   metaBlock: {
     gap: 6,
@@ -1519,7 +1503,7 @@ const styles = StyleSheet.create({
   metaLabel: {
     color: auraColors.accentRose,
     fontSize: 11.25,
-    fontWeight: "800",
+    fontWeight: "600",
     letterSpacing: 0,
   },
   closetChips: {
@@ -1553,10 +1537,41 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     fontWeight: "600",
   },
-  closetSheetRoot: {
+  completeLookBlock: {
+    borderRadius: 18,
+    borderWidth: CHIP_BORDER_WIDTH,
+    padding: 10,
+  },
+  completeLookBlockHome: {
+    borderRadius: 16,
+    padding: 9,
+  },
+  completeLookHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  shopMissingButton: {
+    minHeight: 34,
+    maxWidth: 154,
+    borderRadius: PILL_RADIUS,
+    borderWidth: CHIP_BORDER_WIDTH,
+    paddingHorizontal: 10,
+    paddingVertical: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+  },
+  shopMissingButtonText: {
+    fontSize: 10.75,
+    lineHeight: 14,
+    fontWeight: "600",
+    letterSpacing: 0,
+  },
+  sheetRoot: {
     flex: 1,
     justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.58)",
     paddingHorizontal: 16,
     paddingBottom: 24,
   },
@@ -1575,14 +1590,14 @@ const styles = StyleSheet.create({
   closetSheetEyebrow: {
     fontSize: 10.5,
     lineHeight: 14,
-    fontWeight: "900",
-    letterSpacing: 1.2,
+    fontWeight: "500",
+    letterSpacing: 1.5,
     textTransform: "uppercase",
   },
   closetSheetTitle: {
     fontSize: 18,
-    lineHeight: 22,
-    fontWeight: "800",
+    lineHeight: 23,
+    fontWeight: "600",
   },
   closetSheetClose: {
     minHeight: 34,
@@ -1595,7 +1610,7 @@ const styles = StyleSheet.create({
   closetSheetCloseText: {
     fontSize: 11.5,
     lineHeight: 15,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   closetSheetScroll: {
     maxHeight: 280,
@@ -1616,23 +1631,74 @@ const styles = StyleSheet.create({
     width: 24,
     fontSize: 10.5,
     lineHeight: 14,
-    fontWeight: "900",
-    letterSpacing: 0.8,
+    fontWeight: "500",
+    letterSpacing: 1.2,
   },
   closetSheetItem: {
     flex: 1,
     fontSize: 13,
-    lineHeight: 17,
-    fontWeight: "700",
+    lineHeight: 18,
+    fontWeight: "600",
   },
   actions: {
     flexDirection: "row",
     gap: ACTION_GAP,
-    paddingTop: 2,
+    paddingTop: 0,
+    alignItems: "stretch",
   },
   actionsHome: {
     gap: ACTION_GAP,
     paddingTop: 0,
+  },
+  primaryCta: {
+    minHeight: CTA_HEIGHT,
+    height: CTA_HEIGHT,
+  },
+  primaryCtaHome: {
+    minHeight: HOME_CTA_HEIGHT,
+    height: HOME_CTA_HEIGHT,
+  },
+  primaryCtaText: {
+    fontSize: 13.5,
+    lineHeight: 18,
+  },
+  overflowButtonHome: {
+    width: HOME_CTA_HEIGHT,
+    height: HOME_CTA_HEIGHT,
+  },
+  actionSheetCard: {
+    gap: 14,
+  },
+  actionSheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  actionSheetList: {
+    gap: 8,
+  },
+  actionSheetRow: {
+    minHeight: 58,
+    borderRadius: auraDesignTokens.radii.md,
+    borderWidth: CHIP_BORDER_WIDTH,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+  },
+  actionSheetIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: CHIP_BORDER_WIDTH,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionSheetTitle: {
+    fontSize: 13.5,
+    lineHeight: 18,
   },
   actionButton: {
     flex: 1,
@@ -1665,12 +1731,12 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: auraColors.textOnLight,
     fontSize: 13.5,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   secondaryButtonText: {
     color: auraColors.textPrimary,
     fontSize: 13.5,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   regenerateButtonText: {
     fontSize: 12.5,
@@ -1704,7 +1770,7 @@ const styles = StyleSheet.create({
     color: auraColors.textSecondary,
     fontSize: 11.75,
     lineHeight: 16,
-    fontWeight: "700",
+    fontWeight: "500",
   },
 });
 
