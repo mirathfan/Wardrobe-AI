@@ -11,7 +11,7 @@ import ChatList from "@/src/components/ai/ChatList";
 import InputBar from "@/src/components/ai/InputBar";
 import ShopOptionsSheet from "@/src/components/shop/ShopOptionsSheet";
 import AuraGlowBackground from "@/src/components/aura/AuraGlowBackground";
-import { AuraButton, AuraText } from "@/src/components/ui/auraStylePrimitives";
+import { AuraButton, AuraText, AuraTopSafeAreaScrim } from "@/src/components/ui/auraStylePrimitives";
 import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
 import { DOCK_HEIGHT, FLOATING_CONTROL_GAP } from "@/src/constants/dock";
@@ -110,7 +110,7 @@ const AURA_LOGO_SOURCE = require("../../assets/images/aura-tab-mark.png");
 
 const DEFAULT_COMPOSER_HEIGHT = 50;
 const CHAT_COMPOSER_TAB_GAP = 6;
-const CHAT_BOTTOM_BREATHING_ROOM = 26;
+const CHAT_BOTTOM_BREATHING_ROOM = 82;
 const STREAM_FLUSH_INTERVAL_MS = 32;
 const AURA_REPLY_START_HAPTIC = "light" as const;
 const AURA_REPLY_FINISH_HAPTIC = "selection" as const;
@@ -765,7 +765,33 @@ function promptRequestsWardrobeBuyingAdvice(prompt: string) {
 
 function promptHasManualSelectedOutfit(prompt: string) {
   const text = String(prompt ?? "");
-  return MANUAL_SELECTED_OUTFIT_RE.test(text) && /\bcloset item id:|selected item ids?:/i.test(text);
+  return (
+    /\bcloset item id:|selected item ids?:/i.test(text) &&
+    (MANUAL_SELECTED_OUTFIT_RE.test(text) || /\bstyle this closet item\b/i.test(text))
+  );
+}
+
+function uniquePromptItemIds(values: string[], max = 3) {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const value of values) {
+    const id = String(value ?? "").trim().replace(/[),.;]+$/g, "");
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    if (ids.length >= max) break;
+  }
+  return ids;
+}
+
+function selectedItemIdsFromPrompt(prompt: string) {
+  const ids: string[] = [];
+  for (const match of String(prompt ?? "").matchAll(/closet item id:\s*([^)\\\n;]+)/gi)) {
+    ids.push(match[1]);
+  }
+  const selectedIdsLine = String(prompt ?? "").match(/selected item ids?:\s*([^\n]+)/i)?.[1] ?? "";
+  ids.push(...selectedIdsLine.split(/[,|]/g));
+  return uniquePromptItemIds(ids);
 }
 
 function timestampMillis(value: unknown) {
@@ -1101,8 +1127,8 @@ function buildAuraResponseFromSwipeBatch(
         : wantsOuterwear && !hasOuterwearLooks
           ? "I couldn't build reliable jacket looks from the current generator, so I repaired the closest structured options with outerwear from your closet."
           : count > 1
-        ? `I pulled ${count} structured outfit options from your closet so you can compare them side by side.`
-        : "I pulled one structured outfit option from your closet.",
+        ? `Here are ${count} structured options from your closet.`
+        : "Here’s one structured option from your closet.",
     reason: "",
     outfitItems: primaryLook?.fromCloset ?? [],
     ownedPieces: primaryLook?.fromCloset ?? [],
@@ -1561,23 +1587,35 @@ export default function AIScreen() {
         prompt,
         uploadedAttachments.length,
         historyMessagesBeforeRequest,
-      );
+      ) || isManualSelectedOutfit;
       const shouldRouteToExistingLook =
         !isManualSelectedOutfit &&
         (chatIntent === "STYLE_EXISTING" || chatIntent === "MODIFY_OUTFIT");
       const structuredOutfitPrompt = shouldForceStructuredBatch ? structuredBatchPrompt : prompt;
-      const outfitDiversity = buildAuraOutfitDiversityContext(
+      const promptAnchorItemIds = selectedItemIdsFromPrompt(prompt);
+      const baseOutfitDiversity = buildAuraOutfitDiversityContext(
         options?.forceOutfitDiversity ? "Try again" : prompt,
         intentContextMessages,
         {
           multiLook: shouldForceStructuredBatch,
         },
       );
+      const promptAnchorIdSet = new Set(promptAnchorItemIds);
+      const outfitDiversity = promptAnchorItemIds.length
+        ? {
+            ...baseOutfitDiversity,
+            excludedItemIds: baseOutfitDiversity.excludedItemIds.filter((itemId) => !promptAnchorIdSet.has(itemId)),
+          }
+        : baseOutfitDiversity;
       const outfitAnchorItemIds = recentOutfitAnchorItemIds(
         prompt,
         items,
         intentContextMessages,
       );
+      const lockedOutfitAnchorItemIds = uniquePromptItemIds([
+        ...promptAnchorItemIds,
+        ...outfitAnchorItemIds,
+      ]);
       if (DEBUG_AURA_CLIENT) {
         console.log("[AURA_INTENT]", "chat intent route", {
           prompt,
@@ -1591,7 +1629,7 @@ export default function AIScreen() {
               ? "outfit_generator"
               : "stream_stylist",
           outfitGeneratorWillRun: !shouldRouteToExistingLook && shouldForceStructuredOutfit,
-          anchorItemIds: outfitAnchorItemIds,
+          anchorItemIds: lockedOutfitAnchorItemIds,
         });
       }
       if (DEBUG_AURA_CLIENT && outfitDiversity.shouldAvoidRepeats) {
@@ -1817,7 +1855,7 @@ export default function AIScreen() {
             intentText: structuredOutfitPrompt,
             numOutfits: desiredLookCount,
             items,
-            anchorItemIds: outfitAnchorItemIds,
+            anchorItemIds: lockedOutfitAnchorItemIds,
             excludeItemIds: outfitDiversity.excludedItemIds,
             recentItemIds: outfitDiversity.recentItemIds,
             previousLookItemIds: outfitDiversity.previousLookItemIds,
@@ -1994,7 +2032,7 @@ export default function AIScreen() {
             intentText: structuredBatchPrompt,
             numOutfits: desiredLookCount,
             items,
-            anchorItemIds: outfitAnchorItemIds,
+            anchorItemIds: lockedOutfitAnchorItemIds,
             excludeItemIds: outfitDiversity.excludedItemIds,
             recentItemIds: outfitDiversity.recentItemIds,
             previousLookItemIds: outfitDiversity.previousLookItemIds,
@@ -2632,6 +2670,7 @@ export default function AIScreen() {
         end={{ x: 1, y: 1 }}
         style={{ flex: 1, paddingTop: Math.max(insets.top + 2, layout.topContentInset - 14) }}
       >
+        <AuraTopSafeAreaScrim color="#111014" />
         <LinearGradient
           pointerEvents="none"
           colors={chatBottomGlowColors}

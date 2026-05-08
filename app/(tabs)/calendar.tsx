@@ -1,5 +1,4 @@
 import { router } from "expo-router";
-import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -24,6 +23,7 @@ import {
   auraButtonTextStyle,
   auraCardStyle,
   auraSheetBackdropStyle,
+  AuraTopSafeAreaScrim,
   auraTypography,
 } from "@/src/components/ui/auraStylePrimitives";
 import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
@@ -74,8 +74,8 @@ function SectionHeader({ icon, title }: { icon: SectionIconName; title: string }
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   return (
     <View style={styles.sectionHeader}>
-      <Ionicons name={iconFallback(icon)} size={17} color={colors.iridescentStart} />
-      <Text style={[styles.sectionTitle, { color: colors.iridescentStart }]}>{title}</Text>
+      <Ionicons name={iconFallback(icon)} size={17} color={colors.textSecondary} />
+      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{title}</Text>
     </View>
   );
 }
@@ -215,9 +215,6 @@ function DatePickerSheet({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={styles.modalBackdrop}>
         <View style={styles.modalSheet}>
-          <BlurView intensity={64} tint="dark" style={StyleSheet.absoluteFill} />
-          <View pointerEvents="none" style={styles.modalGlassTint} />
-
           <View style={styles.modalHeaderRow}>
             <Text style={styles.modalTitle}>{title}</Text>
             <Pressable
@@ -700,8 +697,12 @@ export default function CalendarScreen() {
 
   const onClearPlan = useCallback(async () => {
     if (!uid) return;
-    const next = await clearPlan(uid, selectedDayKey);
-    setRecord(next);
+    try {
+      const next = await clearPlan(uid, selectedDayKey);
+      setRecord(next);
+    } catch (error: any) {
+      Toast.error("Clear plan failed", error?.message ?? "Unable to clear this plan.");
+    }
   }, [selectedDayKey, uid]);
 
   const onOpenCopyPicker = useCallback(() => {
@@ -851,6 +852,7 @@ export default function CalendarScreen() {
 
   return (
     <View style={themedStyles.screen}>
+      <AuraTopSafeAreaScrim color={colors.background} />
       <ScrollView
         refreshControl={
           <RefreshControl
@@ -913,8 +915,14 @@ export default function CalendarScreen() {
           onPermissionAction={onCalendarAction}
         />
 
-        <View style={themedStyles.sectionGap} />
-        <TimelineCard events={events.events} />
+        {events.events.length ? (
+          <>
+            <View style={themedStyles.sectionGap} />
+            <View style={themedStyles.timelineQuiet}>
+              <TimelineCard events={events.events} />
+            </View>
+          </>
+        ) : null}
 
         <View style={themedStyles.sectionGap} />
         <SectionHeader icon="sparkles" title="Outfit for this date" />
@@ -948,8 +956,8 @@ export default function CalendarScreen() {
         )}
 
         <View style={themedStyles.sectionGap} />
-        <SectionHeader icon="chart.bar.xaxis" title="Wardrobe Insights" />
-        <View style={themedStyles.card}>
+        <SectionHeader icon="chart.bar.xaxis" title="Wardrobe rhythm" />
+        <View style={[themedStyles.card, themedStyles.insightsQuietCard]}>
           <View style={themedStyles.weekBars}>
             {weeklyFlags.map((value, index) => (
               <View key={`week-${index}`} style={themedStyles.weekBarTrack}>
@@ -1056,6 +1064,7 @@ return StyleSheet.create({
   },
   sectionTitle: {
     ...auraTypography.eyebrow,
+    letterSpacing: 1.15,
   },
   monthPicker: {
     marginTop: 6,
@@ -1066,15 +1075,15 @@ return StyleSheet.create({
     gap: 4,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.purpleBorder,
-    backgroundColor: colors.purpleSurface,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
     paddingHorizontal: 13,
     paddingVertical: 8,
   },
   monthPickerText: {
-    color: colors.lightPurple,
+    color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "500",
   },
   sectionGap: {
     height: layout.sectionGap - 4,
@@ -1085,9 +1094,17 @@ return StyleSheet.create({
     borderRadius: layout.mediumRadius,
     padding: layout.cardPadding,
   },
+  timelineQuiet: {
+    opacity: 0.72,
+  },
+  insightsQuietCard: {
+    opacity: 0.82,
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+  },
   emptyDayCard: {
-    backgroundColor: "rgba(255,255,255,0.045)",
-    borderColor: "rgba(255,255,255,0.1)",
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
   },
   emptyDayTitle: {
     color: colors.text,
@@ -1120,7 +1137,7 @@ return StyleSheet.create({
     flex: 1,
     height: 20,
     borderRadius: 6,
-    backgroundColor: colors.overlay,
+    backgroundColor: colors.surfaceMuted,
     justifyContent: "flex-end",
     padding: 1,
   },
@@ -1140,19 +1157,15 @@ return StyleSheet.create({
     marginHorizontal: layout.horizontalPadding,
     marginBottom: layout.floatingDockBottom + FLOATING_TAB_BAR_HEIGHT + 12,
     borderRadius: layout.largeRadius,
-    borderColor: colors.purpleBorder,
+    borderColor: colors.borderStrong,
     padding: layout.cardPadding,
     gap: 13,
     overflow: "hidden",
-    shadowColor: colors.ctaCream,
-    shadowOpacity: 0.12,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 8,
-  },
-  modalGlassTint: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(25,0,25,0.72)",
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.14,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 5,
   },
   modalHeaderRow: {
     minHeight: 36,
@@ -1167,14 +1180,14 @@ return StyleSheet.create({
     flex: 1,
   },
   modalCloseButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.chipBackground,
+    backgroundColor: colors.surfaceMuted,
   },
   monthNavRow: {
     minHeight: 42,
@@ -1184,21 +1197,21 @@ return StyleSheet.create({
     gap: 12,
   },
   monthNavButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.surfaceInteractive,
+    backgroundColor: colors.surfaceMuted,
   },
   monthTitle: {
     flex: 1,
     color: colors.text,
     fontSize: 17,
     lineHeight: 22,
-    fontWeight: "700",
+    fontWeight: "600",
     textAlign: "center",
   },
   weekdayRow: {
@@ -1235,12 +1248,12 @@ return StyleSheet.create({
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(251,228,216,0.025)",
+    backgroundColor: colors.surfaceMuted,
   },
   dateText: {
     fontSize: 14,
     lineHeight: 18,
-    fontWeight: "700",
+    fontWeight: "600",
     textAlign: "center",
   },
   todayMarker: {

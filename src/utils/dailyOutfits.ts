@@ -329,7 +329,7 @@ export async function clearPlannedOutfit(uid: string, dateKey: string | Date) {
     ref,
     {
       planned: false,
-      itemIds: deleteField(),
+      itemIds: [],
       plannedOutfit: deleteField(),
       updatedAt: serverTimestamp(),
     },

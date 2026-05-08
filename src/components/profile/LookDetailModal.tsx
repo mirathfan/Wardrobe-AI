@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import { Alert, Modal, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -8,8 +8,8 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-import { Colors } from "@/constants/theme";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
+import { AuraButton, AuraIconButton } from "@/src/components/ui/auraStylePrimitives";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import {
@@ -33,6 +33,7 @@ function formatDate(value?: number) {
 export function LookDetailModal({ visible, record, onClose }: Props) {
   const { colors } = useAppTheme();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const progress = useSharedValue(0);
 
@@ -94,18 +95,23 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-      <Animated.View style={[styles.screen, sheetStyle]}>
+      <Animated.View style={[styles.screen, { backgroundColor: colors.background }, sheetStyle]}>
         <View style={styles.header}>
           <View style={styles.headerSpacer} />
           <View style={styles.headerTitleBlock}>
-            <Text numberOfLines={1} style={styles.title}>
+            <Text numberOfLines={1} style={[styles.title, { color: colors.text }]}>
               {record.title}
             </Text>
-            {savedDate ? <Text style={styles.date}>{savedDate}</Text> : null}
+            {savedDate ? <Text style={[styles.date, { color: colors.textMuted }]}>{savedDate}</Text> : null}
           </View>
-          <Pressable onPress={onClose} style={styles.closeButton} accessibilityRole="button" accessibilityLabel="Close">
-            <Text style={styles.closeText}>×</Text>
-          </Pressable>
+          <AuraIconButton
+            icon="close"
+            label="Close saved look"
+            onPress={onClose}
+            variant="tertiary"
+            size="compact"
+            style={styles.closeButton}
+          />
         </View>
 
         <ScrollView contentContainerStyle={styles.content}>
@@ -118,41 +124,60 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
           />
         </ScrollView>
 
-        <View style={[styles.actions, { borderTopColor: colors.border }]}>
+        <View
+          style={[
+            styles.actions,
+            {
+              borderTopColor: colors.border,
+              backgroundColor: colors.background,
+              paddingBottom: Math.max(28, insets.bottom + 16),
+            },
+          ]}
+        >
           {isDisliked ? (
             <>
-              <Pressable disabled={busy} onPress={() => runAction("like")} style={styles.gradientButton}>
-                <LinearGradient
-                  colors={[colors.ctaCream, colors.ctaCream]}
-                  start={{ x: 0, y: 0.5 }}
-                  end={{ x: 1, y: 0.5 }}
-                  style={styles.gradientFill}
-                >
-                  <Text style={styles.gradientText}>{busy ? "Updating..." : "Actually I like this"}</Text>
-                </LinearGradient>
-              </Pressable>
-              <Pressable disabled={busy} onPress={() => runAction("remove")} style={styles.darkButton}>
-                <Text style={styles.darkButtonText}>Remove</Text>
-              </Pressable>
+              <AuraButton
+                label={busy ? "Updating..." : "Actually I like this"}
+                disabled={busy}
+                onPress={() => runAction("like")}
+                fullWidth
+              />
+              <AuraButton
+                label="Remove"
+                disabled={busy}
+                onPress={() => runAction("remove")}
+                variant="destructive"
+                fullWidth
+              />
             </>
           ) : (
             <>
-              <Pressable disabled={busy} onPress={() => runAction("wear")} style={styles.gradientButton}>
-                <LinearGradient
-                  colors={[colors.ctaCream, colors.ctaCream]}
-                  start={{ x: 0, y: 0.5 }}
-                  end={{ x: 1, y: 0.5 }}
-                  style={styles.gradientFill}
-                >
-                  <Text style={styles.gradientText}>{busy ? "Updating..." : "Wear today"}</Text>
-                </LinearGradient>
-              </Pressable>
-              <Pressable disabled={busy} onPress={() => runAction("plan")} style={styles.darkButton}>
-                <Text style={styles.darkButtonText}>Plan for today</Text>
-              </Pressable>
-              <Pressable disabled={busy} onPress={() => runAction("remove")} style={styles.darkButton}>
-                <Text style={styles.darkButtonText}>Remove from saved</Text>
-              </Pressable>
+              <AuraButton
+                label={busy ? "Updating..." : "Wear today"}
+                disabled={busy}
+                onPress={() => runAction("wear")}
+                fullWidth
+              />
+              <View style={styles.secondaryActions}>
+                <AuraButton
+                  label="Plan today"
+                  disabled={busy}
+                  onPress={() => runAction("plan")}
+                  variant="secondary"
+                  size="compact"
+                  fullWidth
+                  style={styles.secondaryButton}
+                />
+                <AuraButton
+                  label="Remove"
+                  disabled={busy}
+                  onPress={() => runAction("remove")}
+                  variant="destructive"
+                  size="compact"
+                  fullWidth
+                  style={styles.secondaryButton}
+                />
+              </View>
             </>
           )}
         </View>
@@ -164,7 +189,6 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: Colors.dark.background,
   },
   header: {
     paddingTop: 56,
@@ -182,25 +206,15 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   title: {
-    color: Colors.dark.textPrimary,
     fontSize: 17,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   date: {
-    color: Colors.dark.textMuted,
     fontSize: 12,
   },
   closeButton: {
     width: 44,
     height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  closeText: {
-    color: Colors.dark.textPrimary,
-    fontSize: 30,
-    lineHeight: 34,
-    fontWeight: "300",
   },
   content: {
     paddingHorizontal: 16,
@@ -218,36 +232,13 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
     borderTopWidth: 1,
     gap: 10,
-    backgroundColor: Colors.dark.background,
   },
-  gradientButton: {
-    minHeight: 50,
-    borderRadius: 18,
-    overflow: "hidden",
+  secondaryActions: {
+    flexDirection: "row",
+    gap: 10,
   },
-  gradientFill: {
-    minHeight: 50,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  gradientText: {
-    color: Colors.dark.ctaText,
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  darkButton: {
-    minHeight: 50,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: Colors.dark.secondaryCta,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-  },
-  darkButtonText: {
-    color: Colors.dark.textPrimary,
-    fontSize: 15,
-    fontWeight: "800",
+  secondaryButton: {
+    flex: 1,
   },
 });
 

@@ -73,6 +73,23 @@ function uniqueTokens(values: (string | null | undefined)[], limit = 8) {
   return next;
 }
 
+function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .filter((entry) => entry !== undefined)
+      .map((entry) => stripUndefinedDeep(entry)) as T;
+  }
+
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, stripUndefinedDeep(entry)]);
+    return Object.fromEntries(entries) as T;
+  }
+
+  return value;
+}
+
 function itemDocRef(uid: string, itemId: string) {
   return doc(db, "users", uid, "items", itemId);
 }
@@ -315,11 +332,12 @@ export async function logStyleEvent(uid: string, event: StyleEvent) {
   if (!normalized) {
     throw new Error("Invalid style event");
   }
-  await setDoc(ref, normalized);
+  const payload = stripUndefinedDeep(normalized);
+  await setDoc(ref, payload);
   await recomputeLearnedStyleMemory(uid);
   return {
     id: ref.id,
-    ...normalized,
+    ...payload,
   };
 }
 

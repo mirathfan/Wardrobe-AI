@@ -253,11 +253,17 @@ function deriveEditorialSubtitle(look: AuraLook) {
   ]
     .filter(Boolean)
     .join(" ")
+    .replace(/\b\d{1,3}%\s+formality(?:\s+vibe)?\b,?\s*/gi, "")
+    .replace(/\bstrong color balance\b/gi, "balanced color story")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*,/g, ", ")
+    .replace(/,\s*([.?!])/g, "$1")
     .replace(/\s+/g, " ")
+    .replace(/,\s*$/g, "")
     .trim();
   if (!source) return "";
-  if (source.length <= 88) return source;
-  return `${source.slice(0, 85).trimEnd()}...`;
+  if (source.length <= 68) return source;
+  return `${source.slice(0, 65).trimEnd()}...`;
 }
 
 function labelFromStyleIdentity(value?: string | null) {
@@ -268,22 +274,21 @@ function labelFromStyleIdentity(value?: string | null) {
 
 function colorBalanceLabel(score?: number) {
   if (typeof score !== "number" || !Number.isFinite(score)) {
-    return "Color balance";
+    return "";
   }
-  if (score >= 82) return "Strong color balance";
-  if (score >= 68) return "Balanced color";
-  return "Needs color edit";
+  if (score >= 82) return "balanced color story";
+  if (score >= 68) return "easy color story";
+  return "intentional contrast";
 }
 
 function deriveStylingIntelligenceLine(look: AuraLook) {
   const intelligence = look.stylingIntelligence;
-  const score = intelligence?.overallScore;
-  if (typeof score !== "number" || !Number.isFinite(score)) return "";
+  if (!intelligence) return "";
   const styleLabel =
     labelFromStyleIdentity(intelligence?.styleIdentity) ||
     cleanShortLabel(look.vibe);
   const colorLabel = colorBalanceLabel(intelligence?.colorScore);
-  return [styleLabel, colorLabel, String(Math.round(score))]
+  return [styleLabel, colorLabel]
     .filter(Boolean)
     .join(" · ");
 }
@@ -1028,7 +1033,7 @@ export const AuraLookCard = memo(function AuraLookCard({
             >
               {closetItems.map((item, index) => (
                 <View
-                  key={`${look.lookTitle}-sheet-${item}-${index}`}
+                  key={`${look.lookTitle}-sheet-${item}`}
                   style={[
                     styles.closetSheetRow,
                     {
@@ -1427,7 +1432,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   editorialMeta: {
-    letterSpacing: 1.1,
+    letterSpacing: 0.95,
     textTransform: "uppercase",
   },
   editorialMetaHome: {
@@ -1475,7 +1480,7 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     lineHeight: 15,
     fontWeight: "500",
-    letterSpacing: 1.1,
+    letterSpacing: 0.95,
     textTransform: "uppercase",
   },
   stylingIntelligenceLineHome: {
@@ -1591,7 +1596,7 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     lineHeight: 14,
     fontWeight: "500",
-    letterSpacing: 1.5,
+    letterSpacing: 1.25,
     textTransform: "uppercase",
   },
   closetSheetTitle: {
@@ -1632,7 +1637,7 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     lineHeight: 14,
     fontWeight: "500",
-    letterSpacing: 1.2,
+    letterSpacing: 1,
   },
   closetSheetItem: {
     flex: 1,

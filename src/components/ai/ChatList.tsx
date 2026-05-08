@@ -173,6 +173,7 @@ export default function ChatList({
   const lastInsetScrollKeyRef = useRef<string | null>(null);
   const dismissedFocusMessageIdRef = useRef<string | null>(null);
   const loadingRef = useRef(loading);
+  const messagesRef = useRef(messages);
   const [listViewportHeight, setListViewportHeight] = React.useState(0);
   const [activeFocusAnchorId, setActiveFocusAnchorId] = React.useState<string | null>(null);
   const messageCount = messages.length;
@@ -206,9 +207,12 @@ export default function ChatList({
     [scrollToBottom],
   );
 
-  const scrollToFocusedMessage = useCallback((index: number, animated: boolean) => {
-    if (index < 0) return;
+  const scrollToFocusedMessage = useCallback((messageId: string | null | undefined, animated: boolean) => {
+    if (!messageId) return;
     requestAnimationFrame(() => {
+      const currentMessages = messagesRef.current;
+      const index = currentMessages.findIndex((message) => message.id === messageId);
+      if (index < 0 || index >= currentMessages.length) return;
       listRef.current?.scrollToIndex({
         index,
         animated,
@@ -262,6 +266,10 @@ export default function ChatList({
   }, [loading]);
 
   useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
     return () => {
       if (streamingScrollTimerRef.current) {
         clearTimeout(streamingScrollTimerRef.current);
@@ -282,7 +290,7 @@ export default function ChatList({
     const shouldAnimate = messageCount >= previousCountRef.current;
     previousCountRef.current = messageCount;
     if (isFocusAnchoring) {
-      const timer = setTimeout(() => scrollToFocusedMessage(focusedMessageIndex, false), 30);
+      const timer = setTimeout(() => scrollToFocusedMessage(focusMessageId, false), 30);
       return () => clearTimeout(timer);
     }
     if (focusMessageId && focusedMessageIndex >= 0 && lastMessageId === focusMessageId) {
@@ -313,7 +321,7 @@ export default function ChatList({
     if (focusAnchorReleaseTimerRef.current) {
       clearTimeout(focusAnchorReleaseTimerRef.current);
     }
-    const focusTimer = setTimeout(() => scrollToFocusedMessage(focusedMessageIndex, true), 50);
+    const focusTimer = setTimeout(() => scrollToFocusedMessage(focusMessageId, true), 50);
     focusAnchorReleaseTimerRef.current = setTimeout(() => {
       if (loadingRef.current) return;
       focusAnchorActiveRef.current = false;
@@ -412,7 +420,7 @@ export default function ChatList({
     () => ({
       flexGrow: 1,
       justifyContent: messageCount ? ("flex-start" as const) : ("flex-end" as const),
-      paddingTop: messageCount ? 8 : 0,
+      paddingTop: messageCount ? 14 : 0,
       paddingHorizontal: 6,
       paddingBottom: Math.max(18, contentBottomPadding),
     }),
@@ -451,14 +459,22 @@ export default function ChatList({
       if (scrollToIndexRetryRef.current) {
         clearTimeout(scrollToIndexRetryRef.current);
       }
+      const currentMessages = messagesRef.current;
+      if (info.index < 0 || info.index >= currentMessages.length) {
+        scrollToIndexRetryRef.current = null;
+        scrollToBottomIfFollowing(false);
+        return;
+      }
+      const retryMessageId = currentMessages[info.index]?.id;
+      if (!retryMessageId) return;
       const offset = Math.max(0, info.averageItemLength * info.index - FOCUS_MESSAGE_VIEW_OFFSET);
       listRef.current?.scrollToOffset({ offset, animated: true });
       scrollToIndexRetryRef.current = setTimeout(() => {
         scrollToIndexRetryRef.current = null;
-        scrollToFocusedMessage(info.index, true);
+        scrollToFocusedMessage(retryMessageId, true);
       }, 120);
     },
-    [scrollToFocusedMessage],
+    [scrollToBottomIfFollowing, scrollToFocusedMessage],
   );
 
   const keyExtractor = useCallback((item: AIMessage) => item.id, []);

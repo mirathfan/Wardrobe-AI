@@ -106,6 +106,30 @@ function fallbackStructuredIntro(message: AIMessage) {
   return "Got you — here’s what I’d do.";
 }
 
+function formatUserBubbleText(value?: string | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  if (/^Style this closet item for me:/i.test(raw) && /\bcloset item id:/i.test(raw)) {
+    return "Style this item with AURA.";
+  }
+
+  const cleaned = raw
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false;
+      if (/^closet item id:/i.test(line)) return false;
+      if (/^required anchor item:/i.test(line)) return false;
+      if (/^selected item ids?:/i.test(line)) return false;
+      if (/^do not substitute another closet item/i.test(line)) return false;
+      return true;
+    })
+    .join("\n");
+
+  return sanitizeMultilineDisplayText(cleaned);
+}
+
 function SmoothStreamingText({
   text,
   colors,
@@ -292,7 +316,7 @@ function ChatMessage({
   const structuredIntroText = cleanIntroText(message.assistantIntroText ?? message.text) || fallbackStructuredIntro(message);
   const isUser = message.kind === "user_text" || message.type === "user";
   const isAuraText = message.kind === "aura_text";
-  const displayText = isUser ? message.text : sanitizeMultilineDisplayText(message.text);
+  const displayText = isUser ? formatUserBubbleText(message.text) : sanitizeMultilineDisplayText(message.text);
   const isStreamingPlaceholder = !isUser && !!message.streaming && !displayText;
   const isUserUrlOnly = isUser && isUrlOnlyMessage(displayText);
   const formattedUserText = isUserUrlOnly ? formatUrlForDisplay(String(displayText ?? "")) : displayText;

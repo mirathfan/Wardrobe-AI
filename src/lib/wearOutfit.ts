@@ -331,6 +331,10 @@ export async function markOutfitWorn({
   void logOutfitSnapshotWornStyleEvent(uid, snapshot, {
     source: toMemorySource(source),
     wornAt: wornAtMs,
+  }).catch((error) => {
+    if (__DEV__) {
+      console.warn("[wearOutfit] Failed to log style event", error);
+    }
   });
 
   return {

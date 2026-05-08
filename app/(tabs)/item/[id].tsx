@@ -32,6 +32,7 @@ import {
   AuraSheetBackdrop,
   AuraSheetSurface,
   AuraText,
+  AuraTopSafeAreaScrim,
   auraCardStyle,
   auraDesignTokens,
 } from "@/src/components/ui/auraStylePrimitives";
@@ -350,7 +351,7 @@ function buildDetailGroups(item: ItemDetails) {
     {
       title: "Material & Design",
       items: filterDetailGroupItems([
-        { label: "Material", value: displayValue(item.material) || joinLabels([item.materials]) },
+        { label: "Material", value: displayValue(item.material) || joinLabels([item.materials]), multiline: true },
         { label: "Pattern", value: displayValue(item.pattern) },
         { label: "Style", value: displayValue(item.style) },
       ]),
@@ -359,14 +360,14 @@ function buildDetailGroups(item: ItemDetails) {
       title: "Color",
       items: filterDetailGroupItems([
         { label: "Primary", value: primaryColorForDetail(item) || colorLabel(item) },
-        { label: "Secondary", value: visibleColorsForDetail(item) },
+        { label: "Secondary", value: visibleColorsForDetail(item), multiline: true },
       ]),
     },
     {
       title: "Occasion",
       items: filterDetailGroupItems([
-        { label: "Season", value: joinLabels([item.seasonTags]) },
-        { label: "Use", value: joinLabels([item.occasionTags]) },
+        { label: "Season", value: joinLabels([item.seasonTags]), multiline: true },
+        { label: "Use", value: joinLabels([item.occasionTags]), multiline: true },
         { label: "Tags", value: joinLabels([item.detailTags, item.aestheticTags]), multiline: true },
       ]),
     },
@@ -429,6 +430,11 @@ function buildUsageRows(item: ItemDetails, status: LaundryStatus) {
   ]);
 }
 
+function shouldStackDetailRow(row: DetailRow) {
+  if (row.multiline) return true;
+  return cleanString(row.value).length > 42;
+}
+
 function auraPromptForItem(item: ItemDetails) {
   const details = uniqueStrings([
     itemTitle(item),
@@ -439,10 +445,12 @@ function auraPromptForItem(item: ItemDetails) {
     item.material,
     item.fit,
   ]).join(", ");
+  const slot = normalizeDisplayToken(item.category || item.subCategory || item.type).toLowerCase() || "item";
   return [
     `Style this closet item for me: ${details}.`,
     `Closet item id: ${item.id}.`,
-    "Build a wearable outfit around it using my closet where possible and keep the advice concise.",
+    `Required anchor item: use closet item id ${item.id} as the ${slot} in the outfit.`,
+    "Do not substitute another closet item for this anchor. Build a wearable outfit around it using my closet where possible and keep the advice concise.",
   ].join("\n");
 }
 
@@ -651,6 +659,11 @@ function createStyles(colors: AppColors) {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.borderSoft,
     },
+    detailValueRowStacked: {
+      flexDirection: "column",
+      alignItems: "stretch",
+      gap: 5,
+    },
     detailValueRowLast: {
       borderBottomWidth: 0,
     },
@@ -661,6 +674,9 @@ function createStyles(colors: AppColors) {
       lineHeight: 18,
       fontWeight: "500",
     },
+    detailLabelStacked: {
+      width: "100%",
+    },
     detailValueText: {
       flex: 1,
       color: colors.textPrimary,
@@ -668,6 +684,11 @@ function createStyles(colors: AppColors) {
       lineHeight: 20,
       fontWeight: "500",
       textAlign: "right",
+    },
+    detailValueTextStacked: {
+      flex: 0,
+      width: "100%",
+      textAlign: "left",
     },
     productSourceButton: {
       minHeight: 48,
@@ -792,27 +813,35 @@ function DetailRowsBlock({ title, rows }: { title: string; rows: DetailRow[] }) 
         </AuraText>
       </View>
       <View style={styles.detailGroupItems}>
-        {rows.map((item, index) => (
-          <View
-            key={`${title}-${item.label}`}
-            style={[
-              styles.detailValueRow,
-              index === rows.length - 1 ? styles.detailValueRowLast : null,
-            ]}
-          >
-            <AuraText variant="caption" tone="muted" style={styles.detailLabel}>
-              {item.label}
-            </AuraText>
-            <AuraText
-              variant="body"
-              selectable
-              numberOfLines={item.multiline ? undefined : 3}
-              style={styles.detailValueText}
+        {rows.map((item, index) => {
+          const stacked = shouldStackDetailRow(item);
+          return (
+            <View
+              key={`${title}-${item.label}`}
+              style={[
+                styles.detailValueRow,
+                stacked ? styles.detailValueRowStacked : null,
+                index === rows.length - 1 ? styles.detailValueRowLast : null,
+              ]}
             >
-              {item.value}
-            </AuraText>
-          </View>
-        ))}
+              <AuraText
+                variant="caption"
+                tone="muted"
+                style={[styles.detailLabel, stacked ? styles.detailLabelStacked : null]}
+              >
+                {item.label}
+              </AuraText>
+              <AuraText
+                variant="body"
+                selectable
+                numberOfLines={stacked ? undefined : 3}
+                style={[styles.detailValueText, stacked ? styles.detailValueTextStacked : null]}
+              >
+                {item.value}
+              </AuraText>
+            </View>
+          );
+        })}
       </View>
     </View>
   );
@@ -1257,15 +1286,6 @@ export default function ItemDetailsScreen() {
               accessibilityLabel="Share this item"
               style={{ flex: 1 }}
             />
-            <AuraButton
-              label="More"
-              iconLeft="ellipsis-horizontal"
-              variant="tertiary"
-              size="compact"
-              onPress={onOpenOverflowMenu}
-              accessibilityLabel="Open more item actions"
-              style={{ flex: 1 }}
-            />
           </View>
         </View>
 
@@ -1315,6 +1335,7 @@ export default function ItemDetailsScreen() {
 
   return (
     <SafeScreen backgroundColor={colors.background} includeTopInset={false} includeBottomInset={false}>
+      <AuraTopSafeAreaScrim color={colors.background} />
       <ItemImageModal
         visible={detailImageOpen}
         images={detailImages}
@@ -1415,21 +1436,25 @@ function ActionMenuModal({
   }
 
   function renderMenuRow({
+    rowKey,
     icon,
     label,
     onPress,
     destructive = false,
     disabled = false,
     selected = false,
+    quiet = false,
     accessory = "chevron-forward",
     accessibilityLabel,
   }: {
+    rowKey?: React.Key;
     icon: keyof typeof Ionicons.glyphMap;
     label: string;
     onPress: () => void;
     destructive?: boolean;
     disabled?: boolean;
     selected?: boolean;
+    quiet?: boolean;
     accessory?: keyof typeof Ionicons.glyphMap | null;
     accessibilityLabel?: string;
   }) {
@@ -1438,10 +1463,13 @@ function ActionMenuModal({
       ? colors.destructive
       : selected
         ? colors.accent
-        : colors.textSecondary;
+        : quiet
+          ? colors.textMuted
+          : colors.textSecondary;
 
     return (
       <AuraPressable
+        key={rowKey ?? label}
         onPress={() => {
           void runHaptic(destructive ? "warning" : "light");
           onPress();
@@ -1455,6 +1483,12 @@ function ActionMenuModal({
         accessibilityState={{ selected, disabled }}
         style={[
           styles.actionMenuButton,
+          quiet && !selected && !destructive
+            ? {
+                backgroundColor: "transparent",
+                borderColor: colors.borderSoft,
+              }
+            : null,
           selected
             ? {
                 backgroundColor: colors.accentSoft,
@@ -1499,11 +1533,14 @@ function ActionMenuModal({
                 Styling actions
               </AuraText>
               {renderMenuRow({
+                rowKey: "add-to-outfit",
                 icon: "shirt-outline",
                 label: "Add to outfit",
                 onPress: onAddToOutfit,
+                quiet: true,
               })}
               {renderMenuRow({
+                rowKey: "mark-worn-today",
                 icon: "checkmark-circle-outline",
                 label: "Mark worn today",
                 onPress: onMarkWorn,
@@ -1519,6 +1556,7 @@ function ActionMenuModal({
               </AuraText>
               {STATUS_OPTIONS.map((status) =>
                 renderMenuRow({
+                  rowKey: `laundry-${status}`,
                   icon:
                     status === "clean"
                       ? "sparkles-outline"
@@ -1538,6 +1576,7 @@ function ActionMenuModal({
             <AuraDivider />
 
             {renderMenuRow({
+              rowKey: "delete-item",
               icon: "trash-outline",
               label: "Delete item",
               onPress: onDelete,
