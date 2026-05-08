@@ -4,7 +4,6 @@ import { StatusBar } from "expo-status-bar";
 import { signOut } from "firebase/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import LottieView from "lottie-react-native";
 import Animated, {
   Easing,
   runOnJS,
@@ -22,6 +21,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Colors } from "@/constants/theme";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import AuraRing, { RING_SIZE_LG } from "@/src/components/brand/AuraRing";
+import BrandedLoadingAnimation from "@/src/components/brand/BrandedLoadingAnimation";
 import { configureGoogleSignIn } from "@/src/auth/googleAuth";
 import { logDeviceSecurityContext } from "@/src/lib/security";
 import { auth } from "@/src/lib/firebase";
@@ -70,12 +70,7 @@ function BrandedLoadingScreen() {
         <Animated.Text style={[loadingStyles.message, messageStyle]}>
           {LOADING_MESSAGES[messageIndex]}
         </Animated.Text>
-        <LottieView
-          source={require("../assets/animations/loading.json")}
-          autoPlay={!reducedMotion}
-          loop={!reducedMotion}
-          style={loadingStyles.lottie}
-        />
+        <BrandedLoadingAnimation animated={!reducedMotion} style={loadingStyles.lottie} />
       </View>
     </View>
   );

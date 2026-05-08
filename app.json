@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "AURA",
-    "slug": "aura",
+    "slug": "aura-ai-personal-stylist",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -12,8 +12,7 @@
       "icon": "./assets/icon.png",
       "supportsTablet": true,
       "usesAppleSignIn": true,
-      "bundleIdentifier": "com.athfan.AURA",
-      "deploymentTarget": "17.0",
+      "bundleIdentifier": "com.kasat.aura",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "CFBundleURLTypes": [
@@ -25,6 +24,10 @@
         ],
         "NSLocationWhenInUseUsageDescription": "We use your location to show local weather in your wardrobe insights.",
         "NSCalendarsUsageDescription": "We use your calendar to show today's events in your wardrobe insights.",
+        "NSCalendarsFullAccessUsageDescription": "We use your calendar to show today's events in your wardrobe insights.",
+        "NSCameraUsageDescription": "AURA uses your camera so you can add clothing items to your wardrobe.",
+        "NSPhotoLibraryUsageDescription": "AURA uses your photo library so you can select clothing photos for your wardrobe.",
+        "NSPhotoLibraryAddUsageDescription": "AURA may save edited clothing images to your photo library when you choose to.",
         "NSMicrophoneUsageDescription": "Allow AURA to use your microphone for voice dictation.",
         "NSSpeechRecognitionUsageDescription": "Allow AURA to turn your speech into chat text."
       }
@@ -39,7 +42,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.athfan.aura",
+      "package": "com.kasat.aura",
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ]
@@ -78,8 +81,16 @@
           "speechRecognitionPermission": "Allow AURA to turn your speech into chat text."
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "AURA uses your photo library so you can select clothing photos for your wardrobe.",
+          "cameraPermission": "AURA uses your camera so you can add clothing items to your wardrobe."
+        }
+      ],
       "@react-native-google-signin/google-signin",
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,
