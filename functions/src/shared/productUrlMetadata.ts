@@ -269,7 +269,7 @@ async function fetchHtml(url: URL) {
     }
     logger.warn("[AURA_URL_FETCH] product URL fetch failed; trying retailer fallback", {
       host: url.hostname,
-      error,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 
@@ -340,7 +340,7 @@ async function tryHmContentFallback(
       logger.warn("[AURA_URL_FETCH] H&M content fallback failed", {
         host: url.hostname,
         fallbackHost: new URL(fallbackUrl).hostname,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
   }

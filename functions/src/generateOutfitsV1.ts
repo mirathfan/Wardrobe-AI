@@ -12,8 +12,20 @@ import {
   normalizeParsedIntent,
   persistGeneratedOutfits,
   safeJsonExtract,
+  type Slot,
+  type WardrobeItem,
 } from "./shared/outfitEngine";
 import { loadCompactAuraMemoryContext } from "./shared/auraMemory";
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  redactUid,
+} from "./shared/rateLimit";
+import { scoreOutfitStyling } from "./shared/styling/stylingScore";
+import {
+  roleForStylingItem,
+  type StylingItem,
+} from "./shared/styling/types";
 
 if (!getApps().length) {
   initializeApp();
@@ -40,17 +52,73 @@ function isOuterwearItem(item: { category?: string | null; subCategory?: string 
   );
 }
 
+function slotForAnchorItem(item: WardrobeItem): Slot | null {
+  const role = roleForStylingItem(item as StylingItem);
+  if (role === "footwear") return "footwear";
+  if (role === "top" || role === "bottom" || role === "outerwear" || role === "accessory") {
+    return role;
+  }
+  return null;
+}
+
+function lockedItemsForAnchors(
+  anchorItemIds: string[],
+  itemsById: Map<string, WardrobeItem>,
+): Partial<Record<Slot, WardrobeItem>> | undefined {
+  const locked: Partial<Record<Slot, WardrobeItem>> = {};
+  for (const itemId of anchorItemIds) {
+    const item = itemsById.get(itemId);
+    if (!item) continue;
+    const slot = slotForAnchorItem(item);
+    if (!slot || locked[slot]) continue;
+    locked[slot] = item;
+  }
+  return Object.keys(locked).length ? locked : undefined;
+}
+
+type EnforceableOutfit = {
+  picks: Array<{ slot: "top" | "bottom" | "footwear" | "outerwear" | "accessory"; itemId: string }>;
+  score: number;
+  reason: string;
+  itemIds: string[];
+  stylingScore?: number;
+  stylingIntelligence?: ReturnType<typeof scoreOutfitStyling>;
+};
+
+function applyStylingToOutfit(
+  outfit: EnforceableOutfit,
+  allItems: WardrobeItem[],
+  intent: OutfitIntentV1,
+): EnforceableOutfit {
+  const itemsById = new Map(allItems.map((item) => [item.id, item]));
+  const stylingItems = outfit.picks.flatMap((pick) => {
+    const item = itemsById.get(pick.itemId);
+    if (!item) return [];
+    return [{
+      ...item,
+      role: pick.slot,
+      source: "closet" as const,
+    }];
+  });
+  const stylingIntelligence = scoreOutfitStyling(stylingItems, {
+    occasion: intent.occasion,
+    formalityTarget: intent.formalityTarget,
+    requestText: intent.occasion,
+  });
+  return {
+    ...outfit,
+    stylingScore: stylingIntelligence.overallScore,
+    stylingIntelligence,
+  };
+}
+
 function enforceOuterwearOnOutfits(params: {
-  outfits: Array<{
-    picks: Array<{ slot: "top" | "bottom" | "footwear" | "outerwear" | "accessory"; itemId: string }>;
-    score: number;
-    reason: string;
-    itemIds: string[];
-  }>;
-  allItems: Array<{ id: string; category?: string; subCategory?: string; type?: string | null; name?: string | null }>;
+  outfits: EnforceableOutfit[];
+  allItems: WardrobeItem[];
   requireOuterwear: boolean;
+  intent: OutfitIntentV1;
 }) {
-  const { outfits, allItems, requireOuterwear } = params;
+  const { outfits, allItems, requireOuterwear, intent } = params;
   const outerwearPool = allItems.filter(isOuterwearItem);
   if (!requireOuterwear || outerwearPool.length === 0) {
     return {
@@ -95,7 +163,9 @@ function enforceOuterwearOnOutfits(params: {
   });
 
   return {
-    outfits: repaired.filter((outfit) => outfit.picks.some((pick) => pick.slot === "outerwear")),
+    outfits: repaired
+      .filter((outfit) => outfit.picks.some((pick) => pick.slot === "outerwear"))
+      .map((outfit) => applyStylingToOutfit(outfit, allItems, intent)),
     availableOuterwearCount: outerwearPool.length,
     repairedCount,
   };
@@ -173,6 +243,8 @@ export const generateOutfitsV1 = onCall(
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
+    await assertFunctionRateLimit(uid, "outfitGeneration", RATE_LIMITS.outfitGeneration);
+    const uidHash = redactUid(uid);
 
     const intentText = String(request.data?.intentText ?? "").trim();
     if (!intentText) {
@@ -183,21 +255,34 @@ export const generateOutfitsV1 = onCall(
     const requestedNumOutfits =
       request.data?.numOutfits ?? parsed.numOutfits ?? inferRequestedOutfitCount(intentText) ?? 3;
     const numOutfits = clampNumOutfits(requestedNumOutfits, 3);
+    const anchorItemIds = Array.isArray(request.data?.anchorItemIds)
+      ? request.data.anchorItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 3)
+      : [];
     const parsedIntent = parsed.intent;
     logger.info("generateOutfitsV1 parsed intent", {
-      uid,
-      parsedIntent,
+      uidHash,
+      parsedIntentKeys: Object.keys(parsedIntent ?? {}),
       requestedNumOutfits,
       numOutfits,
+      anchorItemCount: anchorItemIds.length,
     });
 
     const db = getFirestore();
     const allItems = await fetchWardrobeItems(db, uid);
     const memory = await loadCompactAuraMemoryContext(db, uid, null);
-    const generated = generateOutfitCandidates(allItems, parsedIntent, {
+    const itemsById = new Map(allItems.map((item) => [item.id, item]));
+    const lockedItemsBySlot = lockedItemsForAnchors(anchorItemIds, itemsById);
+    let generated = generateOutfitCandidates(allItems, parsedIntent, {
       numOutfits,
       memory,
+      lockedItemsBySlot,
     });
+    if (!generated.outfits.length && lockedItemsBySlot) {
+      generated = generateOutfitCandidates(allItems, parsedIntent, {
+        numOutfits,
+        memory,
+      });
+    }
     const outerwearAvailable = allItems.filter((item) =>
       isOuterwearItem({
         category: item.category,
@@ -208,30 +293,26 @@ export const generateOutfitsV1 = onCall(
     ).length;
 
     logger.info("generateOutfitsV1 slot counts", {
-      uid,
+      uidHash,
       total: allItems.length,
       eligible: generated.eligibleCount,
       ...generated.slotCounts,
       fallbackMode: generated.fallbackMode ?? "strict",
       requiresOuterwear: parsedIntent.requireOuterwear === true,
       availableOuterwearCount: outerwearAvailable,
+      lockedAnchorSlots: Object.keys(lockedItemsBySlot ?? {}),
     });
 
     const enforced = enforceOuterwearOnOutfits({
       outfits: generated.outfits,
-      allItems: allItems.map((item) => ({
-        id: item.id,
-        category: item.category,
-        subCategory: item.subCategory,
-        type: (item as { type?: string | null }).type ?? null,
-        name: item.name ?? null,
-      })),
+      allItems,
       requireOuterwear: parsedIntent.requireOuterwear === true,
+      intent: generated.intent,
     });
     const enforcedOutfits = enforced.outfits;
 
     logger.info("generateOutfitsV1 outerwear enforcement", {
-      uid,
+      uidHash,
       requiresOuterwear: parsedIntent.requireOuterwear === true,
       availableOuterwearCount: enforced.availableOuterwearCount,
       generatedCount: generated.outfits.length,
@@ -251,14 +332,14 @@ export const generateOutfitsV1 = onCall(
     });
 
     logger.info("generateOutfitsV1 selected outfits", {
-      uid,
+      uidHash,
       requestedNumOutfits,
       numOutfits,
       fallbackMode: generated.fallbackMode ?? "strict",
       outfits: outfits.map((outfit) => ({
         id: outfit.id,
         score: outfit.score,
-        itemIds: outfit.picks.map((pick) => pick.itemId),
+        itemCount: outfit.picks.length,
         outerwearCount: outfit.picks.filter((pick) => pick.slot === "outerwear").length,
       })),
     });

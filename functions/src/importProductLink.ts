@@ -8,7 +8,13 @@ import {
   createDraftItemFromProductLink,
   extractProductFromUrl,
 } from "./shared/productLinkExtractor";
+import { requireOpenAiApiKey } from "./shared/env";
 import { rankProductExtractionImages } from "./shared/auraCandidatePreview";
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  redactUid,
+} from "./shared/rateLimit";
 import { redactUrlForLogs } from "./shared/safeFetch";
 
 function messageForError(error: unknown) {
@@ -71,16 +77,17 @@ export const importProductLink = onCall(
     if (!url) {
       throw new HttpsError("invalid-argument", "A product link is required.");
     }
+    await assertFunctionRateLimit(uid, "productLink", RATE_LIMITS.productLink);
     const itemId = String(request.data?.itemId ?? "").trim() || null;
 
     try {
       logger.info("[SNAP_DONE_LINK] importing product link", {
-        uid,
+        uidHash: redactUid(uid),
         url: redactUrlForLogs(url),
         itemId,
       });
       const client = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
+        apiKey: requireOpenAiApiKey(),
       });
       const extraction = await rankProductExtractionImages({
         client,
@@ -93,16 +100,17 @@ export const importProductLink = onCall(
         extraction,
       });
       logger.info("[SNAP_DONE_LINK] product draft created", {
-        uid,
+        uidHash: redactUid(uid),
         itemId: created.itemId,
         imageCount: created.imageCount,
         domain: created.metadata.domain,
       });
       return { ok: true, itemId: created.itemId, imageCount: created.imageCount };
     } catch (error) {
+      if (error instanceof HttpsError) throw error;
       const message = messageForError(error);
       logger.error("[SNAP_DONE_LINK] import failed", {
-        uid,
+        uidHash: redactUid(uid),
         url: redactUrlForLogs(url),
         itemId,
         code: error instanceof ProductLinkError ? error.code : null,

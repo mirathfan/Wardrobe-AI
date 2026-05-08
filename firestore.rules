@@ -39,7 +39,7 @@ service cloud.firestore {
     }
 
     function validDraftState(state) {
-      return state in ["draft", "photo_uploaded", "ingesting", "ready", "failed", "cancelled"];
+      return state in ["draft", "awaiting_confirmation", "photo_uploaded", "ingesting", "ready", "failed", "cancelled"];
     }
 
     function validOptionalString(value) {
@@ -56,6 +56,18 @@ service cloud.firestore {
 
     function validOptionalMap(value) {
       return value == null || value is map;
+    }
+
+    function validUserRootDoc(data, uid) {
+      return data is map
+        && data.size() <= 80
+        && noForeignUidField(data, uid)
+        && (!("email" in data) || validOptionalString(data.email))
+        && (!("displayName" in data) || validOptionalString(data.displayName))
+        && (!("name" in data) || validOptionalString(data.name))
+        && (!("photoURL" in data) || validOptionalString(data.photoURL))
+        && (!("profilePreferences" in data) || data.profilePreferences is map)
+        && (!("updatedAt" in data) || data.updatedAt is number || data.updatedAt is timestamp);
     }
 
     function validCrop(value) {
@@ -204,16 +216,41 @@ service cloud.firestore {
 
     function validAiChatMessageDoc(data, uid) {
       return data is map
+        && data.size() <= 50
         && data.keys().hasAll(["type", "createdAt"])
         && data.type in ["user", "assistant", "outfit", "system/action"]
         && data.createdAt is number
         && (!("kind" in data) || validOptionalString(data.kind))
-        && (!("text" in data) || validOptionalString(data.text))
-        && (!("attachments" in data) || data.attachments is list)
+        && (!("text" in data) || data.text == null || (data.text is string && data.text.size() <= 12000))
+        && (!("attachments" in data) || (data.attachments is list && data.attachments.size() <= 12))
         && (!("streaming" in data) || data.streaming is bool)
-        && (!("outfits" in data) || data.outfits is list)
+        && (!("outfits" in data) || (data.outfits is list && data.outfits.size() <= 12))
         && (!("aura" in data) || data.aura is map)
         && noForeignUidField(data, uid);
+    }
+
+    function validOwnedSmallDoc(data, uid) {
+      return data is map
+        && data.size() <= 80
+        && noForeignUidField(data, uid)
+        && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp)
+        && (!("updatedAt" in data) || data.updatedAt is number || data.updatedAt is timestamp);
+    }
+
+    function validCommerceEventDoc(data, uid) {
+      return data is map
+        && data.size() <= 40
+        && noForeignUidField(data, uid)
+        && (!("userId" in data) || data.userId == uid)
+        && (!("type" in data) || data.type is string)
+        && (!("eventName" in data) || data.eventName is string)
+        && (!("suggestionId" in data) || validOptionalString(data.suggestionId))
+        && (!("itemType" in data) || validOptionalString(data.itemType))
+        && (!("category" in data) || validOptionalString(data.category))
+        && (!("sourceScreen" in data) || validOptionalString(data.sourceScreen))
+        && (!("merchant" in data) || validOptionalString(data.merchant))
+        && (!("timestamp" in data) || data.timestamp is number)
+        && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp);
     }
 
     function validStyleEventDoc(data, uid) {
@@ -253,7 +290,9 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read, write: if isOwner(uid);
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid) && validUserRootDoc(request.resource.data, uid);
+      allow delete: if false;
 
       match /items/{itemId} {
         allow read: if isOwner(uid);
@@ -282,7 +321,9 @@ service cloud.firestore {
       }
 
       match /ai/{docId} {
-        allow read, write: if isOwner(uid);
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
       }
 
       match /assistantProfile/{docId} {
@@ -325,15 +366,27 @@ service cloud.firestore {
       }
 
       match /auraLooks/{lookId} {
-        allow read, write: if isOwner(uid);
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
       }
 
       match /savedOutfits/{lookId} {
-        allow read, write: if isOwner(uid);
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
       }
 
       match /outfitFeedback/{feedbackId} {
-        allow read, write: if isOwner(uid);
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+      }
+
+      match /commerceEvents/{eventId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && validCommerceEventDoc(request.resource.data, uid);
+        allow update, delete: if false;
       }
     }
 

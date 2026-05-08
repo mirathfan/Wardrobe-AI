@@ -7,6 +7,7 @@ import {
   safeFetch,
   validateSafeUrlForFetch,
 } from "./safeFetch";
+import { redactUid } from "./rateLimit";
 
 export type ProductMetadata = {
   sourceUrl: string;
@@ -1255,11 +1256,11 @@ function rankImageUrlsByUrlHeuristic(urls: string[], sourceUrl: string, label: s
     .sort((a, b) => b.score - a.score || a.index - b.index || a.url.localeCompare(b.url));
   ranked.forEach((entry, rank) => {
     logger.info("[LINK_IMAGE_SCORE] URL heuristic score", {
-      sourceUrl,
+      sourceUrl: redactUrlForLogs(sourceUrl),
       source: label,
       sourceIndex: entry.index,
       rank,
-      url: entry.url,
+      url: redactUrlForLogs(entry.url),
       score: entry.score,
       reasons: entry.reasons,
     });
@@ -1281,20 +1282,20 @@ function extractHmScopedProductImages(html: string, baseUrl: URL): string[] | nu
     "hm_scoped_json_ld",
   ).slice(0, 8);
   logger.info("[LINK_PRODUCT_SCOPE]", {
-    sourceUrl: baseUrl.toString(),
+    sourceUrl: redactUrlForLogs(baseUrl.toString()),
     retailer: "hm",
     articleId,
     productNodeCount: products.length,
     matchedSku: scopedProduct ? cleanText(scopedProduct.sku, 120) : null,
-    matchedTitle: scopedProduct ? cleanText(scopedProduct.name, 180) : null,
+    matchedTitleLength: scopedProduct ? String(cleanText(scopedProduct.name, 180) ?? "").length : 0,
     scopedImageCount: scopedImages.length,
   });
   logger.info("[LINK_IMAGE_CANDIDATES_SCOPED]", {
-    sourceUrl: baseUrl.toString(),
+    sourceUrl: redactUrlForLogs(baseUrl.toString()),
     retailer: "hm",
     articleId,
     candidateCount: scopedImages.length,
-    urls: scopedImages,
+    urls: scopedImages.map((url) => redactUrlForLogs(url)),
   });
   return scopedImages.length ? scopedImages : null;
 }
@@ -1635,31 +1636,31 @@ export function extractNikeSelectedVariantData(
   const colorDescription = cleanText(product.colorDescription, 120);
 
   logger.info("[NIKE_LINK] final resolved URL", {
-    sourceUrl,
-    finalResolvedUrl: canonicalUrl.toString(),
+    sourceUrl: redactUrlForLogs(sourceUrl),
+    finalResolvedUrl: redactUrlForLogs(canonicalUrl.toString()),
   });
   logger.info("[NIKE_LINK] selected variant detected", {
-    sourceUrl: canonicalUrl.toString(),
-    title,
-    colorway: colorDescription,
+    sourceUrl: redactUrlForLogs(canonicalUrl.toString()),
+    titleLength: String(title ?? "").length,
+    colorwayLength: String(colorDescription ?? "").length,
     styleColor,
   });
   logger.info("[NIKE_LINK] image candidates before filtering", {
-    sourceUrl: canonicalUrl.toString(),
+    sourceUrl: redactUrlForLogs(canonicalUrl.toString()),
     styleColor,
     candidateCount: genericCandidates.length,
   });
   logger.info("[NIKE_LINK] image candidates after filtering", {
-    sourceUrl: canonicalUrl.toString(),
+    sourceUrl: redactUrlForLogs(canonicalUrl.toString()),
     styleColor,
     candidateCount: imageUrls.length,
-    chosenPrimaryImage: imageUrls[0] ?? null,
+    chosenPrimaryImage: redactUrlForLogs(imageUrls[0] ?? null),
   });
   if (rejected.length) {
     logger.info("[NIKE_LINK] rejected image candidates", {
-      sourceUrl: canonicalUrl.toString(),
+      sourceUrl: redactUrlForLogs(canonicalUrl.toString()),
       styleColor,
-      rejected,
+      rejectedCount: rejected.length,
     });
   }
 
@@ -2030,12 +2031,12 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
   };
   logger.info("[AMAZON_LINK] extraction", {
     asin,
-    sourceUrl: url.toString(),
+    sourceUrl: redactUrlForLogs(url.toString()),
     success: !!title || imageUrls.length > 0,
     confidence,
     status,
-    title,
-    brand,
+    titleLength: String(title ?? "").length,
+    hasBrand: !!brand,
     category: inferred.category,
     subCategory: inferred.subCategory,
     imageCount: imageUrls.length,
@@ -2260,7 +2261,7 @@ export async function extractProductFromUrl(rawUrl: string): Promise<ProductExtr
   } catch (error) {
     logger.error("[AURA_LINK_ERROR] page fetch failed", {
       domain: url.hostname,
-      error,
+      error: error instanceof Error ? error.message : String(error),
     });
     throw error;
   }
@@ -2500,7 +2501,7 @@ export async function createDraftItemFromProductLink(params: {
       createdItemId = docRef.id;
     }
     logger.info("[AURA_LINK_DRAFT] draft item created", {
-      uid,
+      uidHash: redactUid(uid),
       itemId: createdItemId,
       domain: extraction.metadata.domain,
       imageCount: images.length,
@@ -2510,7 +2511,7 @@ export async function createDraftItemFromProductLink(params: {
       hasPhotoUrl: !!primaryUrl,
     });
     logger.info("[LINK_IMAGE_SAVE] product link draft image fields", {
-      uid,
+      uidHash: redactUid(uid),
       itemId: createdItemId,
       sourceUrl: redactUrlForLogs(extraction.metadata.sourceUrl),
       primaryUrl: redactUrlForLogs(primaryUrl),
@@ -2529,9 +2530,9 @@ export async function createDraftItemFromProductLink(params: {
     };
   } catch (error) {
     logger.error("[AURA_LINK_DRAFT] draft item creation failed", {
-      uid,
+      uidHash: redactUid(uid),
       domain: extraction.metadata.domain,
-      error,
+      error: error instanceof Error ? error.message : String(error),
     });
     throw new ProductLinkError("Could not create wardrobe draft.", "draft_failed");
   }

@@ -9,12 +9,19 @@ import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions/v2";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  redactUid,
+} from "./shared/rateLimit";
+
 const FIRESTORE_BATCH_LIMIT = 400;
 const STORAGE_DELETE_BATCH_LIMIT = 100;
 
 type DeleteCounts = {
   firestoreDocumentsDeleted: number;
   storageFilesDeleted: number;
+  rateLimitDocumentsDeleted: number;
   authUserDeleted: boolean;
 };
 
@@ -80,6 +87,36 @@ async function deleteUserStorageFiles(uid: string) {
   return files.length;
 }
 
+async function deleteUserRateLimitDocs(uidHash: string) {
+  let deleted = 0;
+  const db = getFirestore();
+  for (const endpoint of Object.keys(RATE_LIMITS)) {
+    const userRef = db
+      .collection("functionRateLimits")
+      .doc(endpoint)
+      .collection("users")
+      .doc(uidHash);
+    const windows = await userRef.collection("windows").get();
+    let batch = db.batch();
+    let pendingWrites = 0;
+    for (const docSnap of windows.docs) {
+      batch.delete(docSnap.ref);
+      pendingWrites += 1;
+      deleted += 1;
+      if (pendingWrites >= FIRESTORE_BATCH_LIMIT) {
+        await commitBatch(batch, pendingWrites);
+        batch = db.batch();
+        pendingWrites = 0;
+      }
+    }
+    batch.delete(userRef);
+    pendingWrites += 1;
+    deleted += 1;
+    await commitBatch(batch, pendingWrites);
+  }
+  return deleted;
+}
+
 export const deleteAccountData = onCall(
   { timeoutSeconds: 540, memory: "512MiB" },
   async (request): Promise<{ ok: true } & DeleteCounts> => {
@@ -92,12 +129,15 @@ export const deleteAccountData = onCall(
     if (requestedUid && requestedUid !== uid) {
       throw new HttpsError("permission-denied", "You can only delete your own account data.");
     }
+    await assertFunctionRateLimit(uid, "accountDelete", RATE_LIMITS.accountDelete);
+    const uidHash = redactUid(uid);
 
     const userRef = getFirestore().collection("users").doc(uid);
-    logger.info("[ACCOUNT_DELETE] starting account data deletion", { uid });
+    logger.info("[ACCOUNT_DELETE] starting account data deletion", { uidHash });
 
     const firestoreDocumentsDeleted = await deleteDocumentTree(userRef);
     const storageFilesDeleted = await deleteUserStorageFiles(uid);
+    const rateLimitDocumentsDeleted = await deleteUserRateLimitDocs(uidHash);
     let authUserDeleted = false;
     try {
       await getAuth().deleteUser(uid);
@@ -105,9 +145,10 @@ export const deleteAccountData = onCall(
     } catch (error) {
       if ((error as { code?: unknown })?.code !== "auth/user-not-found") {
         logger.error("[ACCOUNT_DELETE] auth deletion failed", {
-          uid,
+          uidHash,
           firestoreDocumentsDeleted,
           storageFilesDeleted,
+          rateLimitDocumentsDeleted,
           error: error instanceof Error ? error.message : String(error),
         });
         throw new HttpsError("internal", "Account data was deleted, but Auth deletion failed.");
@@ -115,9 +156,10 @@ export const deleteAccountData = onCall(
     }
 
     logger.info("[ACCOUNT_DELETE] account data deletion complete", {
-      uid,
+      uidHash,
       firestoreDocumentsDeleted,
       storageFilesDeleted,
+      rateLimitDocumentsDeleted,
       authUserDeleted,
     });
 
@@ -125,6 +167,7 @@ export const deleteAccountData = onCall(
       ok: true,
       firestoreDocumentsDeleted,
       storageFilesDeleted,
+      rateLimitDocumentsDeleted,
       authUserDeleted,
     };
   },

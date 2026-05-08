@@ -3,6 +3,13 @@ import { logger } from "firebase-functions/v2";
 import { getStorage } from "firebase-admin/storage";
 import OpenAI, { toFile } from "openai";
 
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  redactUid,
+} from "./shared/rateLimit";
+import { requireOpenAiApiKey } from "./shared/env";
+
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
 function customError(
@@ -25,6 +32,8 @@ export const transcribeAuraAudio = onCall(
     if (!uid) {
       throw customError("unauthenticated", "unauthorized", "User must be signed in.");
     }
+    await assertFunctionRateLimit(uid, "voiceTranscription", RATE_LIMITS.voiceTranscription);
+    const uidHash = redactUid(uid);
 
     const storagePath = String(request.data?.storagePath ?? "").trim();
     const requestedMimeType = String(request.data?.mimeType ?? "").trim() || null;
@@ -42,8 +51,8 @@ export const transcribeAuraAudio = onCall(
     try {
       const [metadata] = await file.getMetadata().catch((error) => {
         logger.warn("[AURA_TRANSCRIBE] temp audio metadata read failed", {
-          uid,
-          storagePath,
+          uidHash,
+          hasStoragePath: !!storagePath,
           error: error instanceof Error ? error.message : String(error),
         });
         throw customError("invalid-argument", "invalid_path", "Audio file was not found.");
@@ -62,22 +71,22 @@ export const transcribeAuraAudio = onCall(
 
       const [buffer] = await file.download();
       logger.info("[AURA_TRANSCRIBE] temp audio downloaded", {
-        uid,
-        storagePath,
+        uidHash,
+        hasStoragePath: !!storagePath,
         size,
         contentType,
         durationMs: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null,
       });
 
-      const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const client = new OpenAI({ apiKey: requireOpenAiApiKey() });
       const transcript = await client.audio.transcriptions.create({
         model: "gpt-4o-mini-transcribe",
         file: await toFile(buffer, "aura-audio.m4a", { type: contentType }),
       });
       const text = String(transcript.text ?? "").trim();
       logger.info("[AURA_TRANSCRIBE] transcription complete", {
-        uid,
-        storagePath,
+        uidHash,
+        hasStoragePath: !!storagePath,
         transcriptLength: text.length,
       });
 
@@ -85,8 +94,8 @@ export const transcribeAuraAudio = onCall(
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       logger.error("[AURA_TRANSCRIBE] transcription failed", {
-        uid,
-        storagePath,
+        uidHash,
+        hasStoragePath: !!storagePath,
         error: error instanceof Error ? error.message : String(error),
       });
       throw customError("internal", "transcription_failed", "Unable to transcribe audio.");
@@ -94,8 +103,8 @@ export const transcribeAuraAudio = onCall(
       await file.delete().catch((error) => {
         if ((error as { code?: unknown })?.code === 404) return;
         logger.warn("[AURA_TRANSCRIBE] temp audio delete failed", {
-          uid,
-          storagePath,
+          uidHash,
+          hasStoragePath: !!storagePath,
           error: error instanceof Error ? error.message : String(error),
         });
       });

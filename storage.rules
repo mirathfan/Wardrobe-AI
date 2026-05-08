@@ -31,7 +31,8 @@ service firebase.storage {
 
     match /users/{uid}/{allPaths=**} {
       allow read: if isOwner(uid);
-      allow write: if isOwner(uid) && isValidImage();
+      allow create, update: if isOwner(uid) && isValidImage();
+      allow delete: if isOwner(uid);
     }
 
     match /{allPaths=**} {

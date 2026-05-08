@@ -29,6 +29,11 @@ import {
 } from "./shared/assistantMemory";
 import { loadCompactAuraMemoryContext } from "./shared/auraMemory";
 import { getOrRefreshWardrobeSummary } from "./shared/wardrobeSummary";
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  redactUid,
+} from "./shared/rateLimit";
 
 if (!getApps().length) {
   initializeApp();
@@ -416,6 +421,8 @@ export const outfitChatV1 = onCall(
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
+    await assertFunctionRateLimit(uid, "outfitGeneration", RATE_LIMITS.outfitGeneration);
+    const uidHash = redactUid(uid);
 
     const message = String(request.data?.message ?? "").trim();
     const incomingThreadId = String(request.data?.threadId ?? "").trim() || null;
@@ -474,14 +481,14 @@ export const outfitChatV1 = onCall(
     );
 
     logger.info("outfitChatV1 parsed action", {
-      uid,
+      uidHash,
       threadId,
       action: parsed.action,
       requestedOutfitCount: parsed.requestedOutfitCount,
       outfitCount: parsed.clampedOutfitCount,
-      constraints: mergedConstraints,
-      references: {...parsed.references, outfitId: resolvedOutfitId},
-      followup: parsed.followup,
+      constraintsKeys: Object.keys(mergedConstraints ?? {}),
+      hasResolvedOutfitId: !!resolvedOutfitId,
+      hasFollowup: !!parsed.followup,
       slotCounts,
     });
 
@@ -566,7 +573,7 @@ export const outfitChatV1 = onCall(
         });
 
         logger.info("outfitChatV1 slot counts", {
-          uid,
+          uidHash,
           threadId,
           eligible: generated.eligibleCount,
           ...generated.slotCounts,
@@ -659,7 +666,7 @@ export const outfitChatV1 = onCall(
     }, {merge: true});
 
     logger.info("outfitChatV1 completed", {
-      uid,
+      uidHash,
       threadId,
       action: parsed.action,
       outfitCount: outfits.length,

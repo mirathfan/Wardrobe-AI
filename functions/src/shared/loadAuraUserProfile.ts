@@ -14,6 +14,7 @@ type AuraUserProfileListKey =
   | "goals";
 
 export type AuraUserProfile = {
+  displayName?: string;
   name?: string;
   firstName?: string;
   region?: string;
@@ -26,6 +27,7 @@ export type AuraUserProfile = {
   occasionPriority?: string[];
   goals?: string[];
   preferredFit?: "slim" | "regular" | "relaxed" | "oversized";
+  budgetPreference?: "budget" | "mid" | "premium";
   defaultSizes?: CompactStringMap;
   fitPreferences?: CompactStringMap;
   stylePreferences?: {
@@ -90,6 +92,14 @@ function cleanPreferredFit(value: unknown) {
     next === "relaxed" ||
     next === "oversized"
   ) {
+    return next;
+  }
+  return null;
+}
+
+function cleanBudgetPreference(value: unknown) {
+  const next = String(value ?? "").trim();
+  if (next === "budget" || next === "mid" || next === "premium") {
     return next;
   }
   return null;
@@ -204,7 +214,10 @@ export async function loadAuraUserProfile(uid: string): Promise<AuraUserProfile>
   const defaultSizes = cleanDefaultSizes(profilePreferences.defaultSizes);
   const fitPreferences = cleanFitPreferences(profilePreferences.fitPreferences);
   const closetPreferences = cleanClosetPreferences(profilePreferences.closetPreferences);
+  const displayName = cleanString(profilePreferences.displayName ?? data.displayName ?? data.name);
+  const budgetPreference = cleanBudgetPreference(profilePreferences.budgetPreference);
 
+  if (displayName) profile.displayName = displayName;
   if (name) profile.name = name;
   if (firstName) profile.firstName = firstName;
   if (region) profile.region = region;
@@ -217,6 +230,7 @@ export async function loadAuraUserProfile(uid: string): Promise<AuraUserProfile>
   addStringList(profile, "occasionPriority", cleanStringList(profilePreferences.occasionPriority));
   addStringList(profile, "goals", cleanStringList(profilePreferences.goals));
   if (preferredFit) profile.preferredFit = preferredFit;
+  if (budgetPreference) profile.budgetPreference = budgetPreference;
   if (defaultSizes) profile.defaultSizes = defaultSizes;
   if (fitPreferences) profile.fitPreferences = fitPreferences;
   if (Object.keys(compactStylePreferences).length) {

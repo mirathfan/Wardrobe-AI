@@ -1,5 +1,6 @@
 import { logger } from "firebase-functions/v2";
 
+import { redactUid } from "./rateLimit";
 import { redactUrlForLogs, validateSafeUrlForFetch } from "./safeFetch";
 
 export type AuraAttachment = {
@@ -38,8 +39,8 @@ export async function parseAuraAttachments(uid: string, input: unknown): Promise
     const storagePath = String(candidate.storagePath ?? "").trim() || null;
     if (storagePath && !storagePath.startsWith(`users/${uid}/auraAttachments/`)) {
       logger.warn("[AURA_STREAM_ATTACHMENTS] rejected foreign image attachment", {
-        uid,
-        storagePath,
+        uidHash: redactUid(uid),
+        hasStoragePath: !!storagePath,
       });
       continue;
     }
@@ -47,18 +48,17 @@ export async function parseAuraAttachments(uid: string, input: unknown): Promise
       await validateSafeUrlForFetch(uri);
     } catch (error) {
       logger.warn("[AURA_STREAM_ATTACHMENTS] rejected unsafe image attachment URL", {
-        uid,
+        uidHash: redactUid(uid),
         uri: redactUrlForLogs(uri),
         reason: error instanceof Error ? error.message : String(error),
       });
       continue;
     }
     logger.info("[AURA_STREAM_ATTACHMENTS] accepted image attachment", {
-      uid,
+      uidHash: redactUid(uid),
       kind: "image",
       mimeType: typeof candidate.mimeType === "string" ? candidate.mimeType : null,
       hasStoragePath: !!storagePath,
-      storagePath,
       hasDownloadURL: /^https?:\/\//i.test(uri),
       uriHost: safeUrlHost(uri),
       validatedMediaSource: storagePath ? "owned_storage_download_url" : "validated_remote_url",

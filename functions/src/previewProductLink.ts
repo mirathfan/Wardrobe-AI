@@ -6,6 +6,7 @@ import {
   BLOCKED_STORE_MESSAGE,
   ProductLinkError,
 } from "./shared/productLinkExtractor";
+import { requireOpenAiApiKey } from "./shared/env";
 import { type AuraCandidateItem } from "./shared/auraCandidatePreview";
 import {
   extractProductUrlMetadata,
@@ -21,6 +22,11 @@ import {
   isHmProductUrl,
   type AuraLinkPreview,
 } from "./shared/auraUrlCandidatePreview";
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  redactUid,
+} from "./shared/rateLimit";
 import { redactUrlForLogs } from "./shared/safeFetch";
 
 function codeForError(
@@ -131,18 +137,19 @@ export const previewProductLink = onCall(
     if (!url) {
       throw new HttpsError("invalid-argument", "A product link is required.");
     }
+    await assertFunctionRateLimit(uid, "productLink", RATE_LIMITS.productLink);
 
     const rawClientPreview = clientLinkPreviewFromRequest(request.data?.linkPreview, url);
     const hmClientFallback =
       hmSanitizedClientPreview(rawClientPreview) ?? hmSingleImageClientPreview(rawClientPreview);
     const clientPreview = isHmProductUrl(url) ? null : rawClientPreview;
     const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: requireOpenAiApiKey(),
     });
 
     try {
       logger.info("[LINK_PREVIEW] extracting product link", {
-        uid,
+        uidHash: redactUid(uid),
         url: redactUrlForLogs(url),
         hasClientLinkPreview: !!clientPreview,
         clientPreviewImageCount: clientPreview?.imageUrls?.length ?? 0,
@@ -157,7 +164,7 @@ export const previewProductLink = onCall(
             : fallbackLinkPreviewFromUrl(url));
         if (fallbackPreview) {
           logger.info("[LINK_PREVIEW] using AURA URL fallback after missing server image", {
-            uid,
+            uidHash: redactUid(uid),
             url: redactUrlForLogs(url),
             hasTitle: !!fallbackPreview.title,
             hasImageUrl: !!fallbackPreview.imageUrl,
@@ -185,7 +192,7 @@ export const previewProductLink = onCall(
       });
 
       logger.info("[LINK_PREVIEW] product link extracted", {
-        uid,
+        uidHash: redactUid(uid),
         domain: domainFromUrl(metadata.sourceUrl),
         imageExtractionSource: "aura_url_candidate",
         imageCandidateCount: built.rankedImageUrls.length || built.rawImageUrls.length,
@@ -204,7 +211,7 @@ export const previewProductLink = onCall(
       const fallbackPreview = clientPreview ?? hmClientFallback ?? fallbackLinkPreviewFromUrl(url);
       if (fallbackPreview) {
         logger.info("[LINK_PREVIEW] using AURA client preview fallback", {
-          uid,
+          uidHash: redactUid(uid),
           url: redactUrlForLogs(url),
           code: error instanceof ProductLinkError ? error.code : null,
           imageCount: fallbackPreview.imageUrls?.length ?? 0,
@@ -224,7 +231,7 @@ export const previewProductLink = onCall(
       }
       const message = messageForError(error);
       logger.error("[LINK_PREVIEW] extraction failed", {
-        uid,
+        uidHash: redactUid(uid),
         url: redactUrlForLogs(url),
         code: error instanceof ProductLinkError ? error.code : null,
         blockedStoreFallback: error instanceof ProductLinkError && error.code === "blocked_store",

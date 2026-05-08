@@ -13,6 +13,8 @@ export { importProductLink } from "./importProductLink";
 export { previewProductLink } from "./previewProductLink";
 export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
 export { deleteAccountData } from "./deleteAccountData";
+export { wrapAffiliateLinks } from "./affiliate/affiliateLinks";
+export { searchLiveProducts } from "./products/searchLiveProducts";
 // export { generateCleanedProductImages } from "./generateCleanedProductImages";
 
 if (!getApps().length) {

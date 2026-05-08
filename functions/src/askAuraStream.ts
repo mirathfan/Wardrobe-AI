@@ -1,7 +1,7 @@
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { logger } from "firebase-functions/v2";
-import { onRequest } from "firebase-functions/v2/https";
+import { HttpsError, onRequest } from "firebase-functions/v2/https";
 import OpenAI from "openai";
 
 import { AURA_INSTRUCTIONS, AURA_STREAM_INSTRUCTIONS } from "./shared/auraPrompt";
@@ -30,6 +30,7 @@ import {
   ProductLinkError,
   extractProductFromUrl,
 } from "./shared/productLinkExtractor";
+import { requireOpenAiApiKey } from "./shared/env";
 import {
   attachmentContextText,
   buildAuraVisionImageInputs,
@@ -57,6 +58,19 @@ import {
   isHmProductUrl,
   type AuraLinkPreview,
 } from "./shared/auraUrlCandidatePreview";
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  isRateLimitError,
+  redactUid,
+} from "./shared/rateLimit";
+import { buildManualOutfitLookFromPrompt } from "./shared/manualOutfitLook";
+import { buildConcreteOutfitLook } from "./shared/auraConcreteLook";
+import { scoreLookStylingFromPieces } from "./shared/styling/stylingScore";
+import type {
+  StylingItem,
+  StylingScoreResult,
+} from "./shared/styling/types";
 
 const db = getFirestore();
 const AURA_BACKEND_VERSION = "candidate-preview-url-v9-zara-product-api";
@@ -182,6 +196,7 @@ type AuraResponse = {
     stylingNote: string;
     personalizationLabel?: string;
     personalizationNote?: string;
+    stylingIntelligence?: StylingScoreResult | null;
     pieces: {
       role: "top" | "bottom" | "shoes" | "outerwear" | "accessory";
       itemName: string;
@@ -203,6 +218,7 @@ type AuraResponse = {
     stylingNote: string;
     personalizationLabel?: string;
     personalizationNote?: string;
+    stylingIntelligence?: StylingScoreResult | null;
     pieces: {
       role: "top" | "bottom" | "shoes" | "outerwear" | "accessory";
       itemName: string;
@@ -219,6 +235,7 @@ type AuraResponse = {
   }[];
   candidates?: AuraCandidateItem[];
   candidateItems?: AuraCandidateItem[];
+  stylingIntelligence?: StylingScoreResult | null;
   laundryAction?: {
     targetStatus: "clean" | "needs_wash" | "in_laundry";
     matches: { itemId: string; label: string; subtitle?: string }[];
@@ -366,9 +383,20 @@ function fallbackPersonalization(
   return {label: "", note: ""};
 }
 
+function stylingItemsFromRecords(
+  items?: (Record<string, unknown> & { id: string })[] | null,
+): StylingItem[] {
+  return (items ?? []).map((item) => ({
+    ...(item as StylingItem),
+    id: item.id,
+    source: "closet",
+  }));
+}
+
 function normalizeLookSurface(
   look: NonNullable<AuraResponse["look"]>,
   auraContext?: {
+    occasion?: string | null;
     wardrobe?: {
       footwear?: Record<string, string>[];
     };
@@ -389,7 +417,9 @@ function normalizeLookSurface(
         vibeForThisSession?: string;
       } | null;
     } | null;
-  }
+  },
+  closetItems?: StylingItem[],
+  userMessage?: string,
 ) {
   if (look.stylingNote) {
     look.stylingNote = shortenLookReply(look.stylingNote);
@@ -437,6 +467,22 @@ function normalizeLookSurface(
   look.personalizationNote =
     cleanPersonalizationText(String(look.personalizationNote ?? ""), 150) ||
     personalization.note;
+
+  const stylingIntelligence = scoreLookStylingFromPieces(
+    look.pieces,
+    closetItems ?? [],
+    {
+      requestText: userMessage,
+      occasion:
+        auraContext?.occasion ??
+        auraContext?.preferenceContext?.session?.currentOccasion ??
+        null,
+      vibe: look.vibe,
+    },
+  );
+  if (stylingIntelligence) {
+    look.stylingIntelligence = stylingIntelligence;
+  }
 
   return {
     ownedPieces: look.fromCloset,
@@ -558,6 +604,7 @@ function normalizeAuraResponse(
   response: AuraResponse,
   userMessage?: string,
   auraContext?: {
+    occasion?: string | null;
     wardrobe?: {
       footwear?: Record<string, string>[];
     };
@@ -591,20 +638,62 @@ function normalizeAuraResponse(
       } | null;
     } | null;
   },
+  closetRecords?: (Record<string, unknown> & { id: string })[] | null,
   diversity?: ClientOutfitDiversityContext | null
 ) {
   const multiRequested = wantsMultipleLooks(userMessage ?? "");
+  const closetItems = stylingItemsFromRecords(closetRecords);
+  if (!response.look && !response.lookOptions?.length && closetRecords?.length) {
+    const manualLook = buildManualOutfitLookFromPrompt(
+      userMessage ?? "",
+      closetRecords,
+      response,
+    );
+    if (manualLook) {
+      response.presentation = "card";
+      response.title = response.title?.trim() && response.title !== "AURA"
+        ? response.title
+        : "Outfit edit";
+      response.look = manualLook;
+      response.outfitItems = manualLook.fromCloset;
+      response.ownedPieces = manualLook.fromCloset;
+      response.recommendedAdditions = manualLook.addToComplete;
+    }
+  }
+  if (!response.look && !response.lookOptions?.length && closetRecords?.length) {
+    const concreteLook = buildConcreteOutfitLook({
+      userMessage,
+      response,
+      closetRecords,
+    });
+    if (concreteLook) {
+      response.presentation = "card";
+      response.title = response.title?.trim() && response.title !== "AURA"
+        ? response.title
+        : "Outfit option";
+      response.reply = concreteLook.reply;
+      response.look = concreteLook.look;
+      response.outfitItems = concreteLook.look.fromCloset;
+      response.ownedPieces = concreteLook.look.fromCloset;
+      response.recommendedAdditions = concreteLook.look.addToComplete;
+    }
+  }
   if (response.lookOptions?.length) {
     response.lookOptions = response.lookOptions.slice(0, 3);
   }
 
   if (response.look || response.lookOptions?.length) {
-    response.reply = shortenLookReply(response.reply);
+    response.reply = /:\n/.test(response.reply) ? response.reply.trim() : shortenLookReply(response.reply);
     response.reason = "";
   }
 
   if (response.look) {
-    const normalized = normalizeLookSurface(response.look, auraContext);
+    const normalized = normalizeLookSurface(
+      response.look,
+      auraContext,
+      closetItems,
+      userMessage,
+    );
     response.ownedPieces = normalized.ownedPieces;
     response.recommendedAdditions = normalized.recommendedAdditions;
 
@@ -629,7 +718,7 @@ function normalizeAuraResponse(
   }
   if (response.lookOptions?.length) {
     response.lookOptions = response.lookOptions.map((look) => {
-      normalizeLookSurface(look, auraContext);
+      normalizeLookSurface(look, auraContext, closetItems, userMessage);
       return look;
     });
   }
@@ -650,6 +739,11 @@ function normalizeAuraResponse(
       outfitItemsCount: response.outfitItems?.length ?? 0,
     });
   }
+
+  response.stylingIntelligence =
+    response.look?.stylingIntelligence ??
+    response.lookOptions?.[0]?.stylingIntelligence ??
+    null;
 
   const gapContext = auraContext?.wardrobeGaps;
   const derivedMissing = uniqueTrimmed([
@@ -803,7 +897,7 @@ function logStreamCandidateEmit(
   const payload = { type: "final", data };
   const serialized = JSON.stringify(payload);
   logger.info("[AURA_STREAM_EMIT] candidate final payload", {
-    uid,
+    uidHash: redactUid(uid),
     source,
     dataKeys: Object.keys(data),
     payloadKeys: Object.keys(payload),
@@ -811,7 +905,6 @@ function logStreamCandidateEmit(
     candidatesCount: data.candidates.length,
     presentation: data.presentation,
     serializedLength: serialized.length,
-    serializedPreview: serialized.slice(0, 1200),
   });
 }
 
@@ -970,7 +1063,7 @@ async function emitUrlCandidatePreview(params: {
     metadata: params.metadata,
   });
   logger.info("[AURA_STREAM_PRE_EMIT] URL candidate final object", {
-    uid: params.uid,
+    uidHash: redactUid(params.uid),
     branchChosen: "url_candidate_preview",
     finalPayloadKeys: Object.keys(data),
     presentation: data.presentation,
@@ -1017,6 +1110,8 @@ export const askAuraStream = onRequest(
       });
       const decodedToken = await getAuth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
+      await assertFunctionRateLimit(uid, "auraChat", RATE_LIMITS.auraChat);
+      const uidHash = redactUid(uid);
       const userMessage = sanitizeUserInput(String(req.body?.message ?? ""));
       const styleCoreNote = styleCoreNoteFromClientContext(req.body?.clientContext);
       const outfitDiversity = outfitDiversityFromClientContext(req.body?.clientContext);
@@ -1032,15 +1127,15 @@ export const askAuraStream = onRequest(
       if (firstDetectedUrl) {
         if (rawClientLinkPreview && !clientLinkPreview) {
           logger.info("[LINK_PRODUCT_SCOPE] ignored client H&M link preview; server scope required", {
-            uid,
+            uidHash,
             urlHost: safeUrlHost(firstDetectedUrl),
             clientImageCount: rawClientLinkPreview.imageUrls?.length ?? 0,
-            clientImageUrl: rawClientLinkPreview.imageUrl ?? null,
+            hasClientImageUrl: !!rawClientLinkPreview.imageUrl,
             sanitizedFallbackImageCount: hmClientFallback?.imageUrls?.length ?? 0,
           });
         }
         logger.info("[AURA_URL_DETECTED] URL detected in AURA message", {
-          uid,
+          uidHash,
           urlHost: safeUrlHost(firstDetectedUrl),
           clientIntent,
           effectiveClientIntent,
@@ -1049,7 +1144,7 @@ export const askAuraStream = onRequest(
         });
       }
       logger.info("[AURA_STREAM] request received", {
-        uid,
+        uidHash,
         hasAuth: !!uid,
         hasMessage: !!userMessage,
         linkIntent,
@@ -1061,10 +1156,10 @@ export const askAuraStream = onRequest(
           ? {
               shouldAvoidRepeats: outfitDiversity.shouldAvoidRepeats,
               reason: outfitDiversity.reason,
-              previousItemIds: outfitDiversity.previousLookItemIds,
-              excludedItemIds: outfitDiversity.excludedItemIds,
-              recentItemIds: outfitDiversity.recentItemIds,
-              previousLookSignatures: outfitDiversity.previousLookSignatures,
+              previousItemCount: outfitDiversity.previousLookItemIds.length,
+              excludedItemCount: outfitDiversity.excludedItemIds.length,
+              recentItemCount: outfitDiversity.recentItemIds.length,
+              previousLookSignatureCount: outfitDiversity.previousLookSignatures.length,
               maxOverlap: outfitDiversity.maxOverlap,
             }
           : null,
@@ -1073,7 +1168,7 @@ export const askAuraStream = onRequest(
           role: attachment.role ?? null,
           groupId: attachment.groupId ?? null,
           mimeType: attachment.mimeType ?? null,
-          storagePath: attachment.storagePath ?? null,
+          hasStoragePath: !!attachment.storagePath,
           width: attachment.width ?? null,
           height: attachment.height ?? null,
           hasUri: !!attachment.uri,
@@ -1108,7 +1203,7 @@ export const askAuraStream = onRequest(
       }
 
       const client = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
+        apiKey: requireOpenAiApiKey(),
       });
       const imageCandidateGroups = imageGroupsForAddIntent(userMessage, attachments, effectiveClientIntent);
       const shouldAnalyzeOutfitPhoto = isOutfitPhotoRequest({
@@ -1117,7 +1212,7 @@ export const askAuraStream = onRequest(
         attachments,
       });
       logger.info("[AURA_STREAM_INTENT] selected intent", {
-        uid,
+        uidHash,
         selectedIntent: shouldAnalyzeOutfitPhoto
           ? "outfit_photo_analysis"
           : imageCandidateGroups.length > 0
@@ -1135,14 +1230,14 @@ export const askAuraStream = onRequest(
       if (shouldAnalyzeOutfitPhoto) {
         writeStatus(res, "analyzing_outfit");
         logger.info("[AURA_OUTFIT_PHOTO] stream outfit analysis intent classified", {
-          uid,
+          uidHash,
           clientIntent,
           effectiveClientIntent,
           attachmentCount: attachments.length,
           attachments: attachments.map((attachment) => ({
             type: attachment.type,
             mimeType: attachment.mimeType ?? null,
-            storagePath: attachment.storagePath ?? null,
+            hasStoragePath: !!attachment.storagePath,
             uriHost: safeUrlHost(attachment.uri),
             width: attachment.width ?? null,
             height: attachment.height ?? null,
@@ -1153,7 +1248,7 @@ export const askAuraStream = onRequest(
           data = await analyzeOutfitPhoto({ client, attachments, userMessage });
         } catch (error) {
           logger.error("[AURA_OUTFIT_PHOTO] stream vision analysis failed", {
-            uid,
+            uidHash,
             clientIntent,
             effectiveClientIntent,
             attachmentCount: attachments.length,
@@ -1178,7 +1273,7 @@ export const askAuraStream = onRequest(
                 : fallbackLinkPreviewFromUrl(firstDetectedUrl));
             if (fallbackPreview) {
               logger.info("[AURA_URL_METADATA] using client link preview after missing server image", {
-                uid,
+                uidHash,
                 urlHost: safeUrlHost(firstDetectedUrl),
                 hasTitle: !!fallbackPreview.title,
                 hasImageUrl: !!fallbackPreview.imageUrl,
@@ -1194,7 +1289,7 @@ export const askAuraStream = onRequest(
               return;
             }
             logger.warn("[AURA_URL_METADATA] no product image found for URL", {
-              uid,
+              uidHash,
               urlHost: safeUrlHost(firstDetectedUrl),
             });
             const reply = "Couldn't read that link. Try a screenshot.";
@@ -1218,7 +1313,7 @@ export const askAuraStream = onRequest(
             fallbackLinkPreviewFromUrl(firstDetectedUrl);
           if (fallbackPreview) {
             logger.info("[AURA_URL_METADATA] using client link preview after server fetch failure", {
-              uid,
+              uidHash,
               urlHost: safeUrlHost(firstDetectedUrl),
               hasTitle: !!fallbackPreview.title,
               hasImageUrl: !!fallbackPreview.imageUrl,
@@ -1234,9 +1329,9 @@ export const askAuraStream = onRequest(
             return;
           }
           logger.error("[AURA_URL_FETCH] failed to read product URL", {
-            uid,
+            uidHash,
             urlHost: safeUrlHost(firstDetectedUrl),
-            error,
+            error: error instanceof Error ? error.message : String(error),
           });
           const reply = "Couldn't read that link. Try a screenshot.";
           writeTextDelta(res, reply);
@@ -1249,7 +1344,7 @@ export const askAuraStream = onRequest(
       if (imageCandidateGroups.length > 0) {
         writeStatus(res, "extracting_preview");
         logger.info("[AURA_CANDIDATE] image add intent classified", {
-          uid,
+          uidHash,
           candidateCount: imageCandidateGroups.length,
         });
         try {
@@ -1259,26 +1354,26 @@ export const askAuraStream = onRequest(
           });
           if (!candidates.length) {
             logger.warn("[AURA_CANDIDATE_BACKEND] image extraction returned no candidates; using fallback", {
-              uid,
+              uidHash,
               groupCount: imageCandidateGroups.length,
             });
             candidates = fallbackImageCandidates(imageCandidateGroups);
           }
           const data = candidatePreviewResponse(candidates);
           logger.info("[AURA_CANDIDATE_BACKEND] raw image candidate object before stream", {
-            uid,
+            uidHash,
             keys: Object.keys(data),
-            candidateItems: data.candidateItems,
+            candidateItemsCount: data.candidateItems.length,
           });
           logger.info("[AURA_STREAM_FINAL] emitting image candidate final", {
-            uid,
+            uidHash,
             clientIntent,
             candidateCount: data.candidateItems.length,
             presentation: data.presentation,
             hasCandidateItems: !!data.candidateItems.length,
           });
           logger.info("[AURA_STREAM_PRE_EMIT] image candidate final object", {
-            uid,
+            uidHash,
             branchChosen: "image_candidate_preview",
             finalPayloadKeys: Object.keys(data),
             presentation: data.presentation,
@@ -1292,8 +1387,8 @@ export const askAuraStream = onRequest(
           return;
         } catch (error) {
           logger.error("[AURA_LINK_ERROR] image candidate extraction failed", {
-            uid,
-            error,
+            uidHash,
+            error: error instanceof Error ? error.message : String(error),
           });
           const reply = "I couldn't read that item photo. Try another photo or add it manually.";
           writeTextDelta(res, reply);
@@ -1317,7 +1412,7 @@ export const askAuraStream = onRequest(
 
         writeStatus(res, "extracting_preview");
         logger.info("[AURA_LINK] add intent classified", {
-          uid,
+          uidHash,
           linkIntent,
           urlCount: detectedUrls.length,
         });
@@ -1330,18 +1425,18 @@ export const askAuraStream = onRequest(
           }
           const data = candidatePreviewResponse(candidatesFromProductExtractions(extractions));
           logger.info("[AURA_CANDIDATE_BACKEND] raw link candidate object before stream", {
-            uid,
+            uidHash,
             keys: Object.keys(data),
-            candidateItems: data.candidateItems,
+            candidateItemsCount: data.candidateItems.length,
           });
           logger.info("[AURA_STREAM_FINAL] emitting link candidate final", {
-            uid,
+            uidHash,
             candidateCount: data.candidateItems.length,
             presentation: data.presentation,
             hasCandidateItems: !!data.candidateItems.length,
           });
           logger.info("[AURA_STREAM_PRE_EMIT] link candidate final object", {
-            uid,
+            uidHash,
             branchChosen: "link_candidate_preview",
             finalPayloadKeys: Object.keys(data),
             presentation: data.presentation,
@@ -1355,9 +1450,9 @@ export const askAuraStream = onRequest(
           return;
         } catch (error) {
           logger.error("[AURA_LINK_ERROR] add from link failed", {
-            uid,
+            uidHash,
             linkIntent,
-            error,
+            error: error instanceof Error ? error.message : String(error),
           });
           const reply = auraLinkErrorMessage(error);
           writeTextDelta(res, reply);
@@ -1377,7 +1472,7 @@ export const askAuraStream = onRequest(
       });
 
       logger.info("[AURA_ROUTE] selected model path", {
-        uid,
+        uidHash,
         path: useSimpleChatPath ? "simple_chat" : "structured",
         contextMode: useSimpleChatPath ? "compact" : "full",
         attachmentCount: attachments.length,
@@ -1414,7 +1509,7 @@ export const askAuraStream = onRequest(
 
         writeStatus(res, "responding");
         logger.info("[AURA_ROUTE] simple chat stream starting", {
-          uid,
+          uidHash,
           path: "simple_chat",
           contextMode: "compact",
           secondModelCall: "skipped",
@@ -1450,7 +1545,7 @@ export const askAuraStream = onRequest(
         const finalReply = streamedText.trim();
         const data = fallbackAuraResponse(finalReply || "I'm here - what are we styling?");
         logger.info("[AURA_ROUTE] simple chat stream finished", {
-          uid,
+          uidHash,
           path: "simple_chat",
           contextMode: "compact",
           secondModelCall: "skipped",
@@ -1502,7 +1597,7 @@ export const askAuraStream = onRequest(
       let linkProductContext = "No product links.";
       if (linkIntent === "analyze_link" && detectedUrls.length > 0) {
         logger.info("[AURA_LINK] analyze intent classified", {
-          uid,
+          uidHash,
           urlCount: detectedUrls.length,
         });
         try {
@@ -1513,8 +1608,8 @@ export const askAuraStream = onRequest(
           linkProductContext = productContextText(products);
         } catch (error) {
           logger.error("[AURA_LINK_ERROR] analyze link extraction failed", {
-            uid,
-            error,
+            uidHash,
+            error: error instanceof Error ? error.message : String(error),
           });
           linkProductContext = auraLinkErrorMessage(error);
         }
@@ -1534,7 +1629,7 @@ export const askAuraStream = onRequest(
 
       writeStatus(res, "responding");
       logger.info("[AURA_STREAM] starting OpenAI stream", {
-        uid,
+        uidHash,
         attachmentCount: attachments.length,
       });
 
@@ -1568,12 +1663,12 @@ export const askAuraStream = onRequest(
 
       const finalReply = streamedText.trim();
       logger.info("[AURA_STREAM] OpenAI stream finished", {
-        uid,
+        uidHash,
         textLength: finalReply.length,
       });
 
       logger.info("[AURA_ROUTE] structured finalizer starting", {
-        uid,
+        uidHash,
         path: "structured",
         contextMode: "full",
         secondModelCall: "used",
@@ -1747,7 +1842,7 @@ export const askAuraStream = onRequest(
       parsed.reply = parsed.reply?.trim() ? parsed.reply.trim() : finalReply;
       if (!parsed.reply) parsed.reply = finalReply;
       logger.info("[AURA_MULTI] stream structured response parsed", {
-        uid,
+        uidHash,
         multiRequested: wantsMultipleLooks(userMessage),
         requestedCount: parseRequestedLookCount(userMessage),
         rawPresentation: parsed.presentation,
@@ -1756,9 +1851,9 @@ export const askAuraStream = onRequest(
         rawOwnedPiecesCount: parsed.ownedPieces?.length ?? 0,
         rawOutfitItemsCount: parsed.outfitItems?.length ?? 0,
       });
-      parsed = normalizeAuraResponse(parsed, userMessage, auraContext, outfitDiversity);
+      parsed = normalizeAuraResponse(parsed, userMessage, auraContext, items, outfitDiversity);
       logger.info("[AURA_MULTI] stream structured response normalized", {
-        uid,
+        uidHash,
         multiRequested: wantsMultipleLooks(userMessage),
         normalizedPresentation: parsed.presentation,
         normalizedHasLook: !!parsed.look,
@@ -1768,7 +1863,7 @@ export const askAuraStream = onRequest(
         upgradeSuggestionsCount: parsed.upgradeSuggestions?.length ?? 0,
       });
       logger.info("[AURA_RESPONSE_FINAL] stream final response", {
-        uid,
+        uidHash,
         presentation: parsed.presentation,
         hasLook: !!parsed.look,
         lookOptionsCount: parsed.lookOptions?.length ?? 0,
@@ -1777,20 +1872,32 @@ export const askAuraStream = onRequest(
         missingPiecesCount: parsed.missingPieces?.length ?? 0,
         upgradeSuggestionsCount: parsed.upgradeSuggestions?.length ?? 0,
         outfitItemsCount: parsed.outfitItems?.length ?? 0,
-        title: parsed.title,
-        replyPreview: String(parsed.reply ?? "").slice(0, 160),
+        titleLength: String(parsed.title ?? "").length,
+        replyLength: String(parsed.reply ?? "").length,
       });
 
       writeFinal(res, parsed);
       logger.info("[AURA_STREAM] final response emitted", {
-        uid,
+        uidHash,
         presentation: parsed.presentation,
         hasLook: !!parsed.look,
         lookOptionsCount: parsed.lookOptions?.length ?? 0,
       });
       res.end();
     } catch (error) {
-      logger.error("[AURA_ERROR] askAuraStream failed", error);
+      if (isRateLimitError(error)) {
+        writeError(res, error.message);
+        res.end();
+        return;
+      }
+      if (error instanceof HttpsError) {
+        writeError(res, error.message);
+        res.end();
+        return;
+      }
+      logger.error("[AURA_ERROR] askAuraStream failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       writeError(res, "AURA could not respond right now.");
       res.end();
     }

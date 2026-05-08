@@ -1,5 +1,4 @@
 import { getApps, initializeApp } from "firebase-admin/app";
-import { logger } from "firebase-functions/v2";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 
 if (!getApps().length) {
@@ -14,9 +13,7 @@ export const generateCleanedProductImages = onDocumentWritten(
     timeoutSeconds: 60,
   },
   async (event) => {
-    const uid = String(event.params.uid ?? "");
-    const itemId = String(event.params.itemId ?? "");
-    logger.info("Skipping cleaned image generation: ONNX disabled", { uid, itemId });
+    void event;
     return;
   }
 );

@@ -72,6 +72,7 @@ function uniqueTrimmed(values: string[] | undefined, max = 3) {
 
 function compactAuraUserProfile(userProfile: AuraUserProfile) {
   return {
+    displayName: compactText(userProfile.displayName),
     firstName: compactText(userProfile.firstName),
     region: compactText(userProfile.region),
     wardrobeMode: compactText(userProfile.wardrobeMode),
@@ -83,6 +84,7 @@ function compactAuraUserProfile(userProfile: AuraUserProfile) {
     occasionPriority: uniqueTrimmed(userProfile.occasionPriority, 6),
     goals: uniqueTrimmed(userProfile.goals, 6),
     preferredFit: compactText(userProfile.preferredFit),
+    budgetPreference: compactText(userProfile.budgetPreference),
     preferredBrands: uniqueTrimmed(userProfile.stylePreferences?.preferredBrands, 6),
     closetPreferences: userProfile.closetPreferences
       ? {

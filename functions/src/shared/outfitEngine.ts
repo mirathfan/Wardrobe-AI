@@ -10,6 +10,11 @@ import {
   getAccessorySlot,
   type AccessorySlot,
 } from "../../../shared/accessorySlots";
+import { scoreOutfitStyling } from "./styling/stylingScore";
+import type {
+  StylingItem,
+  StylingScoreResult,
+} from "./styling/types";
 
 export const MODEL = "gpt-4.1-mini";
 const ALLOWED_COLOR_SET = new Set<string>(ALLOWED_COLORS);
@@ -106,7 +111,11 @@ export type WardrobeItem = {
   rise?: string | null;
   legShape?: string | null;
   colors?: string[];
+  aiColors?: string[];
   primaryColor?: string;
+  displayColor?: string | null;
+  displayColors?: string[] | null;
+  aiColorLabel?: string | null;
   status?: string;
   laundryStatus?: string | null;
   isDraft?: boolean;
@@ -118,7 +127,13 @@ export type WardrobeItem = {
   formality?: string | null;
   wearSlot?: "core" | "accessory" | null;
   material?: string | null;
+  materials?: string[] | null;
   pattern?: string | null;
+  sleeveLength?: string | null;
+  neckline?: string | null;
+  collar?: string | null;
+  closure?: string | null;
+  length?: string | null;
   visualWeight?: string | null;
   aestheticTags?: string[];
   colorLabel?: string | null;
@@ -147,6 +162,8 @@ export type OutfitResult = {
   picks: Array<{slot: Slot; itemId: string}>;
   score: number;
   reason: string;
+  stylingScore?: number;
+  stylingIntelligence?: StylingScoreResult;
 };
 
 type ScoredItem = {
@@ -165,6 +182,8 @@ type OutfitCandidate = {
   score: number;
   reason: string;
   itemIds: string[];
+  stylingScore?: number;
+  stylingIntelligence?: StylingScoreResult;
 };
 
 export type OutfitDiversityOptions = {
@@ -1081,6 +1100,26 @@ function buildReason(
   return `${reasons.join(", ")}.`;
 }
 
+function stylingItemsForOutfit(chosen: ScoredItem[]): StylingItem[] {
+  return chosen.map((entry) => ({
+    ...entry.item,
+    role: entry.slot,
+    source: "closet",
+  }));
+}
+
+function stylingIntentForOutfit(intent: OutfitIntentV1) {
+  return {
+    occasion: intent.occasion,
+    formalityTarget: intent.formalityTarget,
+    requestText: [
+      intent.occasion,
+      intent.colorsWanted.length ? `wanted colors ${intent.colorsWanted.join(" ")}` : "",
+      intent.avoidLogos ? "avoid logos" : "",
+    ].filter(Boolean).join(" "),
+  };
+}
+
 function selectTopCandidates(
   items: WardrobeItem[],
   slot: Slot,
@@ -1163,7 +1202,7 @@ function assembleOutfits(
           for (const accessoryVariant of accessoryVariants) {
             const chosen = [...variant.chosen, ...accessoryVariant.chosen];
             const itemScores = chosen.map((value) => value.score);
-            const outfitScore =
+            const baseOutfitScore =
               itemScores.reduce((sum, value) => sum + value, 0) / itemScores.length +
               compatibilityBonus(
                 chosen.map((value) => value.item),
@@ -1172,6 +1211,14 @@ function assembleOutfits(
               variant.bonus +
               accessoryVariant.bonus +
               underusedWearableBonus(chosen.map((value) => value.item));
+            const stylingIntelligence = scoreOutfitStyling(
+              stylingItemsForOutfit(chosen),
+              stylingIntentForOutfit(intent),
+            );
+            // Keep the legacy item score shape, but let deterministic styling
+            // quality break ties and lift outfits with better fit/color/identity.
+            const outfitScore =
+              baseOutfitScore + ((stylingIntelligence.overallScore - 72) / 100) * 0.22;
             const picks = chosen.map((value) => ({
               slot: value.slot,
               itemId: value.item.id,
@@ -1184,6 +1231,8 @@ function assembleOutfits(
                 chosen.map((value) => ({slot: value.slot, item: value.item}))
               ),
               itemIds: picks.map((pick) => pick.itemId),
+              stylingScore: stylingIntelligence.overallScore,
+              stylingIntelligence,
             });
           }
         }
@@ -1614,6 +1663,8 @@ export async function persistGeneratedOutfits(params: {
       itemIds: outfit.itemIds,
       planned: true,
       score: outfit.score,
+      stylingScore: outfit.stylingScore,
+      stylingIntelligence: outfit.stylingIntelligence,
       reason: outfit.reason,
       version: "v1",
     });
@@ -1623,6 +1674,8 @@ export async function persistGeneratedOutfits(params: {
       picks: outfit.picks,
       score: outfit.score,
       reason: outfit.reason,
+      stylingScore: outfit.stylingScore,
+      stylingIntelligence: outfit.stylingIntelligence,
     };
   });
 

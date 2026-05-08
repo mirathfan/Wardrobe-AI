@@ -196,7 +196,7 @@ export async function analyzeOutfitPhoto(params: {
       ...safeImageRef(image.uri),
       validatedMediaSource: image.storagePath ? "owned_storage_download_url" : "validated_remote_url",
       mimeType: image.mimeType ?? null,
-      storagePathTail: image.storagePath?.split("/").slice(-2).join("/") ?? null,
+      hasStoragePath: !!image.storagePath,
       width: image.width ?? null,
       height: image.height ?? null,
     })),

@@ -10,6 +10,7 @@ import {
   type AuraCandidateItem,
 } from "./auraCandidatePreview";
 import type { ProductUrlMetadata } from "./productUrlMetadata";
+import { redactUid } from "./rateLimit";
 import { redactUrlForLogs } from "./safeFetch";
 
 export type AuraLinkPreview = {
@@ -318,7 +319,7 @@ export async function buildUrlCandidatePreview(params: {
     params.metadata.imageUrl,
   ].filter((url): url is string => !!url);
   logger.info("[LINK_IMAGE_SOURCE] URL metadata image source", {
-    uid: params.uid ?? null,
+    uidHash: params.uid ? redactUid(params.uid) : null,
     sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
     rawImageCount: rawImageUrls.length,
     rawImageUrls: rawImageUrls.slice(0, 6).map((url) => redactUrlForLogs(url)),
@@ -334,10 +335,10 @@ export async function buildUrlCandidatePreview(params: {
   const primaryImageUrl = rankedImageUrls[0] ?? null;
   const titleHints = productCategoryHintsFromText(params.metadata.title, params.metadata.description);
   logger.info("[LINK_EXTRACTION_TARGET]", {
-    uid: params.uid ?? null,
+    uidHash: params.uid ? redactUid(params.uid) : null,
     sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
-    title: params.metadata.title,
-    description: params.metadata.description,
+    titleLength: String(params.metadata.title ?? "").length,
+    descriptionLength: String(params.metadata.description ?? "").length,
     hintedCategory: titleHints.category,
     hintedSubCategory: titleHints.subCategory,
     chosenImage: redactUrlForLogs(primaryImageUrl),
@@ -383,7 +384,7 @@ export async function buildUrlCandidatePreview(params: {
   candidate.primaryImageUrl = candidate.imageUrls[0] ?? null;
   candidate.secondaryImageUrls = candidate.imageUrls.slice(1);
   logger.info("[LINK_IMAGE_REVIEW_SET]", {
-    uid: params.uid ?? null,
+    uidHash: params.uid ? redactUid(params.uid) : null,
     sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
     candidateId: candidate.candidateId,
     primaryImageUrl: redactUrlForLogs(candidate.primaryImageUrl),
@@ -409,17 +410,17 @@ export async function buildUrlCandidatePreview(params: {
   }
   candidate.title = cleanProductTitle(params.metadata.title ?? candidate.title, candidate.brand);
   logger.info("[LINK_BRAND_NORMALIZE] candidate brand/title normalized", {
-    uid: params.uid ?? null,
-    sourceUrl: params.metadata.sourceUrl,
-    rawTitle: params.metadata.title,
-    savedBrand: candidate.brand,
-    savedTitle: candidate.title,
+    uidHash: params.uid ? redactUid(params.uid) : null,
+    sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
+    rawTitleLength: String(params.metadata.title ?? "").length,
+    hasSavedBrand: !!candidate.brand,
+    savedTitleLength: String(candidate.title ?? "").length,
   });
   logger.info("[AURA_URL_TO_CANDIDATE] converted URL metadata to candidate", {
-    uid: params.uid ?? null,
-    sourceUrl: params.metadata.sourceUrl,
-    imageUrl: params.metadata.imageUrl,
-    title: params.metadata.title,
+    uidHash: params.uid ? redactUid(params.uid) : null,
+    sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),
+    hasImageUrl: !!params.metadata.imageUrl,
+    titleLength: String(params.metadata.title ?? "").length,
     candidateId: candidate.candidateId,
     category: candidate.category,
     subCategory: candidate.subCategory,

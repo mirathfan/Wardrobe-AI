@@ -16,6 +16,21 @@ type WardrobeItem = {
   aiColorLabel?: string;
   colors?: string[];
   aiColors?: string[];
+  primaryColor?: string | null;
+  displayColor?: string | null;
+  displayColors?: string[] | null;
+  material?: string | null;
+  materials?: string[] | null;
+  pattern?: string | null;
+  fit?: string | null;
+  sleeveLength?: string | null;
+  neckline?: string | null;
+  collar?: string | null;
+  closure?: string | null;
+  length?: string | null;
+  occasionTags?: string[] | null;
+  seasonTags?: string[] | null;
+  style?: string | null;
   status?: string;
   inLaundry?: boolean;
   isDraft?: boolean;
@@ -180,6 +195,15 @@ function nonEmptyList(value?: string[]) {
   return Array.isArray(value) && value.length ? value : null;
 }
 
+function compactStringList(values?: string[] | null) {
+  if (!Array.isArray(values)) return "";
+  return values
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(", ");
+}
+
 function nonEmptyRecord<T extends object>(value?: T | null) {
   return value && Object.keys(value).length ? value : null;
 }
@@ -188,6 +212,9 @@ function compactUserPreferences(userProfile?: AuraUserProfile | null) {
   if (!userProfile) return null;
 
   const userPreferences = {
+    ...(userProfile.displayName ? {displayName: userProfile.displayName} : {}),
+    ...(userProfile.name ? {name: userProfile.name} : {}),
+    ...(userProfile.firstName ? {firstName: userProfile.firstName} : {}),
     ...(userProfile.wardrobeMode ? {wardrobeMode: userProfile.wardrobeMode} : {}),
     ...(nonEmptyList(userProfile.selectedCategories)
       ? {selectedCategories: userProfile.selectedCategories}
@@ -202,6 +229,8 @@ function compactUserPreferences(userProfile?: AuraUserProfile | null) {
       ? {avoidedColors: userProfile.avoidedColors}
       : {}),
     ...(userProfile.preferredFit ? {preferredFit: userProfile.preferredFit} : {}),
+    ...(userProfile.preferredFit ? {fitPreference: userProfile.preferredFit} : {}),
+    ...(userProfile.budgetPreference ? {budgetPreference: userProfile.budgetPreference} : {}),
     ...(nonEmptyRecord(userProfile.fitPreferences)
       ? {fitPreferences: userProfile.fitPreferences}
       : {}),
@@ -216,6 +245,9 @@ function compactUserPreferences(userProfile?: AuraUserProfile | null) {
       : {}),
     ...(nonEmptyList(userProfile.occasionPriority)
       ? {occasionPriority: userProfile.occasionPriority}
+      : {}),
+    ...(nonEmptyList(userProfile.occasionPriority)
+      ? {occasions: userProfile.occasionPriority}
       : {}),
     ...(nonEmptyList(userProfile.goals) ? {goals: userProfile.goals} : {}),
     ...(nonEmptyRecord(userProfile.closetPreferences)
@@ -273,6 +305,24 @@ export function buildAuraContext({
       subCategory: String(item.subCategory ?? "").trim(),
       type: String(item.type ?? "").trim(),
       color: pickColor(item),
+      colors: compactStringList([
+        ...(item.displayColors ?? []),
+        ...(item.aiColors ?? []),
+        ...(item.colors ?? []),
+      ]),
+      primaryColor: String(item.primaryColor ?? "").trim(),
+      displayColor: String(item.displayColor ?? "").trim(),
+      material:
+        String(item.material ?? "").trim() || compactStringList(item.materials),
+      pattern: String(item.pattern ?? "").trim(),
+      fit: String(item.fit ?? "").trim(),
+      sleeveLength: String(item.sleeveLength ?? "").trim(),
+      neckline: String(item.neckline ?? item.collar ?? "").trim(),
+      closure: String(item.closure ?? "").trim(),
+      length: String(item.length ?? "").trim(),
+      occasionTags: compactStringList(item.occasionTags),
+      seasonTags: compactStringList(item.seasonTags),
+      style: String(item.style ?? "").trim(),
       status: String(item.status ?? "").trim(),
       primaryImageUrl:
         String(
@@ -379,6 +429,32 @@ export function buildAuraContext({
       preferOwnedFootwear: true,
       preferOwnedBottoms: true,
       suggestMissingPiecesOnlyWhenNoReasonableOwnedOptionExists: true,
+    },
+    stylingIntelligenceV1: {
+      ruleBased: true,
+      engines: ["fit", "color", "style_identity"],
+      scoreRange: "0-100",
+      guidance:
+        "AURA may use wardrobe metadata for styling, but final deterministic styling scores are added after look selection.",
+      supportedColorFamilies: [
+        "black",
+        "white",
+        "gray",
+        "navy",
+        "blue",
+        "brown",
+        "beige",
+        "cream",
+        "green",
+        "red",
+        "pink",
+        "purple",
+        "yellow",
+        "orange",
+        "metallic",
+        "multicolor",
+        "unknown",
+      ],
     },
     userPreferences: compactUserPreferences(userProfile),
     preferenceContext: memory ?? null,

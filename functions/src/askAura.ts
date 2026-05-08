@@ -28,7 +28,20 @@ import {
   ProductLinkError,
   extractProductFromUrl,
 } from "./shared/productLinkExtractor";
+import { requireOpenAiApiKey } from "./shared/env";
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  redactUid,
+} from "./shared/rateLimit";
 import { redactUrlForLogs, validateSafeUrlForFetch } from "./shared/safeFetch";
+import { buildManualOutfitLookFromPrompt } from "./shared/manualOutfitLook";
+import { buildConcreteOutfitLook } from "./shared/auraConcreteLook";
+import { scoreLookStylingFromPieces } from "./shared/styling/stylingScore";
+import type {
+  StylingItem,
+  StylingScoreResult,
+} from "./shared/styling/types";
 
 const db = getFirestore();
 const AURA_BACKEND_VERSION = "candidate-preview-url-v9-zara-product-api";
@@ -90,6 +103,7 @@ type AuraResponse = {
     stylingNote: string;
     personalizationLabel?: string;
     personalizationNote?: string;
+    stylingIntelligence?: StylingScoreResult | null;
     pieces: {
       role: "top" | "bottom" | "shoes" | "outerwear" | "accessory";
       itemName: string;
@@ -111,6 +125,7 @@ type AuraResponse = {
     stylingNote: string;
     personalizationLabel?: string;
     personalizationNote?: string;
+    stylingIntelligence?: StylingScoreResult | null;
     pieces: {
       role: "top" | "bottom" | "shoes" | "outerwear" | "accessory";
       itemName: string;
@@ -127,6 +142,7 @@ type AuraResponse = {
   }[];
   candidates?: AuraCandidateItem[];
   candidateItems?: AuraCandidateItem[];
+  stylingIntelligence?: StylingScoreResult | null;
   laundryAction?: {
     targetStatus: "clean" | "needs_wash" | "in_laundry";
     matches: { itemId: string; label: string; subtitle?: string }[];
@@ -377,9 +393,20 @@ function fallbackPersonalization(
   return {label: "", note: ""};
 }
 
+function stylingItemsFromRecords(
+  items?: (Record<string, unknown> & { id: string })[] | null,
+): StylingItem[] {
+  return (items ?? []).map((item) => ({
+    ...(item as StylingItem),
+    id: item.id,
+    source: "closet",
+  }));
+}
+
 function normalizeLookSurface(
   look: NonNullable<AuraResponse["look"]>,
   auraContext?: {
+    occasion?: string | null;
     wardrobe?: {
       footwear?: Record<string, string>[];
     };
@@ -400,7 +427,9 @@ function normalizeLookSurface(
         vibeForThisSession?: string;
       } | null;
     } | null;
-  }
+  },
+  closetItems?: StylingItem[],
+  userMessage?: string,
 ) {
   if (look.stylingNote) {
     look.stylingNote = shortenLookReply(look.stylingNote);
@@ -449,6 +478,22 @@ function normalizeLookSurface(
     cleanPersonalizationText(String(look.personalizationNote ?? ""), 150) ||
     personalization.note;
 
+  const stylingIntelligence = scoreLookStylingFromPieces(
+    look.pieces,
+    closetItems ?? [],
+    {
+      requestText: userMessage,
+      occasion:
+        auraContext?.occasion ??
+        auraContext?.preferenceContext?.session?.currentOccasion ??
+        null,
+      vibe: look.vibe,
+    },
+  );
+  if (stylingIntelligence) {
+    look.stylingIntelligence = stylingIntelligence;
+  }
+
   return {
     ownedPieces: look.fromCloset,
     recommendedAdditions: look.addToComplete,
@@ -459,6 +504,7 @@ function normalizeAuraResponse(
   response: AuraResponse,
   userMessage?: string,
   auraContext?: {
+    occasion?: string | null;
     wardrobe?: {
       footwear?: Record<string, string>[];
     };
@@ -491,20 +537,62 @@ function normalizeAuraResponse(
         vibeForThisSession?: string;
       } | null;
     } | null;
-  }
+  },
+  closetRecords?: (Record<string, unknown> & { id: string })[] | null,
 ) {
   const multiRequested = wantsMultipleLooks(userMessage ?? "");
+  const closetItems = stylingItemsFromRecords(closetRecords);
+  if (!response.look && !response.lookOptions?.length && closetRecords?.length) {
+    const manualLook = buildManualOutfitLookFromPrompt(
+      userMessage ?? "",
+      closetRecords,
+      response,
+    );
+    if (manualLook) {
+      response.presentation = "card";
+      response.title = response.title?.trim() && response.title !== "AURA"
+        ? response.title
+        : "Outfit edit";
+      response.look = manualLook;
+      response.outfitItems = manualLook.fromCloset;
+      response.ownedPieces = manualLook.fromCloset;
+      response.recommendedAdditions = manualLook.addToComplete;
+    }
+  }
+  if (!response.look && !response.lookOptions?.length && closetRecords?.length) {
+    const concreteLook = buildConcreteOutfitLook({
+      userMessage,
+      response,
+      closetRecords,
+    });
+    if (concreteLook) {
+      response.presentation = "card";
+      response.title = response.title?.trim() && response.title !== "AURA"
+        ? response.title
+        : "Outfit option";
+      response.reply = concreteLook.reply;
+      response.look = concreteLook.look;
+      response.outfitItems = concreteLook.look.fromCloset;
+      response.ownedPieces = concreteLook.look.fromCloset;
+      response.recommendedAdditions = concreteLook.look.addToComplete;
+    }
+  }
   if (response.lookOptions?.length) {
     response.lookOptions = response.lookOptions.slice(0, 3);
   }
 
   if (response.look || response.lookOptions?.length) {
-    response.reply = shortenLookReply(response.reply);
+    response.reply = /:\n/.test(response.reply) ? response.reply.trim() : shortenLookReply(response.reply);
     response.reason = "";
   }
 
   if (response.look) {
-    const normalized = normalizeLookSurface(response.look, auraContext);
+    const normalized = normalizeLookSurface(
+      response.look,
+      auraContext,
+      closetItems,
+      userMessage,
+    );
     response.ownedPieces = normalized.ownedPieces;
     response.recommendedAdditions = normalized.recommendedAdditions;
 
@@ -530,7 +618,7 @@ function normalizeAuraResponse(
   }
   if (response.lookOptions?.length) {
     response.lookOptions = response.lookOptions.map((look) => {
-      normalizeLookSurface(look, auraContext);
+      normalizeLookSurface(look, auraContext, closetItems, userMessage);
       return look;
     });
   }
@@ -551,6 +639,11 @@ function normalizeAuraResponse(
       outfitItemsCount: response.outfitItems?.length ?? 0,
     });
   }
+
+  response.stylingIntelligence =
+    response.look?.stylingIntelligence ??
+    response.lookOptions?.[0]?.stylingIntelligence ??
+    null;
 
   const gapContext = auraContext?.wardrobeGaps;
   const derivedMissing = uniqueTrimmed([
@@ -613,8 +706,8 @@ async function parseAuraAttachments(uid: string, input: unknown): Promise<AuraAt
     const storagePath = String(candidate.storagePath ?? "").trim() || null;
     if (storagePath && !storagePath.startsWith(`users/${uid}/auraAttachments/`)) {
       logger.warn("[AURA_ATTACHMENTS] rejected foreign image attachment", {
-        uid,
-        storagePath,
+        uidHash: redactUid(uid),
+        hasStoragePath: !!storagePath,
       });
       continue;
     }
@@ -622,18 +715,17 @@ async function parseAuraAttachments(uid: string, input: unknown): Promise<AuraAt
       await validateSafeUrlForFetch(uri);
     } catch (error) {
       logger.warn("[AURA_ATTACHMENTS] rejected unsafe image attachment URL", {
-        uid,
+        uidHash: redactUid(uid),
         uri: redactUrlForLogs(uri),
         reason: error instanceof Error ? error.message : String(error),
       });
       continue;
     }
     logger.info("[AURA_ATTACHMENTS] accepted image attachment", {
-      uid,
+      uidHash: redactUid(uid),
       kind: "image",
       mimeType: typeof candidate.mimeType === "string" ? candidate.mimeType : null,
       hasStoragePath: !!storagePath,
-      storagePath,
       hasDownloadURL: /^https?:\/\//i.test(uri),
       uriHost: safeUrlHost(uri),
       validatedMediaSource: storagePath ? "owned_storage_download_url" : "validated_remote_url",
@@ -754,7 +846,7 @@ function logCallableCandidatePayload(
   const payload = { ok: true, data };
   const serialized = JSON.stringify(payload);
   logger.info("[AURA_CANDIDATE_BACKEND] callable final candidate payload", {
-    uid,
+    uidHash: redactUid(uid),
     source,
     dataKeys: Object.keys(data),
     payloadKeys: Object.keys(payload),
@@ -762,7 +854,6 @@ function logCallableCandidatePayload(
     candidatesCount: data.candidates.length,
     presentation: data.presentation,
     serializedLength: serialized.length,
-    serializedPreview: serialized.slice(0, 1200),
   });
 }
 
@@ -780,6 +871,7 @@ export const askAura = onCall(
     if (!uid) {
       throw new HttpsError("unauthenticated", "User must be signed in.");
     }
+    await assertFunctionRateLimit(uid, "auraChat", RATE_LIMITS.auraChat);
 
     const userMessage = sanitizeUserInput(String(request.data?.message || ""));
     const styleCoreNote = styleCoreNoteFromClientContext(request.data?.clientContext);
@@ -787,8 +879,9 @@ export const askAura = onCall(
     const clientIntent = typeof request.data?.clientIntent === "string" ? request.data.clientIntent : null;
     const linkIntent = classifyAuraLinkIntent(userMessage);
     const detectedUrls = extractUrlsFromText(userMessage);
+    const uidHash = redactUid(uid);
     logger.info("[AURA_SEND] callable request received", {
-      uid,
+      uidHash,
       hasMessage: !!userMessage,
       linkIntent,
       clientIntent,
@@ -800,7 +893,7 @@ export const askAura = onCall(
         role: attachment.role ?? null,
         groupId: attachment.groupId ?? null,
         mimeType: attachment.mimeType ?? null,
-        storagePath: attachment.storagePath ?? null,
+        hasStoragePath: !!attachment.storagePath,
         width: attachment.width ?? null,
         height: attachment.height ?? null,
         hasUri: !!attachment.uri,
@@ -831,12 +924,12 @@ export const askAura = onCall(
     }
 
     const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: requireOpenAiApiKey(),
     });
     const imageCandidateGroups = imageGroupsForAddIntent(userMessage, attachments, clientIntent);
     const shouldAnalyzeOutfitPhoto = isOutfitPhotoRequest({ clientIntent, userMessage, attachments });
     logger.info("[AURA_INTENT] callable selected intent", {
-      uid,
+      uidHash,
       selectedIntent: shouldAnalyzeOutfitPhoto
         ? "outfit_photo_analysis"
         : imageCandidateGroups.length > 0
@@ -852,13 +945,13 @@ export const askAura = onCall(
 
     if (shouldAnalyzeOutfitPhoto) {
       logger.info("[AURA_OUTFIT_PHOTO] callable outfit analysis intent classified", {
-        uid,
+        uidHash,
         clientIntent,
         attachmentCount: attachments.length,
         attachments: attachments.map((attachment) => ({
           type: attachment.type,
           mimeType: attachment.mimeType ?? null,
-          storagePath: attachment.storagePath ?? null,
+          hasStoragePath: !!attachment.storagePath,
           uriHost: safeUrlHost(attachment.uri),
           width: attachment.width ?? null,
           height: attachment.height ?? null,
@@ -869,7 +962,7 @@ export const askAura = onCall(
         return { ok: true, data };
       } catch (error) {
         logger.error("[AURA_OUTFIT_PHOTO] callable vision analysis failed", {
-          uid,
+          uidHash,
           clientIntent,
           attachmentCount: attachments.length,
           error: safeAuraVisionError(error),
@@ -883,7 +976,7 @@ export const askAura = onCall(
 
     if (imageCandidateGroups.length > 0) {
       logger.info("[AURA_CANDIDATE] image add intent classified", {
-        uid,
+        uidHash,
         candidateCount: imageCandidateGroups.length,
       });
       try {
@@ -893,21 +986,21 @@ export const askAura = onCall(
         });
         if (!candidates.length) {
           logger.warn("[AURA_CANDIDATE_BACKEND] callable image extraction returned no candidates; using fallback", {
-            uid,
+            uidHash,
             groupCount: imageCandidateGroups.length,
           });
           candidates = fallbackImageCandidates(imageCandidateGroups);
         }
         logger.info("[AURA_CANDIDATE] callable image preview response", {
-          uid,
+          uidHash,
           candidateCount: candidates.length,
-          candidateIds: candidates.map((candidate) => candidate.candidateId),
+          candidateIdsCount: candidates.length,
         });
         const data = candidatePreviewResponse(candidates);
         logger.info("[AURA_CANDIDATE_BACKEND] callable raw image candidate object", {
-          uid,
+          uidHash,
           keys: Object.keys(data),
-          candidateItems: data.candidateItems,
+          candidateItemsCount: data.candidateItems.length,
         });
         logCallableCandidatePayload(uid, "image", data);
         return {
@@ -916,8 +1009,8 @@ export const askAura = onCall(
         };
       } catch (error) {
         logger.error("[AURA_LINK_ERROR] image candidate extraction failed", {
-          uid,
-          error,
+          uidHash,
+          error: error instanceof Error ? error.message : String(error),
         });
         return {
           ok: true,
@@ -936,7 +1029,7 @@ export const askAura = onCall(
         throw new HttpsError("invalid-argument", "A product link is required.");
       }
       logger.info("[AURA_LINK] add intent classified", {
-        uid,
+        uidHash,
         linkIntent,
         urlCount: detectedUrls.length,
       });
@@ -947,15 +1040,15 @@ export const askAura = onCall(
           extractions.push(await rankProductExtractionImages({ client, extraction }));
         }
         logger.info("[AURA_CANDIDATE] callable link preview response", {
-          uid,
+          uidHash,
           candidateCount: extractions.length,
           domains: extractions.map((extraction) => extraction.metadata.domain),
         });
         const data = candidatePreviewResponse(candidatesFromProductExtractions(extractions));
         logger.info("[AURA_CANDIDATE_BACKEND] callable raw link candidate object", {
-          uid,
+          uidHash,
           keys: Object.keys(data),
-          candidateItems: data.candidateItems,
+          candidateItemsCount: data.candidateItems.length,
         });
         logCallableCandidatePayload(uid, "link", data);
         return {
@@ -964,9 +1057,9 @@ export const askAura = onCall(
         };
       } catch (error) {
         logger.error("[AURA_LINK_ERROR] add from link failed", {
-          uid,
+          uidHash,
           linkIntent,
-          error,
+          error: error instanceof Error ? error.message : String(error),
         });
         return {
           ok: true,
@@ -1013,7 +1106,7 @@ export const askAura = onCall(
     let linkProductContext = "No product links.";
     if (linkIntent === "analyze_link" && detectedUrls.length > 0) {
       logger.info("[AURA_LINK] analyze intent classified", {
-        uid,
+        uidHash,
         urlCount: detectedUrls.length,
       });
       try {
@@ -1024,8 +1117,8 @@ export const askAura = onCall(
         linkProductContext = productContextText(products);
       } catch (error) {
         logger.error("[AURA_LINK_ERROR] analyze link extraction failed", {
-          uid,
-          error,
+          uidHash,
+          error: error instanceof Error ? error.message : String(error),
         });
         linkProductContext = auraLinkErrorMessage(error);
       }
@@ -1253,7 +1346,7 @@ export const askAura = onCall(
         parsed = fallbackAuraResponse(raw);
       }
       logger.info("[AURA_MULTI] structured response parsed", {
-        uid,
+        uidHash,
         multiRequested: wantsMultipleLooks(userMessage),
         requestedCount: parseRequestedLookCount(userMessage),
         rawPresentation: parsed.presentation,
@@ -1262,9 +1355,9 @@ export const askAura = onCall(
         rawOwnedPiecesCount: parsed.ownedPieces?.length ?? 0,
         rawOutfitItemsCount: parsed.outfitItems?.length ?? 0,
       });
-      const normalized = normalizeAuraResponse(parsed, userMessage, auraContext);
+      const normalized = normalizeAuraResponse(parsed, userMessage, auraContext, items);
       logger.info("[AURA_MULTI] structured response normalized", {
-        uid,
+        uidHash,
         multiRequested: wantsMultipleLooks(userMessage),
         normalizedPresentation: normalized.presentation,
         normalizedHasLook: !!normalized.look,
@@ -1274,7 +1367,7 @@ export const askAura = onCall(
         upgradeSuggestionsCount: normalized.upgradeSuggestions?.length ?? 0,
       });
       logger.info("[AURA_RESPONSE_FINAL] callable final response", {
-        uid,
+        uidHash,
         presentation: normalized.presentation,
         hasLook: !!normalized.look,
         lookOptionsCount: normalized.lookOptions?.length ?? 0,
@@ -1283,17 +1376,17 @@ export const askAura = onCall(
         missingPiecesCount: normalized.missingPieces?.length ?? 0,
         upgradeSuggestionsCount: normalized.upgradeSuggestions?.length ?? 0,
         outfitItemsCount: normalized.outfitItems?.length ?? 0,
-        title: normalized.title,
-        replyPreview: String(normalized.reply ?? "").slice(0, 160),
+        titleLength: String(normalized.title ?? "").length,
+        replyLength: String(normalized.reply ?? "").length,
       });
 
       return { ok: true, data: normalized };
     } catch (error) {
       logger.error("[AURA_ERROR] askAura failed", {
-        uid,
-        message: userMessage,
+        uidHash,
+        messageLength: userMessage.length,
         attachmentCount: attachments.length,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
       throw new HttpsError("internal", "Aura could not respond right now.");
     }

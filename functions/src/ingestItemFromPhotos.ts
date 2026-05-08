@@ -19,6 +19,13 @@ import {
   isValidCategorySubCategory,
   wearSlot,
 } from "./shared/wardrobeTaxonomy";
+import {
+  RATE_LIMIT_MESSAGE,
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  isRateLimitError,
+  redactUid,
+} from "./shared/rateLimit";
 import { redactUrlForLogs, safeFetch, validateSafeUrlForFetch } from "./shared/safeFetch";
 
 if (!getApps().length) {
@@ -891,10 +898,10 @@ async function validateImageInputUrls(uid: string, itemId: string, urls: string[
         safeUrls.push(url);
       } else {
         logger.warn("[INGEST_SECURITY] rejected foreign Storage image URL", {
-          uid,
+          uidHash: redactUid(uid),
           itemId,
           label,
-          storagePath,
+          hasStoragePath: !!storagePath,
         });
       }
       continue;
@@ -903,7 +910,7 @@ async function validateImageInputUrls(uid: string, itemId: string, urls: string[
       safeUrls.push((await validateSafeUrlForFetch(url)).toString());
     } catch (error) {
       logger.warn("[INGEST_SECURITY] rejected unsafe external image URL", {
-        uid,
+        uidHash: redactUid(uid),
         itemId,
         label,
         url: redactUrlForLogs(url),
@@ -978,7 +985,7 @@ async function applyServerBackgroundRemoval(params: {
   try {
     if (await hasTransparentPngBackground(imageBytes)) {
       logger.info("[BgRemoval] Server-side removal skipped; PNG already has transparency", {
-        uid,
+        uidHash: redactUid(uid),
         itemId,
       });
       return { bytes: imageBytes, method: "none" };
@@ -987,7 +994,7 @@ async function applyServerBackgroundRemoval(params: {
     const storagePath = extractStoragePathFromUrl(photoUrl);
     if (!storagePath) {
       logger.warn("[BgRemoval] Server-side removal skipped; unable to parse Storage path", {
-        uid,
+        uidHash: redactUid(uid),
         itemId,
         photoUrl: redactUrlForLogs(photoUrl),
       });
@@ -995,9 +1002,9 @@ async function applyServerBackgroundRemoval(params: {
     }
     if (!isUserOwnedStoragePath(uid, storagePath)) {
       logger.warn("[BgRemoval] Server-side removal skipped; Storage path is not user-owned", {
-        uid,
+        uidHash: redactUid(uid),
         itemId,
-        storagePath,
+        hasStoragePath: !!storagePath,
       });
       return { bytes: imageBytes, method: "none" };
     }
@@ -1017,14 +1024,14 @@ async function applyServerBackgroundRemoval(params: {
       resumable: false,
     });
     logger.info("[BgRemoval] Server-side removal applied", {
-      uid,
+      uidHash: redactUid(uid),
       itemId,
-      storagePath,
+      hasStoragePath: !!storagePath,
     });
     return { bytes: pngBytes, method: "server" };
   } catch (error) {
     logger.error("[BgRemoval] Server-side removal failed; continuing original image", {
-      uid,
+      uidHash: redactUid(uid),
       itemId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -1453,14 +1460,16 @@ async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
 
   const content = data.choices?.[0]?.message?.content ?? "";
   logger.info("OpenAI raw extraction response", {
-    rawText: content.slice(0, 2000),
+    responseLength: content.length,
     truncated: content.length > 2000,
   });
   const parsed = safeJsonExtract(content);
   if (!parsed) {
     throw new Error("OpenAI returned invalid JSON payload");
   }
-  logger.info("OpenAI parsed extraction payload", { parsed });
+  logger.info("OpenAI parsed extraction payload", {
+    parsedKeys: Object.keys(parsed as Record<string, unknown>),
+  });
 
   return parsed;
 }
@@ -1469,10 +1478,13 @@ export const ingestItemFromPhotos = onDocumentWritten(
   {
     document: "users/{uid}/items/{itemId}",
     secrets: ["OPENAI_API_KEY"],
+    memory: "512MiB",
+    timeoutSeconds: 180,
   },
   async (event) => {
     const uid = String(event.params.uid ?? "");
     const itemId = String(event.params.itemId ?? "");
+    const uidHash = redactUid(uid);
     const before = event.data?.before.data() as ItemDoc | undefined;
     const after = event.data?.after.data() as ItemDoc | undefined;
     if (!after) return;
@@ -1496,7 +1508,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       draftState === "awaiting_confirmation" ||
       status === "awaiting_confirmation";
     logger.info("[INGEST_TRIGGER] item write received", {
-      uid,
+      uidHash,
       itemId,
       status: status || null,
       sourceType: sourceType || null,
@@ -1516,7 +1528,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
     });
     if (isCancelledOrDeleted) {
       logger.info("[INGEST_VALIDATE] skipping cancelled, deleted, or candidate item", {
-        uid,
+        uidHash,
         itemId,
         status,
         lifecycleStatus: lifecycleStatus || null,
@@ -1526,7 +1538,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
     }
     if (status === "processing" || status === "done") {
       logger.info("[INGEST_VALIDATE] skipping active or terminal status", {
-        uid,
+        uidHash,
         itemId,
         status,
         sourceType: sourceType || null,
@@ -1536,7 +1548,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
     }
     if (draftState === "awaiting_confirmation" || draftState === "cancelled") {
       logger.info("Skipping ingestion: awaiting user confirmation", {
-        uid,
+        uidHash,
         itemId,
         status,
         draftState: draftState || null,
@@ -1554,7 +1566,10 @@ export const ingestItemFromPhotos = onDocumentWritten(
               ingestion: {
                 status: "failed",
                 lastRunAt: FieldValue.serverTimestamp(),
-                error: { message: "Image URL is not safe to process." },
+                error: {
+                  code: "unsafe_image_url",
+                  message: "Image URL is not safe to process.",
+                },
               },
               updatedAt: Date.now(),
             },
@@ -1562,7 +1577,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           );
       }
       logger.info("[INGEST_VALIDATE] skipping no photo URLs", {
-        uid,
+        uidHash,
         itemId,
         sourceType: sourceType || null,
         isSnapDoneDraft,
@@ -1650,7 +1665,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         explicitRetryRequested);
 
     logger.info("[INGEST_VALIDATE] trigger decision", {
-      uid,
+      uidHash,
       itemId,
       beforeExists: !!before,
       beforeStatus: String(before?.ingestion?.status ?? "").trim() || null,
@@ -1681,7 +1696,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
 
     if (!shouldRun) {
       logger.info("[INGEST_VALIDATE] skipping conditions not met", {
-        uid,
+        uidHash,
         itemId,
         status: status ?? "missing",
         hasNewPhoto,
@@ -1706,7 +1721,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
     ).trim();
     if (latestStatus === "processing" || latestStatus === "done") {
       logger.info("[INGEST_VALIDATE] skipping latest state already active/terminal", {
-        uid,
+        uidHash,
         itemId,
         latestStatus,
       });
@@ -1720,7 +1735,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       logger.info(
         "[INGEST_VALIDATE] skipping latest source already processed for current hash",
         {
-          uid,
+          uidHash,
           itemId,
           currentSourceHash,
           latestProcessedSourceHash,
@@ -1733,7 +1748,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       logger.info(
         "[INGEST_VALIDATE] skipping cleanedFromHash already matches current source",
         {
-          uid,
+          uidHash,
           itemId,
           currentSourceHash,
         },
@@ -1741,9 +1756,36 @@ export const ingestItemFromPhotos = onDocumentWritten(
       return;
     }
 
+    try {
+      await assertFunctionRateLimit(uid, "imageIngestion", RATE_LIMITS.imageIngestion);
+    } catch (error) {
+      if (!isRateLimitError(error)) throw error;
+      logger.warn("[INGEST_RATE_LIMIT] image ingestion blocked", {
+        uidHash,
+        itemId,
+      });
+      await ref.set(
+        {
+          itemLifecycleStatus: "failed",
+          ingestionStatus: "failed",
+          ingestion: {
+            status: "failed",
+            lastRunAt: FieldValue.serverTimestamp(),
+            error: {
+              code: "rate_limit",
+              message: RATE_LIMIT_MESSAGE,
+            },
+          },
+          updatedAt: Date.now(),
+        },
+        { merge: true },
+      );
+      return;
+    }
+
     const runId = randomUUID();
     logger.info("[INGEST_START] transition to processing", {
-      uid,
+      uidHash,
       itemId,
       isSnapDoneDraft,
       from: status ?? "missing",
@@ -2106,7 +2148,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       }
 
       logger.info("Ingestion normalized output", {
-        uid,
+        uidHash,
         itemId,
         normalized: {
           category,
@@ -2118,13 +2160,14 @@ export const ingestItemFromPhotos = onDocumentWritten(
             colors: colorsConfidence,
             brand: brandConfidence,
           },
-          brand:
+          hasBrand: !!(
             hasUserBrandOverride || shouldPreserveLegacyManualBrand
-              ? (after.brand ?? null)
-              : brand,
+              ? after.brand
+              : brand
+          ),
           brandConfidence,
-          brandEvidence,
-          brandCandidates,
+          hasBrandEvidence: !!brandEvidence,
+          brandCandidateCount: brandCandidates.length,
           wearSlot: wearSlot(category),
           pattern,
           material,
@@ -2148,9 +2191,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
           occasionTags,
           seasonTags,
           aestheticTags,
-          crop: cropRect.normalized,
-          "photos.croppedUrl": croppedUrl,
-          "photos.thumbUrl": thumbUrl,
+          hasCrop: !!cropRect.normalized,
+          hasCroppedUrl: !!croppedUrl,
+          hasThumbUrl: !!thumbUrl,
           finalColors,
           ...(finalColorLabel ? { finalColorLabel } : {}),
           finalPrimaryColor,
@@ -2158,19 +2201,19 @@ export const ingestItemFromPhotos = onDocumentWritten(
           finalDisplayColors,
           detailTags,
           confidenceSummary,
-          generatedName: inferredName,
+          generatedNameLength: String(inferredName ?? "").length,
           backgroundRemovalMethod,
           colorSource: hasUserColorOverride ? "user" : "ai",
           formalityScore,
           warmthScore,
           aiDebug: {
-            brandEvidence,
-            brandCandidates,
-            aiColors,
-            aiPrimaryColor: aiPrimaryColor ? toTitleCase(aiPrimaryColor) : null,
-            aiColorLabel: safeAiColorLabel ?? null,
-            pixelColors,
-            pixelColorHex: pixelResult.pixelHex,
+            hasBrandEvidence: !!brandEvidence,
+            brandCandidateCount: brandCandidates.length,
+            aiColorCount: aiColors.length,
+            hasAiPrimaryColor: !!aiPrimaryColor,
+            hasAiColorLabel: !!safeAiColorLabel,
+            pixelColorCount: pixelColors.length,
+            hasPixelColorHex: !!pixelResult.pixelHex,
             colorConfidence,
             colorNeedsReview: persistedColorNeedsReview,
           },
@@ -2182,19 +2225,20 @@ export const ingestItemFromPhotos = onDocumentWritten(
       });
 
       logger.info("Ingestion final write payload", {
-        uid,
+        uidHash,
         itemId,
         finalWrite: {
           category,
           subCategory,
           type: itemType,
-          colors: finalColors,
-          detailTags,
-          brand:
+          colorCount: finalColors.length,
+          detailTagCount: detailTags.length,
+          hasBrand: !!(
             hasUserBrandOverride || shouldPreserveLegacyManualBrand
-              ? (after.brand ?? null)
-              : brand,
-          generatedName: inferredName,
+              ? after.brand
+              : brand
+          ),
+          generatedNameLength: String(inferredName ?? "").length,
           lastProcessedSourceHash: currentSourceHash,
           backgroundRemovalMethod,
         },
@@ -2203,7 +2247,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const latestBeforeDone = await ref.get();
       if (!latestBeforeDone.exists) {
         logger.warn("[INGEST_VALIDATE] skipping completion because item doc was hard-deleted", {
-          uid,
+          uidHash,
           itemId,
           runId,
         });
@@ -2225,7 +2269,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         latestLifecycleStatus === "candidate"
       ) {
         logger.warn("[INGEST_VALIDATE] skipping completion because item was removed or is candidate-only", {
-          uid,
+          uidHash,
           itemId,
           runId,
           latestDraftState,
@@ -2235,7 +2279,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       }
       if (latestRunId && latestRunId !== runId) {
         logger.warn("Skipping stale ingestion completion write", {
-          uid,
+          uidHash,
           itemId,
           runId,
           latestRunId,
@@ -2500,7 +2544,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       );
 
       logger.info("[INGEST_SUCCESS] transition to done", {
-        uid,
+        uidHash,
         itemId,
         isSnapDoneDraft,
         finalizedDraft: isSnapDoneDraft,
@@ -2508,18 +2552,19 @@ export const ingestItemFromPhotos = onDocumentWritten(
         to: "done",
         category,
         subCategory,
-        colors: finalColors,
-        brand:
+        colorCount: finalColors.length,
+        hasBrand: !!(
           hasUserBrandOverride || shouldPreserveLegacyManualBrand
-            ? (after.brand ?? null)
-            : brand,
+            ? after.brand
+            : brand
+        ),
         processedSourceHash: currentSourceHash,
       });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unknown ingestion error";
       logger.error("[INGEST_ERROR] ingestion failed", {
-        uid,
+        uidHash,
         itemId,
         isSnapDoneDraft,
         error: message,
@@ -2528,7 +2573,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const latest = await ref.get();
       if (!latest.exists) {
         logger.warn("[INGEST_ERROR] skipping failure write because item doc was hard-deleted", {
-          uid,
+          uidHash,
           itemId,
           runId,
           error: message,
@@ -2545,7 +2590,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       const latestLifecycleStatus = String(latest.get("itemLifecycleStatus") ?? "").trim().toLowerCase();
       if (latestStatus === "done") {
         logger.warn("[INGEST_ERROR] failure ignored because item is already done", {
-          uid,
+          uidHash,
           itemId,
           error: message,
         });
@@ -2553,7 +2598,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
       }
       if (latestRunId && latestRunId !== runId) {
         logger.warn("[INGEST_ERROR] skipping stale failure write", {
-          uid,
+          uidHash,
           itemId,
           runId,
           latestRunId,
@@ -2568,7 +2613,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         latestLifecycleStatus === "candidate"
       ) {
         logger.warn("[INGEST_ERROR] skipping failure write because item was removed or is candidate-only", {
-          uid,
+          uidHash,
           itemId,
           runId,
           latestDraftState,
@@ -2589,7 +2634,10 @@ export const ingestItemFromPhotos = onDocumentWritten(
             lastRunAt: FieldValue.serverTimestamp(),
             lastProcessedPhotoHash: photoHash,
             lastProcessedSourceHash: currentSourceHash,
-            error: { message },
+            error: {
+              code: "ingestion_failed",
+              message,
+            },
           },
         },
         { merge: true },

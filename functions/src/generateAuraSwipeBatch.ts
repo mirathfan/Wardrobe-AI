@@ -12,9 +12,20 @@ import {
   normalizeParsedIntent,
   safeJsonExtract,
   type OutfitIntentV1,
+  type Slot,
   type WardrobeItem,
 } from "./shared/outfitEngine";
 import { loadCompactAuraMemoryContext } from "./shared/auraMemory";
+import {
+  roleForStylingItem,
+  type StylingItem,
+  type StylingScoreResult,
+} from "./shared/styling/types";
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  redactUid,
+} from "./shared/rateLimit";
 
 if (!getApps().length) {
   initializeApp();
@@ -25,15 +36,19 @@ type SwipeLookPayload = {
   position: number;
   score: number;
   reason: string;
+  stylingScore?: number;
+  stylingIntelligence?: StylingScoreResult;
   directionLabel: "safe" | "balanced" | "bold" | null;
   itemIds: string[];
   look: {
+    id?: string | null;
     lookTitle: string;
     vibe: string;
     shortExplanation: string;
     stylingNote: string;
     personalizationLabel?: string;
     personalizationNote?: string;
+    stylingIntelligence?: StylingScoreResult | null;
     pieces: Array<{
       role: "top" | "bottom" | "shoes" | "outerwear" | "accessory";
       itemName: string;
@@ -167,6 +182,30 @@ function buildDirectionLabel(index: number, total: number): "safe" | "balanced" 
   return "balanced";
 }
 
+function slotForAnchorItem(item: WardrobeItem): Slot | null {
+  const role = roleForStylingItem(item as StylingItem);
+  if (role === "footwear") return "footwear";
+  if (role === "top" || role === "bottom" || role === "outerwear" || role === "accessory") {
+    return role;
+  }
+  return null;
+}
+
+function lockedItemsForAnchors(
+  anchorItemIds: string[],
+  itemsById: Map<string, WardrobeItem>,
+): Partial<Record<Slot, WardrobeItem>> | undefined {
+  const locked: Partial<Record<Slot, WardrobeItem>> = {};
+  for (const itemId of anchorItemIds) {
+    const item = itemsById.get(itemId);
+    if (!item) continue;
+    const slot = slotForAnchorItem(item);
+    if (!slot || locked[slot]) continue;
+    locked[slot] = item;
+  }
+  return Object.keys(locked).length ? locked : undefined;
+}
+
 function toSwipeLook(
   outfit: GeneratedSwipeCandidate,
   itemsById: Map<string, WardrobeItem>,
@@ -194,15 +233,19 @@ function toSwipeLook(
     position: index,
     score: Math.round(outfit.score * 100) / 100,
     reason: cleanString(outfit.reason),
+    stylingScore: outfit.stylingScore,
+    stylingIntelligence: outfit.stylingIntelligence,
     directionLabel,
     itemIds: outfit.picks.map((pick) => pick.itemId),
     look: {
+      id: `swipe_${index + 1}_${outfit.picks.map((pick) => pick.itemId).join("_").slice(0, 80)}`,
       lookTitle: buildLookTitle(outfit, itemsById, index),
       vibe: directionLabel ? `${directionLabel} direction` : "wardrobe direction",
       shortExplanation: cleanString(outfit.reason) || "AURA built this from your wardrobe.",
-      stylingNote: buildStylingNote(outfit, itemsById),
+      stylingNote: outfit.stylingIntelligence?.stylingNotes[0] ?? buildStylingNote(outfit, itemsById),
       personalizationLabel: directionLabel ? directionLabel.toUpperCase() : undefined,
       personalizationNote: learnedSummary || undefined,
+      stylingIntelligence: outfit.stylingIntelligence ?? null,
       pieces,
       fromCloset,
       addToComplete: [],
@@ -219,6 +262,8 @@ export const generateAuraSwipeBatch = onCall(
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
+    await assertFunctionRateLimit(uid, "outfitGeneration", RATE_LIMITS.outfitGeneration);
+    const uidHash = redactUid(uid);
 
     const intentText = cleanString(request.data?.intentText) ||
       "Build a varied batch of outfit directions from my wardrobe. Keep them polished, wearable, and distinct.";
@@ -231,6 +276,9 @@ export const generateAuraSwipeBatch = onCall(
       : [];
     const recentItemIds = Array.isArray(request.data?.recentItemIds)
       ? request.data.recentItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 36)
+      : [];
+    const anchorItemIds = Array.isArray(request.data?.anchorItemIds)
+      ? request.data.anchorItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 3)
       : [];
     const previousLookItemIds = Array.isArray(request.data?.previousLookItemIds)
       ? request.data.previousLookItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 12)
@@ -245,10 +293,13 @@ export const generateAuraSwipeBatch = onCall(
     const db = getFirestore();
     const allItems = await fetchWardrobeItems(db, uid);
     const memory = await loadCompactAuraMemoryContext(db, uid, null);
+    const itemsById = new Map(allItems.map((item) => [item.id, item]));
+    const lockedItemsBySlot = lockedItemsForAnchors(anchorItemIds, itemsById);
     let generated = generateOutfitCandidates(allItems, parsed.intent, {
       numOutfits,
       memory,
       excludeItemIds,
+      lockedItemsBySlot,
       diversity: {
         recentItemIds,
         previousLookItemIds,
@@ -256,6 +307,19 @@ export const generateAuraSwipeBatch = onCall(
         maxOverlap,
       },
     });
+    if (!generated.outfits.length && lockedItemsBySlot) {
+      generated = generateOutfitCandidates(allItems, parsed.intent, {
+        numOutfits,
+        memory,
+        excludeItemIds,
+        diversity: {
+          recentItemIds,
+          previousLookItemIds,
+          previousLookSignatures,
+          maxOverlap,
+        },
+      });
+    }
     if (!generated.outfits.length && excludeItemIds.length) {
       generated = generateOutfitCandidates(allItems, parsed.intent, {
         numOutfits,
@@ -271,7 +335,7 @@ export const generateAuraSwipeBatch = onCall(
     }
 
     logger.info("generateAuraSwipeBatch built batch", {
-      uid,
+      uidHash,
       requestedNumOutfits,
       numOutfits,
       eligibleCount: generated.eligibleCount,
@@ -279,23 +343,24 @@ export const generateAuraSwipeBatch = onCall(
       returned: generated.outfits.length,
       fallbackMode: generated.fallbackMode ?? "strict",
       diversity: {
-        excludeItemIds,
-        previousLookItemIds,
-        recentItemIds,
-        previousLookSignatures,
+        excludeItemCount: excludeItemIds.length,
+        previousLookItemCount: previousLookItemIds.length,
+        recentItemCount: recentItemIds.length,
+        anchorItemCount: anchorItemIds.length,
+        lockedAnchorSlots: Object.keys(lockedItemsBySlot ?? {}),
+        previousLookSignatureCount: previousLookSignatures.length,
         maxOverlap,
       },
     });
 
-    const itemsById = new Map(allItems.map((item) => [item.id, item]));
     const lookOptions = generated.outfits.map((outfit, index) =>
       toSwipeLook(outfit, itemsById, index, generated.outfits.length, memory.learnedProfile?.summaryShort ?? null),
     );
 
     logger.info("generateAuraSwipeBatch response payload", {
-      uid,
+      uidHash,
       lookCount: lookOptions.length,
-      lookTitles: lookOptions.map((entry) => entry.look.lookTitle),
+      lookTitleCount: lookOptions.filter((entry) => !!entry.look.lookTitle).length,
       itemCounts: lookOptions.map((entry) => entry.look.pieces.length),
     });
 
