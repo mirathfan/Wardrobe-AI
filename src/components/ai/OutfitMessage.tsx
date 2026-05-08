@@ -52,6 +52,9 @@ function OutfitMessage({
     }))
     .filter((value): value is { slot: string; item: ClothingItem } => !!value.item);
   const cleanReason = sanitizeDisplayText(outfit.reason);
+  const closetPieceLabel = pickedItems.length
+    ? `${pickedItems.length} closet ${pickedItems.length === 1 ? "piece" : "pieces"}`
+    : "Closet edit";
 
   return (
     <LinearGradient
@@ -81,13 +84,13 @@ function OutfitMessage({
             paddingHorizontal: 9,
             paddingVertical: 5,
             borderRadius: 999,
-            backgroundColor: colors.purpleSurface,
+            backgroundColor: colors.surfaceMuted,
             borderWidth: CHIP_BORDER_WIDTH,
-            borderColor: colors.purpleBorder,
+            borderColor: colors.borderSoft,
           }}
         >
           <Text style={{ color: colors.text, fontSize: 11, fontWeight: "600" }}>
-            {Math.round(outfit.score * 100)}% match
+            {closetPieceLabel}
           </Text>
         </View>
       </View>
@@ -109,7 +112,7 @@ function OutfitMessage({
         </View>
       ) : null}
 
-      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21 }} numberOfLines={4}>
+      <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21 }} numberOfLines={2} ellipsizeMode="tail">
         {cleanReason}
       </Text>
 

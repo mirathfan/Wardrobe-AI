@@ -42,8 +42,8 @@ export default function DayContextCard({
       style={[
         styles.card,
         {
-          borderColor: colors.glassBorder,
-          backgroundColor: colors.overlay,
+          borderColor: colors.border,
+          backgroundColor: colors.surface,
           borderRadius: layout.largeRadius,
           padding: layout.cardPadding,
         },
@@ -64,7 +64,7 @@ export default function DayContextCard({
         <Text style={[styles.weather, { color: colors.textSecondary }]}>{weatherSummary}</Text>
       )}
       <Text style={[styles.tip, { color: colors.textSecondary }]}>{suggestion}</Text>
-      {streak >= 2 ? <Text style={[styles.streak, { color: colors.text }]}>🔥 Outfit streak: {streak} days</Text> : null}
+      {streak >= 2 ? <Text style={[styles.streak, { color: colors.textMuted }]}>Worn {streak} days in a row</Text> : null}
     </View>
   );
 }
@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
   },
   greeting: {
     fontSize: 13,
-    fontWeight: "700",
+    fontWeight: "500",
   },
   summary: {
     fontSize: 13,
@@ -93,14 +93,14 @@ const styles = StyleSheet.create({
   },
   weatherActionText: {
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
   },
   tip: {
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "400",
   },
   streak: {
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "500",
   },
 });

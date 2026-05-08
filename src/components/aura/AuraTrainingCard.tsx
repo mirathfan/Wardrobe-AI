@@ -86,7 +86,7 @@ export default function AuraTrainingCard({
             color: colors.auraChampagne,
             fontSize: 10.5,
             fontWeight: "600",
-            letterSpacing: 1.5,
+            letterSpacing: 1.2,
           }}
         >
           AURA TRAINING

@@ -12,6 +12,7 @@ import {
   auraButtonStyle,
   auraButtonTextStyle,
   auraCardStyle,
+  AuraTopSafeAreaScrim,
   auraTypography,
 } from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
@@ -195,7 +196,7 @@ function StatCard({ label, value, onPress }: StatCardProps) {
         gap: 4,
       }}
     >
-      <Text style={[auraTypography.sectionTitle, { color: colors.text }]}>{value}</Text>
+      <Text style={[auraTypography.sectionTitle, { color: colors.text, fontWeight: "600" }]}>{value}</Text>
       <Text style={[auraTypography.caption, { color: colors.textSecondary, fontSize: 11, lineHeight: 15 }]}>{label}</Text>
     </AuraPressable>
   );
@@ -204,7 +205,7 @@ function StatCard({ label, value, onPress }: StatCardProps) {
 function SectionLabel({ children }: { children: React.ReactNode }) {
   const { colors } = useAppTheme();
   return (
-    <Text style={[auraTypography.eyebrow, { color: colors.iridescentStart }]}>
+    <Text style={[auraTypography.eyebrow, { color: colors.textSecondary, letterSpacing: 1.2 }]}>
       {children}
     </Text>
   );
@@ -363,6 +364,7 @@ export default function ProfileScreen() {
 
   return (
     <SafeScreen backgroundColor={colors.background} includeBottomInset={false} style={{ flex: 1 }}>
+      <AuraTopSafeAreaScrim color={colors.background} />
       <ScrollView
         refreshControl={
           <RefreshControl
@@ -377,7 +379,7 @@ export default function ProfileScreen() {
           paddingHorizontal: layout.horizontalPadding,
           paddingTop: 0,
           gap: 18,
-          paddingBottom: layout.bottomDockPadding + 24,
+          paddingBottom: layout.bottomDockPadding + 48,
         }}
       >
         <View style={{ gap: 5 }}>
@@ -392,12 +394,12 @@ export default function ProfileScreen() {
         ) : (
           <>
             <LinearGradient
-              colors={["rgba(192,132,252,0.22)", "rgba(17,20,28,0.96)", "rgba(10,10,12,0.98)"]}
+              colors={[colors.surfaceElevated, colors.surface, colors.background] as const}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={{
                 ...auraCardStyle(colors, "largeGlass"),
-                borderColor: colors.glassBorder,
+                borderColor: colors.borderStrong,
                 padding: 18,
                 overflow: "hidden",
               }}
@@ -409,8 +411,8 @@ export default function ProfileScreen() {
                     height: 68,
                     borderRadius: 34,
                     borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.20)",
-                    backgroundColor: "rgba(255,255,255,0.08)",
+                    borderColor: colors.borderStrong,
+                    backgroundColor: colors.surfaceMuted,
                     alignItems: "center",
                     justifyContent: "center",
                     overflow: "hidden",
@@ -419,7 +421,7 @@ export default function ProfileScreen() {
                   {user?.photoURL ? (
                     <Image source={{ uri: user.photoURL }} style={{ width: 68, height: 68 }} />
                   ) : (
-                    <Text style={{ color: colors.text, fontSize: 22, fontWeight: "700" }}>
+                    <Text style={{ color: colors.text, fontSize: 22, fontWeight: "600" }}>
                       {getInitials(displayName)}
                     </Text>
                   )}
@@ -427,7 +429,7 @@ export default function ProfileScreen() {
                 <View style={{ flex: 1, gap: 8 }}>
                   <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
                     <View style={{ flex: 1, gap: 5 }}>
-                      <Text style={{ color: colors.text, fontSize: 23, fontWeight: "700" }} numberOfLines={1}>
+                      <Text style={{ color: colors.text, fontSize: 23, fontWeight: "600" }} numberOfLines={1}>
                         {displayName}
                       </Text>
                       <Text style={{ color: colors.textSecondary, fontSize: 13 }} numberOfLines={1}>
@@ -445,7 +447,7 @@ export default function ProfileScreen() {
                       <Text style={[auraButtonTextStyle(colors, "tertiary"), { color: colors.text, fontSize: 12 }]}>Edit</Text>
                     </Pressable>
                   </View>
-                  <Text style={{ color: colors.auraLavender, fontSize: 14, fontWeight: "600" }} numberOfLines={1}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: "500" }} numberOfLines={1}>
                     {summarizeStyleIdentity(profile)}
                   </Text>
                 </View>
@@ -454,11 +456,11 @@ export default function ProfileScreen() {
                 style={{
                   marginTop: 16,
                   borderTopWidth: 1,
-                  borderTopColor: "rgba(255,255,255,0.10)",
+                  borderTopColor: colors.border,
                   paddingTop: 14,
                 }}
               >
-                <Text style={{ color: colors.text, fontSize: 15, lineHeight: 22, fontWeight: "600" }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 15, lineHeight: 22, fontWeight: "400" }}>
                   {summarizeAuraRead(profile)}
                 </Text>
               </View>
@@ -480,19 +482,19 @@ export default function ProfileScreen() {
                 }}
               >
                 <View style={{ gap: 4 }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>Style preferences</Text>
-                  <Text style={{ color: colors.text, fontSize: 15, fontWeight: "700", lineHeight: 21 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "500" }}>Style preferences</Text>
+                  <Text style={{ color: colors.text, fontSize: 15, fontWeight: "600", lineHeight: 21 }}>
                     {profileFacts.styleSummary}
                   </Text>
                 </View>
                 <View style={{ flexDirection: "row", gap: 10 }}>
                   <View style={{ flex: 1, gap: 4 }}>
-                    <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>Fit</Text>
-                    <Text style={{ color: colors.text, fontSize: 14, fontWeight: "700" }}>{profileFacts.fitSummary}</Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "500" }}>Fit</Text>
+                    <Text style={{ color: colors.text, fontSize: 14, fontWeight: "600" }}>{profileFacts.fitSummary}</Text>
                   </View>
                   <View style={{ flex: 1, gap: 4 }}>
-                    <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>Top signal</Text>
-                    <Text style={{ color: colors.text, fontSize: 14, fontWeight: "700" }}>{profileFacts.colorOrCategory}</Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "500" }}>Top signal</Text>
+                    <Text style={{ color: colors.text, fontSize: 14, fontWeight: "600" }}>{profileFacts.colorOrCategory}</Text>
                   </View>
                 </View>
                 <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
@@ -507,7 +509,7 @@ export default function ProfileScreen() {
                     paddingHorizontal: 14,
                   }}
                 >
-                  <Text style={[auraButtonTextStyle(colors, "secondary"), { color: colors.auraLavender, fontSize: 13 }]}>
+                  <Text style={[auraButtonTextStyle(colors, "secondary"), { color: colors.textSecondary, fontSize: 13 }]}>
                     Edit style profile
                   </Text>
                 </Pressable>
@@ -518,7 +520,7 @@ export default function ProfileScreen() {
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                 <SectionLabel>MY LOOKS</SectionLabel>
                 <Pressable onPress={openMyLooks} style={{ minHeight: 44, justifyContent: "center" }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "600" }}>See all →</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "500" }}>See all →</Text>
                 </Pressable>
               </View>
 

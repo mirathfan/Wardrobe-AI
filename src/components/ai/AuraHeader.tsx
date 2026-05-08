@@ -77,7 +77,7 @@ export default function AuraHeader({
                 fontSize: 12 * layout.titleScale,
                 lineHeight: 14 * layout.titleScale,
                 fontWeight: "500",
-                letterSpacing: 2.1,
+                letterSpacing: 1.75,
               }}
             >
               AURA

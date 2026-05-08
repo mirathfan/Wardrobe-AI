@@ -67,7 +67,7 @@ export const auraTypography = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     fontWeight: "500",
-    letterSpacing: 1.6,
+    letterSpacing: 1.35,
     textTransform: "uppercase",
   },
   chipLabel: {
@@ -113,7 +113,7 @@ export function auraButtonStyle(
 ): ViewStyle {
   const isCompact = size === "compact" || variant === "tertiary" || variant === "danger";
   const base: ViewStyle = {
-    minHeight: isCompact ? 42 : 56,
+    minHeight: isCompact ? 42 : 52,
     borderRadius: auraRadii.pill,
     alignItems: "center",
     justifyContent: "center",
@@ -135,7 +135,7 @@ export function auraButtonStyle(
     return {
       ...base,
       backgroundColor: colors.primary,
-      borderColor: "rgba(251,228,216,0.18)",
+      borderColor: "rgba(251,228,216,0.14)",
     };
   }
 
@@ -196,6 +196,7 @@ export {
   AuraSheetBackdrop,
   AuraSheetSurface,
   AuraText,
+  AuraTopSafeAreaScrim,
   auraDesignTokens,
   auraTextStyle,
   type AuraButtonSize as AuraPrimitiveButtonSize,

@@ -71,7 +71,7 @@ function IridecentHeroLine({ colors }: { colors: AppColors }) {
           left: 0,
           height: 1,
           overflow: "hidden",
-          opacity: 0.2,
+          opacity: 0.16,
           zIndex: 4,
         },
         lineStyle,
@@ -163,17 +163,17 @@ export default function HomeHero({
 
       <AuraGlassCard
         warmHero
-        intensity={36}
+        intensity={29}
         style={{
           borderRadius: layout.largeRadius,
           shadowColor: "#000",
-          shadowOpacity: 0.18,
-          shadowRadius: 24,
-          shadowOffset: { width: 0, height: 18 },
+          shadowOpacity: 0.14,
+          shadowRadius: 19,
+          shadowOffset: { width: 0, height: 14 },
         }}
         contentStyle={{
           backgroundColor: colors.surface,
-          borderColor: "rgba(251,228,216,0.05)",
+          borderColor: "rgba(251,228,216,0.035)",
           borderWidth: 1,
         }}
       >
@@ -190,14 +190,14 @@ export default function HomeHero({
           colors={["rgba(255,255,255,0.060)", "rgba(251,228,216,0.010)", "transparent"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
-          style={{ position: "absolute", top: 0, left: 0, right: 0, height: 88, opacity: 0.36 }}
+          style={{ position: "absolute", top: 0, left: 0, right: 0, height: 88, opacity: 0.28 }}
         />
         <LinearGradient
           pointerEvents="none"
           colors={["rgba(255,255,255,0.050)", "rgba(251,228,216,0.010)", "transparent"]}
           start={{ x: 0.05, y: 0.15 }}
           end={{ x: 0.95, y: 0.9 }}
-          style={{ position: "absolute", inset: 0, opacity: 0.28 }}
+          style={{ position: "absolute", inset: 0, opacity: 0.22 }}
         />
         <View
           pointerEvents="none"
@@ -207,7 +207,7 @@ export default function HomeHero({
             left: 18,
             right: 18,
             height: 1,
-            backgroundColor: "rgba(251,228,216,0.05)",
+            backgroundColor: "rgba(251,228,216,0.04)",
           }}
         />
         <View
@@ -218,12 +218,12 @@ export default function HomeHero({
             bottom: 18,
             left: 1,
             width: 1,
-            backgroundColor: "rgba(251,228,216,0.04)",
+            backgroundColor: "rgba(251,228,216,0.03)",
           }}
         />
         <View style={{ minHeight: layout.heroHeight + 4, padding: cardPadding, gap: HERO_CARD_GAP, justifyContent: "space-between" }}>
           <View style={{ gap: HERO_STACK_GAP }}>
-            <AuraText variant="metadata" tone="accent" style={[homeTypography.label, { opacity: 0.7, fontSize: 11.5, lineHeight: 15, letterSpacing: 1.5 }]}>
+            <AuraText variant="metadata" tone="accent" style={[homeTypography.label, { opacity: 0.7, fontSize: 11.5, lineHeight: 15, letterSpacing: 1.2 }]}>
               {statusEyebrow}
             </AuraText>
 

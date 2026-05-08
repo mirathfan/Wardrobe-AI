@@ -38,7 +38,7 @@ export default function CalendarWeekStrip({ days, selectedDate, today, statuses 
             <View style={styles.indicators}>
               {status.planned ? <View style={[styles.dot, styles.planDot]} /> : <View style={styles.dotSpacer} />}
               {status.worn ? <Text style={[styles.check, isSelected ? styles.activeText : null]}>✓</Text> : <View style={styles.dotSpacer} />}
-              {status.streak ? <Text style={styles.fire}>🔥</Text> : <View style={styles.dotSpacer} />}
+              {status.streak ? <View style={styles.streakDot} /> : <View style={styles.dotSpacer} />}
             </View>
 
             {isToday ? <View style={[styles.todayDot, isSelected ? styles.todayDotActive : null]} /> : null}
@@ -66,22 +66,22 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   pillActive: {
-    backgroundColor: Colors.dark.purpleSurface,
-    borderColor: Colors.dark.purpleBorder,
+    backgroundColor: Colors.dark.surfaceElevated,
+    borderColor: Colors.dark.borderStrong,
   },
   week: {
     fontSize: 11,
     color: Colors.dark.textSecondary,
-    fontWeight: "700",
+    fontWeight: "500",
   },
   day: {
     marginTop: 2,
     fontSize: 16,
     color: Colors.dark.text,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   activeText: {
-    color: Colors.dark.ctaCream,
+    color: Colors.dark.textPrimary,
   },
   indicators: {
     marginTop: 4,
@@ -101,12 +101,14 @@ const styles = StyleSheet.create({
   check: {
     fontSize: 9,
     color: Colors.dark.success,
-    fontWeight: "900",
+    fontWeight: "700",
     lineHeight: 9,
   },
-  fire: {
-    fontSize: 9,
-    lineHeight: 9,
+  streakDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.dark.borderStrong,
   },
   dotSpacer: {
     width: 5,

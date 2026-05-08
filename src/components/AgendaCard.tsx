@@ -37,17 +37,17 @@ export default function AgendaCard({
       ]}
     >
       {permission === "unknown" || permission === "denied" ? (
-        <Pressable style={[styles.linkBtn, { backgroundColor: colors.overlay }]} onPress={onPermissionAction}>
+        <Pressable style={[styles.linkBtn, { backgroundColor: colors.surfaceMuted, borderColor: colors.border }]} onPress={onPermissionAction}>
           <Text style={[styles.linkText, { color: colors.text }]}>Connect calendar</Text>
         </Pressable>
       ) : permission === "blocked" ? (
-        <Pressable style={[styles.linkBtn, { backgroundColor: colors.overlay }]} onPress={onPermissionAction}>
+        <Pressable style={[styles.linkBtn, { backgroundColor: colors.surfaceMuted, borderColor: colors.border }]} onPress={onPermissionAction}>
           <Text style={[styles.linkText, { color: colors.text }]}>Enable calendar in Settings</Text>
         </Pressable>
       ) : state === "loading" ? (
         <Text style={[styles.muted, { color: colors.textSecondary }]}>Reading today&apos;s events…</Text>
       ) : state === "error" ? (
-        <Pressable style={[styles.linkBtn, { backgroundColor: colors.overlay }]} onPress={onPermissionAction}>
+        <Pressable style={[styles.linkBtn, { backgroundColor: colors.surfaceMuted, borderColor: colors.border }]} onPress={onPermissionAction}>
           <Text style={[styles.linkText, { color: colors.text }]}>Calendar unavailable · Retry</Text>
         </Pressable>
       ) : events.length === 0 ? (
@@ -55,13 +55,13 @@ export default function AgendaCard({
           style={{
             borderRadius: 16,
             borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.08)",
-            backgroundColor: "rgba(255,255,255,0.04)",
+            borderColor: colors.border,
+            backgroundColor: colors.surfaceMuted,
             padding: 12,
             gap: 5,
           }}
         >
-          <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900" }}>Open day</Text>
+          <Text style={{ color: colors.text, fontSize: 15, fontWeight: "600" }}>Open day</Text>
           <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 18 }}>
             No calendar events here. AURA can bias this day toward comfort, weather, and your planned outfit.
           </Text>
@@ -88,7 +88,7 @@ export default function AgendaCard({
       )}
 
       <View style={[styles.separator, { backgroundColor: colors.border }]} />
-      <Text style={[styles.vibeLabel, { color: colors.textSecondary }]}>Timeline vibe</Text>
+      <Text style={[styles.vibeLabel, { color: colors.textSecondary }]}>Day rhythm</Text>
       <Text style={[styles.vibeValue, { color: colors.text }]}>{timelineVibe}</Text>
     </View>
   );
@@ -105,9 +105,10 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 10,
     borderRadius: 10,
+    borderWidth: 1,
   },
   linkText: {
-    fontWeight: "700",
+    fontWeight: "600",
   },
   row: {
     flexDirection: "row",
@@ -116,7 +117,7 @@ const styles = StyleSheet.create({
   },
   time: {
     minWidth: 78,
-    fontWeight: "700",
+    fontWeight: "500",
     fontSize: 12,
   },
   title: {
@@ -133,10 +134,10 @@ const styles = StyleSheet.create({
   },
   vibeLabel: {
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "500",
   },
   vibeValue: {
     marginTop: 4,
-    fontWeight: "700",
+    fontWeight: "600",
   },
 });

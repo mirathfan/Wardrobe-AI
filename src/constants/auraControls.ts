@@ -1,5 +1,5 @@
-export const CTA_HEIGHT = 56;
-export const HOME_CTA_HEIGHT = 56;
+export const CTA_HEIGHT = 52;
+export const HOME_CTA_HEIGHT = 52;
 export const CHIP_HEIGHT = 40;
 export const PILL_RADIUS = 999;
 export const ACTION_GAP = 8;

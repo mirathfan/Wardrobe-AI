@@ -45,6 +45,9 @@ import {
   auraChipTextStyle,
   auraSheetBackdropStyle,
   auraSurfaceTiers,
+  AuraSheetBackdrop,
+  AuraSheetSurface,
+  AuraTopSafeAreaScrim,
   auraTypography,
 } from "@/src/components/ui/auraStylePrimitives";
 import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
@@ -157,7 +160,6 @@ const PROCESSING_STALE_TIMEOUT_MS = 15 * 60 * 1000;
 const SEARCH_PREVIEW_LIMIT = 8;
 const CLOSET_FAB_SIZE = 66;
 const CLOSET_FAB_DOCK_GAP = 22;
-const CLOSET_ADD_MENU_GAP = 8;
 const DEBUG_CLOSET_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 function debugClosetLog(...args: Parameters<typeof console.log>) {
   if (DEBUG_CLOSET_CLIENT) {
@@ -1122,9 +1124,6 @@ export default function ClosetScreen() {
   const closetFabRight = Math.max(18, layout.horizontalPadding);
   const closetFabBottom =
     layout.composerOffset + Math.max(0, CLOSET_FAB_DOCK_GAP - FLOATING_CONTROL_GAP);
-  const closetAddMenuWidth = Math.min(296, layout.width - layout.horizontalPadding * 2);
-  const closetAddMenuRight = closetFabRight;
-  const closetAddMenuBottom = closetFabBottom + CLOSET_FAB_SIZE + CLOSET_ADD_MENU_GAP;
 
   useEffect(() => {
     setSelectedItemIds((prev) => {
@@ -1819,6 +1818,7 @@ export default function ClosetScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <AuraTopSafeAreaScrim color={colors.background} />
       <View
         style={{
           paddingTop: layout.topContentInset,
@@ -2101,41 +2101,46 @@ export default function ClosetScreen() {
         </Pressable>
       </Modal>
 
-      {quickAddOpen ? (
-        <Pressable
-          onPress={() => setQuickAddOpen(false)}
+      <Modal
+        visible={quickAddOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setQuickAddOpen(false)}
+      >
+        <AuraSheetBackdrop
           style={{
-            position: "absolute",
-            top: 0,
-            right: 0,
-            bottom: 0,
-            left: 0,
-            backgroundColor: "rgba(2,0,8,0.06)",
-            zIndex: 30,
+            paddingHorizontal: layout.horizontalPadding,
+            paddingBottom: Math.max(layout.floatingDockBottom + 12, 20),
           }}
         >
           <Pressable
-            onPress={(event) => event.stopPropagation()}
+            style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
+            onPress={() => setQuickAddOpen(false)}
+          />
+          <AuraSheetSurface
             style={{
-              position: "absolute",
-              right: closetAddMenuRight,
-              bottom: closetAddMenuBottom,
-              width: closetAddMenuWidth,
-              borderRadius: 24,
-              borderWidth: 1,
-              borderColor: "rgba(251,228,216,0.16)",
-              backgroundColor: "rgba(24,6,36,0.97)",
-              padding: 10,
-              gap: 7,
-              overflow: "visible",
-              boxShadow: "0 16px 34px rgba(0,0,0,0.24)",
+              padding: 16,
+              gap: 12,
+              borderRadius: layout.largeRadius,
+              backgroundColor: colors.surfaceElevated,
             }}
           >
-            <View style={{ paddingHorizontal: 5, paddingTop: 2, paddingBottom: 2, gap: 2 }}>
+            <View
+              pointerEvents="none"
+              style={{
+                alignSelf: "center",
+                width: 42,
+                height: 4,
+                borderRadius: 999,
+                backgroundColor: colors.borderStrong,
+                marginBottom: 2,
+              }}
+            />
+            <View style={{ gap: 4, paddingBottom: 2 }}>
               <Text style={[auraTypography.cardTitle, { color: colors.text, fontSize: 18 }]}>
                 Add item
               </Text>
-              <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary, fontSize: 12.5, lineHeight: 17 }]}>
+              <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary, fontSize: 12.5, lineHeight: 18, fontWeight: "400" }]}>
                 Fast capture for your wardrobe.
               </Text>
             </View>
@@ -2172,25 +2177,9 @@ export default function ClosetScreen() {
               disabled={quickAdding}
               onPress={openManualAddFromCloset}
             />
-            <View
-              pointerEvents="none"
-              style={{
-                position: "absolute",
-                right: Math.max(18, CLOSET_FAB_SIZE / 2 - 8),
-                bottom: -7,
-                width: 16,
-                height: 16,
-                borderRadius: 3,
-                backgroundColor: "rgba(24,6,36,0.97)",
-                borderRightWidth: 1,
-                borderBottomWidth: 1,
-                borderColor: "rgba(251,228,216,0.16)",
-                transform: [{ rotate: "45deg" }],
-              }}
-            />
-          </Pressable>
-        </Pressable>
-      ) : null}
+          </AuraSheetSurface>
+        </AuraSheetBackdrop>
+      </Modal>
 
       <Modal
         visible={linkModalOpen}
@@ -2246,9 +2235,9 @@ export default function ClosetScreen() {
                     borderRadius: 999,
                     alignItems: "center",
                     justifyContent: "center",
-                    backgroundColor: "rgba(255,239,229,0.07)",
+                    backgroundColor: colors.surfaceMuted,
                     borderWidth: 1,
-                    borderColor: "rgba(255,239,229,0.12)",
+                    borderColor: colors.border,
                     opacity: productLinkBusy ? 0.45 : pressed ? 0.74 : 1,
                   })}
                 >
@@ -2273,7 +2262,7 @@ export default function ClosetScreen() {
                   keyboardAppearance="dark"
                   keyboardType="url"
                   placeholder="https://..."
-                  placeholderTextColor="rgba(255,239,229,0.45)"
+                  placeholderTextColor={colors.textMuted}
                   editable={!productLinkBusy}
                   onSubmitEditing={() => void handleImportProductLink()}
                   style={{
@@ -2301,11 +2290,16 @@ export default function ClosetScreen() {
                 {productLinkChipLabel ? (
                   <View
                     style={{
-                      alignSelf: "flex-end",
-                      ...auraChipStyle(colors, "metadata"),
-                      paddingHorizontal: 13,
+                      alignSelf: "stretch",
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      backgroundColor: colors.surfaceMuted,
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
                       flexDirection: "row",
                       gap: 7,
+                      alignItems: "center",
                     }}
                   >
                     <Ionicons name="link-outline" size={14} color={colors.textSecondary} />
@@ -2368,16 +2362,16 @@ export default function ClosetScreen() {
                     borderRadius: 22,
                     padding: 14,
                     gap: 12,
-                    backgroundColor: "rgba(255,239,229,0.06)",
+                    backgroundColor: colors.surfaceMuted,
                     borderWidth: 1,
-                    borderColor: "rgba(255,196,180,0.22)",
+                    borderColor: colors.borderStrong,
                   }}
                 >
                   <View style={{ gap: 5 }}>
                     <Text style={{ color: colors.text, fontSize: 15, lineHeight: 19, fontWeight: "600" }}>
                       {productLinkRecoverableError.title}
                     </Text>
-                    <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 17, fontWeight: "600" }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 17, fontWeight: "400" }}>
                       {productLinkRecoverableError.message}
                     </Text>
                   </View>
@@ -2386,31 +2380,31 @@ export default function ClosetScreen() {
                       onPress={() => void handleImportProductLink()}
                       disabled={productLinkBusy || !normalizedProductLink}
                       style={({ pressed }) => ({
-                        minHeight: 40,
+                        minHeight: 42,
                         borderRadius: 999,
-                        paddingHorizontal: 13,
+                        paddingHorizontal: 14,
                         alignItems: "center",
                         justifyContent: "center",
-                        backgroundColor: "rgba(255,239,229,0.13)",
+                        backgroundColor: colors.accent,
                         borderWidth: 1,
-                        borderColor: "rgba(255,239,229,0.18)",
+                        borderColor: colors.borderStrong,
                         opacity: productLinkBusy || !normalizedProductLink ? 0.5 : pressed ? 0.78 : 1,
                       })}
                     >
-                      <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: "600" }}>Try again</Text>
+                      <Text style={{ color: colors.primaryText, fontSize: 12.5, fontWeight: "600" }}>Try again</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => void handleAddProductLinkFromScreenshot()}
                       disabled={productLinkBusy}
                       style={({ pressed }) => ({
-                        minHeight: 40,
+                        minHeight: 42,
                         borderRadius: 999,
                         paddingHorizontal: 13,
                         alignItems: "center",
                         justifyContent: "center",
-                        backgroundColor: "rgba(255,239,229,0.09)",
+                        backgroundColor: colors.surfaceElevated,
                         borderWidth: 1,
-                        borderColor: "rgba(255,239,229,0.15)",
+                        borderColor: colors.border,
                         opacity: productLinkBusy ? 0.5 : pressed ? 0.78 : 1,
                       })}
                     >
@@ -2420,14 +2414,14 @@ export default function ClosetScreen() {
                       onPress={() => void handleOpenProductLinkManually()}
                       disabled={!normalizedProductLink}
                       style={({ pressed }) => ({
-                        minHeight: 40,
+                        minHeight: 42,
                         borderRadius: 999,
                         paddingHorizontal: 13,
                         alignItems: "center",
                         justifyContent: "center",
-                        backgroundColor: "rgba(255,239,229,0.055)",
+                        backgroundColor: "transparent",
                         borderWidth: 1,
-                        borderColor: "rgba(255,239,229,0.12)",
+                        borderColor: "transparent",
                         opacity: !normalizedProductLink ? 0.5 : pressed ? 0.78 : 1,
                       })}
                     >
@@ -2437,14 +2431,14 @@ export default function ClosetScreen() {
                       onPress={closeProductLinkSheet}
                       disabled={productLinkBusy}
                       style={({ pressed }) => ({
-                        minHeight: 40,
+                        minHeight: 42,
                         borderRadius: 999,
                         paddingHorizontal: 13,
                         alignItems: "center",
                         justifyContent: "center",
-                        backgroundColor: "rgba(255,239,229,0.035)",
+                        backgroundColor: "transparent",
                         borderWidth: 1,
-                        borderColor: "rgba(255,239,229,0.10)",
+                        borderColor: "transparent",
                         opacity: productLinkBusy ? 0.5 : pressed ? 0.78 : 1,
                       })}
                     >
@@ -2460,15 +2454,14 @@ export default function ClosetScreen() {
                     borderRadius: 22,
                     padding: 14,
                     gap: 10,
-                    backgroundColor: "rgba(255,239,229,0.055)",
+                    backgroundColor: colors.surfaceMuted,
                     borderWidth: 1,
-                    borderColor: "rgba(255,239,229,0.12)",
-                    flexDirection: "row",
-                    alignItems: "center",
+                    borderColor: colors.border,
                   }}
                 >
-                  <ActivityIndicator color={colors.ctaCream} />
-                  <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>
+                  <AuraSkeletonLine width="48%" height={12} />
+                  <AuraSkeletonLine width="74%" height={10} />
+                  <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: "400" }}>
                     Reading product details...
                   </Text>
                 </View>
@@ -2480,9 +2473,9 @@ export default function ClosetScreen() {
                     borderRadius: 24,
                     padding: 12,
                     gap: 12,
-                    backgroundColor: "rgba(255,239,229,0.06)",
+                    backgroundColor: colors.surfaceMuted,
                     borderWidth: 1,
-                    borderColor: "rgba(255,239,229,0.14)",
+                    borderColor: colors.border,
                   }}
                 >
                   <View style={{ flexDirection: "row", gap: 12 }}>
@@ -2504,7 +2497,7 @@ export default function ClosetScreen() {
                           style={{ width: "100%", height: "100%" }}
                         />
                       ) : (
-                        <Ionicons name="shirt-outline" size={26} color="rgba(25, 6, 36, 0.55)" />
+                        <Ionicons name="shirt-outline" size={26} color={colors.textOnLightSecondary} />
                       )}
                     </View>
                     <View style={{ flex: 1, gap: 7, paddingTop: 1 }}>
@@ -2563,7 +2556,7 @@ export default function ClosetScreen() {
                         }
                       />
                       <View style={{ gap: 7 }}>
-                        <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "600", textTransform: "uppercase" }}>
+                        <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "500", letterSpacing: 1.1, textTransform: "uppercase" }}>
                           Category
                         </Text>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
@@ -2670,13 +2663,13 @@ function ProductLinkPreviewLine({
   const { colors } = useAppTheme();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-      <Text style={{ width: 58, color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "600" }}>
+      <Text style={{ width: 58, color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "500" }}>
         {label}
       </Text>
       <Text
         selectable
         numberOfLines={1}
-        style={{ flex: 1, color: colors.text, fontSize: 12, lineHeight: 15, fontWeight: "600" }}
+        style={{ flex: 1, color: colors.text, fontSize: 12, lineHeight: 15, fontWeight: "500" }}
       >
         {value}
       </Text>
@@ -2700,14 +2693,14 @@ function ProductLinkReviewField({
   const { colors } = useAppTheme();
   return (
     <View style={[{ gap: 6 }, style]}>
-      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "600", textTransform: "uppercase" }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: "500", letterSpacing: 1.1, textTransform: "uppercase" }}>
         {label}
       </Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="rgba(255,239,229,0.38)"
+        placeholderTextColor={colors.textMuted}
         autoCapitalize="words"
         autoCorrect
         keyboardAppearance="dark"
@@ -2720,7 +2713,7 @@ function ProductLinkReviewField({
           borderWidth: 1,
           borderColor: colors.border,
           fontSize: 13,
-          fontWeight: "600",
+          fontWeight: "400",
         }}
       />
     </View>
@@ -2749,8 +2742,8 @@ function QuickAddAction({
         gap: 12,
         minHeight: 52,
         paddingHorizontal: 15,
-        backgroundColor: "rgba(251,228,216,0.045)",
-        borderColor: "rgba(251,228,216,0.10)",
+        backgroundColor: colors.surfaceMuted,
+        borderColor: colors.border,
         justifyContent: "flex-start",
         opacity: disabled ? 0.5 : pressed ? 0.76 : 1,
       })}

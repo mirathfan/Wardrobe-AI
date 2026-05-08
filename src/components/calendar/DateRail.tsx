@@ -77,10 +77,10 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
       const isActive = item.key === selectedKey;
       const dayStatus = statuses[item.key];
       const weatherLine = formatWeatherLine(weatherByDate[item.key]);
-      const weekdayColor = isActive ? colors.ctaCream : colors.textSecondary;
-      const dayColor = isActive ? colors.text : colors.text;
+      const weekdayColor = isActive ? colors.text : colors.textSecondary;
+      const dayColor = colors.text;
       const weatherColor = isActive ? colors.textSecondary : colors.textMuted;
-      const markerColor = isActive ? colors.ctaCream : colors.aiAccent;
+      const markerColor = isActive ? colors.accent : colors.textSecondary;
       return (
         <AuraPressable
           haptic="selection"
@@ -94,9 +94,9 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
               ? [
                   styles.cellActive,
                   {
-                    backgroundColor: colors.purpleSurface,
-                    borderColor: colors.purpleBorder,
-                    shadowColor: colors.ctaCream,
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.borderStrong,
+                    shadowColor: colors.shadow,
                   },
                 ]
               : null,
@@ -123,18 +123,18 @@ export default function DateRail({ selectedDate, onSelectDate, statuses = {}, we
           </View>
           <View style={styles.indicatorRow}>
             {dayStatus?.planned ? <View style={[styles.planDot, { backgroundColor: markerColor }]} /> : null}
-            {dayStatus?.worn ? <Text style={[styles.check, { color: isActive ? colors.ctaCream : colors.success }]}>✓</Text> : null}
-            {dayStatus?.streak ? <Text style={styles.fire}>🔥</Text> : null}
+            {dayStatus?.worn ? <Text style={[styles.check, { color: isActive ? colors.accent : colors.success }]}>✓</Text> : null}
+            {dayStatus?.streak ? <View style={[styles.streakDot, { backgroundColor: isActive ? colors.accent : colors.borderStrong }]} /> : null}
           </View>
         </AuraPressable>
       );
     },
     [
-      colors.aiAccent,
       colors.border,
-      colors.ctaCream,
-      colors.purpleBorder,
-      colors.purpleSurface,
+      colors.accent,
+      colors.borderStrong,
+      colors.surfaceElevated,
+      colors.shadow,
       colors.surfaceSoft,
       colors.success,
       colors.text,
@@ -213,12 +213,12 @@ const styles = StyleSheet.create({
   },
   week: {
     fontSize: 11,
-    fontWeight: "700",
+    fontWeight: "500",
   },
   day: {
     marginTop: 2,
     fontSize: 16,
-    fontWeight: "800",
+    fontWeight: "600",
   },
   weatherSlot: {
     minHeight: 14,
@@ -228,7 +228,7 @@ const styles = StyleSheet.create({
   weather: {
     fontSize: 10,
     lineHeight: 12,
-    fontWeight: "700",
+    fontWeight: "500",
   },
   indicatorRow: {
     marginTop: 3,
@@ -244,11 +244,12 @@ const styles = StyleSheet.create({
   },
   check: {
     fontSize: 9,
-    fontWeight: "900",
+    fontWeight: "700",
     lineHeight: 9,
   },
-  fire: {
-    fontSize: 9,
-    lineHeight: 9,
+  streakDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
   },
 });

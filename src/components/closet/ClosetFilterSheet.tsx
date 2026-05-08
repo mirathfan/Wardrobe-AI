@@ -68,9 +68,9 @@ function Section({
 }) {
   const { colors } = useAppTheme();
   return (
-    <View style={{ gap: 9 }}>
+    <View style={{ gap: 11 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <Text style={[auraTypography.caption, { color: colors.text, fontSize: 12.5, lineHeight: 16, fontWeight: "600", textTransform: "uppercase" }]}>
+        <Text style={[auraTypography.caption, { color: colors.textSecondary, fontSize: 12.5, lineHeight: 16, fontWeight: "500", letterSpacing: 1.15, textTransform: "uppercase" }]}>
           {title}
         </Text>
         {detail ? (
@@ -79,7 +79,7 @@ function Section({
           </Text>
         ) : null}
       </View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
         {children}
       </View>
     </View>
@@ -103,10 +103,11 @@ function FilterPill({
         ...auraChipStyle(colors, active ? "selected" : "filter"),
         flexDirection: "row",
         gap: 6,
-        minHeight: 34,
-        paddingHorizontal: 11,
-        backgroundColor: active ? "rgba(223,182,178,0.13)" : "rgba(251,228,216,0.045)",
-        borderColor: active ? "rgba(223,182,178,0.26)" : "rgba(251,228,216,0.08)",
+        minHeight: 38,
+        minWidth: 92,
+        paddingHorizontal: 12,
+        backgroundColor: active ? colors.accentSoft : colors.surfaceMuted,
+        borderColor: active ? colors.borderStrong : colors.border,
         opacity: pressed ? 0.78 : 1,
       })}
     >
@@ -161,10 +162,11 @@ function ColorPill({
         ...auraChipStyle(colors, active ? "selected" : "filter"),
         flexDirection: "row",
         gap: 8,
-        minHeight: 34,
-        paddingHorizontal: 11,
-        backgroundColor: active ? "rgba(223,182,178,0.13)" : "rgba(251,228,216,0.045)",
-        borderColor: active ? "rgba(223,182,178,0.26)" : "rgba(251,228,216,0.08)",
+        minHeight: 38,
+        minWidth: 104,
+        paddingHorizontal: 12,
+        backgroundColor: active ? colors.accentSoft : colors.surfaceMuted,
+        borderColor: active ? colors.borderStrong : colors.border,
         opacity: pressed ? 0.78 : 1,
       })}
     >
@@ -286,7 +288,7 @@ export function ClosetFilterSheet({
         onPress={closeWithAnimation}
         style={{
           ...auraSheetBackdropStyle(colors),
-          backgroundColor: "rgba(2,0,8,0.38)",
+          backgroundColor: colors.overlay,
         }}
       >
         <Animated.View
@@ -295,10 +297,10 @@ export function ClosetFilterSheet({
             transform: [{ translateY }],
             maxHeight: "86%",
             ...auraCardStyle(colors, "sheet"),
-            backgroundColor: "rgba(24,6,36,0.96)",
-            borderColor: "rgba(251,228,216,0.13)",
+            backgroundColor: colors.surfaceElevated,
+            borderColor: colors.borderStrong,
             borderTopWidth: 1,
-            borderTopColor: "rgba(251,228,216,0.13)",
+            borderTopColor: colors.borderStrong,
             borderTopLeftRadius: layout.largeRadius,
             borderTopRightRadius: layout.largeRadius,
             borderBottomLeftRadius: 0,
@@ -306,7 +308,7 @@ export function ClosetFilterSheet({
             paddingHorizontal: layout.horizontalPadding,
             paddingTop: 10,
             paddingBottom: Math.max(20, layout.floatingDockBottom + 10),
-            gap: 13,
+            gap: 14,
           }}
         >
           <View
@@ -315,7 +317,7 @@ export function ClosetFilterSheet({
               width: 42,
               height: 5,
               borderRadius: 999,
-              backgroundColor: "rgba(251,228,216,0.22)",
+              backgroundColor: colors.borderStrong,
             }}
           />
 
@@ -330,7 +332,7 @@ export function ClosetFilterSheet({
             </View>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 18, paddingBottom: 8 }}>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 22, paddingBottom: 8 }}>
             <Section title="Sort">
               {sortOptions.map((option) => (
                 <FilterPill
@@ -342,9 +344,9 @@ export function ClosetFilterSheet({
               ))}
             </Section>
 
-            <View style={{ height: 1, backgroundColor: "rgba(251,228,216,0.08)" }} />
+            <View style={{ height: 1, backgroundColor: colors.borderSoft }} />
 
-            <Text style={[auraTypography.caption, { color: colors.textSecondary, fontSize: 12, lineHeight: 15, fontWeight: "600", textTransform: "uppercase" }]}>
+            <Text style={[auraTypography.caption, { color: colors.textMuted, fontSize: 11.5, lineHeight: 15, fontWeight: "500", letterSpacing: 1.15, textTransform: "uppercase" }]}>
               Filters
             </Text>
 
@@ -435,8 +437,8 @@ export function ClosetFilterSheet({
                 flex: 1,
                 ...auraButtonStyle(colors, "secondary"),
                 minHeight: 48,
-                backgroundColor: "rgba(251,228,216,0.045)",
-                borderColor: "rgba(251,228,216,0.10)",
+                backgroundColor: colors.surfaceMuted,
+                borderColor: colors.border,
                 opacity: pressed ? 0.82 : 1,
               })}
             >

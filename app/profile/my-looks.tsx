@@ -6,12 +6,13 @@ import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View, useWindowD
 import { Colors } from "@/constants/theme";
 import { SafeScreen } from "@/src/components/SafeScreen";
 import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
-import { auraButtonStyle, auraButtonTextStyle } from "@/src/components/ui/auraStylePrimitives";
+import { AuraTopSafeAreaScrim, auraButtonStyle, auraButtonTextStyle } from "@/src/components/ui/auraStylePrimitives";
 import { LookDetailModal } from "@/src/components/profile/LookDetailModal";
 import { MyLookSkeleton, MyLookThumbnail } from "@/src/components/profile/MyLookThumbnail";
 import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import {
   dislikeProfileLooks,
   favouriteProfileLooks,
@@ -100,6 +101,7 @@ function EmptyState({ tab }: { tab: TabKey }) {
 
 export default function MyLooksScreen() {
   const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
   const { user } = useAuth();
   const params = useLocalSearchParams<{ tab?: string }>();
   const [activeTab, setActiveTab] = useState<TabKey>(() => normalizeInitialTab(params.tab));
@@ -265,6 +267,7 @@ export default function MyLooksScreen() {
 
   return (
     <SafeScreen backgroundColor={colors.background} includeTopInset={selectionMode} includeBottomInset={false} style={{ flex: 1 }}>
+      <AuraTopSafeAreaScrim color={colors.background} />
       {selectionMode ? (
         <View style={styles.selectionToolbar}>
           <Pressable onPress={clearSelection} style={styles.toolbarButton} accessibilityRole="button">
@@ -328,7 +331,7 @@ export default function MyLooksScreen() {
           <Text style={styles.errorText}>{error}</Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.grid}>
+        <ScrollView contentContainerStyle={[styles.grid, { paddingBottom: layout.bottomDockPadding + 48 }]}>
           {currentLoading
             ? Array.from({ length: 6 }).map((_, index) => (
                 <MyLookSkeleton key={index} width={thumbnailWidth} />

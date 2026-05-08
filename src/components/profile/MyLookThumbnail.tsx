@@ -130,7 +130,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderWarm,
   },
   cardSelected: {
-    borderColor: colors.purpleBorder,
+    borderColor: colors.borderStrong,
     borderWidth: 2,
   },
   previewClip: {
@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
     right: 6,
     color: colors.ctaCream,
     fontSize: 14,
-    fontWeight: "900",
+    fontWeight: "700",
     textShadowColor: "rgba(0,0,0,0.45)",
     textShadowRadius: 4,
   },
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
     color: colors.ctaText,
     fontSize: 15,
     lineHeight: 18,
-    fontWeight: "900",
+    fontWeight: "700",
   },
   skeleton: {
     borderRadius: 16,

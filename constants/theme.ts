@@ -9,7 +9,7 @@ export const auraColors = {
   surfaceRaised: "rgba(34,31,40,0.86)",
   surfaceInteractive: "rgba(42,36,50,0.66)",
   accentMauve: "#854F6C",
-  accentRose: "#DFB6B2",
+  accentRose: "#D8AAA6",
   boardLight: "#F7F1EA",
   textPrimary: "#FBE4D8",
   textSecondary: "rgba(251,228,216,0.82)",
@@ -73,7 +73,7 @@ const auraTypography = {
     fontSize: 11,
     lineHeight: 15,
     fontWeight: "500" as const,
-    letterSpacing: 1.4,
+    letterSpacing: 1.25,
   },
   bodySecondary: {
     fontSize: 14,
@@ -105,7 +105,7 @@ const auraTypography = {
   eyebrow: {
     fontSize: 12,
     lineHeight: 16,
-    letterSpacing: 2.4,
+    letterSpacing: 1.9,
     fontWeight: "600" as const,
   },
   body: {

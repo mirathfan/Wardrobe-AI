@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Animated, FlatList, NativeScrollEvent, NativeSyntheticEvent, Pressable, Text, View, useWindowDimensions } from "react-native";
+import { Animated, FlatList, NativeScrollEvent, NativeSyntheticEvent, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 import { Fonts } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
@@ -32,14 +32,15 @@ import { auraShadow, auraTheme } from "./aiTheme";
 const DEBUG_AURA_CLIENT =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<AuraLook>);
-const SMART_BUY_CHIP_HEIGHT = 28;
 const CARD_SECTION_RADIUS = 18;
 
-function getAuraLookStableKey(look: AuraLook) {
+function getAuraLookStableKey(look: AuraLook, fallbackIndex?: number) {
   const pieceKey = (look.pieces ?? [])
     .map((piece) => [piece.role, piece.itemId, piece.itemName].filter(Boolean).join(":"))
     .join("|");
-  return [look.lookTitle, look.vibe, pieceKey].filter(Boolean).join("::") || "aura-look";
+  const semanticKey = [look.lookTitle, look.vibe, pieceKey].filter(Boolean).join("::");
+  if (look.id) return [look.id, semanticKey].filter(Boolean).join("::");
+  return [semanticKey || "aura-look", fallbackIndex ?? 0].join("::");
 }
 
 type AuraReplyCardProps = {
@@ -186,13 +187,13 @@ function AuraReplyCard({
               borderRadius: 999,
               paddingHorizontal: 10,
               paddingVertical: 5,
-              backgroundColor: pressed ? colors.ctaCream : colors.primaryCta,
+              backgroundColor: pressed ? colors.surfaceElevated : colors.surfaceMuted,
               borderWidth: CHIP_BORDER_WIDTH,
-              borderColor: colors.borderWarm,
+              borderColor: colors.border,
             })}
           >
-            <AuraText variant="button" style={{ color: colors.ctaText, fontSize: 11.5, lineHeight: 15 }}>
-              Add All
+            <AuraText variant="button" tone="secondary" style={{ fontSize: 11.5, lineHeight: 15 }}>
+              Add all
             </AuraText>
           </Pressable>
         ) : null}
@@ -313,7 +314,7 @@ function AuraReplyCard({
           <View style={{ gap: 10 }}>
             <AnimatedFlatList
               data={looks}
-              keyExtractor={getAuraLookStableKey}
+              keyExtractor={(look, index) => getAuraLookStableKey(look, index)}
               horizontal
               showsHorizontalScrollIndicator={false}
               decelerationRate="fast"
@@ -374,7 +375,7 @@ function AuraReplyCard({
                 const active = index === selectedLookIndex;
                 return (
                   <View
-                    key={`look-dot-${getAuraLookStableKey(look)}`}
+                    key={`look-dot-${getAuraLookStableKey(look, index)}`}
                     style={{
                       width: active ? 18 : 6,
                       height: 6,
@@ -546,24 +547,22 @@ function LevelThisUpSection({
           Small additions that make this easier to finish.
         </AuraText>
       </View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
+      <View style={{ gap: 5 }}>
         {suggestions.map((item) => (
           <View
             key={`level-up-${item.label}`}
             style={{
-              borderRadius: 999,
-              minHeight: SMART_BUY_CHIP_HEIGHT,
-              paddingHorizontal: 9,
+              minHeight: 20,
+              paddingHorizontal: 0,
               paddingVertical: 0,
-              backgroundColor: colors.surfaceMuted,
-              borderWidth: CHIP_BORDER_WIDTH,
-              borderColor: colors.borderSoft,
+              backgroundColor: "transparent",
+              borderWidth: 0,
               justifyContent: "center",
               maxWidth: "100%",
             }}
           >
             <AuraText variant="metadata" tone="secondary" style={{ fontSize: 11.25, lineHeight: 14 }}>
-              {item.label}
+              • {item.label}
             </AuraText>
           </View>
         ))}
@@ -657,40 +656,42 @@ function OutfitAnalysisCard({
           I found this outfit
         </Text>
         {analysis.outfitVibe ? (
-          <Text style={{ color: auraTheme.textMuted, fontSize: 12.5, lineHeight: 17, fontWeight: "600", fontFamily: Fonts.sans }}>
+          <Text style={{ color: auraTheme.textMuted, fontSize: 12.5, lineHeight: 17, fontWeight: "400", fontFamily: Fonts.sans }}>
             {sanitizeDisplayText(analysis.outfitVibe)}
           </Text>
         ) : null}
       </View>
 
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {pieces.map((piece, index) => (
-          <View
-            key={`${piece.role}-${piece.label}-${index}`}
-            style={{
-              borderRadius: 14,
-              paddingHorizontal: 9,
-              paddingVertical: 7,
-              backgroundColor: colors.chipBackground,
-              borderWidth: CHIP_BORDER_WIDTH,
-              borderColor: colors.border,
-              maxWidth: "100%",
-            }}
-          >
-            <Text style={{ color: auraTheme.textFaint, fontSize: 10, fontWeight: "600", letterSpacing: 0.8, fontFamily: Fonts.sans }}>
-              {displayOutfitRole(piece.role)}
-              {typeof piece.confidence === "number" ? ` · ${Math.round(piece.confidence * 100)}%` : ""}
-            </Text>
-            <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: "600", fontFamily: Fonts.sans }}>
-              {[piece.color, piece.label].filter(Boolean).map(sanitizeDisplayText).join(" ")}
-            </Text>
-            {piece.notes ? (
-              <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: "500", fontFamily: Fonts.sans }}>
-                {sanitizeDisplayText(piece.notes)}
+      <View style={{ gap: 7 }}>
+        {pieces.map((piece, index) => {
+          const pieceKey = [piece.role, piece.label, piece.color, piece.notes]
+            .filter(Boolean)
+            .map((value) => sanitizeDisplayText(String(value)))
+            .join("-");
+          return (
+            <View
+              key={pieceKey || `detected-piece-${index}`}
+              style={{
+                borderTopWidth: index === 0 ? 0 : StyleSheet.hairlineWidth,
+                borderTopColor: colors.borderSoft,
+                paddingTop: index === 0 ? 0 : 7,
+                gap: 2,
+              }}
+            >
+              <Text style={{ color: colors.textSecondary, fontSize: 10.5, fontWeight: "500", letterSpacing: 0.9, fontFamily: Fonts.sans, textTransform: "uppercase" }}>
+                {displayOutfitRole(piece.role)}
               </Text>
-            ) : null}
-          </View>
-        ))}
+              <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: "600", fontFamily: Fonts.sans }}>
+                {[piece.color, piece.label].filter(Boolean).map(sanitizeDisplayText).join(" ")}
+              </Text>
+              {piece.notes ? (
+                <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: "500", fontFamily: Fonts.sans }}>
+                  {sanitizeDisplayText(piece.notes)}
+                </Text>
+              ) : null}
+            </View>
+          );
+        })}
       </View>
 
       {missing.length ? (
@@ -821,7 +822,7 @@ function Group({
       <AuraText variant="caption" tone={titleTone} style={{ fontSize: 12.5, lineHeight: 15, fontWeight: "600" }}>
         {title}
       </AuraText>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>{children}</View>
+      <View style={{ gap: 4 }}>{children}</View>
     </View>
   );
 }
@@ -991,19 +992,14 @@ function CandidateCard({
               Could not save this item. Retry, edit, or cancel.
             </Text>
           ) : null}
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
+          <View style={{ gap: 4 }}>
             {chipFields.map(([label, value]) => (
-              <View
-                key={`${candidate.candidateId}-${label}`}
-                style={{
-                  borderRadius: 9,
-                  paddingHorizontal: 6,
-                  paddingVertical: 3,
-                  backgroundColor: colors.chipBackground,
-                }}
-              >
-                <Text style={{ color: colors.textSecondary, fontSize: 10.5, fontWeight: "600" }}>
-                  {label}: <Text style={{ color: colors.text }}>{sanitizeDisplayText(value)}</Text>
+              <View key={`${candidate.candidateId}-${label}`} style={{ flexDirection: "row", gap: 8 }}>
+                <Text style={{ width: 58, color: colors.textMuted, fontSize: 10.5, lineHeight: 14, fontWeight: "500" }}>
+                  {label}
+                </Text>
+                <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 11.5, lineHeight: 15, fontWeight: "400" }}>
+                  {sanitizeDisplayText(value)}
                 </Text>
               </View>
             ))}
@@ -1094,28 +1090,16 @@ function Tag({
   colors: ReturnType<typeof useAppTheme>["colors"];
   tone: "owned" | "suggested" | "default";
 }) {
-  const backgroundColor =
-    tone === "owned"
-      ? colors.purpleSurface
-      : tone === "suggested"
-        ? colors.chipBackground
-        : auraTheme.surfaceSofter;
-  const borderColor =
-    tone === "owned"
-      ? colors.purpleBorder
-      : colors.border;
   const textColor = tone === "owned" ? colors.ctaCream : colors.textSecondary;
 
   return (
     <View
       style={{
-        minHeight: SMART_BUY_CHIP_HEIGHT,
-        paddingHorizontal: 9,
+        minHeight: 22,
+        paddingHorizontal: 0,
         paddingVertical: 0,
-        borderRadius: 999,
-        backgroundColor,
-        borderWidth: CHIP_BORDER_WIDTH,
-        borderColor,
+        backgroundColor: "transparent",
+        borderWidth: 0,
         justifyContent: "center",
         maxWidth: "100%",
       }}
@@ -1129,7 +1113,7 @@ function Tag({
           fontWeight: "500",
         }}
       >
-        {label}
+        • {label}
       </AuraText>
     </View>
   );

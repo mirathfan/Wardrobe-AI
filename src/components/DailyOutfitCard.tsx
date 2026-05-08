@@ -119,9 +119,9 @@ export default function DailyOutfitCard({
     <View
       style={[
         styles.card,
-        auraCardStyle(colors, "largeGlass"),
+        auraCardStyle(colors, "card"),
         {
-          borderColor: colors.glassBorder,
+          borderColor: colors.border,
           borderRadius: layout.largeRadius,
           padding: layout.cardPadding,
         },
@@ -151,13 +151,13 @@ export default function DailyOutfitCard({
         </View>
       ) : null}
 
-      {thinking ? <Text style={[homeTypography.caption, styles.thinking, { color: colors.textSecondary }]}>Thinking...</Text> : null}
+      {thinking ? <Text style={[homeTypography.caption, styles.thinking, { color: colors.textSecondary }]}>Planning...</Text> : null}
       <View style={{ height: 10 }} />
       <FlatLayCanvas items={gridItems} />
 
       {activeLook ? (
         <View style={styles.scoreWrap}>
-          <Text style={[homeTypography.bodySmall, styles.score, { color: colors.text }]}>Outfit score: {activeLook.score}%</Text>
+          <Text style={[homeTypography.bodySmall, styles.score, { color: colors.textSecondary }]}>Styling note</Text>
           {(activeLook.reasons ?? []).slice(0, 2).map((reason) => (
             <Text key={reason} style={[homeTypography.caption, styles.reason, { color: colors.textSecondary }]}>{reason}</Text>
           ))}
@@ -217,14 +217,14 @@ const styles = StyleSheet.create({
   thinking: {
     marginTop: 8,
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "500",
   },
   scoreWrap: {
     marginTop: 10,
     gap: 4,
   },
   score: {
-    fontWeight: "700",
+    fontWeight: "500",
   },
   reason: {
     fontSize: 12,
@@ -242,10 +242,10 @@ const styles = StyleSheet.create({
     minWidth: 190,
     alignSelf: "flex-start",
     overflow: "hidden",
-    shadowOpacity: 0.16,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 4,
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
   },
   primaryBtnText: {
     fontSize: 15,
@@ -263,7 +263,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   textAction: {
-    fontWeight: "600",
+    fontWeight: "500",
   },
   linkBtn: {
     marginTop: 10,

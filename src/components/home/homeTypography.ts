@@ -56,7 +56,7 @@ export const homeTypography = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     fontWeight: "500",
-    letterSpacing: 1.4,
+    letterSpacing: 1.2,
   },
   accentNote: {
     ...systemFont,

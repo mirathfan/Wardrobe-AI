@@ -1,9 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Linking,
   Modal,
@@ -23,6 +20,7 @@ import {
   auraSurfaceTiers,
   auraTypography,
 } from "@/src/components/ui/auraStylePrimitives";
+import { AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { formatMoney } from "@/src/lib/currency";
 import {
@@ -174,7 +172,7 @@ export default function ShopOptionsSheet({
       animationType="slide"
       onRequestClose={onDismiss}
     >
-      <View style={styles.root}>
+      <View style={[styles.root, { backgroundColor: colors.overlay }]}>
         <Pressable
           accessibilityLabel="Close shopping options"
           style={StyleSheet.absoluteFill}
@@ -185,25 +183,17 @@ export default function ShopOptionsSheet({
             styles.sheet,
             {
               paddingBottom: Math.max(18, insets.bottom + 14),
-              backgroundColor: "rgba(9,0,11,0.92)",
-              borderColor: colors.border,
+              backgroundColor: colors.surfaceElevated,
+              borderColor: colors.borderStrong,
             },
           ]}
         >
-          <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
-          <LinearGradient
-            pointerEvents="none"
-            colors={["rgba(223,182,178,0.12)", "rgba(43,18,76,0.34)", "rgba(9,0,11,0.86)"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
           <View style={styles.handle} />
 
           <View style={styles.header}>
             <View style={{ flex: 1, gap: 5 }}>
-              <Text style={[auraTypography.eyebrow, { color: colors.ctaCream }]} numberOfLines={1}>
-                {products.some((product) => product.source === "live") ? "Live Options" : "Curated Options"}
+              <Text style={[auraTypography.eyebrow, { color: colors.textSecondary, letterSpacing: 1.2 }]} numberOfLines={1}>
+                {products.some((product) => product.source === "live") ? "Live options" : "Curated options"}
               </Text>
               <Text
                 style={[auraTypography.sectionTitle, { color: colors.text }]}
@@ -256,13 +246,11 @@ export default function ShopOptionsSheet({
                   },
                 ]}
               >
-                <ActivityIndicator size="small" color={colors.ctaCream} />
-                <View style={{ flex: 1, gap: 3 }}>
-                  <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: "900" }}>
-                    Finding curated options
-                  </Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "600" }}>
-                    AURA is choosing safe MVP picks for this wardrobe gap.
+                <View style={{ flex: 1, gap: 8 }}>
+                  <AuraSkeletonLine width="54%" height={12} />
+                  <AuraSkeletonLine width="82%" height={10} />
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "400" }}>
+                    Finding a few wardrobe options.
                   </Text>
                 </View>
               </View>
@@ -311,7 +299,7 @@ export default function ShopOptionsSheet({
                         color: colors.text,
                         fontSize: 14,
                         lineHeight: 18,
-                        fontWeight: "900",
+                        fontWeight: "600",
                         letterSpacing: 0,
                       }}
                       numberOfLines={2}
@@ -323,7 +311,7 @@ export default function ShopOptionsSheet({
                         color: colors.textSecondary,
                         fontSize: 12,
                         lineHeight: 16,
-                        fontWeight: "700",
+                        fontWeight: "500",
                         letterSpacing: 0,
                       }}
                       numberOfLines={1}
@@ -345,10 +333,10 @@ export default function ShopOptionsSheet({
                       >
                         <Text
                           style={{
-                            color: colors.ctaCream,
+                            color: colors.textSecondary,
                             fontSize: 10.5,
                             lineHeight: 13,
-                            fontWeight: "900",
+                            fontWeight: "500",
                             letterSpacing: 0,
                           }}
                           numberOfLines={1}
@@ -363,17 +351,17 @@ export default function ShopOptionsSheet({
                           paddingHorizontal: 8,
                           alignItems: "center",
                           justifyContent: "center",
-                          backgroundColor: product.source === "live" ? colors.purpleSurface : "rgba(251,228,216,0.06)",
+                          backgroundColor: product.source === "live" ? colors.accentSoft : colors.surfaceMuted,
                           borderWidth: 1,
-                          borderColor: product.source === "live" ? colors.purpleBorder : colors.border,
+                          borderColor: product.source === "live" ? colors.borderStrong : colors.border,
                         }}
                       >
                         <Text
                           style={{
-                            color: product.source === "live" ? colors.ctaCream : colors.textSecondary,
+                            color: colors.textSecondary,
                             fontSize: 10.5,
                             lineHeight: 13,
-                            fontWeight: "900",
+                            fontWeight: "500",
                             letterSpacing: 0,
                           }}
                           numberOfLines={1}
@@ -388,7 +376,7 @@ export default function ShopOptionsSheet({
                             color: colors.textSecondary,
                             fontSize: 11.5,
                             lineHeight: 22,
-                            fontWeight: "800",
+                            fontWeight: "500",
                             letterSpacing: 0,
                             fontVariant: ["tabular-nums"],
                           }}
@@ -403,7 +391,7 @@ export default function ShopOptionsSheet({
                             color: colors.textSecondary,
                             fontSize: 11.5,
                             lineHeight: 22,
-                            fontWeight: "800",
+                            fontWeight: "500",
                             letterSpacing: 0,
                             fontVariant: ["tabular-nums"],
                           }}
@@ -461,7 +449,6 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     justifyContent: "flex-end",
-    backgroundColor: "rgba(9,0,11,0.58)",
   },
   sheet: {
     maxHeight: "82%",
@@ -478,7 +465,7 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 999,
     alignSelf: "center",
-    backgroundColor: "rgba(251,228,216,0.28)",
+    backgroundColor: "rgba(251,228,216,0.22)",
   },
   header: {
     flexDirection: "row",

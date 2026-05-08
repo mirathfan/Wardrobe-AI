@@ -9,6 +9,7 @@ import {
   type ViewProps,
   type ViewStyle,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { AppColors } from "@/constants/theme";
 import { Fonts } from "@/constants/theme";
@@ -125,7 +126,7 @@ const auraTextVariants: Record<AuraTextVariant, TextStyle> = {
     fontSize: 11,
     lineHeight: 15,
     fontWeight: "500",
-    letterSpacing: 1.4,
+    letterSpacing: 1.25,
   },
   button: {
     fontSize: 15,
@@ -346,6 +347,7 @@ export function AuraIconButton({
   return (
     <AuraPressable
       {...props}
+      hitSlop={props.hitSlop ?? (dimension < 44 ? 8 : 4)}
       disabled={disabled}
       accessibilityRole={props.accessibilityRole ?? "button"}
       accessibilityLabel={props.accessibilityLabel ?? label}
@@ -549,6 +551,36 @@ export function AuraSheetSurface({
     <AuraCard {...props} variant="sheet" radius="xl" padding="md" style={style}>
       {children}
     </AuraCard>
+  );
+}
+
+export function AuraTopSafeAreaScrim({
+  color,
+  heightOffset = 0,
+  style,
+}: {
+  color?: string;
+  heightOffset?: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const { colors } = useAppTheme();
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        {
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: Math.max(0, insets.top + heightOffset),
+          backgroundColor: color ?? colors.background,
+          zIndex: 100,
+        },
+        style,
+      ]}
+    />
   );
 }
 

@@ -21,15 +21,15 @@ export default function CalendarHeader({ selectedDate, today, onJumpToToday }: P
   return (
     <View style={[styles.wrap, { gap: 8 }]}>
       <AuraText variant="metadata" tone="accent" style={styles.kicker}>
-        Plan the week
+        This week
       </AuraText>
       <View style={styles.row}>
         <View style={{ flex: 1, gap: 3 }}>
           <AuraText variant="title" style={[styles.title, { fontSize: 30 * layout.titleScale }]}>
-            Calendar
+            Style calendar
           </AuraText>
           <AuraText variant="caption" tone="secondary" style={styles.date}>
-            Plan outfits by date
+            Plan what to wear by date
           </AuraText>
         </View>
         {!isToday ? (
@@ -53,7 +53,7 @@ const styles = StyleSheet.create({
   wrap: {
     marginBottom: 8,
   },
-  kicker: { letterSpacing: 1.5, textTransform: "uppercase" },
+  kicker: { letterSpacing: 1.25, textTransform: "uppercase" },
   title: { letterSpacing: 0 },
   date: { marginTop: 2, fontSize: 14, lineHeight: 22, opacity: 0.65 },
   row: {

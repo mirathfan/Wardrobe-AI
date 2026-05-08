@@ -73,9 +73,9 @@ const styles = StyleSheet.create({
     borderRadius: PILL_RADIUS,
     overflow: "hidden",
     shadowColor: palette.colors.ctaCream,
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 7 },
+    shadowOpacity: 0.075,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
   },
   disabled: {
     opacity: 0.58,
@@ -93,6 +93,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     fontFamily: Fonts.sans,
-    letterSpacing: 0.4,
+    letterSpacing: 0.15,
   },
 });

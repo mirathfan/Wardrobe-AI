@@ -21,7 +21,7 @@ import QuickActionRail, { type QuickActionItem } from "@/src/components/home/Qui
 import ShopOptionsSheet from "@/src/components/shop/ShopOptionsSheet";
 import SmartToolsGrid, { type SmartTool } from "@/src/components/home/SmartToolsGrid";
 import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
-import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
+import { AuraTopSafeAreaScrim, auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
 import { HOME_DEFERRED_FEATURES } from "@/src/components/home/homeDeferredFeatures";
 import { homeTypography } from "@/src/components/home/homeTypography";
 import type { AppColors } from "@/constants/theme";
@@ -1055,6 +1055,7 @@ export default function HomeScreen() {
         end={{ x: 0.85, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
+      <AuraTopSafeAreaScrim color={HOME_BACKGROUND_BASE} />
       <ScrollView
         showsVerticalScrollIndicator={false}
         refreshControl={
