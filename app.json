@@ -13,18 +13,23 @@
       "supportsTablet": true,
       "usesAppleSignIn": true,
       "bundleIdentifier": "com.kasat.aura",
+      "buildNumber": "1",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
-              "com.googleusercontent.apps.1043970871162-6ap96ennmcs0r0rmld05d2j4gs1o5o5p"
+              "com.googleusercontent.apps.1043970871162-4mbfs4taqvn9b81imga67hg6kn15k644"
             ]
           }
         ],
-        "NSLocationWhenInUseUsageDescription": "We use your location to show local weather in your wardrobe insights.",
+        "NSLocationWhenInUseUsageDescription": "AURA uses your approximate location while you use the app to show local weather for outfit planning.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "AURA uses location only while you use the app to show local weather for outfit planning.",
+        "NSLocationAlwaysUsageDescription": "AURA uses location only while you use the app to show local weather for outfit planning.",
         "NSCalendarsUsageDescription": "We use your calendar to show today's events in your wardrobe insights.",
         "NSCalendarsFullAccessUsageDescription": "We use your calendar to show today's events in your wardrobe insights.",
+        "NSRemindersUsageDescription": "AURA uses reminders only if calendar access includes them for outfit planning context.",
+        "NSRemindersFullAccessUsageDescription": "AURA uses reminders only if calendar access includes them for outfit planning context.",
         "NSCameraUsageDescription": "AURA uses your camera so you can add clothing items to your wardrobe.",
         "NSPhotoLibraryUsageDescription": "AURA uses your photo library so you can select clothing photos for your wardrobe.",
         "NSPhotoLibraryAddUsageDescription": "AURA may save edited clothing images to your photo library when you choose to.",
@@ -43,6 +48,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.kasat.aura",
+      "versionCode": 1,
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ]

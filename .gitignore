@@ -35,3 +35,9 @@ ios.build/
 android.build/
 .claude/
 .idea/
+
+# Allow Firebase native config files required for EAS/TestFlight builds
+!GoogleService-Info.plist
+!ios/
+!ios/AURA/
+!ios/AURA/GoogleService-Info.plist

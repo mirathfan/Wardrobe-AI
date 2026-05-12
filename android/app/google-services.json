@@ -1,0 +1,90 @@
+{
+  "project_info": {
+    "project_number": "1043970871162",
+    "project_id": "closet-app-57146",
+    "storage_bucket": "closet-app-57146.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1043970871162:android:986f363d6c1a57afad50c3",
+        "android_client_info": {
+          "package_name": "com.athfan.aura"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1043970871162-metmeq51adnvabgt010mt2lhbvbthhio.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.athfan.aura",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "1043970871162-dn5aolk4kto8vqv1rbhidlgtql0okbav.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCC-WJc6mdAWOwXT_kIeKzlTmtyOa5A5-M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1043970871162-dn5aolk4kto8vqv1rbhidlgtql0okbav.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1043970871162-4mbfs4taqvn9b81imga67hg6kn15k644.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.kasat.aura"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1043970871162:android:4932579e9f8cccdbad50c3",
+        "android_client_info": {
+          "package_name": "com.kasat.aura"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1043970871162-dn5aolk4kto8vqv1rbhidlgtql0okbav.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCC-WJc6mdAWOwXT_kIeKzlTmtyOa5A5-M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1043970871162-dn5aolk4kto8vqv1rbhidlgtql0okbav.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1043970871162-4mbfs4taqvn9b81imga67hg6kn15k644.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.kasat.aura"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
