@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>CADisableMinimumFrameDurationOnPhone</key>
+    <true/>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleDisplayName</key>
+    <string>AURA</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>com.googleusercontent.apps.1043970871162-6ap96ennmcs0r0rmld05d2j4gs1o5o5p</string>
+        </array>
+      </dict>
+      <dict>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>aura</string>
+        </array>
+      </dict>
+    </array>
+    <key>CFBundleVersion</key>
+    <string>2</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+      <key>NSAllowsArbitraryLoads</key>
+      <false/>
+      <key>NSAllowsLocalNetworking</key>
+      <true/>
+    </dict>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>We use your calendar to show today's events in your wardrobe insights.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>We use your calendar to show today's events in your wardrobe insights.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>AURA uses your camera so you can add clothing items to your wardrobe.</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>AURA uses location only while you use the app to show local weather for outfit planning.</string>
+    <key>NSLocationAlwaysUsageDescription</key>
+    <string>AURA uses location only while you use the app to show local weather for outfit planning.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>AURA uses your approximate location while you use the app to show local weather for outfit planning.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Allow AURA to use your microphone for voice dictation.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>AURA may save edited clothing images to your photo library when you choose to.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>AURA uses your photo library so you can select clothing photos for your wardrobe.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>AURA uses reminders only if calendar access includes them for outfit planning context.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>AURA uses reminders only if calendar access includes them for outfit planning context.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Allow AURA to turn your speech into chat text.</string>
+    <key>NSUserActivityTypes</key>
+    <array>
+      <string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>
+    </array>
+    <key>RCTNewArchEnabled</key>
+    <true/>
+    <key>UILaunchStoryboardName</key>
+    <string>SplashScreen</string>
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+      <string>arm64</string>
+    </array>
+    <key>UIRequiresFullScreen</key>
+    <false/>
+    <key>UIStatusBarStyle</key>
+    <string>UIStatusBarStyleDefault</string>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+      <string>UIInterfaceOrientationPortrait</string>
+      <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+      <string>UIInterfaceOrientationPortrait</string>
+      <string>UIInterfaceOrientationPortraitUpsideDown</string>
+      <string>UIInterfaceOrientationLandscapeLeft</string>
+      <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UIUserInterfaceStyle</key>
+    <string>Automatic</string>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <false/>
+  </dict>
+</plist>

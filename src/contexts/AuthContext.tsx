@@ -1,7 +1,7 @@
 import { User, onAuthStateChanged } from "firebase/auth";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-import { auth } from "../lib/firebase";
+import { auth, hasFirebaseServices } from "../lib/firebase";
 
 const AUTH_CHECK_TIMEOUT_MS = 10_000;
 
@@ -24,6 +24,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let settled = false;
     setLoading(true);
     setAuthCheckTimedOut(false);
+
+    if (!hasFirebaseServices()) {
+      setUser(null);
+      setLoading(false);
+      return () => {
+        settled = true;
+      };
+    }
 
     const timeout = setTimeout(() => {
       if (!settled) {

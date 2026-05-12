@@ -1,18 +1,86 @@
-import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
+import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
+import { getAuth, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 
-const firebaseConfig = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+import { firebaseConfigStatus, logFirebaseConfigProblem } from "./firebaseConfig";
+
+type FirebaseServices = {
+  app: FirebaseApp;
+  auth: Auth;
+  db: Firestore;
+  storage: FirebaseStorage;
 };
 
-export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+function isDevBuild() {
+  return typeof __DEV__ !== "undefined" && __DEV__;
+}
+
+function firebaseUnavailableError(serviceName: string) {
+  const error = new Error(`AURA Firebase ${serviceName} is unavailable.`);
+  error.name = "FirebaseConfigurationError";
+  return error;
+}
+
+function unavailableFirebaseService<T extends object>(serviceName: string): T {
+  return new Proxy({} as T, {
+    get() {
+      throw firebaseUnavailableError(serviceName);
+    },
+    set() {
+      throw firebaseUnavailableError(serviceName);
+    },
+  });
+}
+
+function logFirebaseInitializationError(error: unknown) {
+  if (isDevBuild()) {
+    console.error("[Firebase] Failed to initialize Firebase services.", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  console.error("[Firebase] Failed to initialize Firebase services.");
+}
+
+function initializeFirebaseServices(): FirebaseServices | null {
+  if (!firebaseConfigStatus.ok) {
+    logFirebaseConfigProblem(firebaseConfigStatus);
+    return null;
+  }
+
+  try {
+    const app = getApps().length ? getApp() : initializeApp(firebaseConfigStatus.config);
+    return {
+      app,
+      auth: getAuth(app),
+      db: getFirestore(app),
+      storage: getStorage(app),
+    };
+  } catch (error) {
+    firebaseInitializationError = error instanceof Error ? error : new Error("Firebase initialization failed.");
+    logFirebaseInitializationError(error);
+    return null;
+  }
+}
+
+export let firebaseInitializationError: Error | null = null;
+const firebaseServices = initializeFirebaseServices();
+
+export function hasFirebaseServices() {
+  return firebaseServices !== null;
+}
+
+export function requireFirebaseServices() {
+  if (!firebaseServices) throw firebaseUnavailableError("services");
+  return firebaseServices;
+}
+
+export { firebaseConfigStatus };
+
+export const app = firebaseServices?.app ?? unavailableFirebaseService<FirebaseApp>("app");
+export const auth = firebaseServices?.auth ?? unavailableFirebaseService<Auth>("auth");
+export const db = firebaseServices?.db ?? unavailableFirebaseService<Firestore>("db");
+export const storage =
+  firebaseServices?.storage ?? unavailableFirebaseService<FirebaseStorage>("storage");

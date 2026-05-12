@@ -24,7 +24,7 @@ import AuraRing, { RING_SIZE_LG } from "@/src/components/brand/AuraRing";
 import BrandedLoadingAnimation from "@/src/components/brand/BrandedLoadingAnimation";
 import { configureGoogleSignIn } from "@/src/auth/googleAuth";
 import { logDeviceSecurityContext } from "@/src/lib/security";
-import { auth } from "@/src/lib/firebase";
+import { auth, hasFirebaseServices } from "@/src/lib/firebase";
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -114,6 +114,19 @@ function AuthLoadTimeoutScreen({
             <Text style={loadingStyles.secondaryText}>Sign in again</Text>
           </Pressable>
         </View>
+      </View>
+    </View>
+  );
+}
+
+function ConfigurationErrorScreen() {
+  return (
+    <View style={loadingStyles.container}>
+      <View style={loadingStyles.errorPanel}>
+        <Text style={loadingStyles.errorTitle}>Configuration Error</Text>
+        <Text style={loadingStyles.errorCopy}>
+          AURA is missing required app configuration. Please install the latest build or contact support.
+        </Text>
       </View>
     </View>
   );
@@ -307,6 +320,7 @@ const loadingStyles = StyleSheet.create({
 export default function RootLayout() {
   useColorScheme();
   const palette = Colors.dark;
+  const firebaseReady = hasFirebaseServices();
   const navigationTheme = {
     ...DarkTheme,
     colors: {
@@ -320,9 +334,10 @@ export default function RootLayout() {
   };
 
   useEffect(() => {
+    if (!firebaseReady) return;
     configureGoogleSignIn();
     void logDeviceSecurityContext();
-  }, []);
+  }, [firebaseReady]);
 
   useEffect(() => {
     if (Platform.OS !== "ios" || !__DEV__) return;
@@ -334,11 +349,17 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <ThemeProvider value={navigationTheme}>
-        <AuthProvider>
+        {firebaseReady ? (
+          <AuthProvider>
+            <View style={{ flex: 1, backgroundColor: palette.background }}>
+              <AuthGate />
+            </View>
+          </AuthProvider>
+        ) : (
           <View style={{ flex: 1, backgroundColor: palette.background }}>
-            <AuthGate />
+            <ConfigurationErrorScreen />
           </View>
-        </AuthProvider>
+        )}
 
         <StatusBar style="light" />
       </ThemeProvider>
