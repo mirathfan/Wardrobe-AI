@@ -14,6 +14,7 @@ import {
 
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
 import { ClosetItemCard } from "@/src/components/closet/ClosetItemCard";
+import { AuraAnimatedListItem, AuraAnimatedSection } from "@/src/components/motion";
 import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
 import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers, auraTypography } from "@/src/components/ui/auraStylePrimitives";
 import { useAuth } from "@/src/hooks/useAuth";
@@ -556,7 +557,7 @@ export default function StudioScreen() {
         numColumns={columns}
         columnWrapperStyle={columns > 1 ? { gap: gridGap } : undefined}
         ListHeaderComponent={
-          <View style={{ gap: 16, marginBottom: 12 }}>
+          <AuraAnimatedSection index={0} withLayout style={{ gap: 16, marginBottom: 12 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
               <View
                 style={{
@@ -591,12 +592,13 @@ export default function StudioScreen() {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ gap: 10, paddingRight: 8 }}
               >
-                {selection.map((item) => {
+                {selection.map((item, index) => {
                   const status = normalizeLaundryStatus(item);
                   const unavailable = status !== "clean";
                   return (
-                    <View
+                    <AuraAnimatedListItem
                       key={`selected-${item.id}`}
+                      index={index}
                       style={{
                         minWidth: 178,
                         maxWidth: 230,
@@ -663,7 +665,7 @@ export default function StudioScreen() {
                           <Ionicons name="close" size={16} color={colors.textSecondary} />
                         </Pressable>
                       </View>
-                    </View>
+                    </AuraAnimatedListItem>
                   );
                 })}
               </ScrollView>
@@ -841,7 +843,7 @@ export default function StudioScreen() {
                 ) : null}
               </View>
             </View>
-          </View>
+          </AuraAnimatedSection>
         }
         ListEmptyComponent={
           <View

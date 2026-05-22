@@ -4,7 +4,6 @@ import { router, useFocusEffect } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
-  Animated,
   InteractionManager,
   RefreshControl,
   ScrollView,
@@ -17,6 +16,7 @@ import ContinueChatCard from "@/src/components/home/ContinueChatCard";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import AuraLookModule from "@/src/components/home/AuraLookModule";
 import HomeHero from "@/src/components/home/HomeHero";
+import { AuraAnimatedSection } from "@/src/components/motion";
 import QuickActionRail, { type QuickActionItem } from "@/src/components/home/QuickActionRail";
 import ShopOptionsSheet from "@/src/components/shop/ShopOptionsSheet";
 import SmartToolsGrid, { type SmartTool } from "@/src/components/home/SmartToolsGrid";
@@ -35,6 +35,7 @@ import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { buildVisiblePreferenceHint, loadAssistantProfile } from "@/src/lib/assistantMemory";
 import { loadChatMessages, loadLatestChatThread, type AIChatThread } from "@/src/lib/aiChats";
 import { askAuraStream, isAuraStreamAbortError } from "@/src/lib/aura";
+import { analyticsErrorProperties, trackLaunchEvent } from "@/src/lib/analytics";
 import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
 import { loadLatestSavedAuraLook } from "@/src/lib/auraLooks";
 import { generateAuraSwipeBatch } from "@/src/lib/auraSwipe";
@@ -81,30 +82,10 @@ function RevealSection({
   delay: number;
   children: React.ReactNode;
 }) {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(18)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 320,
-        delay,
-        useNativeDriver: true,
-      }),
-      Animated.timing(translateY, {
-        toValue: 0,
-        duration: 360,
-        delay,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [delay, opacity, translateY]);
-
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+    <AuraAnimatedSection index={Math.max(0, Math.round(delay / 50))} withLayout>
       {children}
-    </Animated.View>
+    </AuraAnimatedSection>
   );
 }
 
@@ -766,6 +747,16 @@ export default function HomeScreen() {
       }) ?? looks[0] ?? null;
 
     setRegeneratingLook(true);
+    const startedAt = Date.now();
+    void trackLaunchEvent({
+      userId: uid,
+      eventName: "ai_request_started",
+      properties: {
+        source: "home_regenerate_look",
+        closetItemCount: items.length,
+        previousLookItemCount: previousLookItemIds.length,
+      },
+    });
     try {
       try {
         const batch = await generateAuraSwipeBatch({
@@ -800,6 +791,17 @@ export default function HomeScreen() {
             chips: [],
             look: batchLook,
             lookOptions: batchLooks,
+          });
+          void trackLaunchEvent({
+            userId: uid,
+            eventName: "outfit_generated",
+            properties: {
+              source: "home_regenerate_look",
+              provider: "generateAuraSwipeBatch",
+              elapsedMs: Date.now() - startedAt,
+              lookCount: batchLooks.length,
+              closetItemCount: items.length,
+            },
           });
           return;
         }
@@ -846,8 +848,29 @@ export default function HomeScreen() {
         look: regeneratedLook,
         lookOptions: result.lookOptions?.length ? result.lookOptions : [regeneratedLook],
       });
+      void trackLaunchEvent({
+        userId: uid,
+        eventName: "outfit_generated",
+        properties: {
+          source: "home_regenerate_look",
+          provider: "askAuraStream",
+          elapsedMs: Date.now() - startedAt,
+          lookCount: Math.max(result.look ? 1 : 0, result.lookOptions?.length ?? 0),
+          closetItemCount: items.length,
+        },
+      });
     } catch (error: any) {
       if (isAuraStreamAbortError(error)) return;
+      void trackLaunchEvent({
+        userId: uid,
+        eventName: "ai_response_failed",
+        properties: {
+          source: "home_regenerate_look",
+          elapsedMs: Date.now() - startedAt,
+          closetItemCount: items.length,
+          ...analyticsErrorProperties(error),
+        },
+      });
       Alert.alert("AURA", error?.message ?? "Unable to regenerate this outfit right now.");
     } finally {
       setRegeneratingLook(false);
@@ -991,6 +1014,20 @@ export default function HomeScreen() {
         onPress: () => router.push("/(tabs)/closet"),
       },
       {
+        key: "laundry",
+        title: "Laundry",
+        subtitle: `${needsWashCount + laundryCount} pieces need care`,
+        icon: "washing-machine",
+        onPress: () => router.push("/(tabs)/laundry"),
+      },
+      {
+        key: "aura-training",
+        title: "AURA Training",
+        subtitle: "Swipe outfit edits so AURA learns your taste",
+        icon: "gesture-swipe-horizontal",
+        onPress: () => router.push(AURA_TRAINING_ROUTE),
+      },
+      {
         key: "studio",
         title: "Studio",
         subtitle: "Build, refine, save, or plan a look",
@@ -1006,13 +1043,6 @@ export default function HomeScreen() {
           router.push({ pathname: "/(tabs)/add", params: { addSession: String(Date.now()) } }),
       },
       {
-        key: "laundry",
-        title: "Laundry",
-        subtitle: `${needsWashCount + laundryCount} pieces need care`,
-        icon: "washing-machine",
-        onPress: () => router.push("/(tabs)/laundry"),
-      },
-      {
         key: "calendar",
         title: "Calendar",
         subtitle: "Plan the day around real context",
@@ -1025,13 +1055,6 @@ export default function HomeScreen() {
         subtitle: "Read rotation, gaps, and closet signals",
         icon: "chart-box-outline",
         onPress: () => router.push("/insights"),
-      },
-      {
-        key: "aura-training",
-        title: "AURA Training",
-        subtitle: "Swipe outfit edits so AURA learns your taste",
-        icon: "gesture-swipe-horizontal",
-        onPress: () => router.push(AURA_TRAINING_ROUTE),
       },
     ],
     [availableCount, laundryCount, needsWashCount]
@@ -1138,7 +1161,7 @@ export default function HomeScreen() {
             ) : null}
 
             <RevealSection delay={160}>
-              <SmartToolsGrid compact colors={colors} tools={smartTools.slice(0, 3)} columns={layout.smartGridColumns} />
+              <SmartToolsGrid compact colors={colors} tools={smartTools} columns={layout.smartGridColumns} />
             </RevealSection>
 
             {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (

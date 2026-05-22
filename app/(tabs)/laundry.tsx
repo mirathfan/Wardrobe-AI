@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, Pressable, Text, View } from "react-native";
 
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import { AuraAnimatedListItem, AuraAnimatedSection } from "@/src/components/motion";
 import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
 import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers, auraTypography } from "@/src/components/ui/auraStylePrimitives";
 import AppImage from "@/src/components/common/AppImage";
@@ -218,13 +219,15 @@ export default function LaundryScreen() {
   }, [savingStatus, uid, undo]);
 
   const renderLaundryItem = useCallback(
-    ({ item }: { item: ClosetItem }) => (
-      <LaundryRow
-        item={item}
-        disabled={!!savingStatus}
-        activeStatus={normalizeLaundryStatus(item)}
-        onStatus={setItemLaundryStatus}
-      />
+    ({ item, index }: { item: ClosetItem; index: number }) => (
+      <AuraAnimatedListItem index={index}>
+        <LaundryRow
+          item={item}
+          disabled={!!savingStatus}
+          activeStatus={normalizeLaundryStatus(item)}
+          onStatus={setItemLaundryStatus}
+        />
+      </AuraAnimatedListItem>
     ),
     [savingStatus, setItemLaundryStatus],
   );
@@ -358,7 +361,11 @@ export default function LaundryScreen() {
           paddingBottom: layout.bottomDockPadding + 28,
           gap: 10,
         }}
-        ListHeaderComponent={Header}
+        ListHeaderComponent={
+          <AuraAnimatedSection withLayout>
+            {Header}
+          </AuraAnimatedSection>
+        }
         ListEmptyComponent={<PremiumEmptyState tab={tab} />}
         renderItem={renderLaundryItem}
         removeClippedSubviews

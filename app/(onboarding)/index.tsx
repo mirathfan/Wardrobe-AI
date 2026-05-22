@@ -33,6 +33,7 @@ import {
   saveUserAccountProfile,
   saveUserProfilePreferences,
 } from "@/src/lib/userProfile";
+import { trackLaunchEvent } from "@/src/lib/analytics";
 import {
   FIT_OPTIONS,
   BUDGET_OPTIONS,
@@ -313,6 +314,16 @@ export default function OnboardingScreen() {
           null,
       });
       await saveUserProfilePreferences(user.uid, profileToSave);
+      void trackLaunchEvent({
+        userId: user.uid,
+        eventName: "onboarding_completed",
+        properties: {
+          goalsCount: goals.length,
+          styleAestheticCount: normalizedSizingDraft.styleAesthetics.length,
+          categoryCount: normalizedSizingDraft.selectedCategories.length,
+          unitsPreference: draft.unitsPreference,
+        },
+      });
       router.replace("/(tabs)");
     } catch (error) {
       const message = messageForOnboardingSaveError(error);

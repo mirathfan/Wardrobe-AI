@@ -2,6 +2,7 @@ import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import { GoogleAuthProvider, getAdditionalUserInfo, signInWithCredential } from "firebase/auth";
 
 import { saveNewUserProfile } from "@/src/auth/userProfile";
+import { trackLaunchEvent } from "@/src/lib/analytics";
 import { auth } from "@/src/lib/firebase";
 
 export function configureGoogleSignIn(): void {
@@ -33,10 +34,26 @@ export async function signInWithGoogle(): Promise<void> {
   const googleCredential = GoogleAuthProvider.credential(tokens.idToken);
   const result = await signInWithCredential(auth, googleCredential);
   const additionalUserInfo = getAdditionalUserInfo(result);
+  const isNewUser = Boolean(additionalUserInfo?.isNewUser);
 
-  if (additionalUserInfo?.isNewUser) {
+  if (isNewUser) {
     await saveNewUserProfile(result.user.uid, result.user.displayName, result.user.email);
+    void trackLaunchEvent({
+      userId: result.user.uid,
+      eventName: "auth_signed_up",
+      properties: {
+        provider: "google",
+      },
+    });
   }
+  void trackLaunchEvent({
+    userId: result.user.uid,
+    eventName: "auth_sign_in_succeeded",
+    properties: {
+      provider: "google",
+      isNewUser,
+    },
+  });
 }
 
 export async function signOutGoogle(): Promise<void> {

@@ -6,6 +6,7 @@ import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View, useWindowD
 import { Colors } from "@/constants/theme";
 import { SafeScreen } from "@/src/components/SafeScreen";
 import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
+import { AuraAnimatedListItem } from "@/src/components/motion";
 import { AuraTopSafeAreaScrim, auraButtonStyle, auraButtonTextStyle } from "@/src/components/ui/auraStylePrimitives";
 import { LookDetailModal } from "@/src/components/profile/LookDetailModal";
 import { MyLookSkeleton, MyLookThumbnail } from "@/src/components/profile/MyLookThumbnail";
@@ -337,16 +338,17 @@ export default function MyLooksScreen() {
                 <MyLookSkeleton key={index} width={thumbnailWidth} />
               ))
             : currentRecords.length
-              ? currentRecords.map((record) => (
-                  <MyLookThumbnail
-                    key={`${record.collection}-${record.id}`}
-                    record={record}
-                    width={thumbnailWidth}
-                    onPress={() => handleThumbnailPress(record)}
-                    onLongPress={() => startSelection(record)}
-                    selected={selectedKeys.has(selectionKey(record))}
-                    selectionMode={selectionMode}
-                  />
+              ? currentRecords.map((record, index) => (
+                  <AuraAnimatedListItem key={`${record.collection}-${record.id}`} index={index}>
+                    <MyLookThumbnail
+                      record={record}
+                      width={thumbnailWidth}
+                      onPress={() => handleThumbnailPress(record)}
+                      onLongPress={() => startSelection(record)}
+                      selected={selectedKeys.has(selectionKey(record))}
+                      selectionMode={selectionMode}
+                    />
+                  </AuraAnimatedListItem>
                 ))
               : <EmptyState tab={activeTab} />}
         </ScrollView>

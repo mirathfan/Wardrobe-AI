@@ -1,6 +1,7 @@
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { storage } from "./firebase";
 import { optimizeImageForUpload } from "./imageOptimization";
+import { analyticsErrorProperties, trackLaunchEvent } from "./analytics";
 
 type UploadItemPhotoParams = {
   uid: string;
@@ -57,80 +58,98 @@ export async function uploadItemPhoto(params: UploadItemPhotoParams) {
   void maxWidth;
   void quality;
 
-  const displayImage = await optimizeImageForUpload({
-    uri: localUri,
-    width: originalWidth,
-    height: originalHeight,
-    preset: "item_display",
-  });
-  const primaryBlob = await blobFromFileUri(displayImage.uri);
+  try {
+    const displayImage = await optimizeImageForUpload({
+      uri: localUri,
+      width: originalWidth,
+      height: originalHeight,
+      preset: "item_display",
+    });
+    const primaryBlob = await blobFromFileUri(displayImage.uri);
 
-  const suffix = imageId ? `/${imageId}` : "";
-  const storagePath = `users/${uid}/items/${itemId}${suffix}.jpg`;
-  const fileRef = ref(storage, storagePath);
-  await uploadBytes(fileRef, primaryBlob, {
-    contentType: "image/jpeg",
-  });
-  const primaryUrl = await getDownloadURL(fileRef);
-
-  const aiImage = await optimizeImageForUpload({
-    uri: localUri,
-    width: originalWidth,
-    height: originalHeight,
-    preset: "item_ingestion",
-  });
-  let aiUrl = primaryUrl;
-  if (aiImage.uri !== displayImage.uri) {
-    const aiBlob = await blobFromFileUri(aiImage.uri);
-    const aiPath = `users/${uid}/items/${itemId}${suffix}.ai.jpg`;
-    const aiRef = ref(storage, aiPath);
-    await uploadBytes(aiRef, aiBlob, {
+    const suffix = imageId ? `/${imageId}` : "";
+    const storagePath = `users/${uid}/items/${itemId}${suffix}.jpg`;
+    const fileRef = ref(storage, storagePath);
+    await uploadBytes(fileRef, primaryBlob, {
       contentType: "image/jpeg",
     });
-    aiUrl = await getDownloadURL(aiRef);
-  }
+    const primaryUrl = await getDownloadURL(fileRef);
 
-  const cleanedCandidateUri =
-    (saveNormalizedAsCleaned ? normalizedLocalUri : null) ||
-    cleanedLocalUri ||
-    (String(localUri).trim().toLowerCase().endsWith(".png") ? localUri : null);
-  let cleanedUrl: string | null = null;
-  if (cleanedCandidateUri) {
-    const cleanedBlob = await blobFromFileUri(cleanedCandidateUri);
-    const cleanedPath = `users/${uid}/items/${itemId}${suffix}.cleaned.png`;
-    const cleanedRef = ref(storage, cleanedPath);
-    await uploadBytes(cleanedRef, cleanedBlob, {
-      contentType: "image/png",
+    const aiImage = await optimizeImageForUpload({
+      uri: localUri,
+      width: originalWidth,
+      height: originalHeight,
+      preset: "item_ingestion",
     });
-    cleanedUrl = await getDownloadURL(cleanedRef);
-  }
+    let aiUrl = primaryUrl;
+    if (aiImage.uri !== displayImage.uri) {
+      const aiBlob = await blobFromFileUri(aiImage.uri);
+      const aiPath = `users/${uid}/items/${itemId}${suffix}.ai.jpg`;
+      const aiRef = ref(storage, aiPath);
+      await uploadBytes(aiRef, aiBlob, {
+        contentType: "image/jpeg",
+      });
+      aiUrl = await getDownloadURL(aiRef);
+    }
 
-  let normalizedUrl: string | null = null;
-  if (normalizedLocalUri) {
-    const normalizedBlob = await blobFromFileUri(normalizedLocalUri);
-    const normalizedPath = `users/${uid}/items/${itemId}${suffix}.normalized.png`;
-    const normalizedRef = ref(storage, normalizedPath);
-    await uploadBytes(normalizedRef, normalizedBlob, {
-      contentType: "image/png",
-    });
-    normalizedUrl = await getDownloadURL(normalizedRef);
-  }
+    const cleanedCandidateUri =
+      (saveNormalizedAsCleaned ? normalizedLocalUri : null) ||
+      cleanedLocalUri ||
+      (String(localUri).trim().toLowerCase().endsWith(".png") ? localUri : null);
+    let cleanedUrl: string | null = null;
+    if (cleanedCandidateUri) {
+      const cleanedBlob = await blobFromFileUri(cleanedCandidateUri);
+      const cleanedPath = `users/${uid}/items/${itemId}${suffix}.cleaned.png`;
+      const cleanedRef = ref(storage, cleanedPath);
+      await uploadBytes(cleanedRef, cleanedBlob, {
+        contentType: "image/png",
+      });
+      cleanedUrl = await getDownloadURL(cleanedRef);
+    }
 
-  return {
-    originalUrl: primaryUrl,
-    primaryUrl,
-    aiUrl,
-    cleanedUrl,
-    normalizedUrl,
-    cleanedSource: cleanedUrl ? "vision" : null,
-    imageUrls: [primaryUrl],
-    images: [
-      {
-        originalUrl: primaryUrl,
-        aiUrl,
-        ...(cleanedUrl ? { cleanedUrl } : {}),
-        isPrimary: true,
+    let normalizedUrl: string | null = null;
+    if (normalizedLocalUri) {
+      const normalizedBlob = await blobFromFileUri(normalizedLocalUri);
+      const normalizedPath = `users/${uid}/items/${itemId}${suffix}.normalized.png`;
+      const normalizedRef = ref(storage, normalizedPath);
+      await uploadBytes(normalizedRef, normalizedBlob, {
+        contentType: "image/png",
+      });
+      normalizedUrl = await getDownloadURL(normalizedRef);
+    }
+
+    return {
+      originalUrl: primaryUrl,
+      primaryUrl,
+      aiUrl,
+      cleanedUrl,
+      normalizedUrl,
+      cleanedSource: cleanedUrl ? "vision" : null,
+      imageUrls: [primaryUrl],
+      images: [
+        {
+          originalUrl: primaryUrl,
+          aiUrl,
+          ...(cleanedUrl ? { cleanedUrl } : {}),
+          isPrimary: true,
+        },
+      ],
+    };
+  } catch (error) {
+    void trackLaunchEvent({
+      userId: uid,
+      eventName: "photo_upload_failed",
+      properties: {
+        itemId,
+        imageId: imageId || null,
+        hasCleanedLocalUri: Boolean(cleanedLocalUri),
+        hasNormalizedLocalUri: Boolean(normalizedLocalUri),
+        saveNormalizedAsCleaned,
+        originalWidth,
+        originalHeight,
+        ...analyticsErrorProperties(error),
       },
-    ],
-  };
+    });
+    throw error;
+  }
 }

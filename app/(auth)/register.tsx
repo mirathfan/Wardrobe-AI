@@ -11,6 +11,7 @@ import {
 } from "@/src/components/auth/AuthScaffold";
 import { getAuthErrorMessage } from "@/src/auth/authErrors";
 import { auth } from "@/src/lib/firebase";
+import { trackLaunchEvent } from "@/src/lib/analytics";
 import { EMPTY_USER_PROFILE_PREFERENCES, saveUserAccountProfile, saveUserProfilePreferences } from "@/src/lib/userProfile";
 
 function normalize(value: string) {
@@ -52,6 +53,13 @@ export default function RegisterScreen() {
           onboardingCompleted: false,
         }),
       ]);
+      void trackLaunchEvent({
+        userId: credential.user.uid,
+        eventName: "auth_signed_up",
+        properties: {
+          provider: "password",
+        },
+      });
       router.replace("/(onboarding)");
     } catch (error: any) {
       Alert.alert("Create account failed", getAuthErrorMessage(error));

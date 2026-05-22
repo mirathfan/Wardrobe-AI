@@ -15,6 +15,7 @@ import { getAuthErrorMessage } from "@/src/auth/authErrors";
 import { signInWithApple } from "@/src/auth/appleAuth";
 import { signInWithGoogle } from "@/src/auth/googleAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { trackLaunchEvent } from "@/src/lib/analytics";
 import { auth } from "@/src/lib/firebase";
 
 function normalize(value: string) {
@@ -109,7 +110,15 @@ export default function LoginScreen() {
 
     try {
       setLoading(true);
-      await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      const credential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      void trackLaunchEvent({
+        userId: credential.user.uid,
+        eventName: "auth_sign_in_succeeded",
+        properties: {
+          provider: "password",
+          isNewUser: false,
+        },
+      });
     } catch (error: any) {
       Alert.alert("Sign in failed", getAuthErrorMessage(error));
     } finally {

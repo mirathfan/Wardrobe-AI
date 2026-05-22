@@ -18,6 +18,7 @@ import DateRail from "@/src/components/calendar/DateRail";
 import DayContextCard from "@/src/components/calendar/DayContextCard";
 import SwapSheet from "@/src/components/calendar/SwapSheet";
 import TimelineCard from "@/src/components/calendar/TimelineCard";
+import { AuraAnimatedSection } from "@/src/components/motion";
 import {
   auraButtonStyle,
   auraButtonTextStyle,
@@ -893,84 +894,92 @@ export default function CalendarScreen() {
           weatherByDate={dateRailWeather}
         />
 
-        <DayContextCard
-          greeting={greeting}
-          timeLabel={timeLabel}
-          eventSummary={contextEventSummary}
-          weatherSummary={weatherSummary}
-          suggestion={daySuggestion}
-          streak={streak}
-          weatherPermission={weather.permission}
-          weatherState={weather.state}
-          onWeatherAction={onWeatherAction}
-        />
+        <AuraAnimatedSection index={0} withLayout>
+          <DayContextCard
+            greeting={greeting}
+            timeLabel={timeLabel}
+            eventSummary={contextEventSummary}
+            weatherSummary={weatherSummary}
+            suggestion={daySuggestion}
+            streak={streak}
+            weatherPermission={weather.permission}
+            weatherState={weather.state}
+            onWeatherAction={onWeatherAction}
+          />
+        </AuraAnimatedSection>
 
-        <SectionHeader icon="calendar" title="Agenda" />
-        <AgendaCard
-          permission={events.permission}
-          state={events.state}
-          events={events.events}
-          moreCount={events.moreCount}
-          timelineVibe={timelineVibe}
-          onPermissionAction={onCalendarAction}
-        />
+        <AuraAnimatedSection index={1} withLayout>
+          <SectionHeader icon="calendar" title="Agenda" />
+          <AgendaCard
+            permission={events.permission}
+            state={events.state}
+            events={events.events}
+            moreCount={events.moreCount}
+            timelineVibe={timelineVibe}
+            onPermissionAction={onCalendarAction}
+          />
+        </AuraAnimatedSection>
 
         {events.events.length ? (
-          <>
+          <AuraAnimatedSection index={2} withLayout>
             <View style={themedStyles.sectionGap} />
             <View style={themedStyles.timelineQuiet}>
               <TimelineCard events={events.events} />
             </View>
-          </>
+          </AuraAnimatedSection>
         ) : null}
 
         <View style={themedStyles.sectionGap} />
-        <SectionHeader icon="sparkles" title="Outfit for this date" />
-        {isPast && !record?.wornOutfit ? (
-          <View style={[themedStyles.card, themedStyles.emptyDayCard]}>
-            <Text style={themedStyles.emptyDayTitle}>No outfit logged</Text>
-            <Text style={themedStyles.muted}>
-              Nothing was marked worn for {selectedDateLabel}.
-            </Text>
-            <Pressable style={themedStyles.planCta} onPress={() => setSelectedLookId("casual")}>
-              <Text style={themedStyles.planCtaText}>Plan an outfit</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <DailyOutfitCard
-            dateLabel={selectedDateLabel}
-            isPastDate={isPast}
-            record={record}
-            looks={looks}
-            selectedLookId={selectedLookId}
-            itemsById={itemsById}
-            thinking={aiThinking}
-            onSelectLook={onSelectLook}
-            onUseOutfit={onUseOutfit}
-            onWhy={() => setWhyOpen(true)}
-            onMarkWorn={onMarkWorn}
-            onClearPlan={onClearPlan}
-            onCopyPlan={onOpenCopyPicker}
-            onSwapSlot={onSwapSlot}
-          />
-        )}
+        <AuraAnimatedSection index={3} withLayout>
+          <SectionHeader icon="sparkles" title="Outfit for this date" />
+          {isPast && !record?.wornOutfit ? (
+            <View style={[themedStyles.card, themedStyles.emptyDayCard]}>
+              <Text style={themedStyles.emptyDayTitle}>No outfit logged</Text>
+              <Text style={themedStyles.muted}>
+                Nothing was marked worn for {selectedDateLabel}.
+              </Text>
+              <Pressable style={themedStyles.planCta} onPress={() => setSelectedLookId("casual")}>
+                <Text style={themedStyles.planCtaText}>Plan an outfit</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <DailyOutfitCard
+              dateLabel={selectedDateLabel}
+              isPastDate={isPast}
+              record={record}
+              looks={looks}
+              selectedLookId={selectedLookId}
+              itemsById={itemsById}
+              thinking={aiThinking}
+              onSelectLook={onSelectLook}
+              onUseOutfit={onUseOutfit}
+              onWhy={() => setWhyOpen(true)}
+              onMarkWorn={onMarkWorn}
+              onClearPlan={onClearPlan}
+              onCopyPlan={onOpenCopyPicker}
+              onSwapSlot={onSwapSlot}
+            />
+          )}
+        </AuraAnimatedSection>
 
         <View style={themedStyles.sectionGap} />
-        <SectionHeader icon="chart.bar.xaxis" title="Wardrobe rhythm" />
-        <View style={[themedStyles.card, themedStyles.insightsQuietCard]}>
-          <View style={themedStyles.weekBars}>
-            {weeklyFlags.map((value, index) => (
-              <View key={`week-${index}`} style={themedStyles.weekBarTrack}>
-                <AnimatedWeekBar active={Boolean(value)} index={index} />
-              </View>
-            ))}
+        <AuraAnimatedSection index={4} withLayout>
+          <SectionHeader icon="chart.bar.xaxis" title="Wardrobe rhythm" />
+          <View style={[themedStyles.card, themedStyles.insightsQuietCard]}>
+            <View style={themedStyles.weekBars}>
+              {weeklyFlags.map((value, index) => (
+                <View key={`week-${index}`} style={themedStyles.weekBarTrack}>
+                  <AnimatedWeekBar active={Boolean(value)} index={index} />
+                </View>
+              ))}
+            </View>
+            <View style={themedStyles.insightsList}>
+              {weeklyInsights.map((line) => (
+                <Text key={line} style={themedStyles.muted}>{line}</Text>
+              ))}
+            </View>
           </View>
-          <View style={themedStyles.insightsList}>
-            {weeklyInsights.map((line) => (
-              <Text key={line} style={themedStyles.muted}>{line}</Text>
-            ))}
-          </View>
-        </View>
+        </AuraAnimatedSection>
 
         {loadingItems ? <CalendarStatusSkeleton /> : null}
         {saving ? <Text style={themedStyles.muted}>Saving worn status…</Text> : null}

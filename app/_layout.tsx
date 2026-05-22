@@ -25,6 +25,8 @@ import BrandedLoadingAnimation from "@/src/components/brand/BrandedLoadingAnimat
 import { configureGoogleSignIn } from "@/src/auth/googleAuth";
 import { logDeviceSecurityContext } from "@/src/lib/security";
 import { auth, hasFirebaseServices } from "@/src/lib/firebase";
+import { firebaseEnvDiagnostics } from "@/src/lib/firebaseConfig";
+import { installGlobalErrorTracking, trackLaunchEvent } from "@/src/lib/analytics";
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -122,11 +124,23 @@ function AuthLoadTimeoutScreen({
 function ConfigurationErrorScreen() {
   return (
     <View style={loadingStyles.container}>
-      <View style={loadingStyles.errorPanel}>
+      <View style={[loadingStyles.errorPanel, loadingStyles.configErrorPanel]}>
         <Text style={loadingStyles.errorTitle}>Configuration Error</Text>
         <Text style={loadingStyles.errorCopy}>
           AURA is missing required app configuration. Please install the latest build or contact support.
         </Text>
+        <View style={loadingStyles.configDiagnostics}>
+          <Text style={loadingStyles.configDiagnosticTitle}>
+            Build diagnostics: Firebase env validation failed
+          </Text>
+          {firebaseEnvDiagnostics.map((diagnostic) => (
+            <Text key={diagnostic.name} style={loadingStyles.configDiagnosticText}>
+              {diagnostic.name}: required {String(diagnostic.requiredForLaunch)}, present{" "}
+              {String(diagnostic.present)}, length {diagnostic.length}, valid{" "}
+              {String(diagnostic.valid)}, checks {JSON.stringify(diagnostic.checks)}
+            </Text>
+          ))}
+        </View>
       </View>
     </View>
   );
@@ -138,6 +152,7 @@ function AuthGate() {
   const [profileState, setProfileState] = useState<ProfileGateState>("loading");
   const [profileRetryKey, setProfileRetryKey] = useState(0);
   const routedRef = useRef<string | null>(null);
+  const appOpenTrackedForUidRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -201,6 +216,19 @@ function AuthGate() {
       }
     }
   }, [loading, profileState, segments, user]);
+
+  useEffect(() => {
+    if (loading || profileState === "loading" || profileState === "error") return;
+    if (!user?.uid || appOpenTrackedForUidRef.current === user.uid) return;
+    appOpenTrackedForUidRef.current = user.uid;
+    void trackLaunchEvent({
+      userId: user.uid,
+      eventName: "app_opened",
+      properties: {
+        onboardingState: profileState,
+      },
+    });
+  }, [loading, profileState, user?.uid]);
 
   if (loading && authCheckTimedOut) {
     return (
@@ -268,6 +296,12 @@ const loadingStyles = StyleSheet.create({
     gap: 14,
     transform: [{ translateY: -60 }],
   },
+  configErrorPanel: {
+    top: "24%",
+    width: "88%",
+    maxWidth: 430,
+    transform: [{ translateY: -32 }],
+  },
   errorTitle: {
     color: Colors.dark.textPrimary,
     fontSize: 20,
@@ -315,6 +349,23 @@ const loadingStyles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
   },
+  configDiagnostics: {
+    width: "100%",
+    gap: 6,
+    marginTop: 10,
+  },
+  configDiagnosticTitle: {
+    color: Colors.dark.textPrimary,
+    fontSize: 12,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  configDiagnosticText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+    textAlign: "left",
+  },
 });
 
 export default function RootLayout() {
@@ -335,6 +386,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (!firebaseReady) return;
+    installGlobalErrorTracking();
     configureGoogleSignIn();
     void logDeviceSecurityContext();
   }, [firebaseReady]);

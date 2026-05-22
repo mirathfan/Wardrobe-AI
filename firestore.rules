@@ -253,6 +253,22 @@ service cloud.firestore {
         && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp);
     }
 
+    function validLaunchEventDoc(data, uid) {
+      return data is map
+        && data.size() <= 20
+        && noForeignUidField(data, uid)
+        && (!("userId" in data) || data.userId == uid)
+        && (!("type" in data) || data.type is string)
+        && (!("eventName" in data) || data.eventName is string)
+        && (!("sessionId" in data) || validOptionalString(data.sessionId))
+        && (!("platform" in data) || validOptionalString(data.platform))
+        && (!("appVersion" in data) || validOptionalString(data.appVersion))
+        && (!("buildNumber" in data) || data.buildNumber == null || data.buildNumber is string || data.buildNumber is number)
+        && (!("timestamp" in data) || data.timestamp is number)
+        && (!("properties" in data) || data.properties is map)
+        && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp);
+    }
+
     function validStyleEventDoc(data, uid) {
       return data is map
         && data.size() <= 50
@@ -386,6 +402,12 @@ service cloud.firestore {
       match /commerceEvents/{eventId} {
         allow read: if isOwner(uid);
         allow create: if isOwner(uid) && validCommerceEventDoc(request.resource.data, uid);
+        allow update, delete: if false;
+      }
+
+      match /launchEvents/{eventId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && validLaunchEventDoc(request.resource.data, uid);
         allow update, delete: if false;
       }
     }

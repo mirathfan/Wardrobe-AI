@@ -4,6 +4,7 @@ import { OAuthProvider, getAdditionalUserInfo, signInWithCredential } from "fire
 
 import { auth } from "@/src/lib/firebase";
 import { saveNewUserProfile } from "@/src/auth/userProfile";
+import { trackLaunchEvent } from "@/src/lib/analytics";
 
 function createRawNonce() {
   return Array.from(Crypto.getRandomBytes(32))
@@ -43,8 +44,24 @@ export async function signInWithApple(): Promise<void> {
 
   const result = await signInWithCredential(auth, firebaseCredential);
   const additionalUserInfo = getAdditionalUserInfo(result);
+  const isNewUser = Boolean(additionalUserInfo?.isNewUser);
 
-  if (additionalUserInfo?.isNewUser) {
+  if (isNewUser) {
     await saveNewUserProfile(result.user.uid, displayName ?? result.user.displayName, result.user.email);
+    void trackLaunchEvent({
+      userId: result.user.uid,
+      eventName: "auth_signed_up",
+      properties: {
+        provider: "apple",
+      },
+    });
   }
+  void trackLaunchEvent({
+    userId: result.user.uid,
+    eventName: "auth_sign_in_succeeded",
+    properties: {
+      provider: "apple",
+      isNewUser,
+    },
+  });
 }
