@@ -219,6 +219,8 @@ export async function analyzeOutfitPhoto(params: {
             text:
               `User request: ${params.userMessage || "Analyze this worn outfit photo."}\n\n` +
               "Return top, bottom, footwear, outerwear/jacket, and accessories only when visible. " +
+              "Use role accessory for ties, sunglasses, glasses, belts, bags, watches, jewelry, and hats. " +
+              "Use role outerwear for suit jackets, blazers, jackets, coats, and overshirts. Use role bottom for trousers or pants and footwear for shoes. " +
               "Use confidence scores from 0 to 1. If shoes or accessories are cropped/hidden, omit them from detectedPieces and list them as not visible in missingToComplete.",
           },
           ...images.slice(0, 2).map((image) => ({

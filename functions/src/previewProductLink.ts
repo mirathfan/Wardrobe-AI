@@ -29,6 +29,9 @@ import {
 } from "./shared/rateLimit";
 import { redactUrlForLogs } from "./shared/safeFetch";
 
+const PRODUCT_LINK_FAILURE_MESSAGE =
+  "I couldn't read this product page. Try another link, upload a screenshot, or add manually.";
+
 function codeForError(
   error: unknown,
 ): "invalid-argument" | "failed-precondition" | "internal" {
@@ -45,6 +48,52 @@ function codeForError(
     default:
       return "internal";
   }
+}
+
+function cleanText(value?: string | null) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function previewHasUsableProductEvidence(preview: AuraLinkPreview | null | undefined) {
+  if (!preview) return false;
+  const hasTitle = !!cleanText(preview.title);
+  const hasImage = !!cleanText(preview.imageUrl) || (preview.imageUrls ?? []).some((url) => !!cleanText(url));
+  return hasTitle && hasImage;
+}
+
+function candidateHasUsableProductEvidence(candidate: AuraCandidateItem, metadata: ProductLinkPreviewMetadata) {
+  const title = cleanText(candidate.title) || cleanText(metadata.title);
+  const image =
+    cleanText(candidate.primaryImageUrl) ||
+    cleanText(candidate.imageUrls?.[0]) ||
+    cleanText(candidate.secondaryImageUrls?.[0]) ||
+    cleanText("imageUrl" in metadata ? metadata.imageUrl : null);
+  return { hasTitle: !!title, hasImage: !!image };
+}
+
+function throwIfCandidateMissingEvidence(candidate: AuraCandidateItem, metadata: ProductLinkPreviewMetadata) {
+  const evidence = candidateHasUsableProductEvidence(candidate, metadata);
+  if (!evidence.hasTitle) {
+    throw new ProductLinkError(PRODUCT_LINK_FAILURE_MESSAGE, "no_metadata", {
+      reason: "missing_product_title",
+    });
+  }
+  if (!evidence.hasImage) {
+    throw new ProductLinkError(PRODUCT_LINK_FAILURE_MESSAGE, "no_images", {
+      reason: "missing_product_image",
+    });
+  }
+}
+
+function shouldSkipPreviewFallback(error: unknown) {
+  if (!(error instanceof ProductLinkError)) return false;
+  return (
+    error.code === "blocked_store" ||
+    error.code === "no_metadata" ||
+    error.code === "no_images" ||
+    error.code === "invalid_url" ||
+    error.code === "unsafe_url"
+  );
 }
 
 function messageForError(error: unknown) {
@@ -156,12 +205,8 @@ export const previewProductLink = onCall(
       });
       const metadata = await extractProductUrlMetadata(url);
       if (!metadata.imageUrl) {
-        const fallbackPreview =
-          clientPreview ??
-          hmClientFallback ??
-          (metadata.title || metadata.description
-            ? { ...metadata, status: "needs_review" as const }
-            : fallbackLinkPreviewFromUrl(url));
+        const fallbackPreview = [clientPreview, hmClientFallback, { ...metadata, status: "needs_review" as const }]
+          .find(previewHasUsableProductEvidence) ?? null;
         if (fallbackPreview) {
           logger.info("[LINK_PREVIEW] using AURA URL fallback after missing server image", {
             uidHash: redactUid(uid),
@@ -176,6 +221,7 @@ export const previewProductLink = onCall(
             uid,
             metadata: fallbackPreview,
           });
+          throwIfCandidateMissingEvidence(built.candidate, fallbackPreview);
           return previewResponseFromCandidate({
             candidate: built.candidate,
             metadata: fallbackPreview,
@@ -183,6 +229,9 @@ export const previewProductLink = onCall(
             imageExtractionSource: "fallback",
           });
         }
+        throw new ProductLinkError(PRODUCT_LINK_FAILURE_MESSAGE, "no_images", {
+          reason: metadata.title || metadata.description ? "missing_product_image" : "missing_product_evidence",
+        });
       }
 
       const built = await buildUrlCandidatePreview({
@@ -190,6 +239,7 @@ export const previewProductLink = onCall(
         uid,
         metadata,
       });
+      throwIfCandidateMissingEvidence(built.candidate, metadata);
 
       logger.info("[LINK_PREVIEW] product link extracted", {
         uidHash: redactUid(uid),
@@ -208,8 +258,9 @@ export const previewProductLink = onCall(
         imageExtractionSource: null,
       });
     } catch (error) {
-      const fallbackPreview = clientPreview ?? hmClientFallback ?? fallbackLinkPreviewFromUrl(url);
-      if (fallbackPreview) {
+      const fallbackPreview = [clientPreview, hmClientFallback, fallbackLinkPreviewFromUrl(url)]
+        .find(previewHasUsableProductEvidence) ?? null;
+      if (fallbackPreview && !shouldSkipPreviewFallback(error)) {
         logger.info("[LINK_PREVIEW] using AURA client preview fallback", {
           uidHash: redactUid(uid),
           url: redactUrlForLogs(url),
@@ -222,6 +273,7 @@ export const previewProductLink = onCall(
           uid,
           metadata: fallbackPreview,
         });
+        throwIfCandidateMissingEvidence(built.candidate, fallbackPreview);
         return previewResponseFromCandidate({
           candidate: built.candidate,
           metadata: fallbackPreview,

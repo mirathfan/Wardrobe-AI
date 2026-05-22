@@ -22,6 +22,7 @@ import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { formatMoney } from "@/src/lib/currency";
+import { displayOutfitAnalysisRole, formatDetectedOutfitPiece } from "@/src/lib/auraOutfitAnalysisDisplay";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { WardrobeSuggestion } from "@/src/lib/wardrobeSuggestions";
@@ -679,10 +680,10 @@ function OutfitAnalysisCard({
               }}
             >
               <Text style={{ color: colors.textSecondary, fontSize: 10.5, fontWeight: "500", letterSpacing: 0.9, fontFamily: Fonts.sans, textTransform: "uppercase" }}>
-                {displayOutfitRole(piece.role)}
+                {displayOutfitAnalysisRole(piece)}
               </Text>
               <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: "600", fontFamily: Fonts.sans }}>
-                {[piece.color, piece.label].filter(Boolean).map(sanitizeDisplayText).join(" ")}
+                {sanitizeDisplayText(formatDetectedOutfitPiece(piece))}
               </Text>
               {piece.notes ? (
                 <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: "500", fontFamily: Fonts.sans }}>
@@ -727,19 +728,13 @@ function OutfitAnalysisCard({
             borderColor={auraTheme.borderSoft}
           >
             <AuraText variant="button" style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>
-              Add pieces
+              Add pieces (optional)
             </AuraText>
           </ActionButton>
         </View>
       </View>
     </View>
   );
-}
-
-function displayOutfitRole(role: string) {
-  if (role === "footwear") return "Shoes";
-  if (role === "outerwear") return "Outerwear";
-  return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 function ActionButton({

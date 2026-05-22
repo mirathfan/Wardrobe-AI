@@ -52,8 +52,26 @@ export type AuraLinkPreview = {
 type UrlCandidateMetadata = ProductUrlMetadata | AuraLinkPreview;
 
 function cleanPreviewText(value: unknown, maxLength = 500) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  const text = decodePreviewText(value).replace(/\s+/g, " ").trim();
   return text ? text.slice(0, maxLength) : null;
+}
+
+function decodePreviewText(value: unknown) {
+  return String(value ?? "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&#(\d+);/g, (_, decimal: string) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
 }
 
 function normalizePreviewImage(sourceUrl: URL, value: unknown) {
@@ -162,6 +180,12 @@ export function brandFromSourceUrl(sourceUrl?: string | null) {
     if (host.endsWith("hm.com")) return "H&M";
     if (host.endsWith("zara.com")) return "Zara";
     if (host.endsWith("nike.com")) return "Nike";
+    if (host.endsWith("aritzia.com")) return "Aritzia";
+    if (host.endsWith("amazon.com")) return "Amazon";
+    if (host.endsWith("footlocker.com")) return "Foot Locker";
+    if (host.endsWith("jdsports.com")) return "JD Sports";
+    if (host.endsWith("macys.com")) return "Macy's";
+    if (host.endsWith("newbalance.com")) return "New Balance";
     const domain = host.split(".")[0] ?? "";
     return domain ? domain.charAt(0).toUpperCase() + domain.slice(1) : null;
   } catch {
@@ -211,11 +235,13 @@ export function fallbackLinkPreviewFromUrl(sourceUrl: string): AuraLinkPreview |
 }
 
 function cleanProductTitle(title?: string | null, brand?: string | null) {
-  let next = String(title ?? "").replace(/\s+/g, " ").trim();
+  let next = decodePreviewText(title).replace(/\s+/g, " ").trim();
   next = next
     .replace(/\s*\|\s*H\s*&\s*M(?:\s+[A-Z]{2})?\s*$/i, "")
     .replace(/\s*\|\s*Zara\s*$/i, "")
     .replace(/\s*\|\s*Nike\s*$/i, "")
+    .replace(/\s*(?:\||-|–)\s*(?:Aritzia|Amazon(?:\.[A-Za-z.]+)?|Foot\s*Locker|JD\s*Sports|Macy[’']?s|New\s*Balance)\s*$/i, "")
+    .replace(/\s*(?:\||-|–)\s*(?:Men[’']s|Women[’']s)\s*$/i, "")
     .replace(/^Men[’']s\s+/i, "")
     .replace(/^Women[’']s\s+/i, "")
     .replace(/^Ladies[’']?\s+/i, "")
@@ -383,6 +409,9 @@ export async function buildUrlCandidatePreview(params: {
   candidate.imageUrls = rankedImageUrls.length ? rankedImageUrls : candidate.imageUrls;
   candidate.primaryImageUrl = candidate.imageUrls[0] ?? null;
   candidate.secondaryImageUrls = candidate.imageUrls.slice(1);
+  candidate.imageSourceReason = candidate.primaryImageUrl
+    ? "product_link_ranked_image"
+    : "product_link_no_usable_image";
   logger.info("[LINK_IMAGE_REVIEW_SET]", {
     uidHash: params.uid ? redactUid(params.uid) : null,
     sourceUrl: redactUrlForLogs(params.metadata.sourceUrl),

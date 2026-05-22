@@ -29,6 +29,34 @@ type UseAuraChatHydrationOptions = {
   debug: boolean;
 };
 
+const PENDING_STREAM_TIMEOUT_MS = 120_000;
+const INTERRUPTED_STREAM_MESSAGE =
+  "AURA was interrupted before it finished. Try again to regenerate this response.";
+
+function recoverStaleStreamingMessages(messages: AIMessage[]) {
+  const now = Date.now();
+  return orderChatMessages(messages).map((message) => {
+    if (!message.streaming || message.type !== "assistant") return message;
+    const createdAt =
+      typeof message.createdAt === "number"
+        ? message.createdAt
+        : typeof message.clientCreatedAt === "number"
+          ? message.clientCreatedAt
+          : now;
+    if (now - createdAt < PENDING_STREAM_TIMEOUT_MS) return message;
+    return {
+      ...message,
+      type: "system/action" as const,
+      kind: "system" as const,
+      text: INTERRUPTED_STREAM_MESSAGE,
+      assistantIntroText: undefined,
+      aura: undefined,
+      outfits: undefined,
+      streaming: false,
+    };
+  });
+}
+
 function messageSignature(messages: AIMessage[]) {
   return messages
     .map((message) =>
@@ -106,7 +134,7 @@ export function useAuraChatHydration({
           consumedChatTokens.current.add(`${routeChatKey}:${routeChatId}`);
           const cachedMessages = await getCachedRecentMessages(uid, routeChatId);
           if (!cancelled && cachedMessages?.data?.length) {
-            setMessages(orderChatMessages(cachedMessages.data));
+            setMessages(recoverStaleStreamingMessages(cachedMessages.data));
             setActiveChatId(routeChatId);
             setIsBooting(false);
           }
@@ -115,7 +143,7 @@ export function useAuraChatHydration({
             loadRecentChatThreads(uid, recentChatLimit),
           ]);
           if (!cancelled) {
-            const orderedThreadMessages = orderChatMessages(threadMessages);
+            const orderedThreadMessages = recoverStaleStreamingMessages(threadMessages);
             if (shouldReplaceMessages(latestMessagesRef.current, orderedThreadMessages)) {
               setMessages(orderedThreadMessages);
             }
@@ -133,7 +161,7 @@ export function useAuraChatHydration({
           let renderedCachedMessages = false;
           const cachedMessages = await getCachedRecentMessages(uid, session.chatId);
           if (!cancelled && cachedMessages?.data?.length) {
-            setMessages(orderChatMessages(cachedMessages.data));
+            setMessages(recoverStaleStreamingMessages(cachedMessages.data));
             setActiveChatId(session.chatId);
             setIsBooting(false);
             renderedCachedMessages = true;
@@ -142,7 +170,7 @@ export function useAuraChatHydration({
           if (!renderedCachedMessages) {
             const cachedLatest = await loadLatestChatCache<AIMessage>(uid);
             if (!cancelled && cachedLatest?.chatId === session.chatId && cachedLatest.messages.length) {
-              setMessages(orderChatMessages(cachedLatest.messages));
+              setMessages(recoverStaleStreamingMessages(cachedLatest.messages));
               setActiveChatId(session.chatId);
               setIsBooting(false);
               renderedCachedMessages = true;
@@ -161,7 +189,7 @@ export function useAuraChatHydration({
             loadChatMessages(uid, session.chatId),
           ]);
           if (!cancelled) {
-            const orderedThreadMessages = orderChatMessages(threadMessages);
+            const orderedThreadMessages = recoverStaleStreamingMessages(threadMessages);
             setRecentThreads(recent);
             setActiveChatId(session.chatId);
             if (shouldReplaceMessages(latestMessagesRef.current, orderedThreadMessages)) {
@@ -180,7 +208,7 @@ export function useAuraChatHydration({
             openedAt: cachedLatest.updatedAt ?? 0,
           })
         ) {
-          const orderedCachedMessages = orderChatMessages(cachedLatest.messages);
+          const orderedCachedMessages = recoverStaleStreamingMessages(cachedLatest.messages);
           if (!cancelled) {
             setMessages(orderedCachedMessages);
             setActiveChatId(cachedLatest.chatId);
@@ -192,7 +220,7 @@ export function useAuraChatHydration({
             loadChatMessages(uid, cachedLatest.chatId),
           ]);
           if (!cancelled) {
-            const orderedThreadMessages = orderChatMessages(threadMessages);
+            const orderedThreadMessages = recoverStaleStreamingMessages(threadMessages);
             setRecentThreads(recent);
             setActiveChatId(cachedLatest.chatId);
             if (shouldReplaceMessages(latestMessagesRef.current, orderedThreadMessages)) {

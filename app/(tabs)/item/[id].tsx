@@ -445,12 +445,9 @@ function auraPromptForItem(item: ItemDetails) {
     item.material,
     item.fit,
   ]).join(", ");
-  const slot = normalizeDisplayToken(item.category || item.subCategory || item.type).toLowerCase() || "item";
   return [
     `Style this closet item for me: ${details}.`,
-    `Closet item id: ${item.id}.`,
-    `Required anchor item: use closet item id ${item.id} as the ${slot} in the outfit.`,
-    "Do not substitute another closet item for this anchor. Build a wearable outfit around it using my closet where possible and keep the advice concise.",
+    "Use it as the anchor and build a wearable outfit around it using my closet where possible.",
   ].join("\n");
 }
 
@@ -1179,6 +1176,7 @@ export default function ItemDetailsScreen() {
       pathname: "/(tabs)/ai",
       params: {
         prompt: auraPromptForItem(currentItem),
+        requiredItemIds: currentItem.id,
         promptKey: `item-${currentItem.id}-${Date.now()}`,
       },
     });

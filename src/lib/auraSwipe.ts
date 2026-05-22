@@ -34,6 +34,7 @@ type GenerateAuraSwipeBatchArgs = {
   intentText?: string;
   numOutfits?: number;
   anchorItemIds?: string[];
+  requiredItemIds?: string[];
   excludeItemIds?: string[];
   recentItemIds?: string[];
   previousLookItemIds?: string[];
@@ -68,6 +69,37 @@ type GenerateAuraSwipeBatchResponse = {
 
 function cleanString(value: unknown) {
   return String(value ?? "").trim();
+}
+
+function uniqueItemIds(values: unknown[], max = 8) {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  values.forEach((value) => {
+    const itemId = cleanString(value);
+    if (!itemId || seen.has(itemId)) return;
+    seen.add(itemId);
+    ids.push(itemId);
+  });
+  return ids.slice(0, max);
+}
+
+function lookIncludesRequiredItemIds(look: AuraLook | null | undefined, requiredItemIds: string[]) {
+  if (!requiredItemIds.length || !look) return true;
+  const itemIds = new Set(
+    (look.pieces ?? [])
+      .filter((piece) => piece.source === "closet")
+      .map((piece) => cleanString(piece.itemId))
+      .filter(Boolean),
+  );
+  return requiredItemIds.every((itemId) => itemIds.has(itemId));
+}
+
+function filterRequiredLookOptions(
+  lookOptions: AuraSwipeBatchLook[],
+  requiredItemIds: string[],
+) {
+  if (!requiredItemIds.length) return lookOptions;
+  return lookOptions.filter((entry) => lookIncludesRequiredItemIds(entry.look, requiredItemIds));
 }
 
 function buildDirectionLabel(index: number, total: number): "safe" | "balanced" | "bold" | null {
@@ -198,7 +230,9 @@ function localSwipeBatchFromCloset(
     previousLookSignatures: args.previousLookSignatures,
     maxOverlap: args.maxOverlap,
     numOutfits: args.numOutfits,
-  }).slice(0, args.numOutfits);
+  }).filter((suggestion) =>
+    args.requiredItemIds.every((itemId) => suggestion.itemIds.includes(itemId)),
+  ).slice(0, args.numOutfits);
 
   if (!suggestions.length) return null;
 
@@ -280,13 +314,18 @@ export async function generateAuraSwipeBatch(
       args?.intentText ??
       "Build a varied batch of outfit directions from my wardrobe. Keep them polished, wearable, and distinct.",
     numOutfits: args?.numOutfits ?? 8,
-    anchorItemIds: args?.anchorItemIds ?? [],
+    requiredItemIds: uniqueItemIds(args?.requiredItemIds ?? []),
+    anchorItemIds: uniqueItemIds(
+      [...(args?.requiredItemIds ?? []), ...(args?.anchorItemIds ?? [])],
+      args?.requiredItemIds?.length ? 8 : 3,
+    ),
     excludeItemIds: args?.excludeItemIds ?? [],
     recentItemIds: args?.recentItemIds ?? [],
     previousLookItemIds: args?.previousLookItemIds ?? [],
     previousLookSignatures: args?.previousLookSignatures ?? [],
     maxOverlap: args?.maxOverlap ?? 2,
   };
+  const requiredItemIds = request.requiredItemIds;
   const itemsById = new Map((args?.items ?? []).map((item) => [item.id, item]));
   const localItems = args?.items ?? [];
   const isMissingCoreCategory =
@@ -303,7 +342,7 @@ export async function generateAuraSwipeBatch(
     if (DEBUG_AURA_SWIPE) {
       console.log("[AURA_SWIPE]", "callable generateAuraSwipeBatch response", result.data);
     }
-    const lookOptions = normalizeLookOptions(result.data ?? {}, itemsById);
+    const lookOptions = filterRequiredLookOptions(normalizeLookOptions(result.data ?? {}, itemsById), requiredItemIds);
     if (lookOptions.length > 0) {
       return {
         batchId: cleanString(result.data?.batchId) || `swipe_${Date.now()}`,
@@ -337,7 +376,7 @@ export async function generateAuraSwipeBatch(
   if (DEBUG_AURA_SWIPE) {
     console.log("[AURA_SWIPE]", "fallback generateOutfitsV1 response", fallback.data);
   }
-  const lookOptions = normalizeLookOptions(fallback.data ?? {}, itemsById);
+  const lookOptions = filterRequiredLookOptions(normalizeLookOptions(fallback.data ?? {}, itemsById), requiredItemIds);
   if (lookOptions.length === 0) {
     const localBatch =
       localSwipeBatchFromCloset({ ...request, items: localItems }) ??

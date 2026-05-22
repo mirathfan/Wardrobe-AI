@@ -40,6 +40,7 @@ export type AIMessage = {
   type: "user" | "assistant" | "outfit" | "system/action";
   kind?: "user_text" | "aura_text" | "aura_card" | "system";
   text?: string;
+  requiredItemIds?: string[];
   assistantIntroText?: string;
   attachments?: ChatAttachment[];
   streaming?: boolean;

@@ -378,11 +378,21 @@ function normalizePriceCandidate(params: {
 
 function decodeHtmlEntities(value: string): string {
   return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&#(\d+);/g, (_, decimal: string) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, " ");
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
 }
 
 function extractMeta(html: string, key: string): string | null {
@@ -862,6 +872,12 @@ function extractAttributeHintsFromText(text: string): Partial<ProductMetadata> {
 
 function inferCategoryHintsFromTitle(title?: string | null): string[] {
   const text = String(title ?? "").toLowerCase();
+  if (/\b(air\s+jordan|jordan\s+\d+|new\s+balance|foot\s*locker|jd\s+sports|men[’']?s\s+shoes?|women[’']?s\s+shoes?|running\s+shoes?|basketball\s+shoes?|sneakers?|trainers?|shoes?)\b/.test(text)) {
+    return ["footwear", "sneakers"];
+  }
+  if (/\bboots?\b/.test(text)) return ["footwear", "boots"];
+  if (/\bloafers?\b/.test(text)) return ["footwear", "loafers"];
+  if (/\bsandals?\b/.test(text)) return ["footwear", "sandals"];
   if (/\bfootball shirt\b/.test(text)) return ["top", "football shirt"];
   if (/\bpolo\b/.test(text)) return ["top", "polo"];
   if (/\bt-?shirt\b|\btee\b/.test(text)) return ["top", "tshirt"];
@@ -876,9 +892,6 @@ function inferCategoryHintsFromTitle(title?: string | null): string[] {
   if (/\btrousers?\b|\bpants?\b/.test(text)) return ["bottom", "trousers"];
   if (/\bshorts?\b/.test(text)) return ["bottom", "shorts"];
   if (/\bskirt\b/.test(text)) return ["bottom", "skirt"];
-  if (/\bsneakers?\b|\btrainers?\b/.test(text)) return ["footwear", "sneakers"];
-  if (/\bboots?\b/.test(text)) return ["footwear", "boots"];
-  if (/\bloafers?\b/.test(text)) return ["footwear", "loafers"];
   if (/\bdress\b/.test(text)) return ["one_piece", "dress"];
   return [];
 }
@@ -898,7 +911,7 @@ function productNounFromHints(hints: string[], fallbackTitle?: string | null) {
 
 function removeBrandWords(title: string, brand?: string | null) {
   let next = title;
-  const brands = [brand, "H&M", "Zara", "Uniqlo", "Nike", "Adidas"]
+  const brands = [brand, "H&M", "Zara", "Uniqlo", "Nike", "Adidas", "Aritzia", "Amazon", "Foot Locker", "JD Sports", "Macy's", "Macy’s", "New Balance"]
     .map((value) => cleanText(value, 80))
     .filter((value): value is string => !!value);
   for (const candidate of brands) {
@@ -940,6 +953,9 @@ function cleanRetailProductTitle(params: {
     .replace(/\s*\|\s*H\s*&\s*M(?:\s+[A-Z]{2})?\s*$/i, "")
     .replace(/\s*\|\s*Zara\s*$/i, "")
     .replace(/\s*\|\s*Nike\s*$/i, "")
+    .replace(/\s*(?:\||-|–)\s*(?:Aritzia|Amazon(?:\.[A-Za-z.]+)?|Foot\s*Locker|JD\s*Sports|Macy[’']?s|New\s*Balance)\s*$/i, "")
+    .replace(/\s*(?:\||-|–)\s*(?:Men[’']s|Women[’']s)\s*(?:\||-|–)\s*(?:Foot\s*Locker|JD\s*Sports|Macy[’']?s)\s*$/i, "")
+    .replace(/\s*(?:\||-|–)\s*(?:Men[’']s|Women[’']s)\s*$/i, "")
     .replace(/^Men[’']s\s+/i, "")
     .replace(/^Women[’']s\s+/i, "")
     .replace(/^Ladies[’']?\s+/i, "")
@@ -2446,8 +2462,10 @@ export async function createDraftItemFromProductLink(params: {
           sourceType: "aura_product_link",
           sourceUrl: extraction.metadata.sourceUrl,
           domain: extraction.metadata.domain,
+          imageSourceReason: "product_link_extraction_primary",
         },
-        source: "aura_product_link",
+        source: "product_link",
+        imageSourceReason: "product_link_extraction_primary",
         sourceUrl: extraction.metadata.sourceUrl,
         productUrl: extraction.metadata.sourceUrl,
         retailer: extraction.metadata.retailer,

@@ -37,6 +37,7 @@ import { ClosetProcessingSection } from "@/src/components/closet/ClosetProcessin
 import { ClosetSearchBar } from "@/src/components/closet/ClosetSearchBar";
 import AppImage from "@/src/components/common/AppImage";
 import AuraPressable from "@/src/components/aura/AuraPressable";
+import { AuraAnimatedListItem, AuraAnimatedSection } from "@/src/components/motion";
 import {
   auraButtonStyle,
   auraButtonTextStyle,
@@ -682,7 +683,7 @@ const ClosetGridRow = React.memo(
     onLongPressItem,
   }: ClosetGridRowProps) {
     return (
-      <View style={{ flexDirection: "row", gap: gridGap }}>
+      <AuraAnimatedListItem index={animateOffset} style={{ flexDirection: "row", gap: gridGap }}>
         {items.map((item, index) => (
           <ClosetItemCard
             key={item.id}
@@ -697,7 +698,7 @@ const ClosetGridRow = React.memo(
         {trailingAddTile ? (
           <ClosetAddItemTile width={cardWidth} onPress={onAddItem} />
         ) : null}
-      </View>
+      </AuraAnimatedListItem>
     );
   },
   (prev, next) =>
@@ -917,7 +918,8 @@ export default function ClosetScreen() {
     !!uid &&
     !!productLinkPreview &&
     !!productLinkDraft &&
-    !!cleanProductLinkText(productLinkDraft.name);
+    !!cleanProductLinkText(productLinkDraft.name) &&
+    !!productLinkImageUrl;
 
   useEffect(() => {
     if (!uid) return;
@@ -1693,18 +1695,24 @@ export default function ClosetScreen() {
   );
 
   const renderClosetRow = React.useCallback(
-    ({ item }: { item: ClosetListRow }) => {
+    ({ item, index }: { item: ClosetListRow; index: number }) => {
       if (item.type === "section") {
         return (
-          <ClosetSectionHeader
-            section={item.section}
-            expanded={item.expanded}
-            onToggle={handleToggleSection}
-          />
+          <AuraAnimatedSection index={index} withLayout>
+            <ClosetSectionHeader
+              section={item.section}
+              expanded={item.expanded}
+              onToggle={handleToggleSection}
+            />
+          </AuraAnimatedSection>
         );
       }
       if (item.type === "subcategory") {
-        return <ClosetSubcategoryHeader label={item.label} count={item.count} />;
+        return (
+          <AuraAnimatedSection index={index} withLayout>
+            <ClosetSubcategoryHeader label={item.label} count={item.count} />
+          </AuraAnimatedSection>
+        );
       }
       return (
         <ClosetGridRow

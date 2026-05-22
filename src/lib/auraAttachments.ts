@@ -393,8 +393,10 @@ export async function createProductLinkProcessingDraft(params: {
       sourceHash: `link:${url}`,
       sourceType: "aura_product_link",
       sourceUrl: url,
+      imageSourceReason: "product_link_import_pending",
     },
-    source: "aura_product_link",
+    source: "product_link",
+    imageSourceReason: "product_link_import_pending",
     sourceUrl: url,
     auraPrompt: prompt,
     name: "Importing from link",
@@ -585,6 +587,20 @@ function candidateSourceType(candidate: AuraCandidateItem) {
   return "aura_chat";
 }
 
+function candidatePublicSource(candidate: AuraCandidateItem) {
+  if (candidate.sourceType === "link") return "product_link";
+  return "chat_image";
+}
+
+function candidateImageSourceReason(candidate: AuraCandidateItem, hasLocalPhoto: boolean) {
+  if (candidate.imageSourceReason) return candidate.imageSourceReason;
+  if (candidate.sourceType === "link") return "product_link_selected_preview_image";
+  if (candidate.sourceType === "batch") {
+    return hasLocalPhoto ? "chat_image_matched_batch_attachment" : "chat_image_batch_candidate";
+  }
+  return hasLocalPhoto ? "chat_image_matched_attachment" : "chat_image_candidate";
+}
+
 function normalizedText(value?: string | null) {
   return String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
@@ -622,6 +638,8 @@ function normalizeLinkBrandAndTitle(candidate: AuraCandidateItem) {
     .replace(/\s*\|\s*H\s*&\s*M(?:\s+[A-Z]{2})?\s*$/i, "")
     .replace(/\s*\|\s*Zara\s*$/i, "")
     .replace(/\s*\|\s*Nike\s*$/i, "")
+    .replace(/\s*(?:\||-|–)\s*(?:Aritzia|Amazon(?:\.[A-Za-z.]+)?|Foot\s*Locker|JD\s*Sports|Macy[’']?s|New\s*Balance)\s*$/i, "")
+    .replace(/\s*(?:\||-|–)\s*(?:Men[’']s|Women[’']s)\s*$/i, "")
     .replace(/^Men[’']s\s+/i, "")
     .replace(/^Women[’']s\s+/i, "")
     .replace(/^Ladies[’']?\s+/i, "")
@@ -779,6 +797,13 @@ function normalizeCandidateCategory(candidate: AuraCandidateItem) {
 }
 
 function categoryForDetectedOutfitPiece(piece: AuraDetectedOutfitPiece) {
+  const text = `${piece.label ?? ""} ${piece.notes ?? ""}`.toLowerCase();
+  if (/\b(tie|sunglasses|glasses|watch|bag|belt|scarf|hat|cap|necklace|chain|bracelet|ring|earrings?)\b/.test(text)) {
+    return "accessory";
+  }
+  if (/\b(shoes?|sneakers?|boots?|loafers?|heels?|sandals?|footwear)\b/.test(text)) return "footwear";
+  if (/\b(suit\s+jacket|blazer|jacket|coat|outerwear)\b/.test(text)) return "outerwear";
+  if (/\b(trousers?|pants?|slacks|jeans?|shorts?|skirt)\b/.test(text)) return "bottom";
   if (piece.role === "footwear") return "footwear";
   if (piece.role === "outerwear") return "outerwear";
   if (piece.role === "accessory") return "accessory";
@@ -823,8 +848,10 @@ export async function createAuraItemDraftsFromDetectedOutfit(params: {
         sourceHash: `outfit-photo:${sourceImageUrl}:${piece.role}:${piece.label}`,
         sourceType: "aura_outfit_photo",
         candidateId,
+        imageSourceReason: "outfit_photo_reference",
       },
-      source: "aura_outfit_photo",
+      source: "chat_image",
+      imageSourceReason: "outfit_photo_reference",
       auraPrompt: prompt,
       auraDetectedOutfitPiece: piece,
       name: piece.label,
@@ -1042,6 +1069,7 @@ export async function createAuraItemDraftsFromCandidates(params: {
     const category = normalizeCandidateCategory(candidate);
     const matchedLocalPhoto = localPhotosByCandidateId[candidate.candidateId];
     const localPhoto = matchedLocalPhoto ?? undefined;
+    const imageSourceReason = candidateImageSourceReason(candidate, !!localPhoto?.localUri);
     const docRef = doc(collection(db, "users", uid, "items"));
     const payload = {
       isDraft: true,
@@ -1061,9 +1089,11 @@ export async function createAuraItemDraftsFromCandidates(params: {
         sourceHash,
         sourceType: candidateSourceType(candidate),
         candidateId: candidate.candidateId,
+        imageSourceReason,
         ...(candidate.sourceUrl ? { sourceUrl: candidate.sourceUrl } : {}),
       },
-      source: candidateSourceType(candidate),
+      source: candidatePublicSource(candidate),
+      imageSourceReason,
       ...(candidate.sourceUrl ? { sourceUrl: candidate.sourceUrl } : {}),
       ...(candidate.productUrl ?? candidate.sourceUrl ? { productUrl: candidate.productUrl ?? candidate.sourceUrl } : {}),
       auraPrompt: prompt,

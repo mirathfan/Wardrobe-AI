@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
-import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, RefreshControl, Text, View } from "react-native";
+import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, Pressable, RefreshControl, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import { AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
@@ -132,6 +132,7 @@ export default function ChatList({
   onAuraOutfitPhotoAction,
   onAuraLaundryAction,
   onRetryAuraResponse,
+  onMessageLongPress,
 }: {
   colors: AppColors;
   messages: AIMessage[];
@@ -158,6 +159,7 @@ export default function ChatList({
   onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
   onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
   onRetryAuraResponse?: (message: AIMessage) => void;
+  onMessageLongPress?: (message: AIMessage) => void;
 }) {
   const listRef = useRef<FlatList<AIMessage>>(null);
   const previousCountRef = useRef(messages.length);
@@ -483,7 +485,11 @@ export default function ChatList({
     ({ item }: { item: AIMessage }) => {
       return (
         <ChatErrorBoundary colors={colors} resetKey={`${item.id}:${item.createdAt ?? ""}:${item.streaming ? "streaming" : "done"}`}>
-          <View>
+          <Pressable
+            delayLongPress={260}
+            onLongPress={() => onMessageLongPress?.(item)}
+            disabled={!onMessageLongPress}
+          >
             <ChatMessage
               colors={colors}
               message={item}
@@ -499,7 +505,7 @@ export default function ChatList({
               onAuraLaundryAction={onAuraLaundryAction}
               onRetryAuraResponse={onRetryAuraResponse}
             />
-          </View>
+          </Pressable>
         </ChatErrorBoundary>
       );
     },
@@ -513,6 +519,7 @@ export default function ChatList({
       onAuraOutfitPhotoAction,
       onMoreLikeThis,
       onRetryAuraResponse,
+      onMessageLongPress,
       onSaveOutfit,
       onSwapOutfit,
       savingId,

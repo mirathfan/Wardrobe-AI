@@ -45,6 +45,7 @@ type AskAuraArgs = {
       previousLookSignatures: string[];
       maxOverlap: number;
     };
+    requiredItemIds?: string[];
   };
 };
 
@@ -222,6 +223,7 @@ function logAuraRequest(label: string, args: AskAuraArgs, url?: string) {
           maxOverlap: args.clientContext.outfitDiversity.maxOverlap,
         }
       : null,
+    requiredItemCount: args.clientContext?.requiredItemIds?.length ?? 0,
   });
 }
 
@@ -246,11 +248,20 @@ function firstUrlFromText(text: string) {
 
 function decodeHtmlEntities(value: string) {
   return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&#(\d+);/g, (_, decimal: string) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, "\"")
-    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

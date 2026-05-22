@@ -53,6 +53,8 @@ export type ProductUrlMetadata = {
 const USER_AGENT =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) " +
   "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+const PRODUCT_PAGE_FAILURE_MESSAGE =
+  "I couldn't read this product page. Try another link, upload a screenshot, or add manually.";
 
 function isHmHost(url: URL) {
   const hostname = url.hostname.toLowerCase();
@@ -98,6 +100,20 @@ async function fetchTextWithTimeout(
 
 function cleanText(value: unknown, maxLength = 300) {
   const text = String(value ?? "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&#(\d+);/g, (_, decimal: string) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return text ? text.slice(0, maxLength) : null;
@@ -296,6 +312,13 @@ async function fetchHtml(url: URL) {
       message: "You can try again, paste another link, or add the item from a screenshot.",
     });
   }
+  if (originalStatus === 404) {
+    throw new ProductLinkError(PRODUCT_PAGE_FAILURE_MESSAGE, "no_metadata", {
+      reason: "http_404",
+      status: originalStatus,
+      host: url.hostname,
+    });
+  }
   throw new Error(`Product page returned ${originalStatus ?? "unknown status"}`);
 }
 
@@ -385,6 +408,30 @@ function firstLargeImage($: cheerio.CheerioAPI, baseUrl: URL) {
   return best ?? fallback;
 }
 
+function detectProductPageFailure($: cheerio.CheerioAPI, finalUrl: URL) {
+  const title = cleanText($("title").first().text(), 220) ?? "";
+  const h1 = cleanText($("h1").first().text(), 220) ?? "";
+  const canonical = normalizeImageUrl(finalUrl, $("link[rel='canonical']").first().attr("href") ?? undefined);
+  const bodyText = cleanText($("body").text(), 2_000) ?? "";
+  const combined = `${title} ${h1} ${bodyText}`.toLowerCase();
+  const failureReason =
+    /\b(?:404|not\s+found|page\s+not\s+available|page\s+unavailable|we\s+can(?:not|'t)\s+find|does\s+not\s+exist|error\s+page)\b/i.test(combined)
+      ? "not_found"
+      : /\b(?:access\s+denied|captcha|robot\s+check|bot\s+protection|blocked|forbidden|request\s+unsuccessful)\b/i.test(combined)
+        ? "blocked_or_bot_protected"
+        : /\/(?:404|not-found|page-not-found)(?:\/|$)/i.test(finalUrl.pathname) ||
+          (canonical ? /\/(?:404|not-found|page-not-found)(?:\/|$)/i.test(canonical) : false)
+          ? "not_found_route"
+          : null;
+
+  if (!failureReason) return;
+  throw new ProductLinkError(PRODUCT_PAGE_FAILURE_MESSAGE, "no_metadata", {
+    reason: failureReason,
+    title,
+    finalUrl: redactUrlForLogs(finalUrl.toString()),
+  });
+}
+
 export async function extractProductUrlMetadata(rawUrl: string): Promise<ProductUrlMetadata> {
   const url = await validateProductUrl(rawUrl);
   const zaraMetadata = await extractZaraProductUrlMetadata(url);
@@ -393,6 +440,8 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
   const fetched = await fetchHtml(url);
   const html = fetched.html;
   const finalUrl = fetched.finalUrl;
+  const page = cheerio.load(html);
+  detectProductPageFailure(page, finalUrl);
   if (isAmazonProductUrl(finalUrl)) {
     const amazon = extractAmazonLinkData(finalUrl, html);
     const imageUrls = await filterSafeExternalImageUrls(amazon.imageUrls, {
@@ -418,7 +467,7 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
       status: amazon.status,
     };
   }
-  const $ = cheerio.load(html);
+  const $ = page;
   const nikeVariant = extractNikeSelectedVariantData(finalUrl.toString(), html);
   const productMetadata = extractProductMetadataFromHtml(finalUrl.toString(), html);
   const imageUrls =

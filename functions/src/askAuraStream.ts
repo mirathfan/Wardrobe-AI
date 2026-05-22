@@ -137,6 +137,34 @@ function cleanStringList(value: unknown, maxLength: number) {
   return out;
 }
 
+function requiredItemIdsFromClientContext(value: unknown) {
+  const context = value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+  return cleanStringList(context.requiredItemIds, 8);
+}
+
+function requiredItemsPromptNote(requiredItemIds: string[]) {
+  if (!requiredItemIds.length) return "No required closet anchor items.";
+  return [
+    "Required closet anchor:",
+    `- Every outfit/look option must include these exact closet item IDs: ${requiredItemIds.join(", ")}.`,
+    "- Do not substitute another closet item for these anchors.",
+    "- Never mention these raw IDs in the user-facing reply.",
+    "- If you cannot use the required item, return chat copy explaining that instead of inventing a random outfit.",
+  ].join("\n");
+}
+
+async function assertRequiredItemsBelongToUser(uid: string, requiredItemIds: string[]) {
+  if (!requiredItemIds.length) return;
+  const snaps = await Promise.all(
+    requiredItemIds.map((itemId) => db.doc(`users/${uid}/items/${itemId}`).get()),
+  );
+  if (snaps.some((snap) => !snap.exists)) {
+    throw new HttpsError("failed-precondition", "Selected closet item is no longer available.");
+  }
+}
+
 function outfitDiversityFromClientContext(value: unknown): ClientOutfitDiversityContext | null {
   const context = value && typeof value === "object"
     ? (value as Record<string, unknown>).outfitDiversity
@@ -1114,6 +1142,8 @@ export const askAuraStream = onRequest(
       const uidHash = redactUid(uid);
       const userMessage = sanitizeUserInput(String(req.body?.message ?? ""));
       const styleCoreNote = styleCoreNoteFromClientContext(req.body?.clientContext);
+      const requiredItemIds = requiredItemIdsFromClientContext(req.body?.clientContext);
+      await assertRequiredItemsBelongToUser(uid, requiredItemIds);
       const outfitDiversity = outfitDiversityFromClientContext(req.body?.clientContext);
       const attachments = await parseAuraAttachments(uid, req.body?.attachments);
       const clientIntent = typeof req.body?.clientIntent === "string" ? req.body.clientIntent : null;
@@ -1501,6 +1531,7 @@ export const askAuraStream = onRequest(
           `Aura context:\n${JSON.stringify(compactAuraContext, null, 2)}\n\n` +
           "Stylist brief:\nPersonalize lightly.\n\n" +
           `Style core note:\n${styleCoreNote || "None."}\n\n` +
+          `Required item guard:\n${requiredItemsPromptNote(requiredItemIds)}\n\n` +
           `Outfit diversity:\n${outfitDiversityPromptNote(outfitDiversity)}\n\n` +
           `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
           "Product link context:\nNo product links.\n\n" +
@@ -1587,12 +1618,12 @@ export const askAuraStream = onRequest(
         userProfile,
       });
       logger.info("AURA stream closet context", {
-        counts: auraContext.counts,
+        itemCount: items.length,
         isSparseWardrobe: auraContext.isSparseWardrobe,
-        categoryCounts: auraContext.categoryCounts,
-        detectedGaps: auraContext.wardrobeGaps,
-        footwearAvailable: auraContext.wardrobeDebug?.footwearAvailable ?? [],
-        excludedFootwear: auraContext.wardrobeDebug?.excludedFootwear ?? [],
+        categoryKeyCount: Object.keys(auraContext.categoryCounts ?? {}).length,
+        gapKeyCount: Object.keys(auraContext.wardrobeGaps ?? {}).length,
+        footwearAvailableCount: auraContext.wardrobeDebug?.footwearAvailable?.length ?? 0,
+        excludedFootwearCount: auraContext.wardrobeDebug?.excludedFootwear?.length ?? 0,
       });
       let linkProductContext = "No product links.";
       if (linkIntent === "analyze_link" && detectedUrls.length > 0) {
@@ -1620,6 +1651,7 @@ export const askAuraStream = onRequest(
         `Aura context:\n${JSON.stringify(auraContext, null, 2)}\n\n` +
         `Stylist brief:\n${auraContext.stylistBrief || "Personalize lightly."}\n\n` +
         `Style core note:\n${styleCoreNote || "None."}\n\n` +
+        `Required item guard:\n${requiredItemsPromptNote(requiredItemIds)}\n\n` +
         `Outfit diversity:\n${outfitDiversityPromptNote(outfitDiversity)}\n\n` +
         `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
         `Product link context:\n${linkProductContext}\n\n` +

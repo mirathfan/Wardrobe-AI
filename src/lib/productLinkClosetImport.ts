@@ -100,6 +100,21 @@ function normalizePreviewError(error: unknown) {
       },
     );
   }
+  if (
+    productLinkCode === "no_metadata" ||
+    productLinkCode === "no_images" ||
+    productLinkCode === "fetch_failed"
+  ) {
+    return new ClosetProductLinkError(
+      "I couldn't read this product page. Try another link, upload a screenshot, or add manually.",
+      productLinkCode,
+      {
+        ...details,
+        title: "I couldn't read this product page.",
+        message: "Try another link, upload a screenshot, or add manually.",
+      },
+    );
+  }
   return new ClosetProductLinkError(
     raw?.message ?? "I could not read that product link. Try another product page or add it manually.",
     productLinkCode,
@@ -132,11 +147,30 @@ export async function previewProductLinkForCloset(url: string) {
 }
 
 function clean(value?: string | null) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
+  return String(value ?? "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&#(\d+);/g, (_, decimal: string) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeCategory(raw?: string | null) {
   const value = clean(raw).toLowerCase().replace(/[_-]+/g, " ");
+  if (/\b(air jordan|jordan\s+\d+|new balance|foot locker|jd sports|men[’']?s shoes?|women[’']?s shoes?|running shoes?|basketball shoes?|shoe|sneaker|trainer|boot|loafer|sandal|footwear)\b/.test(value)) {
+    return "shoes";
+  }
   if (["top", "tops"].includes(value)) return "top";
   if (["bottom", "bottoms"].includes(value)) return "bottom";
   if (["outerwear", "jacket", "coat", "blazer"].includes(value)) return "outerwear";
@@ -146,7 +180,6 @@ function normalizeCategory(raw?: string | null) {
   if (/\b(shirt|tee|t-shirt|polo|sweater|hoodie|top)\b/.test(value)) return "top";
   if (/\b(jean|trouser|pant|short|skirt)\b/.test(value)) return "bottom";
   if (/\b(jacket|coat|blazer)\b/.test(value)) return "outerwear";
-  if (/\b(shoe|sneaker|boot|loafer|sandal)\b/.test(value)) return "shoes";
   if (/\b(dress|jumpsuit|romper)\b/.test(value)) return "one_piece";
   return "top";
 }
@@ -183,13 +216,21 @@ function subCategoryFromTitle(category: string, title?: string | null) {
 export function draftFromProductLinkPreview(
   preview: ClosetProductLinkPreview,
 ): ClosetProductLinkDraft {
+  const title = clean(preview.candidate.title) || clean(preview.metadata.title);
   return {
-    name: clean(preview.candidate.title) || clean(preview.metadata.title),
+    name: title,
     brand:
       clean(preview.candidate.brand) ||
       clean(preview.metadata.brand) ||
       clean(preview.metadata.retailer),
-    category: normalizeCategory(preview.candidate.category ?? preview.metadata.categoryHints?.[0]),
+    category: normalizeCategory([
+      preview.candidate.category,
+      preview.candidate.subCategory,
+      preview.metadata.categoryHints?.join(" "),
+      title,
+      preview.metadata.retailer,
+      preview.metadata.domain,
+    ].filter(Boolean).join(" ")),
     color: clean(preview.candidate.displayColor) || clean(preview.candidate.color) || clean(preview.metadata.displayColor) || clean(preview.metadata.color),
     size: clean(preview.metadata.sizeOptions?.[0]) || clean(preview.metadata.sizeHints?.[0]),
   };
@@ -210,7 +251,15 @@ export function candidateFromProductLinkDraft(params: {
 }): AuraCandidateItem {
   const { preview, draft } = params;
   const candidate = preview.candidate;
-  const category = normalizeCategory(draft.category);
+  const category = normalizeCategory([
+    draft.category,
+    draft.name,
+    candidate.title,
+    candidate.subCategory,
+    preview.metadata.categoryHints?.join(" "),
+    preview.metadata.retailer,
+    preview.metadata.domain,
+  ].filter(Boolean).join(" "));
   const color = clean(draft.color);
   const sourceUrl = candidate.sourceUrl ?? preview.metadata.sourceUrl;
   const sizeOptions = mergeSizeList(
@@ -235,6 +284,7 @@ export function candidateFromProductLinkDraft(params: {
     sourceType: "link",
     sourceUrl,
     productUrl: candidate.productUrl ?? sourceUrl,
+    imageSourceReason: candidate.imageSourceReason ?? "product_link_preview_selected_image",
     category,
     subCategory: candidate.subCategory || subCategoryFromTitle(category, draft.name),
     title: clean(draft.name) || clean(candidate.title) || clean(preview.metadata.title) || "Product link item",

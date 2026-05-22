@@ -105,6 +105,7 @@ export type AuraCandidateItem = {
   collaborationName?: string | null;
   sourceType: "image" | "link" | "batch";
   sourceUrl?: string | null;
+  imageSourceReason?: string | null;
   status: "awaiting_confirmation" | "needs_review" | "added" | "cancelled" | "failed";
 };
 

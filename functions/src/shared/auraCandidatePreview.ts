@@ -59,6 +59,7 @@ export type AuraCandidateItem = {
   collaborationName?: string | null;
   sourceType: "image" | "link" | "batch";
   sourceUrl?: string | null;
+  imageSourceReason?: string | null;
   status: "awaiting_confirmation" | "needs_review" | "added" | "cancelled" | "failed";
 };
 
@@ -997,6 +998,20 @@ export async function rankProductExtractionImages(params: {
 export function productCategoryHintsFromText(title?: string | null, description?: string | null) {
   const titleText = String(title ?? "").toLowerCase();
   const text = `${titleText} ${description ?? ""}`.toLowerCase();
+  const footwearRe =
+    /\b(shoes?|sneakers?|trainers?|boots?|loafers?|sandals?|heels?|footwear|air\s+jordan|jordan\s+\d+|new\s+balance|men[’']?s\s+shoes?|women[’']?s\s+shoes?|running\s+shoes?|basketball\s+shoes?|foot\s*locker|jd\s+sports)\b/i;
+  if (footwearRe.test(titleText) || footwearRe.test(text)) {
+    return {
+      category: "footwear",
+      subCategory: /\bboots?\b/.test(text)
+        ? "boots"
+        : /\bloafers?\b/.test(text)
+          ? "loafers"
+          : /\bsandals?\b/.test(text)
+            ? "sandals"
+            : "sneakers",
+    };
+  }
   const topSubCategory = (() => {
     if (/\bpolo\b/.test(titleText)) return "polo";
     if (/\bt-?shirt|\btee\b/.test(titleText)) return "tshirt";
@@ -1009,7 +1024,6 @@ export function productCategoryHintsFromText(title?: string | null, description?
   })();
   if (topSubCategory) return { category: "top", subCategory: topSubCategory };
   if (/\b(jacket|coat|blazer)\b/.test(titleText)) return { category: "outerwear", subCategory: null };
-  if (/\b(shoe|sneaker|boot|loafer|sandal)\b/.test(titleText)) return { category: "footwear", subCategory: null };
   if (/\b(dress|jumpsuit|romper)\b/.test(titleText)) return { category: "one_piece", subCategory: null };
   if (/\b(shorts?|trousers?|pants?|jeans?|skirt|leggings?)\b/.test(titleText)) {
     return {

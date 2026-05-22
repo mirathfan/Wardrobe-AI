@@ -14,6 +14,7 @@ import AuraPressable from "@/src/components/aura/AuraPressable";
 import AppImage from "@/src/components/common/AppImage";
 import { AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
+import { formatOutfitAnalysisSentence } from "@/src/lib/auraOutfitAnalysisDisplay";
 import { formatUrlForDisplay, isUrlOnlyMessage } from "@/src/lib/formatChatText";
 import { sanitizeDisplayText, sanitizeMultilineDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
@@ -89,7 +90,7 @@ function fallbackStructuredIntro(message: AIMessage) {
     return "I found this item. Review it before I add it to your wardrobe.";
   }
   if (message.aura?.outfitAnalysis) {
-    return "I found this outfit. Review the pieces before saving or adding them.";
+    return `${formatOutfitAnalysisSentence(message.aura.outfitAnalysis)} Review the pieces below before saving or adding them.`;
   }
   if (message.aura?.presentation === "laundry_confirmation") {
     return message.aura.reply || "Which item did you mean?";

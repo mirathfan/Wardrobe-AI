@@ -1161,8 +1161,12 @@ function assembleOutfits(
     ? accessoryItems.filter((item) => item.item.id === lockedBySlot.accessory?.id).slice(0, 1)
     : accessoryItems.slice(0, 14);
   const shouldIncludeOuterwear =
-    intent.warmthTarget > 0.65 || intent.niceToHave.includes("outerwear");
+    intent.warmthTarget > 0.65 || intent.niceToHave.includes("outerwear") || !!lockedBySlot?.outerwear;
   const requiresOuterwear = intent.requireOuterwear === true;
+  const accessoryIntent =
+    lockedBySlot?.accessory && !intent.niceToHave.includes("accessory")
+      ? {...intent, niceToHave: [...intent.niceToHave, "accessory" as const]}
+      : intent;
 
   if (requiresOuterwear && outerwearCandidates.length === 0) {
     return [];
@@ -1196,7 +1200,7 @@ function assembleOutfits(
           const accessoryVariants = buildAccessoryVariants(
             accessoryCandidates,
             variant.chosen,
-            intent,
+            accessoryIntent,
             preferenceBias
           );
           for (const accessoryVariant of accessoryVariants) {

@@ -69,10 +69,10 @@ type ClosetRecord = StylingItem & WardrobeItem & {
 };
 
 const CONCRETE_OUTFIT_INTENT_RE =
-  /\b(suggest|recommend|build|make|create|pull|put together|plan|style|dress)\b[\s\S]{0,80}\b(outfit|look|fit)\b|\bwhat should i wear\b|\boutfit for\b|\bfit for\b|\bstyle this\b|\bstyle it\b|\bmake it (?:dressier|more casual|better|warmer|cooler|sharper)\b|\bhow (?:do|should|would|can) i style\b/i;
+  /\b(suggest|recommend|build|make|create|pull|put together|plan|style|dress|improve|refine|polish|complete|finish)\b[\s\S]{0,80}\b(outfit|look|fit)\b|\bwhat should i wear\b|\boutfit for\b|\bfit for\b|\bstyle this(?:\s+(?:item|piece|shirt|top|pants|jeans|shoes?|sneakers?|jacket|coat|hoodie))?\b|\bstyle it\b|\bcomplete this look\b|\bfinish this look\b|\bmake (?:this|it) (?:dressier|more casual|better|warmer|cooler|sharper)\b|\bwhat (?:shoes?|sneakers?|footwear) (?:work|go|should i wear)\b|\bhow (?:do|should|would|can) i style\b/i;
 
 const LIST_HEADER_RE =
-  /^(quick take|why it works|how to wear it|swap|swap \/ add|styling note|keep|what works|what weakens it|fix|score|best option|outfit|top priorities|next move|avoid|best with|outfit ideas)\s*:?$/i;
+  /^(my call|quick take|why|why it works|how to wear it|do this|swap|swap \/ add|styling note|keep|what works|what weakens it|fix|score|best option|outfit|top priorities|next move|avoid|avoid unless|best with|outfit ideas)\s*:?$/i;
 
 const STOP_TOKENS = new Set([
   "a",
@@ -269,18 +269,19 @@ function lookIdForPieces(pieces: AuraLookPiece[], source: string) {
 }
 
 function replyForLook(look: AuraConcreteLook) {
+  const top = look.pieces.find((piece) => piece.role === "top");
+  const bottom = look.pieces.find((piece) => piece.role === "bottom");
   const outerwear = look.pieces.find((piece) => piece.role === "outerwear");
   const shoes = look.pieces.find((piece) => piece.role === "shoes");
   return [
-    "Quick take:",
-    "This is a concrete outfit built from the closet pieces AURA picked.",
+    "My call:",
+    `Go with ${look.lookTitle}.`,
     "",
-    "Why it works:",
-    outerwear ? `- ${outerwear.itemName} adds the main layer and attitude.` : "- The base pieces keep the outfit easy to wear.",
-    shoes ? `- ${shoes.itemName} grounds the outfit.` : "- The footwear slot stays simple and wearable.",
-    "- The card below keeps the exact pieces together.",
+    "Why:",
+    top && bottom ? `- ${top.itemName} and ${bottom.itemName} give you the base.` : "- The base pieces are easy to wear together.",
+    outerwear ? `- ${outerwear.itemName} adds the main layer.` : shoes ? `- ${shoes.itemName} keeps it grounded.` : "- The card below keeps the exact pieces together.",
     "",
-    "Styling note:",
+    "Do this:",
     look.stylingNote,
   ].join("\n");
 }

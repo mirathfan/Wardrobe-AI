@@ -80,6 +80,48 @@ function styleCoreNoteFromClientContext(value: unknown) {
   ].filter(Boolean).join(" ");
 }
 
+function cleanStringList(value: unknown, maxLength: number) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of value) {
+    const text = String(entry ?? "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+    if (out.length >= maxLength) break;
+  }
+  return out;
+}
+
+function requiredItemIdsFromClientContext(value: unknown) {
+  const context = value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+  return cleanStringList(context.requiredItemIds, 8);
+}
+
+function requiredItemsPromptNote(requiredItemIds: string[]) {
+  if (!requiredItemIds.length) return "No required closet anchor items.";
+  return [
+    "Required closet anchor:",
+    `- Every outfit/look option must include these exact closet item IDs: ${requiredItemIds.join(", ")}.`,
+    "- Do not substitute another closet item for these anchors.",
+    "- Never mention these raw IDs in the user-facing reply.",
+    "- If you cannot use the required item, return chat copy explaining that instead of inventing a random outfit.",
+  ].join("\n");
+}
+
+async function assertRequiredItemsBelongToUser(uid: string, requiredItemIds: string[]) {
+  if (!requiredItemIds.length) return;
+  const snaps = await Promise.all(
+    requiredItemIds.map((itemId) => db.doc(`users/${uid}/items/${itemId}`).get()),
+  );
+  if (snaps.some((snap) => !snap.exists)) {
+    throw new HttpsError("failed-precondition", "Selected closet item is no longer available.");
+  }
+}
+
 type AuraResponse = {
   presentation: "chat" | "card" | "candidate_preview" | "outfit_analysis" | "laundry_confirmation";
   title: string;
@@ -875,6 +917,8 @@ export const askAura = onCall(
 
     const userMessage = sanitizeUserInput(String(request.data?.message || ""));
     const styleCoreNote = styleCoreNoteFromClientContext(request.data?.clientContext);
+    const requiredItemIds = requiredItemIdsFromClientContext(request.data?.clientContext);
+    await assertRequiredItemsBelongToUser(uid, requiredItemIds);
     const attachments = await parseAuraAttachments(uid, request.data?.attachments);
     const clientIntent = typeof request.data?.clientIntent === "string" ? request.data.clientIntent : null;
     const linkIntent = classifyAuraLinkIntent(userMessage);
@@ -1096,12 +1140,12 @@ export const askAura = onCall(
       userProfile,
     });
     logger.info("AURA closet context", {
-      counts: auraContext.counts,
+      itemCount: items.length,
       isSparseWardrobe: auraContext.isSparseWardrobe,
-      categoryCounts: auraContext.categoryCounts,
-      detectedGaps: auraContext.wardrobeGaps,
-      footwearAvailable: auraContext.wardrobeDebug?.footwearAvailable ?? [],
-      excludedFootwear: auraContext.wardrobeDebug?.excludedFootwear ?? [],
+      categoryKeyCount: Object.keys(auraContext.categoryCounts ?? {}).length,
+      gapKeyCount: Object.keys(auraContext.wardrobeGaps ?? {}).length,
+      footwearAvailableCount: auraContext.wardrobeDebug?.footwearAvailable?.length ?? 0,
+      excludedFootwearCount: auraContext.wardrobeDebug?.excludedFootwear?.length ?? 0,
     });
     let linkProductContext = "No product links.";
     if (linkIntent === "analyze_link" && detectedUrls.length > 0) {
@@ -1142,6 +1186,7 @@ export const askAura = onCall(
                   `Aura context:\n${JSON.stringify(auraContext, null, 2)}\n\n` +
                   `Stylist brief:\n${auraContext.stylistBrief || "Personalize lightly."}\n\n` +
                   `Style core note:\n${styleCoreNote || "None."}\n\n` +
+                  `Required item guard:\n${requiredItemsPromptNote(requiredItemIds)}\n\n` +
                   `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
                   `Product link context:\n${linkProductContext}\n\n` +
                   `Attachments:\n${attachmentContextText(attachments)}\n\n` +

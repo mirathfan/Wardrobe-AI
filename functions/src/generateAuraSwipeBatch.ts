@@ -206,6 +206,38 @@ function lockedItemsForAnchors(
   return Object.keys(locked).length ? locked : undefined;
 }
 
+function cleanItemIdList(value: unknown, max = 8) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const entry of value) {
+    const itemId = String(entry ?? "").trim();
+    if (!itemId || seen.has(itemId)) continue;
+    seen.add(itemId);
+    ids.push(itemId);
+    if (ids.length >= max) break;
+  }
+  return ids;
+}
+
+function requiredItemIdsFromRequest(data: unknown) {
+  const raw = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  return cleanItemIdList([
+    ...cleanItemIdList(raw.requiredItemIds, 8),
+    ...cleanItemIdList(raw.mustIncludeItemIds, 8),
+  ], 8);
+}
+
+function filterOutfitsForRequiredItems<T extends { itemIds: string[] }>(
+  outfits: T[],
+  requiredItemIds: string[],
+) {
+  if (!requiredItemIds.length) return outfits;
+  return outfits.filter((outfit) =>
+    requiredItemIds.every((itemId) => outfit.itemIds.includes(itemId)),
+  );
+}
+
 function toSwipeLook(
   outfit: GeneratedSwipeCandidate,
   itemsById: Map<string, WardrobeItem>,
@@ -277,9 +309,11 @@ export const generateAuraSwipeBatch = onCall(
     const recentItemIds = Array.isArray(request.data?.recentItemIds)
       ? request.data.recentItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 36)
       : [];
-    const anchorItemIds = Array.isArray(request.data?.anchorItemIds)
-      ? request.data.anchorItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 3)
-      : [];
+    const requiredItemIds = requiredItemIdsFromRequest(request.data);
+    const anchorItemIds = cleanItemIdList([
+      ...requiredItemIds,
+      ...(Array.isArray(request.data?.anchorItemIds) ? request.data.anchorItemIds : []),
+    ], requiredItemIds.length ? 8 : 3);
     const previousLookItemIds = Array.isArray(request.data?.previousLookItemIds)
       ? request.data.previousLookItemIds.map((value: unknown) => String(value).trim()).filter(Boolean).slice(0, 12)
       : [];
@@ -294,7 +328,14 @@ export const generateAuraSwipeBatch = onCall(
     const allItems = await fetchWardrobeItems(db, uid);
     const memory = await loadCompactAuraMemoryContext(db, uid, null);
     const itemsById = new Map(allItems.map((item) => [item.id, item]));
+    const missingRequiredItemIds = requiredItemIds.filter((itemId) => !itemsById.has(itemId));
+    if (missingRequiredItemIds.length) {
+      throw new HttpsError("failed-precondition", "Selected closet item is no longer available.");
+    }
     const lockedItemsBySlot = lockedItemsForAnchors(anchorItemIds, itemsById);
+    if (requiredItemIds.length && Object.keys(lockedItemsBySlot ?? {}).length < requiredItemIds.length) {
+      throw new HttpsError("failed-precondition", "Selected closet item cannot be used as an outfit anchor.");
+    }
     let generated = generateOutfitCandidates(allItems, parsed.intent, {
       numOutfits,
       memory,
@@ -307,6 +348,13 @@ export const generateAuraSwipeBatch = onCall(
         maxOverlap,
       },
     });
+    generated = {
+      ...generated,
+      outfits: filterOutfitsForRequiredItems(generated.outfits, requiredItemIds),
+    };
+    if (!generated.outfits.length && requiredItemIds.length) {
+      throw new HttpsError("failed-precondition", "Could not build an outfit with the selected closet item.");
+    }
     if (!generated.outfits.length && lockedItemsBySlot) {
       generated = generateOutfitCandidates(allItems, parsed.intent, {
         numOutfits,
@@ -320,6 +368,13 @@ export const generateAuraSwipeBatch = onCall(
         },
       });
     }
+    generated = {
+      ...generated,
+      outfits: filterOutfitsForRequiredItems(generated.outfits, requiredItemIds),
+    };
+    if (!generated.outfits.length && requiredItemIds.length) {
+      throw new HttpsError("failed-precondition", "Could not build an outfit with the selected closet item.");
+    }
     if (!generated.outfits.length && excludeItemIds.length) {
       generated = generateOutfitCandidates(allItems, parsed.intent, {
         numOutfits,
@@ -332,6 +387,13 @@ export const generateAuraSwipeBatch = onCall(
           maxOverlap,
         },
       });
+    }
+    generated = {
+      ...generated,
+      outfits: filterOutfitsForRequiredItems(generated.outfits, requiredItemIds),
+    };
+    if (!generated.outfits.length && requiredItemIds.length) {
+      throw new HttpsError("failed-precondition", "Could not build an outfit with the selected closet item.");
     }
 
     logger.info("generateAuraSwipeBatch built batch", {
@@ -347,6 +409,7 @@ export const generateAuraSwipeBatch = onCall(
         previousLookItemCount: previousLookItemIds.length,
         recentItemCount: recentItemIds.length,
         anchorItemCount: anchorItemIds.length,
+        requiredItemCount: requiredItemIds.length,
         lockedAnchorSlots: Object.keys(lockedItemsBySlot ?? {}),
         previousLookSignatureCount: previousLookSignatures.length,
         maxOverlap,

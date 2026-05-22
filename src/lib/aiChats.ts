@@ -605,8 +605,12 @@ export async function appendMessageToChat(
   const sanitizedAura = message.aura ? stripUndefinedDeep(message.aura) : undefined;
   const persistedAttachments = message.attachments?.filter((attachment) => attachment.type === "image") ?? [];
   const shouldUpdateGeneratedTitle = message.type === "user" && !!options?.titleFromUserText;
-  const threadSnap = shouldUpdateGeneratedTitle ? await getDoc(chatRef) : null;
+  const [threadSnap, existingMessageSnap] = await Promise.all([
+    shouldUpdateGeneratedTitle ? getDoc(chatRef) : Promise.resolve(null),
+    getDoc(messageRef),
+  ]);
   const existingThread = threadSnap?.exists() ? toChatThread(threadSnap) : null;
+  const isNewMessage = !existingMessageSnap.exists();
   const batch = writeBatch(db);
   batch.set(messageRef, {
     type: message.type,
@@ -650,7 +654,7 @@ export async function appendMessageToChat(
     {
       updatedAt: now,
       lastMessagePreview: sanitizeMessagePreview(message),
-      messageCount: increment(1),
+      ...(isNewMessage ? { messageCount: increment(1) } : {}),
       ...(typeof options?.threadId === "string" || options?.threadId === null ? { threadId: options.threadId } : {}),
       ...(shouldUpdateGeneratedTitle &&
       !existingThread?.titleEdited
