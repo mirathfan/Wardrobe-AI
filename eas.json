@@ -11,6 +11,7 @@
     "preview": {
       "credentialsSource": "local",
       "distribution": "store",
+      "environment": "production",
       "ios": {
         "resourceClass": "m-medium"
       }
