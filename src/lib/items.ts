@@ -294,32 +294,63 @@ function hasItemVisualSource(item: Partial<ClosetItem> | null | undefined): bool
   );
 }
 
+const STALE_PROCESSING_MS = 10 * 60 * 1000;
+
+function toMillisValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value && typeof (value as any).toMillis === "function") {
+    const millis = Number((value as any).toMillis());
+    return Number.isFinite(millis) ? millis : null;
+  }
+  return null;
+}
+
+function isStaleProcessingItem(item: Partial<ClosetItem> | null | undefined): boolean {
+  const candidate = item as any;
+  const startedAt =
+    toMillisValue(candidate?.ingestion?.startedAt) ??
+    toMillisValue(candidate?.ingestion?.lastRunAt) ??
+    toMillisValue(candidate?.updatedAt) ??
+    toMillisValue(candidate?.createdAt);
+  return !startedAt || Date.now() - startedAt >= STALE_PROCESSING_MS;
+}
+
 export function getItemLifecycleStatus(
   item: Partial<ClosetItem> | null | undefined
 ): ItemLifecycleStatus {
   if (!item) return "ready";
+  const ingestionStatus = getIngestionStatus(item);
+  const draftState = getDraftState(item);
   const explicit = String((item as any)?.itemLifecycleStatus ?? "")
     .trim()
     .toLowerCase();
+  if (explicit === "candidate" || explicit === "deleted") return explicit;
+  if (ingestionStatus === "failed" || draftState === "failed") return "failed";
   if (
-    explicit === "candidate" ||
     explicit === "uploading" ||
     explicit === "processing" ||
     explicit === "needs_review" ||
     explicit === "ready" ||
-    explicit === "failed" ||
-    explicit === "deleted"
+    explicit === "failed"
   ) {
+    if (explicit === "processing" && isStaleProcessingItem(item)) return "failed";
+    if (
+      explicit === "needs_review" &&
+      ingestionStatus === "done" &&
+      draftState === "ready" &&
+      (item as any)?.isDraft !== true
+    ) {
+      return "ready";
+    }
     return explicit;
   }
 
-  const ingestionStatus = getIngestionStatus(item);
-  const draftState = getDraftState(item);
   if (draftState === "awaiting_confirmation") return "candidate";
   if (draftState === "cancelled") return "deleted";
-  if (ingestionStatus === "failed" || draftState === "failed") return "failed";
   if (draftState === "photo_uploaded" && ingestionStatus === "done") return "needs_review";
-  if (ingestionStatus === "pending" || ingestionStatus === "processing") return "processing";
+  if (ingestionStatus === "pending" || ingestionStatus === "processing") {
+    return isStaleProcessingItem(item) ? "failed" : "processing";
+  }
   if ((item as any)?.isDraft === true && hasItemVisualSource(item)) return "needs_review";
   return "ready";
 }

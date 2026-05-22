@@ -260,6 +260,43 @@ export function usePhotoStep({
     []
   );
 
+  const commitPrimaryPhotoCutout = useCallback(
+    (payload: {
+      cutoutUri: string | null;
+      previewUri: string | null;
+      maskUri: string | null;
+      hasTransparency: boolean;
+      transparentPixelRatio: number;
+      contentBounds?: SelectedPhotoEntry["contentBounds"];
+      cutoutWidth?: number | null;
+      cutoutHeight?: number | null;
+      visualNormalization: VisualNormalization | null;
+    }) => {
+      setSelectedPhotos((prev) => {
+        const targetId = primaryPhotoId ?? prev[0]?.id ?? null;
+        if (!targetId) return prev;
+        return prev.map((entry) =>
+          entry.id === targetId
+            ? {
+                ...entry,
+                cleanedLocalUri: payload.cutoutUri,
+                normalizedLocalUri: payload.previewUri,
+                hasTransparency: payload.hasTransparency,
+                transparentPixelRatio: payload.transparentPixelRatio,
+                maskUri: payload.maskUri,
+                contentBounds: payload.contentBounds ?? null,
+                cutoutWidth: payload.cutoutWidth ?? null,
+                cutoutHeight: payload.cutoutHeight ?? null,
+                visualNormalization: payload.visualNormalization,
+                uploaded: null,
+              }
+            : entry
+        );
+      });
+    },
+    [primaryPhotoId]
+  );
+
   const previewPhotoUri =
     (pendingCutoutHasTransparency &&
     pendingCutoutTransparencyRatio >= MIN_USABLE_CUTOUT_TRANSPARENCY
@@ -512,7 +549,7 @@ export function usePhotoStep({
 
   const retryBackgroundRemoval = useCallback(async () => {
     if (!originalPickedPhotoUri || !canRefineCutout) return;
-    const options = getRefineOptions(refineValue);
+    const options = currentDebugRefineOptions();
     const requestId = latestRefineRequestIdRef.current + 1;
     latestRefineRequestIdRef.current = requestId;
     setRefiningCutout(true);
@@ -548,15 +585,37 @@ export function usePhotoStep({
             imageHeight: cutout.height,
           })
         : null;
-      commitPendingCutoutState("retry", {
-        cutoutUri: usableCutout ? cutout.uri : null,
-        previewUri: previewCutoutUri,
-        maskUri: usableCutout ? cutout.maskUri : null,
-        hasTransparency: usableCutout ? cutout.hasTransparency : false,
-        transparentPixelRatio: usableCutout ? cutout.transparentPixelRatio : 0,
-      });
-      setPendingVisualNormalization(visualNormalization);
-      setCleanedPhotoUrl(null);
+      if (usableCutout) {
+        commitPendingCutoutState("retry", {
+          cutoutUri: cutout.uri,
+          previewUri: previewCutoutUri,
+          maskUri: cutout.maskUri,
+          hasTransparency: cutout.hasTransparency,
+          transparentPixelRatio: cutout.transparentPixelRatio,
+        });
+        commitPrimaryPhotoCutout({
+          cutoutUri: cutout.uri,
+          previewUri: previewCutoutUri,
+          maskUri: cutout.maskUri,
+          hasTransparency: cutout.hasTransparency,
+          transparentPixelRatio: cutout.transparentPixelRatio,
+          contentBounds: cutout.contentBounds,
+          cutoutWidth: cutout.width,
+          cutoutHeight: cutout.height,
+          visualNormalization,
+        });
+        setPendingVisualNormalization(visualNormalization);
+        setCleanedPhotoUrl(null);
+      }
+      if (__DEV__) {
+        console.log("[RefineCutout] refine applied", {
+          hasOriginal: Boolean(originalPickedPhotoUri),
+          hasPreviousCutout: Boolean(pendingCleanedPhotoUri),
+          hasResult: usableCutout,
+          resultUri: usableCutout ? cutout.uri : null,
+          params: options,
+        });
+      }
       if (!usableCutout) {
         setBgRemovalError(CUTOUT_ERROR_MESSAGE);
       }
@@ -575,7 +634,10 @@ export function usePhotoStep({
     buildNormalizedPreviewCutout,
     canRefineCutout,
     commitPendingCutoutState,
+    commitPrimaryPhotoCutout,
+    currentDebugRefineOptions,
     originalPickedPhotoUri,
+    pendingCleanedPhotoUri,
     pendingPhotoWidth,
     prepareImageUriForCutout,
     refineValue,
@@ -598,8 +660,14 @@ export function usePhotoStep({
     ) => {
       if (!canRefineCutout || !originalPickedPhotoUri) return;
       const normalizedValue = Math.max(0, Math.min(1, value));
-      const { threshold, cleanupRadius, feather, edgeTighten, maskToAlpha } =
-        explicitOptions ?? getRefineOptions(normalizedValue);
+      const {
+        threshold,
+        cleanupRadius,
+        feather,
+        edgeTighten,
+        edgePolish: scheduledEdgePolish,
+        maskToAlpha,
+      } = explicitOptions ?? getRefineOptions(normalizedValue);
       const requestKey = getRefineRequestKey(originalPickedPhotoUri, normalizedValue);
       if (!explicitOptions && lastCompletedRefineKeyRef.current === requestKey) return;
 
@@ -616,7 +684,14 @@ export function usePhotoStep({
             inputUri: localCutoutInputUri,
             width: pendingPhotoWidth,
             height: null,
-            options: { threshold, cleanupRadius, feather, edgeTighten, edgePolish, maskToAlpha },
+            options: {
+              threshold,
+              cleanupRadius,
+              feather,
+              edgeTighten,
+              edgePolish: scheduledEdgePolish,
+              maskToAlpha,
+            },
             tag: "refine",
           });
           if (requestId !== latestRefineRequestIdRef.current) {
@@ -650,8 +725,37 @@ export function usePhotoStep({
             transparentPixelRatio: usableCutout ? cutout.transparentPixelRatio : 0,
             updateAutofillCutout: immediate,
           });
+          if (immediate) {
+            commitPrimaryPhotoCutout({
+              cutoutUri: usableCutout ? cutout.uri : null,
+              previewUri: previewCutoutUri,
+              maskUri: usableCutout ? cutout.maskUri : null,
+              hasTransparency: usableCutout ? cutout.hasTransparency : false,
+              transparentPixelRatio: usableCutout ? cutout.transparentPixelRatio : 0,
+              contentBounds: usableCutout ? cutout.contentBounds : null,
+              cutoutWidth: usableCutout ? cutout.width : null,
+              cutoutHeight: usableCutout ? cutout.height : null,
+              visualNormalization,
+            });
+          }
           setPendingVisualNormalization(visualNormalization);
           setCleanedPhotoUrl(null);
+          if (__DEV__) {
+            console.log("[RefineCutout] refine applied", {
+              hasOriginal: Boolean(originalPickedPhotoUri),
+              hasPreviousCutout: Boolean(pendingCleanedPhotoUri),
+              hasResult: usableCutout,
+              resultUri: usableCutout ? cutout.uri : null,
+              params: {
+                threshold,
+                cleanupRadius,
+                feather,
+                edgeTighten,
+                edgePolish: scheduledEdgePolish,
+                maskToAlpha,
+              },
+            });
+          }
           if (!usableCutout) {
             setBgRemovalError(CUTOUT_ERROR_MESSAGE);
           }
@@ -683,9 +787,10 @@ export function usePhotoStep({
       buildNormalizedPreviewCutout,
       canRefineCutout,
       commitPendingCutoutState,
-      edgePolish,
+      commitPrimaryPhotoCutout,
       extractionRef,
       originalPickedPhotoUri,
+      pendingCleanedPhotoUri,
       pendingPhotoWidth,
       prepareImageUriForCutout,
       analyzeCurrentVisualNormalization,
@@ -693,24 +798,38 @@ export function usePhotoStep({
     ]
   );
 
-  const handleRefineValueChange = useCallback((value: number) => {
-    if (__DEV__) {
-      void value;
-    }
-  }, []);
-
-  const handleRefineValueComplete = useCallback(
+  const handleRefineValueChange = useCallback(
     (value: number) => {
-      setRefineValue(value);
-      const options = getRefineOptions(value);
-      setEdgePolish(options.edgePolish);
+      const next = Math.max(0, Math.min(1, value));
+      const options = getRefineOptions(next);
+      setRefineValue(next);
       setDebugThreshold(options.threshold);
       setDebugCleanupRadius(options.cleanupRadius);
       setDebugFeather(options.feather);
       setDebugEdgeTighten(options.edgeTighten);
-      scheduleRefine(value, true, options);
+      scheduleRefine(next, false, {
+        ...options,
+        edgePolish,
+      });
     },
-    [scheduleRefine]
+    [edgePolish, scheduleRefine]
+  );
+
+  const handleRefineValueComplete = useCallback(
+    (value: number) => {
+      const next = Math.max(0, Math.min(1, value));
+      setRefineValue(next);
+      const options = getRefineOptions(next);
+      setDebugThreshold(options.threshold);
+      setDebugCleanupRadius(options.cleanupRadius);
+      setDebugFeather(options.feather);
+      setDebugEdgeTighten(options.edgeTighten);
+      scheduleRefine(next, true, {
+        ...options,
+        edgePolish,
+      });
+    },
+    [edgePolish, scheduleRefine]
   );
 
   const handleRefineReset = useCallback(() => {
@@ -723,6 +842,49 @@ export function usePhotoStep({
     setDebugEdgeTighten(options.edgeTighten);
     scheduleRefine(DEFAULT_REFINE_VALUE, true, options);
   }, [scheduleRefine]);
+
+  const useOriginalPhoto = useCallback(() => {
+    if (refineTimeoutRef.current) {
+      clearTimeout(refineTimeoutRef.current);
+      refineTimeoutRef.current = null;
+    }
+    latestRefineRequestIdRef.current += 1;
+    setRefiningCutout(false);
+    setBgRemovalError(null);
+    setCleanedPhotoUrl(null);
+    setServerCleanedUrl(null);
+    setPendingVisualNormalization(null);
+    setUploadedPhotoRecord(null);
+    lastCompletedRefineKeyRef.current = "";
+    commitPendingCutoutState("use-original", {
+      cutoutUri: null,
+      previewUri: null,
+      maskUri: null,
+      hasTransparency: false,
+      transparentPixelRatio: 0,
+      updateAutofillCutout: true,
+    });
+    setSelectedPhotos((prev) => {
+      const targetId = primaryPhotoId ?? prev[0]?.id ?? null;
+      return prev.map((entry) =>
+        entry.id === targetId
+          ? {
+              ...entry,
+              cleanedLocalUri: null,
+              normalizedLocalUri: null,
+              hasTransparency: false,
+              transparentPixelRatio: 0,
+              maskUri: null,
+              contentBounds: null,
+              cutoutWidth: null,
+              cutoutHeight: null,
+              visualNormalization: null,
+              uploaded: null,
+            }
+          : entry
+      );
+    });
+  }, [commitPendingCutoutState, primaryPhotoId]);
 
   const handleEdgePolishChange = useCallback(
     (value: number, commit = false) => {
@@ -1627,6 +1789,7 @@ export function usePhotoStep({
     handleRefineValueChange,
     handleRefineValueComplete,
     handleRefineReset,
+    useOriginalPhoto,
     handleEdgePolishChange,
     handleDebugRefineThresholdChange,
     handleDebugRefineCleanupRadiusChange,

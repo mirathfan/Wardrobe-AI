@@ -87,7 +87,7 @@ async function deleteUserStorageFiles(uid: string) {
   return files.length;
 }
 
-async function deleteUserRateLimitDocs(uidHash: string) {
+async function deleteUserRateLimitDocs(uidHash: string, uid: string) {
   let deleted = 0;
   const db = getFirestore();
   for (const endpoint of Object.keys(RATE_LIMITS)) {
@@ -114,6 +114,15 @@ async function deleteUserRateLimitDocs(uidHash: string) {
     deleted += 1;
     await commitBatch(batch, pendingWrites);
   }
+  const legacyParseIntentRef = db
+    .collection("functionRateLimits")
+    .doc("parseOutfitIntent")
+    .collection("users")
+    .doc(uid);
+  const legacyParseIntentSnap = await legacyParseIntentRef.get();
+  if (legacyParseIntentSnap.exists) {
+    deleted += await deleteDocumentTree(legacyParseIntentRef);
+  }
   return deleted;
 }
 
@@ -137,7 +146,7 @@ export const deleteAccountData = onCall(
 
     const firestoreDocumentsDeleted = await deleteDocumentTree(userRef);
     const storageFilesDeleted = await deleteUserStorageFiles(uid);
-    const rateLimitDocumentsDeleted = await deleteUserRateLimitDocs(uidHash);
+    const rateLimitDocumentsDeleted = await deleteUserRateLimitDocs(uidHash, uid);
     let authUserDeleted = false;
     try {
       await getAuth().deleteUser(uid);

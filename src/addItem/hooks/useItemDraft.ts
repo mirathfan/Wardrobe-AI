@@ -15,6 +15,7 @@ import { Alert, LayoutAnimation, Platform, UIManager } from "react-native";
 
 import { type AddItemMode, norm, normColor } from "../controllerShared";
 import { db } from "../../lib/firebase";
+import { analyticsErrorProperties, trackLaunchEvent } from "../../lib/analytics";
 import { safeGoBack } from "../../lib/navigation";
 import { Toast } from "../../lib/toast";
 import { normalizeCategoryForStorage } from "../../lib/items";
@@ -587,8 +588,13 @@ export function useItemDraft({
           "photos.images": nextPhoto.images,
           isDraft: false,
           draftState: "ready",
+          itemLifecycleStatus:
+            (photo.state.pendingPhotoUri || isConfirmationDraft) && canKickoffIngestion
+              ? "processing"
+              : "ready",
           ...((photo.state.pendingPhotoUri || isConfirmationDraft) && canKickoffIngestion
             ? {
+                ingestionStatus: "pending",
                 ingestion: {
                   status: "pending",
                   lastRunAt: Date.now(),
@@ -609,6 +615,16 @@ export function useItemDraft({
         await updateDoc(itemRef, updatePayload);
         lastFinalizedSubmissionKeyRef.current = submissionKey;
         Toast.success("Item updated");
+        void trackLaunchEvent({
+          userId: uid,
+          eventName: "wardrobe_item_updated",
+          properties: {
+            itemId: itemRef.id,
+            mode,
+            category: category ?? Category.TOP,
+            photoCount: nextPhoto.imageUrls.length,
+          },
+        });
         resetDraftState();
         photo.actions.resetPhotoState?.();
         extraction.actions.resetExtractionState?.();
@@ -626,6 +642,7 @@ export function useItemDraft({
           "photos.images": nextPhoto.images,
           isDraft: false,
           draftState: "ready",
+          itemLifecycleStatus: "ready",
           updatedAt: Date.now(),
         };
         if (nextPhoto.cleanedUrl) {
@@ -643,6 +660,8 @@ export function useItemDraft({
           canKickoffIngestion &&
           photo.refs.syncedPreviewUriRef.current !== photo.state.pendingPhotoUri
         ) {
+          updatePayload.itemLifecycleStatus = "processing";
+          updatePayload.ingestionStatus = "pending";
           updatePayload.ingestion = {
             status: "pending",
             lastRunAt: Date.now(),
@@ -657,6 +676,17 @@ export function useItemDraft({
           });
         }
         Toast.itemAdded();
+        void trackLaunchEvent({
+          userId: uid,
+          eventName: "wardrobe_item_added",
+          properties: {
+            itemId: itemRef.id,
+            source: "draft",
+            category: category ?? Category.TOP,
+            photoCount: nextPhoto.imageUrls.length,
+            ingestionStatus: updatePayload.ingestionStatus ?? "ready",
+          },
+        });
         await resetCreateFlow?.("post-save");
         extraction.actions.stopDraftSubscription?.();
         finalizedAndExiting = true;
@@ -717,6 +747,17 @@ export function useItemDraft({
         });
       }
       Toast.itemAdded();
+      void trackLaunchEvent({
+        userId: uid,
+        eventName: "wardrobe_item_added",
+        properties: {
+          itemId: itemRef.id,
+          source: "manual",
+          category: category ?? Category.TOP,
+          photoCount: nextPhoto.imageUrls.length,
+          ingestionStatus: canKickoffIngestion ? "pending" : "ready",
+        },
+      });
       await resetCreateFlow?.("post-save");
       extraction.actions.stopDraftSubscription?.();
       finalizedAndExiting = true;
@@ -725,6 +766,17 @@ export function useItemDraft({
       }
       router.replace(itemDetailRoute(itemRef.id));
     } catch (e: any) {
+      void trackLaunchEvent({
+        userId: uid,
+        eventName: "wardrobe_item_save_failed",
+        properties: {
+          mode,
+          isEdit,
+          hasPhoto: hasAtLeastOnePhoto,
+          category: category ?? Category.TOP,
+          ...analyticsErrorProperties(e),
+        },
+      });
       Alert.alert(
         "Error",
         e?.message ?? (isEdit ? "Failed to update item" : "Failed to add item")

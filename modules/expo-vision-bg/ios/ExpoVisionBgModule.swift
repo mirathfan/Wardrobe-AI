@@ -275,22 +275,36 @@ public class ExpoVisionBgModule: Module {
     )
     let mask = masks.alphaMask
     print("[VisionBG] mask image generated extent=\(mask.extent)")
-    let cutout = self.decontaminatedCutout(
+    let baseCutout = self.decontaminatedCutout(
       sourceImage: input,
       alphaMask: mask,
       interiorMask: masks.interiorMask,
       targetExtent: input.extent
     )
+    let ciContext = CIContext(options: nil)
+    let cutout = self.smoothedCutoutImage(
+      sourceImage: input,
+      baseCutout: baseCutout,
+      alphaMask: mask,
+      edgePolish: Float(edgePolish),
+      targetExtent: input.extent,
+      context: ciContext
+    )
     print("[VisionBG] cutout image generated extent=\(cutout.extent)")
 
-    let ciContext = CIContext(options: nil)
     guard let previewCGImage = ciContext.createCGImage(cutout, from: input.extent) else {
       throw VisionBgError.maskGenerationFailed
     }
 
     let previewAlphaInfo = previewCGImage.alphaInfo
     print("[VisionBG] preview alpha info: \(previewAlphaInfo.rawValue)")
-    assert(self.hasAlpha(previewAlphaInfo), "Vision output should preserve alpha")
+    guard self.hasAlpha(previewAlphaInfo),
+          self.isUsableCutoutImage(previewCGImage) else {
+      #if DEBUG
+      print("[CutoutSmooth] invalid cutout output; falling back to original image path")
+      #endif
+      throw VisionBgError.maskGenerationFailed
+    }
 
     let outputUrl = try self.writePngImage(
       cutout,
@@ -487,6 +501,26 @@ public class ExpoVisionBgModule: Module {
     )
   }
 
+  private func isUsableCutoutImage(_ image: CGImage) -> Bool {
+    let width = image.width
+    let height = image.height
+    guard width > 0, height > 0 else {
+      return false
+    }
+
+    let transparency = transparencyStats(for: image)
+    guard transparency.hasTransparency,
+          transparency.ratio > 0.005,
+          transparency.ratio < 0.995,
+          let bounds = alphaBounds(for: image) else {
+      return false
+    }
+
+    let imageArea = CGFloat(width * height)
+    let contentArea = bounds.width * bounds.height
+    return contentArea >= max(CGFloat(16), imageArea * 0.001)
+  }
+
   private func loadOrientedCGImage(from uri: String) throws -> CGImage {
     guard let inputUrl = normalizeFileUrl(uri) else {
       throw VisionBgError.badInput("The URI is not a valid local file path.")
@@ -622,6 +656,11 @@ public class ExpoVisionBgModule: Module {
         .cropped(to: workingExtent)
     }
 
+    let closeRadius = smallGapCloseRadius(cleanupRadius, workingScale: workingScale)
+    if closeRadius > 0.05 {
+      tightMask = closedMaskImage(tightMask, radius: closeRadius, to: workingExtent)
+    }
+
     let interiorMask = workingScale > 1.01
       ? resampledImage(tightMask, to: targetExtent)
       : tightMask.cropped(to: targetExtent)
@@ -630,9 +669,8 @@ public class ExpoVisionBgModule: Module {
 
     // The tight mask removes the halo-prone outer rim. A final clean antialias band
     // smooths fabric curves without returning to Vision's contaminated soft mask.
-    _ = feather
     return (
-      antialiasedMaskImage(finalInteriorMask, to: targetExtent),
+      antialiasedMaskImage(finalInteriorMask, to: targetExtent, feather: feather),
       finalInteriorMask
     )
   }
@@ -662,15 +700,52 @@ public class ExpoVisionBgModule: Module {
     return min(1.4, 0.75 + clamped * 0.9)
   }
 
-  private func antialiasedMaskImage(
+  private func smallGapCloseRadius(_ cleanupRadius: Int, workingScale: CGFloat) -> CGFloat {
+    let normalized = CGFloat(max(0, min(8, cleanupRadius)))
+    guard normalized > 0 else {
+      return 0
+    }
+
+    let baseRadius = max(0.28, min(0.52, normalized * 0.18))
+    return baseRadius * workingScale
+  }
+
+  private func closedMaskImage(
     _ mask: CIImage,
+    radius: CGFloat,
     to targetExtent: CGRect
   ) -> CIImage {
-    let smoothed = mask
-      .applyingFilter("CIGaussianBlur", parameters: [
-        kCIInputRadiusKey: 0.65
+    mask
+      .applyingFilter("CIMorphologyMaximum", parameters: [
+        kCIInputRadiusKey: radius
       ])
       .cropped(to: targetExtent)
+      .applyingFilter("CIMorphologyMinimum", parameters: [
+        kCIInputRadiusKey: radius
+      ])
+      .cropped(to: targetExtent)
+  }
+
+  private func antialiasedMaskImage(
+    _ mask: CIImage,
+    to targetExtent: CGRect,
+    feather: Int
+  ) -> CIImage {
+    let featherBoost = CGFloat(max(0, min(2, feather))) * 0.08
+    let blurRadius = max(0.68, min(0.92, 0.78 + featherBoost))
+    let smoothed = mask
+      .applyingFilter("CIGaussianBlur", parameters: [
+        kCIInputRadiusKey: blurRadius
+      ])
+      .cropped(to: targetExtent)
+
+    if let rampKernel = Self.alphaRampKernel,
+       let ramped = rampKernel.apply(
+        extent: targetExtent,
+        arguments: [smoothed, Float(0.5), Float(0.44)]
+       ) {
+      return ramped.cropped(to: targetExtent)
+    }
 
     guard let kernel = Self.antialiasMaskKernel,
           let antialiased = kernel.apply(
@@ -725,6 +800,36 @@ public class ExpoVisionBgModule: Module {
     }
 
     return cleaned.cropped(to: targetExtent)
+  }
+
+  private func smoothedCutoutImage(
+    sourceImage: CIImage,
+    baseCutout: CIImage,
+    alphaMask: CIImage,
+    edgePolish: Float,
+    targetExtent: CGRect,
+    context: CIContext
+  ) -> CIImage {
+    let safeEdgePolish = max(0.35, min(0.65, edgePolish))
+    let polished = applyColorMatchedEdgeCleanup(
+      cutout: baseCutout,
+      mask: alphaMask,
+      sourceImage: sourceImage,
+      edgePolish: safeEdgePolish,
+      targetExtent: targetExtent
+    )
+    guard let rendered = context.createCGImage(polished, from: targetExtent),
+          isUsableCutoutImage(rendered) else {
+      #if DEBUG
+      print("[CutoutSmooth] smoothing failed; using unsmoothed cutout")
+      #endif
+      return baseCutout.cropped(to: targetExtent)
+    }
+
+    #if DEBUG
+    print("[CutoutSmooth] smoothing succeeded")
+    #endif
+    return polished.cropped(to: targetExtent)
   }
 
   private func sourceEdgeMapImage(

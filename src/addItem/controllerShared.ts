@@ -114,6 +114,7 @@ export function normalizeDisplayColorToDefault(value: unknown) {
 
   const aliases: [string, string][] = [
     ["off white", "Cream"],
+    ["offwhite", "Cream"],
     ["ivory", "Cream"],
     ["cream", "Cream"],
     ["light blue", "Blue"],
@@ -125,9 +126,15 @@ export function normalizeDisplayColorToDefault(value: unknown) {
     ["gray", "Grey"],
     ["charcoal", "Grey"],
     ["khaki", "Khaki"],
+    ["camel", "Tan"],
     ["olive", "Olive"],
     ["tan", "Tan"],
     ["beige", "Beige"],
+    ["chocolate", "Brown"],
+    ["mocha", "Brown"],
+    ["espresso", "Brown"],
+    ["taupe", "Brown"],
+    ["dark brown", "Brown"],
     ["brown", "Brown"],
     ["black", "Black"],
     ["white", "White"],
@@ -271,7 +278,16 @@ export function nearestColorLabel(rgb: { r: number; g: number; b: number }) {
 
 export function normalizeColorList(values: unknown) {
   if (!Array.isArray(values)) return [] as string[];
-  return values.map((v) => normColor(String(v))).filter(Boolean).slice(0, 2);
+  const allowed = new Set(DEFAULT_COLORS);
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized =
+      normalizeDisplayColorToDefault(value) || normColor(String(value));
+    if (!normalized || !allowed.has(normalized) || out.includes(normalized)) continue;
+    out.push(normalized);
+    if (out.length >= 2) break;
+  }
+  return out;
 }
 
 export function hasTwoLegRegionCue(data: any) {

@@ -89,12 +89,6 @@ export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
             fallbackPreviewUri={derived.fallbackPreviewUri}
             hasCutoutPreview={derived.hasCutoutPreview}
             maskDebugUri={derived.maskDebugUri}
-            refineValue={state.refineValue}
-            edgePolish={state.edgePolish}
-            debugThreshold={state.debugThreshold}
-            debugCleanupRadius={state.debugCleanupRadius}
-            debugFeather={state.debugFeather}
-            debugEdgeTighten={state.debugEdgeTighten}
             isProcessing={state.refiningCutout}
             canRefine={derived.canRefineCutout}
             isAiRunning={state.aiStatus === "running"}
@@ -116,14 +110,8 @@ export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
               }
               void actions.resetCreateFlow("remove-photo", { deleteActiveDraft: true });
             }}
-            onRefineChange={actions.handleRefineValueChange}
-            onRefineComplete={actions.handleRefineValueComplete}
-            onResetRefine={actions.handleRefineReset}
-            onEdgePolishChange={actions.handleEdgePolishChange}
-            onDebugThresholdChange={actions.handleDebugRefineThresholdChange}
-            onDebugCleanupRadiusChange={actions.handleDebugRefineCleanupRadiusChange}
-            onDebugFeatherChange={actions.handleDebugRefineFeatherChange}
-            onDebugEdgeTightenChange={actions.handleDebugRefineEdgeTightenChange}
+            onUseOriginal={actions.useOriginalPhoto}
+            onRerunCutout={() => void actions.retryBackgroundRemoval()}
             onReplace={() => void actions.pickPhoto("library")}
             onRefineOpen={() => {}}
             frameless

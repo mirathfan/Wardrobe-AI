@@ -496,23 +496,29 @@ export function useItemExtraction({
     }
     setAiDebugAspectRatio(aspectRatio);
 
+    const aiDebug = data?.aiDebug ?? {};
     const rawColors = normalizeColorList(data?.colors);
-    const rawPrimary = normColor(String(data?.primaryColor ?? ""));
-    const colorNeedsReview = Boolean(data?.colorNeedsReview);
-    const pixelHex = norm(String(data?.pixelColorHex ?? data?.pixelHex ?? ""));
+    const rawPrimary = normalizeColorList([data?.primaryColor])[0] ?? "";
+    const debugColors = normalizeColorList([
+      ...(Array.isArray(aiDebug?.aiColors) ? aiDebug.aiColors : []),
+      aiDebug?.aiPrimaryColor,
+      aiDebug?.aiColorLabel,
+      aiDebug?.displayColor,
+      ...(Array.isArray(aiDebug?.displayColors) ? aiDebug.displayColors : []),
+      ...(Array.isArray(aiDebug?.pixelColors) ? aiDebug.pixelColors : []),
+    ]);
+    const pixelHex = norm(String(data?.pixelColorHex ?? data?.pixelHex ?? aiDebug?.pixelColorHex ?? ""));
     const dominantRgb = parseHexRgb(pixelHex);
     const dominantColor = dominantRgb ? nearestColorLabel(dominantRgb) : "";
-    const dominantColorLabel = colorNeedsReview ? "" : normColor(dominantColor);
+    const dominantColorLabel = normColor(dominantColor);
     const warmNeutralDominant = ["Beige", "Brown", "Khaki", "Tan", "Olive"].includes(
       dominantColorLabel
     );
-    const filteredRawColors = (colorNeedsReview ? [] : rawColors).filter(
+    const filteredRawColors = rawColors.filter(
       (color) => !(warmNeutralDominant && (color === "Orange" || color === "Grey"))
     );
     const filteredRawPrimary =
-      colorNeedsReview
-        ? ""
-        : warmNeutralDominant && (rawPrimary === "Orange" || rawPrimary === "Grey")
+      warmNeutralDominant && (rawPrimary === "Orange" || rawPrimary === "Grey")
         ? ""
         : rawPrimary;
     const displayColorFallback = normalizeDisplayColorToDefault(
@@ -520,6 +526,9 @@ export function useItemExtraction({
         data?.displayColor,
         ...(Array.isArray(data?.displayColors) ? data.displayColors : []),
         data?.colorLabel,
+        aiDebug?.displayColor,
+        ...(Array.isArray(aiDebug?.displayColors) ? aiDebug.displayColors : []),
+        aiDebug?.aiColorLabel,
       ]
         .filter(Boolean)
         .join(" ")
@@ -527,6 +536,7 @@ export function useItemExtraction({
     const finalColors = [
       ...filteredRawColors,
       ...(filteredRawPrimary ? [filteredRawPrimary] : []),
+      ...debugColors,
       ...(filteredRawColors.length === 0 && !filteredRawPrimary && displayColorFallback
         ? [displayColorFallback]
         : []),
@@ -1007,6 +1017,8 @@ export function useItemExtraction({
           lastWashedAt: null,
           isDraft: true,
           draftState: "photo_uploaded",
+          itemLifecycleStatus: "processing",
+          ingestionStatus: "pending",
           name: null,
           brand: null,
           subCategory: "",
@@ -1255,13 +1267,32 @@ export function useItemExtraction({
   }, []);
 
   const autofillTriggerUri = useMemo(
-    () => photo.state.autofillCutoutUri ?? null,
-    [photo.state.autofillCutoutUri]
+    () =>
+      photo.state.autofillCutoutUri ??
+      photo.state.pendingPhotoUri ??
+      photo.state.originalPickedPhotoUri ??
+      null,
+    [
+      photo.state.autofillCutoutUri,
+      photo.state.originalPickedPhotoUri,
+      photo.state.pendingPhotoUri,
+    ]
   );
 
   const autofillInputSource = useMemo<"cutout" | "original" | "">(
-    () => (photo.state.autofillCutoutUri ? "cutout" : ""),
-    [photo.state.autofillCutoutUri]
+    () =>
+      photo.state.autofillCutoutUri &&
+      autofillTriggerUri === photo.state.autofillCutoutUri &&
+      photo.state.autofillCutoutUri !== photo.state.originalPickedPhotoUri
+        ? "cutout"
+        : autofillTriggerUri
+        ? "original"
+        : "",
+    [
+      autofillTriggerUri,
+      photo.state.autofillCutoutUri,
+      photo.state.originalPickedPhotoUri,
+    ]
   );
 
   const autofillTriggerHash = useMemo(() => {
