@@ -58,7 +58,23 @@ Confirm the production environment before rebuilding:
 eas env:list --environment production
 ```
 
-`EXPO_PUBLIC_*` values are bundled at build time by Expo. After adding or changing these EAS env vars, create a new build; installing the old Build 1 binary will not pick them up.
+Confirm those EAS values are readable by a process using the production EAS environment:
+
+```sh
+eas env:exec --environment production 'npm run check:eas-env'
+```
+
+With `eas-cli/18.11.0`, `env:exec` uses the environment as a positional argument:
+
+```sh
+eas env:exec production 'npm run check:eas-env'
+```
+
+`eas env:list` proves the variables exist in EAS. Because these values are plaintext/public, that command may print the actual values; do not paste its raw output into tickets, logs, or commits. `eas env:exec` with `npm run check:eas-env` proves they are readable by a process launched with that EAS environment and prints only redacted diagnostics. The actual TestFlight binary still requires a rebuild because `EXPO_PUBLIC_*` values are bundled into the JavaScript app at build time.
+
+Expo only inlines `EXPO_PUBLIC_*` variables when the app code references them with static dot notation, such as `process.env.EXPO_PUBLIC_FIREBASE_API_KEY`. Dynamic bracket access such as `process.env[name]` is not inlined into the production bundle.
+
+After adding or changing these EAS env vars, create a new build; installing an old binary will not pick them up.
 
 ```sh
 eas build --profile preview --platform ios
@@ -69,3 +85,4 @@ eas build --profile preview --platform ios
 - Do not commit `.env`, `.env.local`, `credentials.json`, `.p12`, or provisioning profile files.
 - Firebase client API keys are not service-account secrets, but they should still be restricted in Google Cloud to the intended Firebase APIs and app identifiers.
 - The app now validates required Firebase config before initialization and renders a production-safe configuration error instead of hard-crashing when the bundle is missing required values.
+- Build 3 includes temporary redacted diagnostics on the configuration error screen. Remove them after confirming the production build receives the bundled Firebase values.

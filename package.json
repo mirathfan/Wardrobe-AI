@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "check:eas-env": "node scripts/check-eas-public-env.cjs"
   },
   "dependencies": {
     "@d11/react-native-fast-image": "^8.13.0",
