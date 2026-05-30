@@ -93,6 +93,7 @@ export const AuthInput = React.forwardRef<TextInput, React.ComponentProps<typeof
 function AuthInput(props, ref) {
   const { colors } = useAppTheme();
   const isWeb = Platform.OS === "web";
+  const defaultMaxLength = props.secureTextEntry ? 128 : 200;
   const webInputStyle = isWeb
     ? ({
         outlineStyle: "none",
@@ -104,6 +105,8 @@ function AuthInput(props, ref) {
   return (
     <TextInput
       ref={ref}
+      accessibilityLabel={props.accessibilityLabel ?? props.placeholder}
+      maxLength={defaultMaxLength}
       placeholderTextColor={colors.textMuted}
       selectionColor={colors.softPurple}
       {...props}

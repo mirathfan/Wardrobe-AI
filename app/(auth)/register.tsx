@@ -10,6 +10,7 @@ import {
   PrimaryAuthButton,
 } from "@/src/components/auth/AuthScaffold";
 import { getAuthErrorMessage } from "@/src/auth/authErrors";
+import { getRegisterValidationError } from "@/src/auth/registerValidation";
 import { auth } from "@/src/lib/firebase";
 import { trackLaunchEvent } from "@/src/lib/analytics";
 import { EMPTY_USER_PROFILE_PREFERENCES, saveUserAccountProfile, saveUserProfilePreferences } from "@/src/lib/userProfile";
@@ -31,12 +32,14 @@ export default function RegisterScreen() {
   async function onRegister() {
     const normalizedName = normalize(name);
     const normalizedEmail = normalize(email).toLowerCase();
-    if (!normalizedName) return Alert.alert("Missing name", "Enter your first name.");
-    if (!normalizedEmail) return Alert.alert("Missing email", "Enter your email.");
-    if (!password) return Alert.alert("Missing password", "Enter a password.");
-    if (password.length < 6) return Alert.alert("Weak password", "Use at least 6 characters.");
-    if (password !== confirmPassword) {
-      return Alert.alert("Password mismatch", "Passwords do not match.");
+    const validationError = getRegisterValidationError({
+      name,
+      email,
+      password,
+      confirmPassword,
+    });
+    if (validationError) {
+      return Alert.alert(validationError.title, validationError.message);
     }
 
     try {
@@ -83,6 +86,7 @@ export default function RegisterScreen() {
         value={name}
         onChangeText={setName}
         autoComplete="name"
+        maxLength={100}
         placeholder="First name"
         returnKeyType="next"
         blurOnSubmit={false}
@@ -95,6 +99,7 @@ export default function RegisterScreen() {
         autoCapitalize="none"
         keyboardType="email-address"
         autoComplete="email"
+        maxLength={254}
         placeholder="Email"
         returnKeyType="next"
         blurOnSubmit={false}
@@ -106,6 +111,7 @@ export default function RegisterScreen() {
         onChangeText={setPassword}
         secureTextEntry
         autoComplete="new-password"
+        maxLength={128}
         placeholder="Password"
         returnKeyType="next"
         blurOnSubmit={false}
@@ -117,6 +123,7 @@ export default function RegisterScreen() {
         onChangeText={setConfirmPassword}
         secureTextEntry
         autoComplete="new-password"
+        maxLength={128}
         placeholder="Confirm password"
         returnKeyType="done"
         onSubmitEditing={onRegister}

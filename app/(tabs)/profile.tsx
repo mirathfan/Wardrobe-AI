@@ -1,5 +1,5 @@
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
@@ -26,6 +26,7 @@ import {
   formatBodyFitSummary,
   formatClosetSummary,
   formatDefaultSizesSummary,
+  formatShoppingSummary,
   formatStyleSummary,
   formatUnitsSummary,
   useProfilePreferencesState,
@@ -50,6 +51,7 @@ const SETTINGS_GROUPS = [
     rows: [
       { title: "Body & Fit", route: "/profile/body-fit", summary: "bodyFit" },
       { title: "Default Sizes", route: "/profile/default-sizes", summary: "defaultSizes" },
+      { title: "Shopping Preferences", route: "/profile/shopping-preferences", summary: "shopping" },
       { title: "Style Preferences", route: "/profile/style-preferences", summary: "style" },
       { title: "Closet Preferences", route: "/profile/closet-preferences", summary: "closet" },
     ],
@@ -272,6 +274,7 @@ export default function ProfileScreen() {
       account: accountSummary,
       bodyFit: formatBodyFitSummary(profile),
       defaultSizes: formatDefaultSizesSummary(profile),
+      shopping: formatShoppingSummary(profile),
       style: formatStyleSummary(profile),
       closet: formatClosetSummary(profile),
       units: formatUnitsSummary(profile),
@@ -574,7 +577,7 @@ export default function ProfileScreen() {
                         key={row.title}
                         title={row.title}
                         summary={summaries[row.summary]}
-                        onPress={() => router.push(row.route)}
+                        onPress={() => router.push(row.route as Href)}
                       />
                     ))}
                   </View>

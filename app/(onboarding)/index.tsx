@@ -651,6 +651,7 @@ function QuickProfileStep({
         onChangeText={(value) =>
           onDraftChange((prev) => ({ ...prev, firstName: value }))
         }
+        maxLength={100}
         placeholder="First name"
       />
 
@@ -862,11 +863,13 @@ function OnboardingInput({
   value,
   onChangeText,
   placeholder,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
   placeholder?: string;
+  maxLength?: number;
 }) {
   const { colors } = useAppTheme();
   return (
@@ -877,6 +880,7 @@ function OnboardingInput({
         onChangeText={onChangeText}
         placeholder={placeholder}
         autoCapitalize="words"
+        maxLength={maxLength}
         placeholderTextColor={colors.textSecondary}
         style={[
           styles.input,

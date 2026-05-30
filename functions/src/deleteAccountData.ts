@@ -6,7 +6,7 @@ import {
   WriteBatch,
 } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 
 import {
@@ -128,7 +128,7 @@ async function deleteUserRateLimitDocs(uidHash: string, uid: string) {
 
 export const deleteAccountData = onCall(
   { timeoutSeconds: 540, memory: "512MiB" },
-  async (request): Promise<{ ok: true } & DeleteCounts> => {
+  tracedHandler(async (request): Promise<{ ok: true } & DeleteCounts> => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "User must be signed in.");
@@ -140,6 +140,7 @@ export const deleteAccountData = onCall(
     }
     await assertFunctionRateLimit(uid, "accountDelete", RATE_LIMITS.accountDelete);
     const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
 
     const userRef = getFirestore().collection("users").doc(uid);
     logger.info("[ACCOUNT_DELETE] starting account data deletion", { uidHash });
@@ -179,5 +180,5 @@ export const deleteAccountData = onCall(
       rateLimitDocumentsDeleted,
       authUserDeleted,
     };
-  },
+  }),
 );

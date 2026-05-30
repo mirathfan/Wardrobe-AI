@@ -32,6 +32,14 @@ export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
   styleAesthetics: [],
   preferredFit: null,
   budgetPreference: null,
+  preferredBrands: [],
+  avoidedBrands: [],
+  preferredStyles: [],
+  avoidedStyles: [],
+  preferredMaterials: [],
+  avoidedMaterials: [],
+  shoppingGoals: [],
+  sustainabilityPreference: null,
   favoriteColors: [],
   avoidedColors: [],
   accessoryPreferences: [],
@@ -58,6 +66,7 @@ export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
   advancedFit: {},
   fitPreferences: {},
   stylePreferences: {},
+  materialPreferences: {},
   closetPreferences: {},
   notifications: {},
 };
@@ -108,6 +117,7 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
   const advancedFit = readRecord(root.advancedFit);
   const fitPreferences = readRecord(root.fitPreferences);
   const stylePreferences = readRecord(root.stylePreferences);
+  const materialPreferences = readRecord(root.materialPreferences);
   const closetPreferences = readRecord(root.closetPreferences);
   const notifications = readRecord(root.notifications);
   const detectedCurrency = detectDeviceCurrency();
@@ -153,6 +163,19 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
       root.budgetPreference === "mid" ||
       root.budgetPreference === "premium"
         ? root.budgetPreference
+        : null,
+    preferredBrands: cleanStringList(root.preferredBrands ?? stylePreferences.preferredBrands),
+    avoidedBrands: cleanStringList(root.avoidedBrands ?? stylePreferences.avoidedBrands),
+    preferredStyles: cleanStringList(root.preferredStyles ?? stylePreferences.preferredStyles),
+    avoidedStyles: cleanStringList(root.avoidedStyles ?? stylePreferences.avoidedStyles),
+    preferredMaterials: cleanStringList(root.preferredMaterials ?? materialPreferences.preferred),
+    avoidedMaterials: cleanStringList(root.avoidedMaterials ?? materialPreferences.avoided),
+    shoppingGoals: cleanStringList(root.shoppingGoals ?? root.goals),
+    sustainabilityPreference:
+      root.sustainabilityPreference === "new" ||
+      root.sustainabilityPreference === "secondhand" ||
+      root.sustainabilityPreference === "either"
+        ? root.sustainabilityPreference
         : null,
     favoriteColors: cleanStringList(root.favoriteColors),
     avoidedColors: cleanStringList(root.avoidedColors),
@@ -256,10 +279,18 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
           : null,
     },
     stylePreferences: {
-      preferredStyles: cleanStringList(stylePreferences.preferredStyles ?? root.styleAesthetics),
+      preferredStyles: cleanStringList(
+        stylePreferences.preferredStyles ?? root.preferredStyles ?? root.styleAesthetics,
+      ),
       favoriteColors: cleanStringList(stylePreferences.favoriteColors ?? root.favoriteColors),
       avoidedColors: cleanStringList(stylePreferences.avoidedColors ?? root.avoidedColors),
-      preferredBrands: cleanStringList(stylePreferences.preferredBrands),
+      preferredBrands: cleanStringList(stylePreferences.preferredBrands ?? root.preferredBrands),
+      avoidedBrands: cleanStringList(stylePreferences.avoidedBrands ?? root.avoidedBrands),
+      avoidedStyles: cleanStringList(stylePreferences.avoidedStyles ?? root.avoidedStyles),
+    },
+    materialPreferences: {
+      preferred: cleanStringList(materialPreferences.preferred ?? root.preferredMaterials),
+      avoided: cleanStringList(materialPreferences.avoided ?? root.avoidedMaterials),
     },
     closetPreferences: {
       prioritizeUnderused:
@@ -358,9 +389,27 @@ export async function saveUserProfilePreferences(
         weight: normalized.weight,
         stylePreferences: {
           ...normalized.stylePreferences,
-          preferredStyles: normalized.styleAesthetics,
+          preferredStyles: normalized.preferredStyles?.length
+            ? normalized.preferredStyles
+            : normalized.styleAesthetics,
           favoriteColors: normalized.favoriteColors,
           avoidedColors: normalized.avoidedColors,
+          preferredBrands: normalized.stylePreferences.preferredBrands?.length
+            ? normalized.stylePreferences.preferredBrands
+            : normalized.preferredBrands ?? [],
+          avoidedBrands: normalized.stylePreferences.avoidedBrands?.length
+            ? normalized.stylePreferences.avoidedBrands
+            : normalized.avoidedBrands ?? [],
+          avoidedStyles: normalized.stylePreferences.avoidedStyles?.length
+            ? normalized.stylePreferences.avoidedStyles
+            : normalized.avoidedStyles ?? [],
+        },
+        materialPreferences: {
+          ...normalized.materialPreferences,
+          preferred:
+            normalized.materialPreferences?.preferred ?? normalized.preferredMaterials ?? [],
+          avoided:
+            normalized.materialPreferences?.avoided ?? normalized.avoidedMaterials ?? [],
         },
         fitPreferences: {
           ...normalized.fitPreferences,

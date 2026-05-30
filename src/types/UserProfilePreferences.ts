@@ -7,6 +7,7 @@ export type WardrobeMode = "masculine" | "feminine" | "neutral" | "mixed" | "cus
 export type PreferredFit = "slim" | "regular" | "relaxed" | "oversized";
 export type CurrencyMode = "auto" | "manual";
 export type BudgetPreference = "budget" | "mid" | "premium";
+export type SustainabilityPreference = "new" | "secondhand" | "either";
 
 export type UserProfilePreferences = {
   onboardingCompleted: boolean;
@@ -22,6 +23,14 @@ export type UserProfilePreferences = {
   styleAesthetics: string[];
   preferredFit?: PreferredFit | null;
   budgetPreference?: BudgetPreference | null;
+  preferredBrands?: string[];
+  avoidedBrands?: string[];
+  preferredStyles?: string[];
+  avoidedStyles?: string[];
+  preferredMaterials?: string[];
+  avoidedMaterials?: string[];
+  shoppingGoals?: string[];
+  sustainabilityPreference?: SustainabilityPreference | null;
   favoriteColors: string[];
   avoidedColors: string[];
   accessoryPreferences: string[];
@@ -93,6 +102,12 @@ export type UserProfilePreferences = {
     favoriteColors?: string[];
     avoidedColors?: string[];
     preferredBrands?: string[];
+    avoidedBrands?: string[];
+    avoidedStyles?: string[];
+  };
+  materialPreferences?: {
+    preferred?: string[];
+    avoided?: string[];
   };
   closetPreferences: {
     prioritizeUnderused?: boolean;
