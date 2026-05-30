@@ -4,6 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { PhotoEditorSection } from "../../components/PhotoEditorSection";
 import { SectionCard } from "../ui/SectionCard";
 import { AddItemPhotoCarousel } from "./AddItemPhotoCarousel";
+import { OutfitExtractionEntry } from "./OutfitExtractionEntry";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
@@ -13,6 +14,18 @@ export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
 }) {
   const { state, derived, actions } = controller;
   const { colors } = useAppTheme();
+  const primaryPhoto =
+    state.selectedPhotos?.find((entry: any) => entry.id === state.primaryPhotoId) ??
+    state.selectedPhotos?.[0] ??
+    null;
+  const productPolishStatusText =
+    state.productPolishStatus === "analyzing"
+      ? "Analyzing photo..."
+      : state.productPolishStatus === "polishing"
+        ? "Improving product photo..."
+        : state.productPolishStatus === "cutout"
+          ? "Creating clean cutout..."
+          : null;
 
   const statusTone =
     derived.aiStatusPill.tone === "error"
@@ -82,6 +95,8 @@ export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
             />
           ) : null}
 
+          {!state.isEdit ? <OutfitExtractionEntry uid={state.uid ?? null} /> : null}
+
           <PhotoEditorSection
             previewUri={derived.previewPhotoUri}
             normalizedPreviewUri={derived.normalizedPreviewUri}
@@ -89,13 +104,31 @@ export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
             fallbackPreviewUri={derived.fallbackPreviewUri}
             hasCutoutPreview={derived.hasCutoutPreview}
             maskDebugUri={derived.maskDebugUri}
-            isProcessing={state.refiningCutout}
+            isProcessing={state.refiningCutout || state.productPolishStatus !== "idle"}
             canRefine={derived.canRefineCutout}
-            isAiRunning={state.aiStatus === "running"}
-            statusText={null}
+            isAiRunning={state.aiStatus === "running" || state.productPolishStatus !== "idle"}
+            statusText={productPolishStatusText}
+            productPolishOriginalUri={
+              primaryPhoto?.normalizedOriginalUri ?? state.originalPickedPhotoUri ?? null
+            }
+            productPolishPolishedUri={
+              primaryPhoto?.refinedLocalUri ??
+              state.pendingRefinedPhotoUri ??
+              primaryPhoto?.refinedImageUrl ??
+              state.pendingRefinedImageUrl ??
+              null
+            }
+            productPolishActiveVariant={
+              state.selectedStudioSource ??
+              primaryPhoto?.activeImageVariant ??
+              state.pendingActiveImageVariant ??
+              "original"
+            }
+            productPolishWarning={state.studioSourceWarning}
             showPendingNote={
               !!state.pendingPhotoUri &&
               !state.uploadingPhoto &&
+              state.productPolishStatus === "idle" &&
               !state.uploadError &&
               !state.draftItemId &&
               !state.isEdit
@@ -111,6 +144,8 @@ export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
               void actions.resetCreateFlow("remove-photo", { deleteActiveDraft: true });
             }}
             onUseOriginal={actions.useOriginalPhoto}
+            onUseOriginalProduct={actions.useOriginalProductPhoto}
+            onUsePolishedProduct={actions.usePolishedProductPhoto}
             onRerunCutout={() => void actions.retryBackgroundRemoval()}
             onReplace={() => void actions.pickPhoto("library")}
             onRefineOpen={() => {}}

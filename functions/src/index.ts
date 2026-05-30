@@ -3,6 +3,9 @@ import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 import { parseOutfitIntentFromPrompt } from "./parseOutfitIntent";
+import { allowedWebOrigins } from "./shared/cors";
+import { setLogContext, tracedHandler } from "./shared/logger";
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "./shared/rateLimit";
 export { generateOutfitsV1 } from "./generateOutfitsV1";
 export { generateAuraSwipeBatch } from "./generateAuraSwipeBatch";
 export { outfitChatV1 } from "./outfitChatV1";
@@ -11,6 +14,12 @@ export { askAuraStream } from "./askAuraStream";
 export { transcribeAuraAudio } from "./transcribeAuraAudio";
 export { importProductLink } from "./importProductLink";
 export { previewProductLink } from "./previewProductLink";
+export { polishProductImage } from "./polishProductImage";
+export {
+  extractOutfitItems,
+  polishExtractedAccessory,
+  reconstructOutfitLayout,
+} from "./extractOutfitItems";
 export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
 export { deleteAccountData } from "./deleteAccountData";
 export { wrapAffiliateLinks } from "./affiliate/affiliateLinks";
@@ -22,34 +31,11 @@ if (!getApps().length) {
 }
 getFirestore().settings({ignoreUndefinedProperties: true});
 
-async function assertParseOutfitIntentRateLimit(uid: string) {
-  const db = getFirestore();
-  const ref = db
-    .collection("functionRateLimits")
-    .doc("parseOutfitIntent")
-    .collection("users")
-    .doc(uid);
-  const now = Date.now();
-  const windowMs = 60_000;
-  const maxRequests = 20;
-  await db.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(ref);
-    const data = snapshot.data() as { windowStart?: number; count?: number } | undefined;
-    const windowStart =
-      typeof data?.windowStart === "number" && now - data.windowStart < windowMs
-        ? data.windowStart
-        : now;
-    const count = windowStart === data?.windowStart ? Number(data?.count ?? 0) + 1 : 1;
-    if (count > maxRequests) {
-      throw new Error("rate_limited");
-    }
-    transaction.set(ref, { windowStart, count, updatedAt: now }, { merge: true });
-  });
-}
+const ALLOWED_ORIGINS = allowedWebOrigins();
 
 export const parseOutfitIntent = onRequest(
-  { cors: true, secrets: ["OPENAI_API_KEY"] },
-  async (req, res) => {
+  { cors: ALLOWED_ORIGINS, secrets: ["OPENAI_API_KEY"] },
+  tracedHandler(async (req, res) => {
     if (req.method === "OPTIONS") {
       res.status(204).send("");
       return;
@@ -64,6 +50,7 @@ export const parseOutfitIntent = onRequest(
     try {
       const decoded = await getAuth().verifyIdToken(token);
       uid = decoded.uid;
+      setLogContext({ uidHash: redactUid(uid) });
     } catch {
       res.status(401).json({ error: "Invalid token" });
       return;
@@ -74,7 +61,7 @@ export const parseOutfitIntent = onRequest(
       return;
     }
     try {
-      await assertParseOutfitIntentRateLimit(uid);
+      await assertFunctionRateLimit(uid, "parseOutfitIntent", RATE_LIMITS.parseOutfitIntent);
     } catch {
       res.status(429).json({ error: "Too many requests" });
       return;
@@ -88,5 +75,9 @@ export const parseOutfitIntent = onRequest(
 
     const intent = await parseOutfitIntentFromPrompt(prompt);
     res.status(200).json(intent);
-  },
+  }),
 );
+
+export const health = onRequest({ cors: false }, tracedHandler((_req, res) => {
+  res.json({ ok: true, ts: Date.now() });
+}));

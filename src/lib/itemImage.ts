@@ -1,5 +1,10 @@
 import type { DimensionValue } from "react-native";
 
+import {
+  resolveItemImage,
+  type ResolvableItemImage,
+  type ResolveItemImageSurface,
+} from "./resolveItemImage";
 import { getVisualNormalizationDefaults, mergeVisualNormalization } from "./visualNormalization";
 
 export type ItemImageSurface =
@@ -10,13 +15,6 @@ export type ItemImageSurface =
   | "ai_outfit";
 
 type ImageLikeItem = {
-  images?: {
-    originalUrl?: string | null;
-    cleanedUrl?: string | null;
-    isPrimary?: boolean;
-  }[] | null;
-  originalImageUrl?: string | null;
-  cleanedImageUrl?: string | null;
   category?: string | null;
   subCategory?: string | null;
   type?: string | null;
@@ -35,33 +33,7 @@ type ImageLikeItem = {
     recommendedTranslateY?: number;
     anchor?: "top" | "center" | "waist" | "foot";
   } | null;
-  photoUrl?: string | null;
-  photoUri?: string | null;
-  normalizedUrl?: string | null;
-  cleanedUrl?: string | null;
-  cleanedPhotoUrl?: string | null;
-  cleanedSource?: string | null;
-  cleanedLocalUri?: string | null;
-  pendingPhotoUri?: string | null;
-  photos?: {
-    originalUrl?: string | null;
-    images?: {
-      originalUrl?: string | null;
-      cleanedUrl?: string | null;
-      isPrimary?: boolean;
-    }[] | null;
-    normalizedUrl?: string | null;
-    previewUrl?: string | null;
-    cleanedUrl?: string | null;
-    cleanedPhotoUrl?: string | null;
-    cleanedSource?: string | null;
-    cleanedThumbUrl?: string | null;
-    thumbUrl?: string | null;
-    croppedUrl?: string | null;
-    primaryUrl?: string | null;
-    urls?: string[];
-  };
-};
+} & ResolvableItemImage;
 
 export type ItemImageDecoration = {
   shadowStyle: {
@@ -511,9 +483,21 @@ export function getItemImageDecoration(
 
 export function getItemImageUrl(
   item: ImageLikeItem | null | undefined,
-  options: { variant: "thumb" | "hero" }
+  options: {
+    variant: "thumb" | "hero";
+    surface?: ResolveItemImageSurface;
+    log?: boolean;
+  }
 ): string | null {
   if (!item) return null;
+  if (normalizeToken(item.imageSource) === "outfit layout reconstruction") {
+    return resolveItemImage(item, {
+      variant: options.variant,
+      surface: options.surface ?? (options.variant === "hero" ? "item_detail" : "closet_card"),
+      log: options.log,
+    }).uri;
+  }
+
   const primaryImage = getPrimaryImage(item);
   const cleanedSource = getCleanedSource(item);
   const preferredVisionCleaned =
@@ -620,8 +604,13 @@ export function getItemImageUrl(
 }
 
 export function getBestThumbnailImageSource(
-  item: ImageLikeItem | null | undefined
+  item: ImageLikeItem | null | undefined,
+  options: { surface?: ResolveItemImageSurface; log?: boolean } = {},
 ): ItemImageSource {
-  const uri = getItemImageUrl(item, { variant: "thumb" });
+  const uri = getItemImageUrl(item, {
+    variant: "thumb",
+    surface: options.surface ?? "closet_card",
+    log: options.log,
+  });
   return uri ? { uri } : null;
 }

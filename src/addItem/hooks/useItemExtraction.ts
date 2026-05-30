@@ -36,11 +36,68 @@ import {
 } from "../controllerShared";
 import { db } from "../../lib/firebase";
 import { normalizeCategoryForStorage } from "../../lib/items";
+import { photoPipelineDuration, photoPipelineNow, safeErrorData } from "../../lib/photoPipelineLogger";
 import {
   Category,
   isValidCategorySubCategory,
 } from "../../shared/wardrobeTaxonomy";
 import { uploadItemPhoto } from "../../lib/uploadImage";
+import type { ProductImageQuality, ProductPolishMetadata } from "../../types/ProductImageQuality";
+
+const UNBRANDED_LABEL = "Unbranded";
+const unknownBrandValues = new Set([
+  "",
+  "unknown",
+  "n/a",
+  "na",
+  "none",
+  "no brand",
+  "not found",
+  "unidentified",
+  "unreadable",
+]);
+
+function cleanDetectedBrand(value: unknown) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function brandConfidenceFor(data: any) {
+  const confidence = Number(
+    data?.brandConfidence ??
+      data?.confidence?.brand ??
+      data?.confidence?.brandConfidence ??
+      Number.NaN
+  );
+  return Number.isFinite(confidence) ? confidence : null;
+}
+
+function confidentBrandFor(data: any) {
+  const brand = cleanDetectedBrand(data?.brand);
+  const normalized = brand.toLowerCase();
+  if (unknownBrandValues.has(normalized)) return "";
+  const confidence = brandConfidenceFor(data);
+  if (confidence != null && confidence > 0 && confidence < 0.55) return "";
+  return brand;
+}
+
+function extractionFieldNamesFor(data: any) {
+  const fields: string[] = [];
+  const add = (field: string, present: boolean) => {
+    if (present && !fields.includes(field)) fields.push(field);
+  };
+  add("brand", !!confidentBrandFor(data));
+  add("name", !!norm(data?.name) && !isWeakItemName(norm(data?.name)));
+  add("category", !!normalizeCategoryForStorage(data?.category));
+  add("subcategory", !!norm(data?.subCategory));
+  add("color", normalizeColorList(data?.colors).length > 0 || !!norm(data?.primaryColor));
+  add("material", !!norm(data?.material));
+  add("fit", !!norm(data?.fit));
+  add("pattern", !!norm(data?.pattern));
+  add("notes", !!norm(data?.notes));
+  return fields;
+}
 
 export function useItemExtraction({
   uid,
@@ -72,6 +129,20 @@ export function useItemExtraction({
       .trim()
       .replace(/_/g, " ")
       .replace(/\b\w/g, (match) => match.toUpperCase());
+  const userFacingAutofillError = (error: unknown, fallback: string) => {
+    const raw = error instanceof Error ? error.message : String(error ?? "");
+    const lower = raw.toLowerCase();
+    if (lower.includes("timed out") || lower.includes("timeout")) {
+      return "AI autofill took too long. You can keep editing manually or try again.";
+    }
+    if (lower.includes("network") || lower.includes("unavailable") || lower.includes("offline")) {
+      return "AI autofill couldn’t stay connected. Check your connection and try again.";
+    }
+    if (lower.includes("upload") || lower.includes("storage")) {
+      return "Photo upload failed. Please try again.";
+    }
+    return fallback;
+  };
   const [draftItemId, setDraftItemId] = useState<string | null>(null);
   const [draftPhotoHash, setDraftPhotoHash] = useState<string | null>(null);
   const [autofillKick, setAutofillKick] = useState(0);
@@ -82,6 +153,7 @@ export function useItemExtraction({
   const [isAutofillRunning, setIsAutofillRunning] = useState(false);
   const [lastAutofillSummary, setLastAutofillSummary] = useState<string>("");
   const [autofillError, setAutofillError] = useState<string | null>(null);
+  const [extractionPartialSuccess, setExtractionPartialSuccess] = useState(false);
   const [aiPrediction, setAiPrediction] = useState<{
     category: string | null;
     colors: string[];
@@ -151,6 +223,7 @@ export function useItemExtraction({
   const snapshotUpdateCountRef = useRef(0);
   const draftCreatePromiseRef = useRef<Promise<string | null> | null>(null);
   const activeAutofillHashRef = useRef<string | null>(null);
+  const extractionStartedAtByHashRef = useRef(new Map<string, number>());
   const autofillStatusDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingAutofillStatusRef = useRef<string | null>(null);
   const isFinalizingRef = useRef(false);
@@ -262,6 +335,7 @@ export function useItemExtraction({
     setAiPattern(null);
     setAiMaterial(null);
     setAiColorNeedsReview(false);
+    setExtractionPartialSuccess(false);
     photo.refs.syncedPreviewUriRef.current = null;
   }, [createSessionRef, draftItemId, draftPhotoHash, photo.refs, stopDraftSubscription]);
 
@@ -382,41 +456,85 @@ export function useItemExtraction({
       previousLifecycleStatus === "done" && normalizedStatus !== "done"
         ? "done"
         : normalizedStatus;
+    const extractionFieldNames = extractionFieldNamesFor(data);
+    const hasPartialExtraction =
+      effectiveStatus === "failed" &&
+      extractionFieldNames.some((field) => field !== "brand");
+    const statusForClient = hasPartialExtraction ? "done" : effectiveStatus;
+    const traceId =
+      String(data?.photoPipelineTraceId ?? photo.state.photoTraceId ?? "").trim() || null;
     if (activePhotoHash) {
       hashLifecycleRef.current.set(activePhotoHash, {
-        status: effectiveStatus,
+        status: statusForClient,
         draftId: createSessionRef.current.draftId,
       });
-      if (effectiveStatus === "failed") {
+      if (statusForClient === "failed") {
         terminalFailedHashesRef.current.add(activePhotoHash);
         verboseAutofillLog("[AddItem] autofill terminal failure recorded", {
           activeRunId,
           draftId: createSessionRef.current.draftId,
           photoHash: activePhotoHash,
         });
-      } else if (effectiveStatus === "done" || effectiveStatus === "processing") {
+      } else if (statusForClient === "done" || statusForClient === "processing") {
         terminalFailedHashesRef.current.delete(activePhotoHash);
       }
     }
     const shouldPreferDoneSnapshot = effectiveStatus === "done";
-    setIngestionStatus(effectiveStatus);
-    if (effectiveStatus === "pending" || effectiveStatus === "processing") {
+    const shouldApplyExtractionFields = effectiveStatus === "done" || hasPartialExtraction;
+    setIngestionStatus(statusForClient);
+    if (statusForClient === "pending" || statusForClient === "processing") {
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "start", {
+        status: statusForClient,
+        draftUpdated: true,
+        hasCategory: !!data?.category,
+        colorCount: Array.isArray(data?.colors) ? data.colors.length : 0,
+      });
       setAiStatus("running");
       setAutofillStatusThrottled("AI autofill running…");
       setIsAutofillRunning(true);
       setAutofillError(null);
+      setExtractionPartialSuccess(false);
       setAiStage("Details");
     } else if (effectiveStatus === "done") {
+      const startedAt = activePhotoHash ? extractionStartedAtByHashRef.current.get(activePhotoHash) : null;
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "success", {
+        status: effectiveStatus,
+        hasCategory: !!data?.category,
+        hasSubCategory: !!data?.subCategory,
+        colorCount: Array.isArray(data?.colors) ? data.colors.length : 0,
+        hasBrand: !!data?.brand,
+        hasName: !!data?.name,
+      }, startedAt ? photoPipelineDuration(startedAt) : null);
       setAiStatus("ready");
       setAutofillStatusThrottled("AI done");
       setIsAutofillRunning(false);
       setAutofillError(null);
+      setExtractionPartialSuccess(false);
+      setAiStage(null);
+    } else if (hasPartialExtraction) {
+      const startedAt = activePhotoHash ? extractionStartedAtByHashRef.current.get(activePhotoHash) : null;
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction_partial_success", "success", {
+        status: effectiveStatus,
+        brandDetected: !!confidentBrandFor(data),
+        fieldsApplied: extractionFieldNames.filter((field) => field !== "brand"),
+      }, startedAt ? photoPipelineDuration(startedAt) : null);
+      setAiStatus("ready");
+      setAutofillStatusThrottled("Detected most details — review before saving.");
+      setIsAutofillRunning(false);
+      setAutofillError(null);
+      setExtractionPartialSuccess(true);
       setAiStage(null);
     } else if (effectiveStatus === "failed") {
+      const startedAt = activePhotoHash ? extractionStartedAtByHashRef.current.get(activePhotoHash) : null;
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "failure", {
+        status: effectiveStatus,
+        hasError: !!data?.ingestion?.error,
+      }, startedAt ? photoPipelineDuration(startedAt) : null);
       setAiStatus("error");
       setAutofillStatusThrottled("AI couldn’t autofill—continue manually");
       setIsAutofillRunning(false);
       setAutofillError("AI autofill failed");
+      setExtractionPartialSuccess(false);
       setAiStage(null);
     }
     setAiPattern(norm(data?.pattern) || null);
@@ -458,7 +576,7 @@ export function useItemExtraction({
     if (serverPrimaryUrl) photo.actions.setPhotoUrl(serverPrimaryUrl);
     if (serverCleanedPhotoUrl) photo.actions.setCleanedPhotoUrl(serverCleanedPhotoUrl);
     if (serverGeneratedCleanedUrl) photo.actions.setServerCleanedUrl(serverGeneratedCleanedUrl);
-    if (effectiveStatus !== "done") {
+    if (!shouldApplyExtractionFields) {
       return;
     }
 
@@ -657,6 +775,14 @@ export function useItemExtraction({
     ) {
       draft.actions.setSeasonTags(data.seasonTags);
     }
+    const incomingNotes = norm(data?.notes);
+    if (
+      !draft.refs.userEditedKeysRef.current.has("notes") &&
+      !draft.state.notes &&
+      incomingNotes
+    ) {
+      draft.actions.setNotes(incomingNotes);
+    }
 
     const normalizedCategory = finalCategoryCandidate ?? draft.derived.selectedCategory;
     const serverSubCategory = norm(data?.subCategory);
@@ -752,9 +878,7 @@ export function useItemExtraction({
     }
 
     const summaryParts: string[] = [];
-    const summaryBrand = String(data?.brand ?? "")
-      .replace(/\s+/g, " ")
-      .trim();
+    const summaryBrand = confidentBrandFor(data);
     if (
       summaryBrand &&
       !draft.refs.userEditedKeysRef.current.has("brand") &&
@@ -769,6 +893,20 @@ export function useItemExtraction({
         draft.actions.setBrand(summaryBrand);
         locked.brand = summaryBrand;
       }
+    } else if (
+      !summaryBrand &&
+      !draft.refs.userEditedKeysRef.current.has("brand") &&
+      !norm(draft.state.brand)
+    ) {
+      verboseAutofillLog("[AddItem] defaulting brand to unbranded", {
+        activeRunId,
+        shouldPreferDoneSnapshot,
+      });
+      draft.actions.setBrand(UNBRANDED_LABEL);
+      locked.brand = UNBRANDED_LABEL;
+      photo.actions.logPhotoPipelineEvent?.(traceId, "brand_defaulted_unbranded", "success", {
+        brandDetected: false,
+      });
     }
     const summaryCategory = norm(locked.category ?? finalCategoryCandidate ?? data?.category);
     const rawSummaryName = norm(data?.name);
@@ -844,6 +982,7 @@ export function useItemExtraction({
     draft,
     draftPhotoHash,
     photo.actions,
+    photo.state,
     setAutofillStatusThrottled,
   ]);
 
@@ -914,6 +1053,11 @@ export function useItemExtraction({
       localPhotoUri: string;
       cleanedLocalUri: string | null;
       normalizedLocalUri?: string | null;
+      sourceOriginalLocalUri?: string | null;
+      refinedLocalUri?: string | null;
+      imageQuality?: ProductImageQuality | null;
+      productPolish?: ProductPolishMetadata | null;
+      traceId?: string | null;
       originalWidth: number | null;
       token: { sessionId: string; requestId: number };
       runId?: number;
@@ -927,6 +1071,11 @@ export function useItemExtraction({
           localPhotoUri,
           cleanedLocalUri,
           normalizedLocalUri = null,
+          sourceOriginalLocalUri = null,
+          refinedLocalUri = null,
+          imageQuality = null,
+          productPolish = null,
+          traceId = null,
           originalWidth,
         } = params;
         if (draftPhotoHash === photoHash && draftItemId) {
@@ -971,12 +1120,16 @@ export function useItemExtraction({
               existingData?.photos?.cleanedPhotoUrl ??
               null;
             const existingNormalized = existingData?.photos?.normalizedUrl ?? null;
+            const existingRefined = existingData?.photos?.refinedUrl ?? existingData?.refinedImageUrl ?? null;
             if (existingPrimary) photo.actions.setPhotoUrl(existingPrimary);
             if (existingCleaned) {
               photo.actions.setCleanedPhotoUrl(existingCleaned);
               photo.actions.setServerCleanedUrl(existingCleaned);
             }
             photo.actions.setPendingNormalizedPreviewUri?.(existingNormalized);
+            photo.actions.setPendingRefinedImageUrl?.(existingRefined);
+            photo.actions.setPendingImageQuality?.(existingData?.imageQuality ?? existingData?.photos?.imageQuality ?? null);
+            photo.actions.setPendingProductPolish?.(existingData?.productPolish ?? existingData?.photos?.productPolish ?? null);
             attachDraftSubscription(draftRef.id, params.token.sessionId, runId);
             return;
           }
@@ -988,8 +1141,14 @@ export function useItemExtraction({
             localUri: localPhotoUri,
             cleanedLocalUri,
             normalizedLocalUri,
+            sourceOriginalLocalUri,
+            refinedLocalUri,
             saveNormalizedAsCleaned: true,
             originalWidth,
+            imageQuality,
+            productPolish,
+            traceId,
+            onLog: photo.actions.appendPhotoPipelineEvent,
           }),
           UPLOAD_TIMEOUT_MS,
           "Photo upload"
@@ -1006,6 +1165,10 @@ export function useItemExtraction({
           photoUri: null,
           originalImageUrl: uploaded.originalUrl,
           cleanedImageUrl: uploaded.cleanedUrl,
+          refinedImageUrl: uploaded.refinedUrl,
+          imageQuality,
+          productPolish,
+          photoPipelineTraceId: traceId,
           images: uploaded.images,
           createdAt: now,
           updatedAt: now,
@@ -1035,6 +1198,10 @@ export function useItemExtraction({
             originalUrl: uploaded.originalUrl,
             primaryUrl: uploaded.primaryUrl,
             aiUrl: uploaded.aiUrl,
+            refinedUrl: uploaded.refinedUrl,
+            imageQuality,
+            productPolish,
+            traceId,
             urls: uploaded.imageUrls,
             images: uploaded.images,
             ...(nextCleanedPhotoUrl
@@ -1058,7 +1225,15 @@ export function useItemExtraction({
             sourceType: nextCleanedPhotoUrl ? "ios_vision" : "original",
           },
         };
+        const draftUpdateStartedAt = photoPipelineNow();
         await setDoc(draftRef, draftPayload, { merge: true });
+        photo.actions.logPhotoPipelineEvent?.(traceId, "draft_updated", "success", {
+          draftId: draftRef.id,
+          hasPrimaryUrl: !!uploaded.primaryUrl,
+          hasCleanedUrl: !!uploaded.cleanedUrl,
+          hasRefinedUrl: !!uploaded.refinedUrl,
+          ingestionStatus: "pending",
+        }, photoPipelineDuration(draftUpdateStartedAt));
         if (runId !== aiRunIdRef.current) {
           cleanupDraftDocIfInactive(draftRef.id);
           return;
@@ -1074,13 +1249,18 @@ export function useItemExtraction({
         photo.actions.setUploadedPhotoRecord?.({
           imageId: "primary",
           itemId: draftRef.id,
+          traceId,
           photoHash,
           originalUrl: uploaded.originalUrl,
+          sourceOriginalUrl: uploaded.sourceOriginalUrl,
           primaryUrl: uploaded.primaryUrl,
           aiUrl: uploaded.aiUrl,
           cleanedUrl: nextCleanedPhotoUrl,
           normalizedUrl: nextNormalizedPhotoUrl,
+          refinedUrl: uploaded.refinedUrl,
           cleanedSource: uploaded.cleanedSource,
+          imageQuality,
+          productPolish,
         });
         photo.refs.syncedPreviewUriRef.current = localPhotoUri;
         attachDraftSubscription(draftRef.id, params.token.sessionId, runId);
@@ -1088,8 +1268,10 @@ export function useItemExtraction({
           cleanupDraftDocIfInactive(previousDraftId);
         }
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Photo upload failed. Please retry.";
+        const message = userFacingAutofillError(error, "Photo upload failed. Please try again.");
+        photo.actions.logPhotoPipelineEvent?.(params.traceId ?? null, "draft_updated", "failure", {
+          ...safeErrorData(error),
+        });
         photo.actions.setUploadError(message);
         throw error;
       }
@@ -1167,6 +1349,7 @@ export function useItemExtraction({
     setAiOccasionTags([]);
     setAiSeasonTags([]);
     setAiColorNeedsReview(false);
+    setExtractionPartialSuccess(false);
     setAiDebugInputUri("");
     setAiDebugInputSource("");
     setAiDebugAspectRatio(null);
@@ -1188,6 +1371,7 @@ export function useItemExtraction({
   const setAutofillRunningState = useCallback(() => {
     setAiStatus("running");
     setAiStage("Color");
+    setExtractionPartialSuccess(false);
     setAutofillStatusThrottled("Starting AI autofill…");
   }, [setAutofillStatusThrottled]);
 
@@ -1205,6 +1389,7 @@ export function useItemExtraction({
     setIsAutofillRunning(false);
     setLastAutofillSummary("");
     setAutofillError(null);
+    setExtractionPartialSuccess(false);
     setAiPrediction({ category: null, colors: [] });
     setFinalPrediction({ category: null, colors: [], crop: null });
     setAiDebugRunId(0);
@@ -1418,6 +1603,14 @@ export function useItemExtraction({
       }
       lastAutofillStartedHashRef.current = photoHash;
       activeAutofillHashRef.current = photoHash;
+      const traceId = String(photo.state.photoTraceId ?? "").trim() || null;
+      const extractionStartedAt = photoPipelineNow();
+      extractionStartedAtByHashRef.current.set(photoHash, extractionStartedAt);
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "start", {
+        inputSource: autofillInputSource || "original",
+        hasCutoutUri: !!cutoutUri,
+        hasNormalizedPreviewUri: !!photo.state.pendingNormalizedPreviewUri,
+      });
       setAutofillError(null);
       setLastAutofillSummary("");
       setAiStatus("running");
@@ -1450,6 +1643,11 @@ export function useItemExtraction({
             localPhotoUri: imageUri,
             cleanedLocalUri: cutoutUri,
             normalizedLocalUri: photo.state.pendingNormalizedPreviewUri,
+            sourceOriginalLocalUri: photo.state.originalPickedPhotoUri ?? imageUri,
+            refinedLocalUri: photo.state.pendingRefinedPhotoUri,
+            imageQuality: photo.state.pendingImageQuality,
+            productPolish: photo.state.pendingProductPolish,
+            traceId,
             originalWidth: photo.state.pendingPhotoWidth,
             token,
             runId,
@@ -1465,8 +1663,13 @@ export function useItemExtraction({
         setIsAutofillRunning(true);
       } catch (error) {
         if (aiRunIdRef.current !== runId) return;
-        const message =
-          error instanceof Error ? error.message : "AI autofill timed out.";
+        const message = userFacingAutofillError(
+          error,
+          "AI autofill couldn’t finish. You can keep editing manually or try again."
+        );
+        photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "failure", {
+          ...safeErrorData(error),
+        }, photoPipelineDuration(extractionStartedAt));
         setAutofillStatusThrottled("AI couldn’t autofill—continue manually");
         setAiStatus("error");
         setAiStage(null);
@@ -1550,6 +1753,7 @@ export function useItemExtraction({
     aiOccasionTags,
     aiSeasonTags,
     aiColorNeedsReview,
+    extractionPartialSuccess,
   };
 
   const refs = {

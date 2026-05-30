@@ -1,5 +1,6 @@
 import { Timestamp } from "firebase/firestore";
 import type { VisualNormalization } from "../lib/visualNormalization";
+import type { ItemImageSource, ProductImageQuality, ProductImageVariant, ProductPolishMetadata } from "./ProductImageQuality";
 import {
   AllowedFormality,
   AllowedLayerRole,
@@ -28,16 +29,31 @@ export type ClothingPattern =
 export type ClothingItem = {
   id: string;
   images?: {
+    traceId?: string | null;
     originalUrl: string;
+    sourceOriginalUrl?: string | null;
+    refinedUrl?: string | null;
     cleanedUrl?: string | null;
+    imageSource?: ItemImageSource | null;
+    cutoutSourceKind?: ProductImageVariant | null;
     isPrimary: boolean;
   }[] | null;
   originalImageUrl?: string | null;
+  refinedImageUrl?: string | null;
   cleanedImageUrl?: string | null;
+  imageSource?: ItemImageSource | null;
+  cutoutSourceKind?: ProductImageVariant | null;
+  imageQuality?: ProductImageQuality | null;
+  productPolish?: ProductPolishMetadata | null;
+  photoPipelineTraceId?: string | null;
   backgroundRemovalMethod?: "client" | "server" | "none";
 
   // core
   brand: string;
+  isUnbranded?: boolean | null;
+  brandSource?: "user" | "ai" | "default_unbranded" | string | null;
+  brandUpdatedAt?: number | null;
+  brandConfidence?: number | null;
   category?: Category | "shoes" | string;
   subCategory?: string;
   type?: string | null;
@@ -66,13 +82,24 @@ export type ClothingItem = {
   ingestionStatus?: "pending" | "processing" | "done" | "failed" | null;
   embeddings?: { image?: number[] };
   photos?: {
+    traceId?: string | null;
     originalUrl?: string | null;
     primaryUrl?: string | null;
     images?: {
+      traceId?: string | null;
       originalUrl?: string | null;
+      sourceOriginalUrl?: string | null;
+      refinedUrl?: string | null;
       cleanedUrl?: string | null;
+      imageSource?: ItemImageSource | null;
+      cutoutSourceKind?: ProductImageVariant | null;
       isPrimary?: boolean;
     }[] | null;
+    refinedUrl?: string | null;
+    imageQuality?: ProductImageQuality | null;
+    productPolish?: ProductPolishMetadata | null;
+    imageSource?: ItemImageSource | null;
+    cutoutSourceKind?: ProductImageVariant | null;
     normalizedUrl?: string | null;
     previewUrl?: string | null;
     urls?: string[];

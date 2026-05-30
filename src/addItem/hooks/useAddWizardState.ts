@@ -47,12 +47,13 @@ export function useAddWizardState(params: {
   const hasPhoto = !!derived.previewPhotoUri;
   const detailMissing = useMemo(() => {
     const missing: string[] = [];
-    if (!String(state.brand ?? "").trim()) missing.push("brand");
+    const effectiveBrand = String(state.brand ?? "").trim() || (state.extractionPartialSuccess ? "Unbranded" : "");
+    if (!effectiveBrand) missing.push("brand");
     if (!String(state.name ?? "").trim()) missing.push("item name");
     if (!state.category) missing.push("category");
     if (state.selectedColors.length === 0) missing.push("color");
     return missing;
-  }, [state.brand, state.category, state.name, state.selectedColors.length]);
+  }, [state.brand, state.category, state.extractionPartialSuccess, state.name, state.selectedColors.length]);
   const hasReviewDetails = detailMissing.length === 0;
   const canContinue =
     currentStep === 0 ? hasPhoto : currentStep === 1 ? hasReviewDetails : derived.canSave;
@@ -68,7 +69,11 @@ export function useAddWizardState(params: {
   const stepStatusText =
     currentStep === 0
       ? hasPhoto
-        ? "Photo ready"
+        ? state.studioSourceWarning === "Background removal failed, but you can still continue with the polished image."
+          ? "Polished photo ready; background removal failed"
+          : state.studioSourceWarning
+            ? "Photo ready with fallback"
+          : "Photo ready"
         : "Add a photo to continue"
       : currentStep === 1
         ? hasReviewDetails
@@ -95,7 +100,8 @@ export function useAddWizardState(params: {
     }
 
     if (currentStep === 1) {
-      if (!String(state.brand ?? "").trim()) {
+      const effectiveBrand = String(state.brand ?? "").trim() || (state.extractionPartialSuccess ? "Unbranded" : "");
+      if (!effectiveBrand) {
         Alert.alert("Confirm details", "Add a brand before continuing.");
         return;
       }
@@ -116,7 +122,7 @@ export function useAddWizardState(params: {
     }
 
     actions.saveItem();
-  }, [actions, currentStep, hasPhoto, state.brand, state.category, state.name, state.selectedColors.length]);
+  }, [actions, currentStep, hasPhoto, state.brand, state.category, state.extractionPartialSuccess, state.name, state.selectedColors.length]);
 
   const currentStepKey = currentStepMeta.id;
 

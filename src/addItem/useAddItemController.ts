@@ -171,6 +171,7 @@ export function useAddItemController({
         photo.state.photoUrl ||
         photo.state.photoUri ||
         photo.state.refiningCutout ||
+        photo.state.productPolishStatus !== "idle" ||
         draft.state.loading ||
         photo.state.uploadingPhoto
     );
@@ -183,6 +184,7 @@ export function useAddItemController({
     photo.state.pendingPhotoUri,
     photo.state.photoUri,
     photo.state.photoUrl,
+    photo.state.productPolishStatus,
     photo.state.refiningCutout,
     photo.state.serverCleanedUrl,
     photo.state.uploadingPhoto,
@@ -401,11 +403,12 @@ export function useAddItemController({
   );
   const fallbackPreviewUri = useMemo(
     () =>
+      photo.derived.activePhotoUri ??
       photo.state.pendingPhotoUri ??
       photo.state.photoUrl ??
       photo.state.photoUri ??
       null,
-    [photo.state.pendingPhotoUri, photo.state.photoUri, photo.state.photoUrl]
+    [photo.derived.activePhotoUri, photo.state.pendingPhotoUri, photo.state.photoUri, photo.state.photoUrl]
   );
   const normalizedPreviewUri = useMemo(
     () => photo.state.pendingNormalizedPreviewUri ?? null,
@@ -512,6 +515,13 @@ export function useAddItemController({
   }, [draft.actions, draft.state.fit, draft.state.occasionTags, draft.state.seasonTags, extraction.state.aiFit, extraction.state.aiOccasionTags, extraction.state.aiSeasonTags]);
 
   const aiStatusRows = useMemo(() => {
+    if (extraction.state.extractionPartialSuccess) {
+      return [
+        "Detected most details — review before saving.",
+        aiHasCategory ? "✓ Category detected" : "⚠️ Category missing",
+        aiHasColors ? "✓ Colors detected" : "⚠️ Colors missing",
+      ];
+    }
     if (extraction.state.aiStatus === "error" || extraction.state.ingestionStatus === "failed") {
       return ["Couldn’t detect details — you can fill them manually"];
     }
@@ -546,7 +556,7 @@ export function useAddItemController({
       ];
     }
     return [];
-  }, [aiHasCategory, aiHasColors, extraction.state.aiMaterial, extraction.state.aiPattern, extraction.state.aiStage, extraction.state.aiStatus, extraction.state.ingestionStatus]);
+  }, [aiHasCategory, aiHasColors, extraction.state.aiMaterial, extraction.state.aiPattern, extraction.state.aiStage, extraction.state.aiStatus, extraction.state.extractionPartialSuccess, extraction.state.ingestionStatus]);
 
   const detectedItemSummary = useMemo(() => {
     const brand = norm(draft.state.brand) || norm(photo.state.detectedBrand ?? "");
@@ -578,6 +588,9 @@ export function useAddItemController({
   ]);
 
   const aiStatusPill = useMemo(() => {
+    if (extraction.state.extractionPartialSuccess) {
+      return { label: "Detected most details — review before saving.", tone: "ready" as const };
+    }
     if (extraction.state.aiStatus === "error" || extraction.state.ingestionStatus === "failed") {
       return { label: "Couldn’t detect details — you can fill them manually", tone: "error" as const };
     }
@@ -609,6 +622,7 @@ export function useAddItemController({
     detectedItemSummary,
     extraction.state.aiColorNeedsReview,
     extraction.state.aiStatus,
+    extraction.state.extractionPartialSuccess,
     extraction.state.ingestionStatus,
   ]);
 
@@ -633,7 +647,17 @@ export function useAddItemController({
   const ctaStatusText = photo.state.uploadError
     ? "Upload failed. Retry below."
     : photo.state.uploadingPhoto
-      ? "Uploading photo…"
+        ? "Uploading photo…"
+      : photo.state.productPolishStatus === "analyzing"
+        ? "Analyzing photo…"
+      : photo.state.productPolishStatus === "polishing"
+        ? "Improving product photo…"
+      : photo.state.productPolishStatus === "cutout"
+        ? "Creating clean cutout…"
+      : photo.state.studioSourceWarning === "Background removal failed, but you can still continue with the polished image."
+        ? "Cleaned image ready; cutout failed"
+      : photo.state.studioSourceWarning
+        ? "Photo ready with fallback"
       : photo.state.refiningCutout ||
           extraction.state.isAutofillRunning ||
           (extraction.state.draftItemId &&

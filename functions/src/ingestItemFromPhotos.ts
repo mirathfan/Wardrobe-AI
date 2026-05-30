@@ -4,7 +4,7 @@ import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { removeBackground } from "@imgly/background-removal-node";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import sharp from "sharp";
 import {
   ALLOWED_AESTHETIC_TAGS,
@@ -1569,10 +1569,8 @@ async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(
-      `OpenAI request failed: ${response.status} ${body.slice(0, 240)}`,
-    );
+    await response.text().catch(() => "");
+    throw new Error(`OpenAI request failed: ${response.status}`);
   }
 
   const data = (await response.json()) as {
@@ -1580,7 +1578,7 @@ async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
   };
 
   const content = data.choices?.[0]?.message?.content ?? "";
-  logger.info("OpenAI raw extraction response", {
+  logger.info("[INGEST_VISION] OpenAI extraction response received", {
     responseLength: content.length,
     truncated: content.length > 2000,
   });
@@ -1588,7 +1586,7 @@ async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
   if (!parsed) {
     throw new Error("OpenAI returned invalid JSON payload");
   }
-  logger.info("OpenAI parsed extraction payload", {
+  logger.info("[INGEST_VISION] parsed extraction shape", {
     parsedKeys: Object.keys(parsed as Record<string, unknown>),
   });
 
@@ -1602,10 +1600,11 @@ export const ingestItemFromPhotos = onDocumentWritten(
     memory: "1GiB",
     timeoutSeconds: 240,
   },
-  async (event) => {
+  tracedHandler(async (event) => {
     const uid = String(event.params.uid ?? "");
     const itemId = String(event.params.itemId ?? "");
     const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
     const before = event.data?.before.data() as ItemDoc | undefined;
     const after = event.data?.after.data() as ItemDoc | undefined;
     if (!after) return;
@@ -2364,11 +2363,13 @@ export const ingestItemFromPhotos = onDocumentWritten(
           category,
           subCategory,
           type: itemType,
+          wearSlot: wearSlot(category),
           confidence: {
             category: categoryConfidence,
             subCategory: subCategoryConfidence,
             colors: colorsConfidence,
             brand: brandConfidence,
+            material: materialConfidence,
           },
           hasBrand: !!(
             hasUserBrandOverride || shouldPreserveLegacyManualBrand
@@ -2378,11 +2379,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
           brandConfidence,
           hasBrandEvidence: !!brandEvidence,
           brandCandidateCount: brandCandidates.length,
-          wearSlot: wearSlot(category),
           pattern,
           material,
           materialConfidence,
-          ...(detailTags.length > 0 ? { detailTags } : {}),
           fit,
           style,
           formality,
@@ -2390,27 +2389,20 @@ export const ingestItemFromPhotos = onDocumentWritten(
           layerRole,
           visualWeight,
           versatilityScore,
-          sleeveLength,
-          neckline,
-          closure,
-          length: itemLength,
-          rise,
-          legShape,
+          detailTagCount: detailTags.length,
+          colorCount: finalColors.length,
+          displayColorCount: finalDisplayColors.length,
+          occasionTagCount: occasionTags.length,
+          seasonTagCount: seasonTags.length,
+          aestheticTagCount: aestheticTags.length,
           hasLogo,
-          logoPlacement,
-          occasionTags,
-          seasonTags,
-          aestheticTags,
+          hasLogoPlacement: !!logoPlacement,
           hasCrop: !!cropRect.normalized,
           hasCroppedUrl: !!croppedUrl,
           hasThumbUrl: !!thumbUrl,
-          finalColors,
-          ...(finalColorLabel ? { finalColorLabel } : {}),
-          finalPrimaryColor,
-          finalDisplayColor,
-          finalDisplayColors,
-          detailTags,
-          confidenceSummary,
+          hasFinalPrimaryColor: !!finalPrimaryColor,
+          hasFinalDisplayColor: !!finalDisplayColor,
+          confidenceOverall,
           generatedNameLength: String(inferredName ?? "").length,
           backgroundRemovalMethod,
           colorSource: hasUserColorOverride ? "user" : "ai",
@@ -2817,7 +2809,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         uidHash,
         itemId,
         isSnapDoneDraft,
-        error: message,
+        error: safeMessage,
       });
 
       const latest = await ref.get();
@@ -2826,7 +2818,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           uidHash,
           itemId,
           runId,
-          error: message,
+          error: safeMessage,
         });
         return;
       }
@@ -2842,7 +2834,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
         logger.warn("[INGEST_ERROR] failure ignored because item is already done", {
           uidHash,
           itemId,
-          error: message,
+          error: safeMessage,
         });
         return;
       }
@@ -2852,7 +2844,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           itemId,
           runId,
           latestRunId,
-          error: message,
+          error: safeMessage,
         });
         return;
       }
@@ -2868,7 +2860,7 @@ export const ingestItemFromPhotos = onDocumentWritten(
           runId,
           latestDraftState,
           latestLifecycleStatus,
-          error: message,
+          error: safeMessage,
         });
         return;
       }
@@ -2900,5 +2892,5 @@ export const ingestItemFromPhotos = onDocumentWritten(
         { merge: true },
       );
     }
-  },
+  }),
 );

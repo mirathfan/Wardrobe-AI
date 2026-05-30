@@ -17,6 +17,7 @@ import { type AddItemMode, norm, normColor } from "../controllerShared";
 import { db } from "../../lib/firebase";
 import { analyticsErrorProperties, trackLaunchEvent } from "../../lib/analytics";
 import { safeGoBack } from "../../lib/navigation";
+import { photoPipelineDuration, photoPipelineNow, safeErrorData } from "../../lib/photoPipelineLogger";
 import { Toast } from "../../lib/toast";
 import { normalizeCategoryForStorage } from "../../lib/items";
 import {
@@ -32,6 +33,18 @@ function itemDetailRoute(itemId: string): ItemDetailRoute {
     pathname: "/(tabs)/item/[id]",
     params: { id: itemId, refreshKey: String(Date.now()) },
   } as ItemDetailRoute;
+}
+
+const UNBRANDED_LABEL = "Unbranded";
+
+function cleanBrandInput(value: unknown) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isUnbrandedValue(value: unknown) {
+  return cleanBrandInput(value).toLowerCase() === UNBRANDED_LABEL.toLowerCase();
 }
 
 export function useItemDraft({
@@ -57,10 +70,6 @@ export function useItemDraft({
   extractionRef: MutableRefObject<any>;
   resetCreateFlowRef: MutableRefObject<any>;
 }) {
-  const cleanBrandInput = (value: unknown) =>
-    String(value ?? "")
-      .replace(/\s+/g, " ")
-      .trim();
   const [loading, setLoading] = useState(false);
   const [brand, setBrand] = useState("");
   const [name, setName] = useState("");
@@ -249,15 +258,17 @@ export function useItemDraft({
     if (!uid || isEdit || !draftItemId) return;
     try {
       const draftRef = doc(db, "users", uid, "items", draftItemId);
+      const effectiveBrand = cleanBrandInput(brand) || UNBRANDED_LABEL;
       await updateDoc(draftRef, {
         ...buildUserEditMetadata(),
-        ...(userEditedKeysRef.current.has("brand")
-          ? {
-              brand: cleanBrandInput(brand) || "",
-              brandSource: "user",
-              brandUpdatedAt: Date.now(),
-            }
-          : {}),
+        brand: effectiveBrand,
+        isUnbranded: isUnbrandedValue(effectiveBrand),
+        brandSource: userEditedKeysRef.current.has("brand")
+          ? "user"
+          : isUnbrandedValue(effectiveBrand)
+            ? "default_unbranded"
+            : "ai",
+        brandUpdatedAt: Date.now(),
         name: norm(name) || "",
         category: category ?? Category.TOP,
         subCategory: isValidCategorySubCategory(selectedCategory, subCategory)
@@ -502,6 +513,14 @@ export function useItemDraft({
         photo.state.photoUrl ||
         photo.state.photoUri
     );
+    const traceId = String(photo.state.photoTraceId ?? "").trim() || null;
+    const finalSaveStartedAt = photoPipelineNow();
+    photo.actions.logPhotoPipelineEvent?.(traceId, "final_save", "start", {
+      mode,
+      isEdit,
+      hasDraftItemId: !!extraction.state.draftItemId,
+      hasPhoto: hasAtLeastOnePhoto,
+    });
 
     try {
       if (!hasAtLeastOnePhoto) {
@@ -529,16 +548,18 @@ export function useItemDraft({
         isEdit || draftItemId
           ? doc(db, "users", uid, "items", String(editItemId ?? draftItemId))
           : doc(itemsRef);
+      const effectiveBrand = b || UNBRANDED_LABEL;
 
       const payloadBase = {
         ...buildUserEditMetadata(),
-        ...(userEditedKeysRef.current.has("brand")
-          ? {
-              brand: b || "",
-              brandSource: "user",
-              brandUpdatedAt: Date.now(),
-            }
-          : {}),
+        brand: effectiveBrand,
+        isUnbranded: isUnbrandedValue(effectiveBrand),
+        brandSource: userEditedKeysRef.current.has("brand")
+          ? "user"
+          : isUnbrandedValue(effectiveBrand)
+            ? "default_unbranded"
+            : "ai",
+        brandUpdatedAt: Date.now(),
         name: n || "",
         category: category ?? Category.TOP,
         subCategory: isValidCategorySubCategory(selectedCategory, subCategory)
@@ -566,12 +587,26 @@ export function useItemDraft({
       };
 
       const nextPhoto = await photo.actions.resolvePhotoFields(uid, itemRef.id);
+      photo.actions.logPhotoPipelineEvent?.(traceId, "cleaned_image_saved", "success", {
+        hasOriginalUrl: !!nextPhoto.originalUrl,
+        hasPhotoUrl: !!nextPhoto.photoUrl,
+        hasCleanedUrl: !!nextPhoto.cleanedUrl,
+        hasNormalizedUrl: !!nextPhoto.normalizedUrl,
+        hasRefinedUrl: !!nextPhoto.refinedUrl,
+        imageCount: nextPhoto.images.length,
+      });
       const payload = {
         ...payloadBase,
         photoUrl: nextPhoto.photoUrl,
         photoUri: nextPhoto.photoUri,
         originalImageUrl: nextPhoto.originalUrl ?? nextPhoto.photoUrl,
         cleanedImageUrl: nextPhoto.cleanedUrl,
+        refinedImageUrl: nextPhoto.refinedUrl,
+        imageQuality: nextPhoto.imageQuality,
+        productPolish: nextPhoto.productPolish,
+        imageSource: nextPhoto.imageSource,
+        cutoutSourceKind: nextPhoto.cutoutSourceKind,
+        photoPipelineTraceId: traceId,
         images: nextPhoto.images,
       };
       if (isEdit) {
@@ -584,6 +619,12 @@ export function useItemDraft({
           ...payload,
           "photos.originalUrl": nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           "photos.primaryUrl": nextPhoto.photoUrl,
+          "photos.refinedUrl": nextPhoto.refinedUrl,
+          "photos.imageQuality": nextPhoto.imageQuality,
+          "photos.productPolish": nextPhoto.productPolish,
+          "photos.imageSource": nextPhoto.imageSource,
+          "photos.cutoutSourceKind": nextPhoto.cutoutSourceKind,
+          "photos.traceId": traceId,
           "photos.urls": nextPhoto.imageUrls,
           "photos.images": nextPhoto.images,
           isDraft: false,
@@ -612,8 +653,21 @@ export function useItemDraft({
         if (nextPhoto.visualNormalization) {
           updatePayload.visualNormalization = nextPhoto.visualNormalization;
         }
+        const draftUpdateStartedAt = photoPipelineNow();
         await updateDoc(itemRef, updatePayload);
+        photo.actions.logPhotoPipelineEvent?.(traceId, "draft_updated", "success", {
+          mode: "edit",
+          itemId: itemRef.id,
+          draftState: "ready",
+          hasCleanedUrl: !!nextPhoto.cleanedUrl,
+          hasRefinedUrl: !!nextPhoto.refinedUrl,
+        }, photoPipelineDuration(draftUpdateStartedAt));
         lastFinalizedSubmissionKeyRef.current = submissionKey;
+        photo.actions.logPhotoPipelineEvent?.(traceId, "final_save", "success", {
+          mode: "edit",
+          itemId: itemRef.id,
+          photoCount: nextPhoto.imageUrls.length,
+        }, photoPipelineDuration(finalSaveStartedAt));
         Toast.success("Item updated");
         void trackLaunchEvent({
           userId: uid,
@@ -638,6 +692,12 @@ export function useItemDraft({
           ...payload,
           "photos.originalUrl": nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           "photos.primaryUrl": nextPhoto.photoUrl,
+          "photos.refinedUrl": nextPhoto.refinedUrl,
+          "photos.imageQuality": nextPhoto.imageQuality,
+          "photos.productPolish": nextPhoto.productPolish,
+          "photos.imageSource": nextPhoto.imageSource,
+          "photos.cutoutSourceKind": nextPhoto.cutoutSourceKind,
+          "photos.traceId": traceId,
           "photos.urls": nextPhoto.imageUrls,
           "photos.images": nextPhoto.images,
           isDraft: false,
@@ -667,8 +727,23 @@ export function useItemDraft({
             lastRunAt: Date.now(),
           };
         }
+        const draftUpdateStartedAt = photoPipelineNow();
         await updateDoc(itemRef, updatePayload);
+        photo.actions.logPhotoPipelineEvent?.(traceId, "draft_updated", "success", {
+          mode: "draft_create",
+          itemId: itemRef.id,
+          draftState: "ready",
+          hasCleanedUrl: !!nextPhoto.cleanedUrl,
+          hasRefinedUrl: !!nextPhoto.refinedUrl,
+          ingestionStatus: updatePayload.ingestionStatus ?? "ready",
+        }, photoPipelineDuration(draftUpdateStartedAt));
         lastFinalizedSubmissionKeyRef.current = submissionKey;
+        photo.actions.logPhotoPipelineEvent?.(traceId, "final_save", "success", {
+          mode: "draft_create",
+          itemId: itemRef.id,
+          photoCount: nextPhoto.imageUrls.length,
+          ingestionStatus: updatePayload.ingestionStatus ?? "ready",
+        }, photoPipelineDuration(finalSaveStartedAt));
         if (__DEV__) {
           console.log("[AddItemSave] success:draft-create", {
             draftItemId,
@@ -697,11 +772,18 @@ export function useItemDraft({
         return;
       }
 
+      const draftUpdateStartedAt = photoPipelineNow();
       await setDoc(itemRef, {
         ...payload,
         photos: {
           originalUrl: nextPhoto.originalUrl ?? nextPhoto.photoUrl,
           primaryUrl: nextPhoto.photoUrl,
+          refinedUrl: nextPhoto.refinedUrl,
+          imageQuality: nextPhoto.imageQuality,
+          productPolish: nextPhoto.productPolish,
+          imageSource: nextPhoto.imageSource,
+          cutoutSourceKind: nextPhoto.cutoutSourceKind,
+          traceId,
           urls: nextPhoto.imageUrls,
           images: nextPhoto.images,
           ...(nextPhoto.cleanedUrl
@@ -740,6 +822,20 @@ export function useItemDraft({
       });
 
       lastFinalizedSubmissionKeyRef.current = submissionKey;
+      photo.actions.logPhotoPipelineEvent?.(traceId, "draft_updated", "success", {
+        mode: "new_create",
+        itemId: itemRef.id,
+        draftState: "ready",
+        hasCleanedUrl: !!nextPhoto.cleanedUrl,
+        hasRefinedUrl: !!nextPhoto.refinedUrl,
+        ingestionStatus: canKickoffIngestion ? "pending" : "ready",
+      }, photoPipelineDuration(draftUpdateStartedAt));
+      photo.actions.logPhotoPipelineEvent?.(traceId, "final_save", "success", {
+        mode: "new_create",
+        itemId: itemRef.id,
+        photoCount: nextPhoto.imageUrls.length,
+        ingestionStatus: canKickoffIngestion ? "pending" : "ready",
+      }, photoPipelineDuration(finalSaveStartedAt));
       if (__DEV__) {
         console.log("[AddItemSave] success:new-create", {
           itemId: itemRef.id,
@@ -766,6 +862,12 @@ export function useItemDraft({
       }
       router.replace(itemDetailRoute(itemRef.id));
     } catch (e: any) {
+      photo.actions.logPhotoPipelineEvent?.(traceId, "final_save", "failure", {
+        mode,
+        isEdit,
+        hasPhoto: hasAtLeastOnePhoto,
+        ...safeErrorData(e),
+      }, photoPipelineDuration(finalSaveStartedAt));
       void trackLaunchEvent({
         userId: uid,
         eventName: "wardrobe_item_save_failed",
@@ -779,7 +881,7 @@ export function useItemDraft({
       });
       Alert.alert(
         "Error",
-        e?.message ?? (isEdit ? "Failed to update item" : "Failed to add item")
+        isEdit ? "Failed to update item." : "Failed to add item."
       );
     } finally {
       if (__DEV__) {
@@ -861,9 +963,9 @@ export function useItemDraft({
         if (mode === "edit") {
           extractionRef.current?.actions?.resetForLoadedEditItem?.();
         }
-      } catch (e: any) {
+      } catch {
         if (cancelled) return;
-        Alert.alert("Error", e?.message ?? "Failed to load item");
+        Alert.alert("Error", "Failed to load item.");
       } finally {
         if (!cancelled) setLoading(false);
       }

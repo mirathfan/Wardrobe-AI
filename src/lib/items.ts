@@ -3,6 +3,7 @@ import {
   doc,
   getDoc,
   increment,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -12,10 +13,12 @@ import {
   where,
   writeBatch,
 } from "firebase/firestore";
+import { Alert } from "react-native";
 
 import { db } from "./firebase";
 import { logItemStyleEvent } from "./auraMemory";
 import { buildSignalFromItem, updateAssistantMemoryFromAction } from "./assistantMemory";
+import { getFriendlyErrorMessage } from "./errors";
 import { getCachedClosetItems, setCachedClosetItems } from "./localCache";
 import type { ClothingItem, ClothingStatus, LaundryStatus } from "../types/ClothingItem";
 import { Category } from "../shared/wardrobeTaxonomy";
@@ -73,6 +76,12 @@ const CATEGORY_MAP: Record<Exclude<CategoryFilter, "ALL">, string[]> = {
   OUTERWEAR: ["outerwear"],
   ACCESSORY: ["accessory"],
 };
+const LISTEN_TO_ITEMS_LIMIT = 300;
+
+function alertItemMutationError(error: unknown) {
+  if (__DEV__) console.log("[callable error]", error);
+  Alert.alert("Hold on", getFriendlyErrorMessage(error));
+}
 
 function norm(v?: string | null) {
   return (v ?? "").trim().toLowerCase();
@@ -484,7 +493,8 @@ export function listenToItems(
   );
 
   const itemsRef = collection(db, "users", uid, "items");
-  const q = query(itemsRef, ...constraints);
+  // TODO before GA: replace this fixed cap with a paginated load-more flow.
+  const q = query(itemsRef, ...constraints, limit(LISTEN_TO_ITEMS_LIMIT));
   let active = true;
 
   if (options?.hydrateFromCache !== false) {
@@ -510,7 +520,12 @@ export function listenToItems(
       void setCachedClosetItems(uid, next);
       cb(applyItemOptions(next, options), { source: "firestore" });
     },
-    (err) => options?.onError?.(err.message)
+    (err) => {
+      if (__DEV__) {
+        console.warn("[Items] listenToItems failed", err);
+      }
+      options?.onError?.("We couldn't load your closet. Please try again.");
+    }
   );
 
   return () => {
@@ -566,14 +581,19 @@ export async function safeMarkWorn(uid: string, itemId: string) {
     throw new Error("Item already worn today");
   }
 
-  await updateDoc(ref, {
-    status: "WORN",
-    laundryStatus: "needs_wash",
-    wearCountSinceWash: increment(1),
-    lastWornDate: serverTimestamp(),
-    lastWornAt: serverTimestamp(),
-    laundryUpdatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(ref, {
+      status: "WORN",
+      laundryStatus: "needs_wash",
+      wearCountSinceWash: increment(1),
+      lastWornDate: serverTimestamp(),
+      lastWornAt: serverTimestamp(),
+      laundryUpdatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    alertItemMutationError(error);
+    throw error;
+  }
   void logItemStyleEvent(uid, "item_worn", {
     ...(data as ClothingItem),
     id: itemId,
@@ -590,32 +610,47 @@ export async function markWorn(uid: string, itemId: string) {
 
 export async function sendToLaundry(uid: string, itemId: string) {
   const ref = doc(db, "users", uid, "items", itemId);
-  await updateDoc(ref, {
-    status: "IN_LAUNDRY",
-    laundryStatus: "in_laundry",
-    laundryUpdatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(ref, {
+      status: "IN_LAUNDRY",
+      laundryStatus: "in_laundry",
+      laundryUpdatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    alertItemMutationError(error);
+    throw error;
+  }
 }
 
 export async function markWashed(uid: string, itemId: string) {
   const ref = doc(db, "users", uid, "items", itemId);
-  await updateDoc(ref, {
-    status: "AVAILABLE",
-    laundryStatus: "clean",
-    wearCountSinceWash: 0,
-    lastWashedDate: serverTimestamp(),
-    lastWashedAt: serverTimestamp(),
-    laundryUpdatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(ref, {
+      status: "AVAILABLE",
+      laundryStatus: "clean",
+      wearCountSinceWash: 0,
+      lastWashedDate: serverTimestamp(),
+      lastWashedAt: serverTimestamp(),
+      laundryUpdatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    alertItemMutationError(error);
+    throw error;
+  }
 }
 
 export async function markNeedsWash(uid: string, itemId: string) {
   const ref = doc(db, "users", uid, "items", itemId);
-  await updateDoc(ref, {
-    status: "WORN",
-    laundryStatus: "needs_wash",
-    laundryUpdatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(ref, {
+      status: "WORN",
+      laundryStatus: "needs_wash",
+      laundryUpdatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    alertItemMutationError(error);
+    throw error;
+  }
 }
 
 function laundryStatusUpdatePayload(laundryStatus: LaundryStatus) {
@@ -635,7 +670,12 @@ function laundryStatusUpdatePayload(laundryStatus: LaundryStatus) {
 
 export async function updateLaundryStatus(uid: string, itemId: string, laundryStatus: LaundryStatus) {
   const ref = doc(db, "users", uid, "items", itemId);
-  await updateDoc(ref, laundryStatusUpdatePayload(laundryStatus));
+  try {
+    await updateDoc(ref, laundryStatusUpdatePayload(laundryStatus));
+  } catch (error) {
+    alertItemMutationError(error);
+    throw error;
+  }
 }
 
 export async function updateLaundryStatuses(uid: string, itemIds: string[], laundryStatus: LaundryStatus) {
@@ -646,5 +686,10 @@ export async function updateLaundryStatuses(uid: string, itemIds: string[], laun
   uniqueItemIds.forEach((itemId) => {
     batch.update(doc(db, "users", uid, "items", itemId), laundryStatusUpdatePayload(laundryStatus));
   });
-  await batch.commit();
+  try {
+    await batch.commit();
+  } catch (error) {
+    alertItemMutationError(error);
+    throw error;
+  }
 }

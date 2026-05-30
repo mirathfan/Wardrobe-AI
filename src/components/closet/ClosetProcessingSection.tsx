@@ -164,7 +164,7 @@ function ProcessingItemRow({
 }) {
   const { colors } = useAppTheme();
   const lifecycle = getItemLifecycleStatus(item);
-  const imageUrl = getItemImageUrl(item, { variant: "thumb" });
+  const imageUrl = getItemImageUrl(item, { variant: "thumb", surface: "closet_grid" });
   const presentation = getItemImagePresentation(item, { surface: "closet_card" });
   const canAct = lifecycle === "needs_review" || lifecycle === "failed";
 

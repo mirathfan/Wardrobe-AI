@@ -1021,7 +1021,7 @@ export default function ItemDetailsScreen() {
         if (__DEV__) {
           console.log(err);
         }
-        Alert.alert("Error", err.message);
+        Alert.alert("Error", "Unable to load this item. Please try again.");
         setLoading(false);
       },
     );
@@ -1038,11 +1038,10 @@ export default function ItemDetailsScreen() {
       void runHaptic("light");
       Toast.laundryUpdated("Piece moved to laundry.");
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "Failed to send item to laundry";
       if (__DEV__) {
         console.log(e);
       }
-      Toast.error("Laundry update failed", message);
+      Toast.error("Laundry update failed", "We couldn't update this item. Please try again.");
     } finally {
       setActionLoading(false);
     }
@@ -1056,11 +1055,10 @@ export default function ItemDetailsScreen() {
       void runHaptic("light");
       Toast.laundryUpdated("Piece marked needs wash.");
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "Failed to mark item as needs wash";
       if (__DEV__) {
         console.log(e);
       }
-      Toast.error("Laundry update failed", message);
+      Toast.error("Laundry update failed", "We couldn't update this item. Please try again.");
     } finally {
       setActionLoading(false);
     }
@@ -1081,9 +1079,8 @@ export default function ItemDetailsScreen() {
         result.alreadyMarked ? "Already marked worn today" : "Marked as worn today",
         result.alreadyMarked ? "This item was not double-counted." : undefined,
       );
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "Unable to mark this item worn.";
-      Toast.error("Couldn't mark worn. Try again.", message);
+    } catch {
+      Toast.error("Couldn't mark worn. Try again.", "We couldn't update this item.");
     } finally {
       setActionLoading(false);
     }
@@ -1103,11 +1100,10 @@ export default function ItemDetailsScreen() {
             void runHaptic("light");
             Toast.laundryUpdated("Piece is clean and ready.");
           } catch (e: unknown) {
-            const message = e instanceof Error ? e.message : "Failed to mark item as washed";
             if (__DEV__) {
               console.log(e);
             }
-            Toast.error("Laundry update failed", message);
+            Toast.error("Laundry update failed", "We couldn't update this item. Please try again.");
           } finally {
             setActionLoading(false);
           }
@@ -1143,11 +1139,10 @@ export default function ItemDetailsScreen() {
             }
             navigateBackToSource();
           } catch (e: unknown) {
-            const message = e instanceof Error ? e.message : "Failed to delete";
             if (__DEV__) {
               console.log(e);
             }
-            Alert.alert("Error", message);
+            Alert.alert("Error", "Failed to delete this item.");
           }
         },
       },
@@ -1200,9 +1195,8 @@ export default function ItemDetailsScreen() {
     }
     try {
       await Linking.openURL(url);
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "Could not open that product link.";
-      Toast.error("Could not open link", message);
+    } catch {
+      Toast.error("Could not open link", "Please try opening the link again.");
     }
   }
 
@@ -1215,9 +1209,8 @@ export default function ItemDetailsScreen() {
         message,
         ...(productUrl ? { url: productUrl } : {}),
       });
-    } catch (e: unknown) {
-      const errorMessage = e instanceof Error ? e.message : "Could not share this item.";
-      Toast.error("Share failed", errorMessage);
+    } catch {
+      Toast.error("Share failed", "Could not share this item.");
     }
   }
 

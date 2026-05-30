@@ -15,6 +15,11 @@ import { SafeScreen } from "./SafeScreen";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { Colors } from "@/constants/theme";
 
+const PHOTO_PREVIEW_DEBUG =
+  __DEV__ &&
+  (process.env.EXPO_PUBLIC_AURA_DEBUG_PHOTO_PREVIEW === "true" ||
+    (globalThis as any).AURA_DEBUG_PHOTO_PREVIEW === true);
+
 type PhotoEditorSectionProps = {
   previewUri: string | null;
   normalizedPreviewUri?: string | null;
@@ -26,11 +31,17 @@ type PhotoEditorSectionProps = {
   canRefine: boolean;
   isAiRunning?: boolean;
   statusText?: string | null;
+  productPolishOriginalUri?: string | null;
+  productPolishPolishedUri?: string | null;
+  productPolishActiveVariant?: "original" | "polished";
+  productPolishWarning?: string | null;
   showPendingNote: boolean;
   onPickLibrary: () => void;
   onUseCamera: () => void;
   onRemove: () => void;
   onUseOriginal?: () => void;
+  onUseOriginalProduct?: () => void;
+  onUsePolishedProduct?: () => void;
   onRerunCutout?: () => void;
   onReplace?: () => void;
   onRotate?: () => void;
@@ -176,6 +187,54 @@ function PreviewEmptyState(props: {
   );
 }
 
+function ProductPolishChoice(props: {
+  label: string;
+  uri: string;
+  selected: boolean;
+  onPress?: () => void;
+}) {
+  const { label, uri, selected, onPress } = props;
+  const { colors } = useAppTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      style={{
+        flex: 1,
+        gap: 7,
+        opacity: onPress ? 1 : 0.55,
+      }}
+    >
+      <View
+        style={{
+          width: "100%",
+          aspectRatio: 1,
+          borderRadius: 12,
+          borderWidth: selected ? 2 : 1,
+          borderColor: selected ? colors.ctaCream : "rgba(251,228,216,0.14)",
+          backgroundColor: colors.boardLight,
+          overflow: "hidden",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Image source={{ uri }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
+      </View>
+      <Text
+        style={{
+          color: selected ? colors.ctaCream : colors.textSecondary,
+          fontSize: 12,
+          fontWeight: "900",
+          textAlign: "center",
+        }}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   const {
     previewUri,
@@ -188,11 +247,17 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     canRefine,
     isAiRunning = false,
     statusText = null,
+    productPolishOriginalUri = null,
+    productPolishPolishedUri = null,
+    productPolishActiveVariant = "original",
+    productPolishWarning = null,
     showPendingNote,
     onPickLibrary,
     onUseCamera,
     onRemove,
     onUseOriginal,
+    onUseOriginalProduct,
+    onUsePolishedProduct,
     onRerunCutout,
     onReplace,
     onRotate,
@@ -219,7 +284,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   const canShowCutoutPreview =
     !!cutoutPreviewUri && !hasFailedPreviewUri(cutoutPreviewUri);
   const canShowMaskPreview =
-    !!maskDebugUri && !hasFailedPreviewUri(maskDebugUri);
+    PHOTO_PREVIEW_DEBUG && !!maskDebugUri && !hasFailedPreviewUri(maskDebugUri);
   const modalPreviewState = (() => {
     if (activeModalPreview === "mask") {
       if (canShowMaskPreview) {
@@ -303,7 +368,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   ]);
 
   useEffect(() => {
-    if (!__DEV__ || !isModalVisible) return;
+    if (!PHOTO_PREVIEW_DEBUG || !isModalVisible) return;
     console.log("[RefineCutout] preview state", {
       originalUri: Boolean(originalPreviewUri),
       cutoutUri: Boolean(cutoutPreviewUri),
@@ -323,7 +388,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
   ]);
 
   useEffect(() => {
-    if (!__DEV__ || !displayedPreviewUri) {
+    if (!PHOTO_PREVIEW_DEBUG || !displayedPreviewUri) {
       return;
     }
     console.log("[AddItemPreview] render:selected-uri", {
@@ -369,6 +434,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     color: colors.ctaText,
   };
   const emptyPreviewHeight = Math.min(220, Math.max(176, screenHeight * 0.22));
+  const canShowProductPolishChoice = !!productPolishOriginalUri && !!productPolishPolishedUri;
 
   function openRefineModal() {
     onRefineOpen?.();
@@ -491,6 +557,40 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
             </Pressable>
           </View>
         )}
+
+        {canShowProductPolishChoice ? (
+          <View
+            style={{
+              gap: 10,
+              padding: 10,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: "rgba(251,228,216,0.12)",
+              backgroundColor: "rgba(43,18,76,0.26)",
+            }}
+          >
+            <Text style={{ color: colors.text, fontSize: 13, fontWeight: "900" }}>Studio Clean-Up</Text>
+            {productPolishWarning ? (
+              <Text style={{ color: colors.warning, fontSize: 11.5, lineHeight: 16, fontWeight: "700" }}>
+                {productPolishWarning}
+              </Text>
+            ) : null}
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <ProductPolishChoice
+                label="Polished"
+                uri={productPolishPolishedUri}
+                selected={productPolishActiveVariant === "polished"}
+                onPress={onUsePolishedProduct}
+              />
+              <ProductPolishChoice
+                label="Original"
+                uri={productPolishOriginalUri}
+                selected={productPolishActiveVariant !== "polished"}
+                onPress={onUseOriginalProduct}
+              />
+            </View>
+          </View>
+        ) : null}
 
         {statusText ? (
           <Text style={{ color: isAiRunning ? colors.lightPurple : colors.textSecondary, fontSize: 13 }}>
@@ -675,7 +775,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
               >
                 <Text style={themedEditorButtonText}>Cutout</Text>
               </Pressable>
-              {maskDebugUri ? (
+              {PHOTO_PREVIEW_DEBUG && maskDebugUri ? (
                 <Pressable
                   onPress={() => setActiveModalPreview("mask")}
                   style={[

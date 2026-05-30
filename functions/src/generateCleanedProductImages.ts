@@ -1,5 +1,6 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
+import { tracedHandler } from "./shared/logger";
 
 if (!getApps().length) {
   initializeApp();
@@ -12,8 +13,8 @@ export const generateCleanedProductImages = onDocumentWritten(
     memory: "1GiB",
     timeoutSeconds: 60,
   },
-  async (event) => {
+  tracedHandler(async (event) => {
     void event;
     return;
-  }
+  })
 );
