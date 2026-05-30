@@ -1,11 +1,32 @@
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { Alert } from "react-native";
 
+import { getFriendlyErrorMessage, isRateLimitError } from "@/src/lib/errors";
 import { app } from "@/src/lib/firebase";
+import {
+  getShoppingRecommendationFeedback,
+  getShoppingRecommendationFeedbackProductState,
+  type ShoppingRecommendationFeedbackProductState,
+} from "@/src/lib/shoppingRecommendationFeedback";
+import { generateShoppingRecommendations } from "@/src/lib/shoppingRecommendationScoring";
+import {
+  detectShoppingWardrobeGaps,
+  type ShoppingWardrobeGapSignal,
+} from "@/src/lib/shoppingWardrobeGaps";
 import {
   trackSuggestionEvent,
   type SuggestionSourceScreen,
 } from "@/src/lib/suggestionAnalytics";
 import type { WardrobeSuggestion } from "@/src/lib/wardrobeSuggestions";
+import type { ClothingItem } from "@/src/types/ClothingItem";
+import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
+import type {
+  ShoppingFeedbackRecord,
+  ShoppingProduct,
+  ShoppingRecommendationCandidate,
+  ShoppingRecommendationContext,
+  WardrobeGap,
+} from "@/src/types/shoppingRecommendations";
 
 export type ProductOption = {
   id: string;
@@ -60,6 +81,44 @@ type ProductRecommendationOptions = {
   maxResults?: number;
   timeoutMs?: number;
 };
+
+export type ProductOptionToShoppingProductOptions = {
+  category?: string | null;
+  subcategory?: string | null;
+  colours?: string[] | null;
+  sizesAvailable?: string[] | null;
+  styleTags?: string[] | null;
+  seasonTags?: string[] | null;
+  occasionTags?: string[] | null;
+  source?: string | null;
+};
+
+export type BuildPersonalizedShoppingRecommendationsInput = {
+  wardrobeItems?: Partial<ClothingItem>[] | null;
+  profilePreferences?: Partial<UserProfilePreferences> | null;
+  context?: ShoppingRecommendationContext | null;
+  limit?: number;
+  recentOutfits?: ShoppingWardrobeGapSignal[] | null;
+  savedLooks?: ShoppingWardrobeGapSignal[] | null;
+  productOptions?: ProductOption[] | null;
+  shoppingProducts?: ShoppingProduct[] | null;
+  feedback?: ShoppingFeedbackRecord[] | null;
+  wardrobeGaps?: WardrobeGap[] | null;
+  includeDebug?: boolean;
+};
+
+export type GetPersonalizedShoppingRecommendationsInput = Omit<
+  BuildPersonalizedShoppingRecommendationsInput,
+  "feedback"
+> & {
+  feedbackLimit?: number;
+};
+
+export type PersonalizedShoppingRecommendationsResult =
+  ShoppingRecommendationFeedbackProductState & {
+    recommendations: ShoppingRecommendationCandidate[];
+    feedback: ShoppingFeedbackRecord[];
+  };
 
 const TIER_ORDER: ProductOption["tier"][] = ["budget", "mid", "premium"];
 
@@ -446,6 +505,155 @@ function clean(value: unknown) {
     .replace(/\s+/g, " ");
 }
 
+function uniqueCleanStrings(values: unknown[], max = 16) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  values.flatMap((value) => (Array.isArray(value) ? value : [value])).forEach((value) => {
+    const next = clean(value);
+    if (!next || seen.has(next)) return;
+    seen.add(next);
+    out.push(next);
+  });
+  return out.slice(0, max);
+}
+
+function fallbackSourceForProductOption(product: ProductOption) {
+  return product.source === "curated" ? "curated_fallback" : product.source;
+}
+
+export function productOptionToShoppingProduct(
+  product: ProductOption,
+  options?: ProductOptionToShoppingProductOptions,
+): ShoppingProduct {
+  return {
+    id: product.id,
+    providerProductId: product.source === "live" ? product.id : undefined,
+    retailer: product.merchant,
+    title: product.title,
+    url: product.productUrl,
+    imageUrl: product.imageUrl,
+    price: product.price,
+    currency: product.currency,
+    brand: product.brand,
+    category: clean(options?.category) || "unknown",
+    subcategory: options?.subcategory ? clean(options.subcategory) : undefined,
+    colours: uniqueCleanStrings(options?.colours ?? []),
+    sizesAvailable: uniqueCleanStrings(options?.sizesAvailable ?? []),
+    styleTags: uniqueCleanStrings(options?.styleTags ?? []),
+    seasonTags: uniqueCleanStrings(options?.seasonTags ?? []),
+    occasionTags: uniqueCleanStrings(options?.occasionTags ?? []),
+    source: options?.source ?? fallbackSourceForProductOption(product),
+  };
+}
+
+function curatedProductToShoppingProduct(product: CuratedProductOption): ShoppingProduct {
+  return productOptionToShoppingProduct(productPublicFields(product), {
+    category: product.category,
+    colours: product.colors ?? [],
+    styleTags: uniqueCleanStrings([product.styleTags, product.keywords], 20),
+    source: "curated_fallback",
+  });
+}
+
+export function getCuratedFallbackShoppingProducts(): ShoppingProduct[] {
+  return CURATED_PRODUCTS.map(curatedProductToShoppingProduct);
+}
+
+function normalizePersonalizedContext(
+  context?: ShoppingRecommendationContext | null,
+  limit?: number,
+): ShoppingRecommendationContext {
+  return {
+    sourceSurface: context?.sourceSurface ?? "home",
+    ...(context ?? {}),
+    ...(typeof limit === "number" && Number.isFinite(limit)
+      ? { limit: Math.max(1, Math.floor(limit)) }
+      : {}),
+  };
+}
+
+function localShoppingProductsForInput(input: BuildPersonalizedShoppingRecommendationsInput) {
+  if (input.shoppingProducts?.length) return input.shoppingProducts;
+  if (input.productOptions?.length) {
+    return input.productOptions.map((product) => productOptionToShoppingProduct(product));
+  }
+  return getCuratedFallbackShoppingProducts();
+}
+
+function filterSuppressedPersonalizedRecommendations(
+  recommendations: ShoppingRecommendationCandidate[],
+  feedback?: ShoppingFeedbackRecord[] | null,
+) {
+  if (!feedback?.length) return recommendations;
+  const state = getShoppingRecommendationFeedbackProductState(feedback);
+  const hiddenProductIds = new Set([
+    ...state.dismissedProductIds,
+    ...state.purchasedProductIds,
+  ]);
+  if (!hiddenProductIds.size) return recommendations;
+  return recommendations.filter((recommendation) => !hiddenProductIds.has(recommendation.product.id));
+}
+
+export function buildPersonalizedShoppingRecommendations(
+  input: BuildPersonalizedShoppingRecommendationsInput,
+): ShoppingRecommendationCandidate[] {
+  const context = normalizePersonalizedContext(input.context, input.limit);
+  const requestedLimit = context.limit;
+  const scoringContext: ShoppingRecommendationContext = { ...context };
+  delete scoringContext.limit;
+  const wardrobeGaps =
+    input.wardrobeGaps ??
+    detectShoppingWardrobeGaps({
+      wardrobeItems: input.wardrobeItems,
+      profilePreferences: input.profilePreferences,
+      recentOutfits: input.recentOutfits,
+      savedLooks: input.savedLooks,
+    });
+
+  const recommendations = generateShoppingRecommendations({
+    wardrobeItems: input.wardrobeItems,
+    profilePreferences: input.profilePreferences,
+    shoppingProducts: localShoppingProductsForInput(input),
+    feedback: input.feedback,
+    context: scoringContext,
+    wardrobeGaps,
+    includeDebug: input.includeDebug,
+  });
+  const visibleRecommendations = filterSuppressedPersonalizedRecommendations(
+    recommendations,
+    input.feedback,
+  );
+
+  return typeof requestedLimit === "number" && Number.isFinite(requestedLimit) && requestedLimit > 0
+    ? visibleRecommendations.slice(0, Math.floor(requestedLimit))
+    : visibleRecommendations;
+}
+
+export async function getPersonalizedShoppingRecommendationBundle(
+  input: GetPersonalizedShoppingRecommendationsInput,
+): Promise<PersonalizedShoppingRecommendationsResult> {
+  const feedback = await getShoppingRecommendationFeedback({
+    limit: input.feedbackLimit ?? 250,
+  }).catch(() => []);
+  const feedbackState = getShoppingRecommendationFeedbackProductState(feedback);
+  const recommendations = buildPersonalizedShoppingRecommendations({
+    ...input,
+    feedback,
+  });
+
+  return {
+    recommendations,
+    feedback,
+    ...feedbackState,
+  };
+}
+
+export async function getPersonalizedShoppingRecommendations(
+  input: GetPersonalizedShoppingRecommendationsInput,
+): Promise<ShoppingRecommendationCandidate[]> {
+  return (await getPersonalizedShoppingRecommendationBundle(input)).recommendations;
+}
+
 function scoreProduct(product: CuratedProductOption, input: ProductRecommendationInput) {
   const itemType = clean(input.itemType);
   const styleText = (input.styleTags ?? []).map(clean).join(" ");
@@ -551,7 +759,13 @@ export async function fetchAffiliateProductOptions(products: ProductOption[]) {
       affiliateEligible: Boolean(affiliateByUrl.get(product.productUrl)),
       affiliateUrl: affiliateByUrl.get(product.productUrl) ?? product.affiliateUrl ?? product.productUrl,
     }));
-  } catch {
+  } catch (error) {
+    if (__DEV__) {
+      console.log("[callable error]", error);
+      console.log("[AFFILIATE_LINKS] optional link wrapping failed", getFriendlyErrorMessage(error));
+    }
+    Alert.alert("Hold on", getFriendlyErrorMessage(error));
+    // Affiliate wrapping is non-blocking; keep product discovery usable with canonical URLs.
     return products.map((product) => ({
       ...product,
       affiliateEligible: false,
@@ -668,6 +882,7 @@ export async function getProductRecommendationsForSuggestion(
     });
     return curatedFallback(suggestion, maxResults);
   } catch (error) {
+    const friendlyMessage = getFriendlyErrorMessage(error);
     await trackSuggestionEvent({
       userId: options.userId,
       eventName: "product_search_failed",
@@ -675,6 +890,15 @@ export async function getProductRecommendationsForSuggestion(
       sourceScreen: options.sourceScreen,
       errorCode: errorCode(error),
     });
+    if (__DEV__) {
+      console.log("[PRODUCT_SEARCH] live product search failed", friendlyMessage);
+    }
+    if (isRateLimitError(error)) {
+      if (__DEV__) console.log("[callable error]", error);
+      Alert.alert("Hold on", friendlyMessage);
+      throw error;
+    }
+    // Live search is additive; curated recommendations keep the shop sheet usable on provider failures.
     return curatedFallback(suggestion, maxResults);
   }
 }

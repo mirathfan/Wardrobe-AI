@@ -370,12 +370,43 @@ export function setCachedClosetItems(uid: string, items: ClothingItem[]) {
   );
 }
 
+export async function removeCachedClosetItem(uid: string, itemId: string) {
+  const cleanedItemId = cleanString(itemId);
+  if (!cleanedItemId) return;
+  const cached = await readCache<ClothingItem[]>(
+    uid,
+    "closet-items",
+    LOCAL_CACHE_MAX_AGE_MS.closetItems,
+  );
+  if (!cached?.data?.length) return;
+  await setCachedClosetItems(
+    uid,
+    cached.data.filter((item) => item.id !== cleanedItemId),
+  );
+}
+
+export async function clearCachedClosetItems(uid: string) {
+  try {
+    await Storage.removeItem(keyFor(uid, "closet-items"));
+  } catch {
+    // ignore
+  }
+}
+
 export function getCachedHomeSnapshot(uid: string) {
   return readCache<HomeDashboardSnapshot>(uid, "home-snapshot", LOCAL_CACHE_MAX_AGE_MS.homeSnapshot);
 }
 
 export function setCachedHomeSnapshot(uid: string, snapshot: HomeDashboardSnapshot) {
   return writeCache(uid, "home-snapshot", sanitizeHomeSnapshotForCache(snapshot));
+}
+
+export async function clearCachedHomeSnapshot(uid: string) {
+  try {
+    await Storage.removeItem(keyFor(uid, "home-snapshot"));
+  } catch {
+    // ignore
+  }
 }
 
 export function getCachedChatList(uid: string) {
@@ -416,6 +447,13 @@ export async function clearCachedRecentMessages(uid: string, chatId: string) {
   } catch {
     // ignore
   }
+}
+
+export async function invalidateClosetItemDeletionCaches(uid: string, itemId: string) {
+  await Promise.allSettled([
+    removeCachedClosetItem(uid, itemId),
+    clearCachedHomeSnapshot(uid),
+  ]);
 }
 
 export function getCachedProfilePreferences(uid: string) {

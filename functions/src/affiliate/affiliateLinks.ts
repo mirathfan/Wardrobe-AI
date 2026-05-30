@@ -1,5 +1,7 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "../shared/logger";
+
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../shared/rateLimit";
 
 type BuildAffiliateUrlOptions = {
   customId?: string | null;
@@ -67,11 +69,13 @@ export function buildAffiliateUrl(
   return affiliateUrl.toString();
 }
 
-export const wrapAffiliateLinks = onCall(async (request) => {
+export const wrapAffiliateLinks = onCall(tracedHandler(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError("unauthenticated", "Please sign in first.");
   }
+  setLogContext({ uidHash: redactUid(uid) });
+  await assertFunctionRateLimit(uid, "affiliateLinks", RATE_LIMITS.affiliateLinks);
 
   const urls: unknown[] = Array.isArray(request.data?.productUrls)
     ? request.data.productUrls
@@ -97,4 +101,4 @@ export const wrapAffiliateLinks = onCall(async (request) => {
       };
     }),
   };
-});
+}));

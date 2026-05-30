@@ -1,5 +1,4 @@
-import { FieldValue, getFirestore } from "firebase-admin/firestore";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "../shared/logger";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 
 import { buildAffiliateUrl } from "../affiliate/affiliateLinks";
@@ -10,6 +9,7 @@ import {
 } from "./productCache";
 import { rankAndFilterProducts } from "./productRanking";
 import { searchSerpApiProducts } from "./serpApiProvider";
+import { assertFunctionRateLimit, RATE_LIMITS, redactUid } from "../shared/rateLimit";
 import type {
   NormalizedSearchRequest,
   ProductCategory,
@@ -18,6 +18,12 @@ import type {
   SearchLiveProductsRequest,
   SearchLiveProductsResponse,
 } from "./types";
+
+if (!process.env.SERPAPI_API_KEY) {
+  throw new Error(
+    "SERPAPI_API_KEY is not set. Deployment is misconfigured.",
+  );
+}
 
 const PRODUCT_CATEGORIES: ProductCategory[] = [
   "tops",
@@ -162,36 +168,6 @@ function normalizeRequest(data: unknown): NormalizedSearchRequest {
   };
 }
 
-function todayUsageDocId() {
-  const now = new Date();
-  return `productSearch_${now.getUTCFullYear()}_${String(now.getUTCMonth() + 1).padStart(2, "0")}_${String(now.getUTCDate()).padStart(2, "0")}`;
-}
-
-async function assertDailyRateLimit(uid: string) {
-  const limit = envNumber("PRODUCT_SEARCH_DAILY_LIMIT", 20, 1, 1000);
-  const ref = getFirestore()
-    .collection("users")
-    .doc(uid)
-    .collection("usage")
-    .doc(todayUsageDocId());
-
-  await getFirestore().runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(ref);
-    const count = Number(snapshot.data()?.count ?? 0);
-    if (count >= limit) {
-      throw new HttpsError("resource-exhausted", "Live product search limit reached for today.");
-    }
-    transaction.set(
-      ref,
-      {
-        count: count + 1,
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
-  });
-}
-
 function emptyResponse(cacheHit = false): SearchLiveProductsResponse {
   return {
     ok: true,
@@ -202,11 +178,12 @@ function emptyResponse(cacheHit = false): SearchLiveProductsResponse {
 }
 
 export const searchLiveProducts = onCall(
-  async (request): Promise<SearchLiveProductsResponse> => {
+  tracedHandler(async (request): Promise<SearchLiveProductsResponse> => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
+    setLogContext({ uidHash: redactUid(uid) });
 
     const provider = envString("PRODUCT_SEARCH_PROVIDER", "serpapi").toLowerCase();
     const normalized = normalizeRequest(request.data);
@@ -228,7 +205,7 @@ export const searchLiveProducts = onCall(
       };
     }
 
-    await assertDailyRateLimit(uid);
+    await assertFunctionRateLimit(uid, "productSearch", RATE_LIMITS.productSearch);
 
     try {
       const rawProducts = await searchSerpApiProducts(normalized);
@@ -263,5 +240,5 @@ export const searchLiveProducts = onCall(
       });
       throw new HttpsError("unavailable", "Live product search is unavailable right now.");
     }
-  },
+  }),
 );

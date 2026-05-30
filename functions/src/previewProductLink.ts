@@ -1,5 +1,5 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import OpenAI from "openai";
 
 import {
@@ -12,9 +12,22 @@ import {
   extractProductUrlMetadata,
   type ProductUrlMetadata,
 } from "./shared/productUrlMetadata";
+import { normalizeProductUrl } from "./shared/productExtractionPipeline";
+import {
+  buildProductLinkLogMetadata,
+  isProductLinkExtractionV2Enabled,
+  logProductLinkEvent,
+  normalizedDomainForProductLink,
+  productLinkFailureCodeForError,
+  productLinkUserMessageForFailure,
+  resultStatusForProductLink,
+  warningCodesForProductLinkDiagnostics,
+  type ProductLinkWarningCode,
+} from "./shared/productLinkRelease";
 import {
   brandFromSourceUrl,
   buildUrlCandidatePreview,
+  canUseHmBlockedStorePreviewFallback,
   clientLinkPreviewFromRequest,
   fallbackLinkPreviewFromUrl,
   hmSanitizedClientPreview,
@@ -31,6 +44,12 @@ import { redactUrlForLogs } from "./shared/safeFetch";
 
 const PRODUCT_LINK_FAILURE_MESSAGE =
   "I couldn't read this product page. Try another link, upload a screenshot, or add manually.";
+const PREVIEW_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const previewMetadataCache = new Map<string, {
+  expiresAt: number;
+  metadata: ProductUrlMetadata;
+}>();
 
 function codeForError(
   error: unknown,
@@ -85,28 +104,34 @@ function throwIfCandidateMissingEvidence(candidate: AuraCandidateItem, metadata:
   }
 }
 
-function shouldSkipPreviewFallback(error: unknown) {
+function shouldSkipPreviewFallback(error: unknown, rawUrl: string, fallbackPreview: AuraLinkPreview | null | undefined) {
   if (!(error instanceof ProductLinkError)) return false;
   return (
-    error.code === "blocked_store" ||
-    error.code === "no_metadata" ||
-    error.code === "no_images" ||
     error.code === "invalid_url" ||
-    error.code === "unsafe_url"
+    error.code === "unsafe_url" ||
+    (error.code === "blocked_store" && !canUseHmBlockedStorePreviewFallback(rawUrl, fallbackPreview))
   );
 }
 
 function messageForError(error: unknown) {
   if (error instanceof ProductLinkError && error.code === "blocked_store") return BLOCKED_STORE_MESSAGE;
-  if (error instanceof ProductLinkError) return error.message;
+  if (error instanceof ProductLinkError) {
+    return productLinkUserMessageForFailure(productLinkFailureCodeForError(error, "preview"), "preview");
+  }
   if (error instanceof Error) return error.message;
   return "Could not read that product link.";
 }
 
-function detailsForError(error: unknown) {
+function detailsForError(
+  error: unknown,
+  failureCode: string | null,
+  warningCodes: ProductLinkWarningCode[],
+) {
   if (!(error instanceof ProductLinkError)) return undefined;
   return {
     productLinkCode: error.code,
+    failureCode,
+    warningCodes,
     ...(error.details ?? {}),
   };
 }
@@ -121,11 +146,57 @@ function domainFromUrl(url: string) {
 
 type ProductLinkPreviewMetadata = ProductUrlMetadata | AuraLinkPreview;
 
+function previewMetadataCacheKey(url: string) {
+  try {
+    return normalizeProductUrl(new URL(url)).normalizedUrl;
+  } catch {
+    return null;
+  }
+}
+
+function isCacheablePreviewMetadata(metadata: ProductUrlMetadata) {
+  return !!(cleanText(metadata.title) || cleanText(metadata.imageUrl) || cleanText(metadata.description));
+}
+
+async function extractProductUrlMetadataWithCache(url: string) {
+  const key = previewMetadataCacheKey(url);
+  const now = Date.now();
+  if (key) {
+    const cached = previewMetadataCache.get(key);
+    if (cached && cached.expiresAt > now) return { metadata: cached.metadata, cacheHit: true };
+    if (cached) previewMetadataCache.delete(key);
+  }
+  const metadata = await extractProductUrlMetadata(url);
+  if (key && isCacheablePreviewMetadata(metadata)) {
+    previewMetadataCache.set(key, {
+      expiresAt: now + PREVIEW_METADATA_CACHE_TTL_MS,
+      metadata,
+    });
+  }
+  return { metadata, cacheHit: false };
+}
+
+function productUrlMetadataForRolloutMode(
+  metadata: ProductUrlMetadata,
+  featureFlagEnabled: boolean,
+): ProductUrlMetadata {
+  if (featureFlagEnabled) return metadata;
+  return {
+    ...metadata,
+    canonicalUrl: metadata.sourceUrl,
+    category: null,
+    subCategory: null,
+    extractionSource: null,
+    adapterName: null,
+  };
+}
+
 function previewResponseFromCandidate(params: {
   candidate: AuraCandidateItem;
   metadata: ProductLinkPreviewMetadata;
   imageCandidateCount: number;
   imageExtractionSource: "json_ld" | "og_image" | "twitter" | "html_image" | "fallback" | null;
+  selectedImageReason?: string | null;
 }) {
   const { candidate, metadata } = params;
   return {
@@ -134,6 +205,7 @@ function previewResponseFromCandidate(params: {
       candidate,
       metadata: {
         sourceUrl: metadata.sourceUrl,
+        canonicalUrl: "canonicalUrl" in metadata ? metadata.canonicalUrl ?? metadata.sourceUrl : metadata.sourceUrl,
         domain: domainFromUrl(metadata.sourceUrl),
         retailer: metadata.brand ?? brandFromSourceUrl(metadata.sourceUrl),
         title: metadata.title ?? candidate.title ?? null,
@@ -163,12 +235,26 @@ function previewResponseFromCandidate(params: {
         graphicText: candidate.graphicText ?? null,
         motif: candidate.motif ?? null,
         collaborationName: candidate.collaborationName ?? null,
+        category: candidate.category ?? ("category" in metadata ? metadata.category ?? null : null),
+        subCategory: candidate.subCategory ?? ("subCategory" in metadata ? metadata.subCategory ?? null : null),
         categoryHints: [candidate.category, candidate.subCategory].filter(
           (value): value is string => !!String(value ?? "").trim(),
         ),
         sku: "sku" in metadata ? metadata.sku ?? null : null,
+        styleId: "styleId" in metadata ? metadata.styleId ?? null : null,
+        productId: "productId" in metadata ? metadata.productId ?? null : null,
+        availability: "availability" in metadata ? metadata.availability ?? null : null,
+        selectedSize: "selectedSize" in metadata ? metadata.selectedSize ?? null : null,
+        sizes: "sizes" in metadata ? metadata.sizes ?? [] : [],
+        extractionSource: "extractionSource" in metadata ? metadata.extractionSource ?? null : null,
+        adapterName: "adapterName" in metadata ? metadata.adapterName ?? null : null,
+        priceUnavailable: "priceUnavailable" in metadata ? metadata.priceUnavailable ?? undefined : undefined,
+        marketPriceUnavailable: "marketPriceUnavailable" in metadata ? metadata.marketPriceUnavailable ?? undefined : undefined,
         imageExtractionSource: params.imageExtractionSource,
         imageCandidateCount: params.imageCandidateCount,
+        selectedImageReason:
+          params.selectedImageReason ??
+          ("selectedImageReason" in metadata ? metadata.selectedImageReason ?? null : null),
       },
     },
   };
@@ -176,17 +262,26 @@ function previewResponseFromCandidate(params: {
 
 export const previewProductLink = onCall(
   { secrets: ["OPENAI_API_KEY"] },
-  async (request) => {
+  tracedHandler(async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
+    setLogContext({ uidHash: redactUid(uid) });
 
     const url = String(request.data?.url ?? "").trim();
     if (!url) {
       throw new HttpsError("invalid-argument", "A product link is required.");
     }
     await assertFunctionRateLimit(uid, "productLink", RATE_LIMITS.productLink);
+    const startedAt = Date.now();
+    const featureFlagEnabled = isProductLinkExtractionV2Enabled();
+    logProductLinkEvent("product_link_preview_started", buildProductLinkLogMetadata({
+      rawUrl: url,
+      featureFlagEnabled,
+      resultStatus: "partial",
+      durationMs: 0,
+    }));
 
     const rawClientPreview = clientLinkPreviewFromRequest(request.data?.linkPreview, url);
     const hmClientFallback =
@@ -203,7 +298,8 @@ export const previewProductLink = onCall(
         hasClientLinkPreview: !!clientPreview,
         clientPreviewImageCount: clientPreview?.imageUrls?.length ?? 0,
       });
-      const metadata = await extractProductUrlMetadata(url);
+      const extracted = await extractProductUrlMetadataWithCache(url);
+      const metadata = productUrlMetadataForRolloutMode(extracted.metadata, featureFlagEnabled);
       if (!metadata.imageUrl) {
         const fallbackPreview = [clientPreview, hmClientFallback, { ...metadata, status: "needs_review" as const }]
           .find(previewHasUsableProductEvidence) ?? null;
@@ -220,13 +316,31 @@ export const previewProductLink = onCall(
             client,
             uid,
             metadata: fallbackPreview,
+            preferNikeFootwearLeftProfile: true,
           });
           throwIfCandidateMissingEvidence(built.candidate, fallbackPreview);
+          const warningCodes: ProductLinkWarningCode[] = [
+            "CLIENT_PREVIEW_FALLBACK_USED",
+            "PARTIAL_EXTRACTION",
+          ];
+          logProductLinkEvent("product_link_preview_partial", buildProductLinkLogMetadata({
+            rawUrl: url,
+            metadata,
+            diagnostics: metadata.extractionDiagnostics,
+            selectedImageReason: built.selectedImageReason,
+            candidateImageCount: built.rankedImageUrls.length || built.rawImageUrls.length,
+            primaryImageUrl: built.candidate.primaryImageUrl,
+            extraWarnings: warningCodes,
+            durationMs: Date.now() - startedAt,
+            featureFlagEnabled,
+            resultStatus: "partial",
+          }));
           return previewResponseFromCandidate({
             candidate: built.candidate,
             metadata: fallbackPreview,
             imageCandidateCount: built.rankedImageUrls.length || built.rawImageUrls.length,
             imageExtractionSource: "fallback",
+            selectedImageReason: built.selectedImageReason,
           });
         }
         throw new ProductLinkError(PRODUCT_LINK_FAILURE_MESSAGE, "no_images", {
@@ -238,6 +352,7 @@ export const previewProductLink = onCall(
         client,
         uid,
         metadata,
+        preferNikeFootwearLeftProfile: true,
       });
       throwIfCandidateMissingEvidence(built.candidate, metadata);
 
@@ -250,17 +365,43 @@ export const previewProductLink = onCall(
         imageCount: built.candidate.imageUrls.length,
         hasTitle: !!built.candidate.title,
       });
+      const warningCodes = warningCodesForProductLinkDiagnostics(
+        metadata.extractionDiagnostics,
+        extracted.cacheHit ? [] : [],
+        metadata,
+      );
+      const resultStatus = resultStatusForProductLink({
+        warningCodes,
+        missingFields: metadata.extractionDiagnostics?.missingFields ?? [],
+        hasTitle: !!built.candidate.title,
+        hasImage: !!built.candidate.primaryImageUrl,
+      });
+      logProductLinkEvent(
+        resultStatus === "partial" ? "product_link_preview_partial" : "product_link_preview_succeeded",
+        buildProductLinkLogMetadata({
+          rawUrl: url,
+          metadata,
+          diagnostics: metadata.extractionDiagnostics,
+          selectedImageReason: built.selectedImageReason,
+          candidateImageCount: built.rankedImageUrls.length || built.rawImageUrls.length,
+          primaryImageUrl: built.candidate.primaryImageUrl,
+          durationMs: Date.now() - startedAt,
+          featureFlagEnabled,
+          resultStatus,
+        }),
+      );
 
       return previewResponseFromCandidate({
         candidate: built.candidate,
         metadata,
         imageCandidateCount: built.rankedImageUrls.length || built.rawImageUrls.length,
         imageExtractionSource: null,
+        selectedImageReason: built.selectedImageReason,
       });
     } catch (error) {
       const fallbackPreview = [clientPreview, hmClientFallback, fallbackLinkPreviewFromUrl(url)]
         .find(previewHasUsableProductEvidence) ?? null;
-      if (fallbackPreview && !shouldSkipPreviewFallback(error)) {
+      if (fallbackPreview && !shouldSkipPreviewFallback(error, url, fallbackPreview)) {
         logger.info("[LINK_PREVIEW] using AURA client preview fallback", {
           uidHash: redactUid(uid),
           url: redactUrlForLogs(url),
@@ -272,16 +413,45 @@ export const previewProductLink = onCall(
           client,
           uid,
           metadata: fallbackPreview,
+          preferNikeFootwearLeftProfile: true,
         });
         throwIfCandidateMissingEvidence(built.candidate, fallbackPreview);
+        const failureCode = productLinkFailureCodeForError(error, "preview");
+        logProductLinkEvent("product_link_preview_partial", buildProductLinkLogMetadata({
+          rawUrl: url,
+          metadata: fallbackPreview,
+          selectedImageReason: built.selectedImageReason,
+          candidateImageCount: built.rankedImageUrls.length || built.rawImageUrls.length,
+          primaryImageUrl: built.candidate.primaryImageUrl,
+          extraWarnings: [
+            "CLIENT_PREVIEW_FALLBACK_USED",
+            failureCode === "FETCH_BLOCKED" ? "FETCH_BLOCKED" : "PARTIAL_EXTRACTION",
+          ],
+          durationMs: Date.now() - startedAt,
+          featureFlagEnabled,
+          resultStatus: "partial",
+        }));
         return previewResponseFromCandidate({
           candidate: built.candidate,
           metadata: fallbackPreview,
           imageCandidateCount: built.rankedImageUrls.length || built.rawImageUrls.length,
           imageExtractionSource: "fallback",
+          selectedImageReason: built.selectedImageReason,
         });
       }
+      const failureCode = productLinkFailureCodeForError(error, "preview");
+      const warningCodes = warningCodesForProductLinkDiagnostics(null, [failureCode], {
+        domain: normalizedDomainForProductLink(url),
+      });
       const message = messageForError(error);
+      logProductLinkEvent("product_link_preview_failed", buildProductLinkLogMetadata({
+        rawUrl: url,
+        failureCode,
+        extraWarnings: warningCodes,
+        durationMs: Date.now() - startedAt,
+        featureFlagEnabled,
+        resultStatus: "failed",
+      }));
       logger.error("[LINK_PREVIEW] extraction failed", {
         uidHash: redactUid(uid),
         url: redactUrlForLogs(url),
@@ -289,7 +459,7 @@ export const previewProductLink = onCall(
         blockedStoreFallback: error instanceof ProductLinkError && error.code === "blocked_store",
         error: message,
       });
-      throw new HttpsError(codeForError(error), message, detailsForError(error));
+      throw new HttpsError(codeForError(error), message, detailsForError(error, failureCode, warningCodes));
     }
-  }
+  })
 );

@@ -1,11 +1,13 @@
 import { getFunctions, httpsCallable } from "firebase/functions";
 
-import { buildClientProductLinkPreview } from "@/src/lib/aura";
+import { buildClientProductLinkPreview, type ClientProductLinkPreview } from "@/src/lib/aura";
+import { getFriendlyErrorMessage, isRateLimitError } from "@/src/lib/errors";
 import { app } from "@/src/lib/firebase";
 import type { AuraCandidateItem } from "@/src/types/aura";
 
 export type ClosetProductLinkPreviewMetadata = {
   sourceUrl: string;
+  canonicalUrl?: string | null;
   domain: string;
   retailer?: string | null;
   title?: string | null;
@@ -35,10 +37,22 @@ export type ClosetProductLinkPreviewMetadata = {
   graphicText?: string | null;
   motif?: string | null;
   collaborationName?: string | null;
+  category?: string | null;
+  subCategory?: string | null;
   categoryHints?: string[];
   sku?: string | null;
+  styleId?: string | null;
+  productId?: string | null;
+  availability?: string | null;
+  selectedSize?: string | null;
+  sizes?: string[];
+  extractionSource?: string | null;
+  adapterName?: string | null;
+  priceUnavailable?: boolean;
+  marketPriceUnavailable?: boolean;
   imageExtractionSource?: "json_ld" | "og_image" | "twitter" | "html_image" | "fallback" | null;
   imageCandidateCount?: number | null;
+  selectedImageReason?: string | null;
 };
 
 export type ClosetProductLinkPreview = {
@@ -86,17 +100,29 @@ function normalizePreviewError(error: unknown) {
       : typeof details?.code === "string"
         ? details.code
         : null;
+  const failureCode = typeof details?.failureCode === "string" ? details.failureCode : null;
   const message = raw?.message ?? "";
   const looksBlocked =
     /(?:returned|status)\s+403\b|forbidden|blocked automatic reading/i.test(message);
+  if (failureCode === "NO_PRODUCT_IMAGE" || failureCode === "IMPORT_REQUIRES_IMAGE" || productLinkCode === "no_images") {
+    return new ClosetProductLinkError(
+      "We found product details, but couldn't find a usable product image.",
+      productLinkCode,
+      {
+        ...details,
+        title: "No usable product image found.",
+        message: "Upload a screenshot/photo or add an image manually.",
+      },
+    );
+  }
   if (productLinkCode === "blocked_store" || details?.blockedStore === true || looksBlocked) {
     return new ClosetProductLinkError(
-      "This store blocked automatic reading.",
+      "We couldn't fully read this product page.",
       "blocked_store",
       {
         ...details,
         title: "This store blocked automatic reading.",
-        message: "You can try again, paste another link, or add the item from a screenshot.",
+        message: "We found limited preview info, or you can add from a screenshot/photo.",
       },
     );
   }
@@ -116,10 +142,137 @@ function normalizePreviewError(error: unknown) {
     );
   }
   return new ClosetProductLinkError(
-    raw?.message ?? "I could not read that product link. Try another product page or add it manually.",
+    "I could not read that product link. Try another product page or add it manually.",
     productLinkCode,
     details,
   );
+}
+
+function isHmProductUrl(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase();
+    return (
+      (host === "hm.com" || host.endsWith(".hm.com")) &&
+      /\/productpage\.\d+\.html$/i.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hmProductIdFromUrl(rawUrl: string) {
+  try {
+    return new URL(rawUrl).pathname.match(/\/productpage\.(\d+)\.html$/i)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function safeHmImageUrls(preview: ClientProductLinkPreview | null) {
+  const urls = [
+    ...(preview?.imageUrls ?? []),
+    preview?.imageUrl,
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter((value) => {
+      try {
+        return new URL(value).hostname.toLowerCase() === "image.hm.com";
+      } catch {
+        return false;
+      }
+    });
+  const seen = new Set<string>();
+  return urls.filter((url) => {
+    const key = url.toLowerCase().replace(/([?&])(imwidth|width|height|w|h)=\d+/g, "$1");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function previewFromSafeHmClientFallback(
+  rawUrl: string,
+  preview: ClientProductLinkPreview | null,
+): ClosetProductLinkPreview | null {
+  if (!preview || !isHmProductUrl(rawUrl) || !isHmProductUrl(preview.sourceUrl)) return null;
+  const title = clean(preview.title);
+  const imageUrls = safeHmImageUrls(preview);
+  if (!title || !imageUrls.length) return null;
+  const sourceUrl = preview.sourceUrl;
+  const priceAmount =
+    typeof preview.priceAmount === "number" && Number.isFinite(preview.priceAmount)
+      ? preview.priceAmount
+      : null;
+  const currency = clean(preview.priceCurrency) || clean(preview.currency);
+  const priceDisplay =
+    clean(preview.priceDisplay) ||
+    clean(preview.price) ||
+    (priceAmount != null && currency ? `${currency} ${priceAmount}` : "");
+  const category = normalizeCategory([
+    preview.category,
+    preview.subCategory,
+    title,
+  ].filter(Boolean).join(" "));
+  const subCategory = preview.subCategory || subCategoryFromTitle(category, title);
+  const productId = clean(preview.productId) || clean(preview.sku) || hmProductIdFromUrl(sourceUrl);
+  const color = clean(preview.color);
+  const candidate: AuraCandidateItem = {
+    candidateId: `product-link-hm-${productId ?? Date.now()}`,
+    imageUrls,
+    primaryImageUrl: imageUrls[0],
+    secondaryImageUrls: imageUrls.slice(1),
+    title,
+    category,
+    subCategory,
+    color,
+    displayColor: color,
+    displayColors: color ? [color] : [],
+    brand: clean(preview.brand) || "H&M",
+    confidence: 0.82,
+    retailPrice: priceAmount,
+    purchasePrice: priceAmount,
+    estimatedValue: priceAmount,
+    currency: currency || null,
+    originalCurrency: currency || null,
+    priceSource: priceAmount != null ? "product_link" : null,
+    priceDisplay: priceDisplay || null,
+    price: priceAmount,
+    productUrl: sourceUrl,
+    productDescription: clean(preview.description) || null,
+    sourceType: "link",
+    sourceUrl,
+    imageSourceReason: "client_hm_preview_fallback",
+    status: "needs_review",
+  };
+  return {
+    candidate,
+    metadata: {
+      sourceUrl,
+      canonicalUrl: sourceUrl,
+      domain: "hm.com",
+      retailer: "H&M",
+      title,
+      brand: "H&M",
+      color,
+      displayColor: color,
+      displayColors: color ? [color] : [],
+      price: priceDisplay || null,
+      priceAmount,
+      priceCurrency: currency || null,
+      priceDisplay: priceDisplay || null,
+      description: clean(preview.description) || null,
+      productDescription: clean(preview.description) || null,
+      category,
+      subCategory,
+      categoryHints: [category, subCategory].filter(Boolean),
+      sku: clean(preview.sku) || productId,
+      productId,
+      imageExtractionSource: "fallback",
+      imageCandidateCount: imageUrls.length,
+      selectedImageReason: "client_hm_preview_fallback",
+    },
+  };
 }
 
 export async function previewProductLinkForCloset(url: string) {
@@ -133,16 +286,47 @@ export async function previewProductLinkForCloset(url: string) {
         imageUrl?: string | null;
         imageUrls?: string[];
         description?: string | null;
+        brand?: string | null;
+        category?: string | null;
+        subCategory?: string | null;
+        color?: string | null;
+        price?: string | null;
+        currency?: string | null;
+        priceAmount?: number | null;
+        priceCurrency?: string | null;
+        priceDisplay?: string | null;
+        sku?: string | null;
+        productId?: string | null;
       } | null;
     },
     PreviewProductLinkResponse
   >(functions, "previewProductLink");
+  let linkPreview: ClientProductLinkPreview | null = null;
   try {
-    const linkPreview = await buildClientProductLinkPreview(url);
+    linkPreview = await buildClientProductLinkPreview(url);
     const result = await callable({ url, linkPreview });
     return result.data.preview;
   } catch (error) {
-    throw normalizePreviewError(error);
+    if (isRateLimitError(error)) {
+      if (__DEV__) {
+        console.log("[PRODUCT_LINK] previewProductLink rate limited", getFriendlyErrorMessage(error));
+      }
+      throw error;
+    }
+    const normalized = normalizePreviewError(error);
+    if (normalized.blockedStore) {
+      const fallback = previewFromSafeHmClientFallback(url, linkPreview);
+      if (fallback) {
+        if (__DEV__) {
+          console.log("[PRODUCT_LINK] using safe H&M client fallback after blocked_store", {
+            imageCount: fallback.metadata.imageCandidateCount,
+            title: fallback.metadata.title,
+          });
+        }
+        return fallback;
+      }
+    }
+    throw normalized;
   }
 }
 
@@ -181,7 +365,7 @@ function normalizeCategory(raw?: string | null) {
   if (/\b(jean|trouser|pant|short|skirt)\b/.test(value)) return "bottom";
   if (/\b(jacket|coat|blazer)\b/.test(value)) return "outerwear";
   if (/\b(dress|jumpsuit|romper)\b/.test(value)) return "one_piece";
-  return "top";
+  return "unknown";
 }
 
 function subCategoryFromTitle(category: string, title?: string | null) {
@@ -210,6 +394,7 @@ function subCategoryFromTitle(category: string, title?: string | null) {
   if (category === "shoes") return "sneaker";
   if (category === "one_piece") return "dress";
   if (category === "accessory") return "accessory";
+  if (category === "unknown") return "";
   return "";
 }
 
@@ -226,6 +411,8 @@ export function draftFromProductLinkPreview(
     category: normalizeCategory([
       preview.candidate.category,
       preview.candidate.subCategory,
+      preview.metadata.category,
+      preview.metadata.subCategory,
       preview.metadata.categoryHints?.join(" "),
       title,
       preview.metadata.retailer,
@@ -256,6 +443,8 @@ export function candidateFromProductLinkDraft(params: {
     draft.name,
     candidate.title,
     candidate.subCategory,
+    preview.metadata.category,
+    preview.metadata.subCategory,
     preview.metadata.categoryHints?.join(" "),
     preview.metadata.retailer,
     preview.metadata.domain,
@@ -286,7 +475,7 @@ export function candidateFromProductLinkDraft(params: {
     productUrl: candidate.productUrl ?? sourceUrl,
     imageSourceReason: candidate.imageSourceReason ?? "product_link_preview_selected_image",
     category,
-    subCategory: candidate.subCategory || subCategoryFromTitle(category, draft.name),
+    subCategory: candidate.subCategory || preview.metadata.subCategory || subCategoryFromTitle(category, draft.name),
     title: clean(draft.name) || clean(candidate.title) || clean(preview.metadata.title) || "Product link item",
     brand: clean(draft.brand) || clean(candidate.brand) || clean(preview.metadata.brand) || clean(preview.metadata.retailer),
     color: color || clean(candidate.color) || clean(preview.metadata.color),

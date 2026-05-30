@@ -16,6 +16,7 @@ import ContinueChatCard from "@/src/components/home/ContinueChatCard";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import AuraLookModule from "@/src/components/home/AuraLookModule";
 import HomeHero from "@/src/components/home/HomeHero";
+import HomeShoppingRecommendations from "@/src/components/home/HomeShoppingRecommendations";
 import { AuraAnimatedSection } from "@/src/components/motion";
 import QuickActionRail, { type QuickActionItem } from "@/src/components/home/QuickActionRail";
 import ShopOptionsSheet from "@/src/components/shop/ShopOptionsSheet";
@@ -39,6 +40,7 @@ import { analyticsErrorProperties, trackLaunchEvent } from "@/src/lib/analytics"
 import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
 import { loadLatestSavedAuraLook } from "@/src/lib/auraLooks";
 import { generateAuraSwipeBatch } from "@/src/lib/auraSwipe";
+import { getFriendlyErrorMessage, isRateLimitError } from "@/src/lib/errors";
 import { listenToItems, normalizeLaundryStatus } from "@/src/lib/items";
 import {
   buildMinimumClosetSummary,
@@ -46,7 +48,9 @@ import {
 } from "@/src/lib/minimumCloset";
 import {
   trackSuggestionEvent,
+  type SuggestionSourceScreen,
 } from "@/src/lib/suggestionAnalytics";
+import { getPersonalizedShoppingRecommendationBundle } from "@/src/lib/productRecommendations";
 import { getStyleProfileConfig } from "@/src/lib/styleProfile";
 import { Toast } from "@/src/lib/toast";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
@@ -62,9 +66,18 @@ import {
   getCachedProfilePreferences,
   setCachedHomeSnapshot,
 } from "@/src/lib/localCache";
+import {
+  buildLiveClosetItemIdSet,
+  filterOutfitItemsToLiveCloset,
+  hasDeletedClosetReferences,
+} from "@/src/lib/outfitLiveCloset";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraLook, AuraLookAction, AuraResponse } from "@/src/types/aura";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
+import type {
+  ShoppingFeedbackRecord,
+  ShoppingRecommendationCandidate,
+} from "@/src/types/shoppingRecommendations";
 import { subscribeOutfitByDate, type DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
 const HOME_BACKGROUND_BASE = "#080709";
@@ -209,6 +222,70 @@ function CompleteWardrobeCard({
   );
 }
 
+function buildShoppingSheetSuggestion(
+  title: string,
+  recommendations: ShoppingRecommendationCandidate[],
+  fallbackReason: string,
+): WardrobeSuggestion {
+  const firstRecommendation = recommendations[0] ?? null;
+  const product = firstRecommendation?.product;
+  const base = buildAdHocWardrobeSuggestion(product?.category || product?.title || title);
+
+  return {
+    ...base,
+    id: `shopping-${base.id}-${product?.id ?? "recommendations"}`,
+    itemType: title,
+    reason: firstRecommendation?.explanation || fallbackReason,
+    impactScore: Math.max(base.impactScore, Math.round(firstRecommendation?.normalizedScore ?? firstRecommendation?.score ?? 24)),
+    preferredColors: product?.colours?.length ? product.colours.slice(0, 3) : base.preferredColors,
+    styleTags: product?.styleTags?.length ? product.styleTags.slice(0, 6) : base.styleTags,
+  };
+}
+
+function shoppingRecommendationKey(recommendation: ShoppingRecommendationCandidate) {
+  return (
+    recommendation.product.id ||
+    recommendation.product.providerProductId ||
+    recommendation.product.url ||
+    recommendation.id ||
+    recommendation.product.title
+  );
+}
+
+function dedupeShoppingRecommendations(recommendations: ShoppingRecommendationCandidate[]) {
+  const seen = new Set<string>();
+  return recommendations.filter((recommendation) => {
+    const key = shoppingRecommendationKey(recommendation);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function appendUniqueId(ids: string[], nextId: string) {
+  return ids.includes(nextId) ? ids : [...ids, nextId];
+}
+
+function hasShoppingSizeSignals(profile: UserProfilePreferences | null) {
+  const sizes = profile?.defaultSizes;
+  if (!sizes) return false;
+  return Boolean(
+    sizes.top ||
+      sizes.tops ||
+      sizes.bottoms ||
+      sizes.bottomWaist ||
+      sizes.bottomsWaist ||
+      sizes.jeans ||
+      sizes.dresses ||
+      sizes.skirts ||
+      sizes.shoes,
+  );
+}
+
+function hasSparseShoppingPreferences(profile: UserProfilePreferences | null) {
+  return !profile?.budgetPreference || !hasShoppingSizeSignals(profile);
+}
+
 function HomeLoadingSkeleton() {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
@@ -275,6 +352,14 @@ export default function HomeScreen() {
   const [latestSavedLook, setLatestSavedLook] = useState<import("@/src/lib/auraLooks").SavedAuraLookRecord | null>(null);
   const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
   const [activeShopSuggestion, setActiveShopSuggestion] = useState<WardrobeSuggestion | null>(null);
+  const [activeShopRecommendations, setActiveShopRecommendations] = useState<ShoppingRecommendationCandidate[] | null>(null);
+  const [activeShopSourceScreen, setActiveShopSourceScreen] = useState<SuggestionSourceScreen>("outfit_card");
+  const [shoppingRecommendations, setShoppingRecommendations] = useState<ShoppingRecommendationCandidate[]>([]);
+  const [savedShoppingProductIds, setSavedShoppingProductIds] = useState<string[]>([]);
+  const [dismissedShoppingProductIds, setDismissedShoppingProductIds] = useState<string[]>([]);
+  const [shoppingRecommendationsLoading, setShoppingRecommendationsLoading] = useState(false);
+  const [shoppingRecommendationsError, setShoppingRecommendationsError] = useState(false);
+  const [shoppingRecommendationsRefreshKey, setShoppingRecommendationsRefreshKey] = useState(0);
   const [renderDeferredHomeSections, setRenderDeferredHomeSections] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [regeneratingLook, setRegeneratingLook] = useState(false);
@@ -299,9 +384,9 @@ export default function HomeScreen() {
       {
         status: "ALL",
         sort: "NEWEST",
-        onError: (message) => {
+        onError: () => {
           setLoading(false);
-          Alert.alert("Firestore error", message);
+          Alert.alert("AURA", "Unable to load your wardrobe. Please try again.");
         },
       }
     );
@@ -328,8 +413,6 @@ export default function HomeScreen() {
       if (cancelled || !cached?.data) return;
       homeCacheRefreshingRef.current = cached.stale;
       setLatestChatThread(cached.data.latestChatPreview);
-      setLatestSavedLook(cached.data.latestSavedLookPreview);
-      setTodayRecord(cached.data.todayOutfitPreview);
     });
 
     return () => {
@@ -427,9 +510,14 @@ export default function HomeScreen() {
   );
 
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const liveClosetItemIds = useMemo(() => buildLiveClosetItemIdSet(items), [items]);
   const styleProfile = useMemo(
     () => getStyleProfileConfig(profilePreferences),
     [profilePreferences]
+  );
+  const shoppingPreferencesSparse = useMemo(
+    () => hasSparseShoppingPreferences(profilePreferences),
+    [profilePreferences],
   );
   const displayName = (
     profilePreferences?.firstName ??
@@ -471,9 +559,49 @@ export default function HomeScreen() {
       }).length,
     [items]
   );
+  const latestAuraLook = useMemo(
+    () =>
+      latestAuraLookResponse?.look &&
+      !hasDeletedClosetReferences(latestAuraLookResponse.look, liveClosetItemIds)
+        ? filterOutfitItemsToLiveCloset(latestAuraLookResponse.look, liveClosetItemIds)
+        : null,
+    [latestAuraLookResponse?.look, liveClosetItemIds],
+  );
+  const latestSavedLookForHome = useMemo(
+    () =>
+      latestSavedLook?.look && !hasDeletedClosetReferences(latestSavedLook.look, liveClosetItemIds)
+        ? filterOutfitItemsToLiveCloset(latestSavedLook.look, liveClosetItemIds)
+        : null,
+    [latestSavedLook?.look, liveClosetItemIds],
+  );
+  const latestLook = latestAuraLook ?? latestSavedLookForHome ?? null;
+  const displayTodayRecord = useMemo(
+    () =>
+      todayRecord && !hasDeletedClosetReferences(todayRecord, liveClosetItemIds)
+        ? filterOutfitItemsToLiveCloset(todayRecord, liveClosetItemIds)
+        : null,
+    [liveClosetItemIds, todayRecord],
+  );
+  const cacheSafeSavedLook = useMemo(
+    () =>
+      latestSavedLook?.look && !hasDeletedClosetReferences(latestSavedLook.look, liveClosetItemIds)
+        ? {
+            ...latestSavedLook,
+            look: filterOutfitItemsToLiveCloset(latestSavedLook.look, liveClosetItemIds),
+          }
+        : null,
+    [latestSavedLook, liveClosetItemIds],
+  );
+  const cacheSafeTodayRecord = useMemo(
+    () =>
+      todayRecord && !hasDeletedClosetReferences(todayRecord, liveClosetItemIds)
+        ? filterOutfitItemsToLiveCloset(todayRecord, liveClosetItemIds)
+        : null,
+    [liveClosetItemIds, todayRecord],
+  );
 
   const heroStylistNote = useMemo(() => {
-    if (todayRecord?.plannedOutfit || todayRecord?.wornOutfit) {
+    if (displayTodayRecord?.plannedOutfit || displayTodayRecord?.wornOutfit) {
       return "Built from pieces ready right now.";
     }
     if (unwornCount > 0) {
@@ -492,9 +620,9 @@ export default function HomeScreen() {
     return "A strong look can start from what you already own.";
   }, [
     laundryCount,
+    displayTodayRecord?.plannedOutfit,
+    displayTodayRecord?.wornOutfit,
     styleProfile.recommendationEmphasis,
-    todayRecord?.plannedOutfit,
-    todayRecord?.wornOutfit,
     unwornCount,
     weather.permission,
     weather.state,
@@ -544,7 +672,86 @@ export default function HomeScreen() {
       }),
     [items, latestAuraLookResponse, latestSavedLook?.look, profilePreferences],
   );
-  const latestLook = latestAuraLookResponse?.look ?? latestSavedLook?.look ?? null;
+  const shoppingLookSignals = useMemo(
+    () => [
+      {
+        addToComplete: latestAuraLookResponse?.recommendedAdditions ?? [],
+        missingPieces: latestAuraLookResponse?.missingPieces ?? [],
+        upgradeSuggestions: latestAuraLookResponse?.upgradeSuggestions ?? [],
+      },
+      ...(latestAuraLookResponse?.look
+        ? [{ addToComplete: latestAuraLookResponse.look.addToComplete }]
+        : []),
+      ...(latestAuraLookResponse?.lookOptions ?? []).map((look) => ({
+        addToComplete: look.addToComplete,
+      })),
+      ...(latestSavedLook?.look
+        ? [{ addToComplete: latestSavedLook.look.addToComplete }]
+        : []),
+    ],
+    [latestAuraLookResponse, latestSavedLook?.look],
+  );
+
+  useEffect(() => {
+    if (!uid || loading || !renderDeferredHomeSections) {
+      setShoppingRecommendations([]);
+      setSavedShoppingProductIds([]);
+      setDismissedShoppingProductIds([]);
+      setShoppingRecommendationsLoading(false);
+      setShoppingRecommendationsError(false);
+      return;
+    }
+
+    if (!items.length && !profilePreferences) {
+      setShoppingRecommendations([]);
+      setSavedShoppingProductIds([]);
+      setDismissedShoppingProductIds([]);
+      setShoppingRecommendationsLoading(false);
+      setShoppingRecommendationsError(false);
+      return;
+    }
+
+    let active = true;
+    setShoppingRecommendationsLoading(true);
+    setShoppingRecommendationsError(false);
+
+    void getPersonalizedShoppingRecommendationBundle({
+      wardrobeItems: items,
+      profilePreferences,
+      savedLooks: shoppingLookSignals,
+      context: {
+        sourceSurface: "home",
+        limit: 4,
+      },
+      limit: 4,
+    })
+      .then((result) => {
+        if (!active) return;
+        setSavedShoppingProductIds(result.savedProductIds);
+        setDismissedShoppingProductIds(result.dismissedProductIds);
+        setShoppingRecommendations(dedupeShoppingRecommendations(result.recommendations).slice(0, 4));
+      })
+      .catch(() => {
+        if (!active) return;
+        setShoppingRecommendations([]);
+        setShoppingRecommendationsError(true);
+      })
+      .finally(() => {
+        if (active) setShoppingRecommendationsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    items,
+    loading,
+    profilePreferences,
+    renderDeferredHomeSections,
+    shoppingLookSignals,
+    shoppingRecommendationsRefreshKey,
+    uid,
+  ]);
 
   useEffect(() => {
     if (!uid || !wardrobeSuggestions.length) return;
@@ -581,20 +788,20 @@ export default function HomeScreen() {
       laundryCount,
       needsWashCount,
       minimumClosetProgress,
-      latestSavedLookPreview: latestSavedLook,
+      latestSavedLookPreview: cacheSafeSavedLook,
       latestChatPreview: latestChatThread,
-      todayOutfitPreview: todayRecord,
+      todayOutfitPreview: cacheSafeTodayRecord,
     });
   }, [
     availableCount,
+    cacheSafeSavedLook,
+    cacheSafeTodayRecord,
     items.length,
     latestChatThread,
-    latestSavedLook,
     laundryCount,
     loading,
     minimumClosetProgress,
     needsWashCount,
-    todayRecord,
     uid,
   ]);
   const proactiveLookMeta = useMemo(() => {
@@ -608,23 +815,23 @@ export default function HomeScreen() {
       ["smart_casual", "office", "formal"].includes(value)
     );
 
-    if (latestAuraLookResponse?.look) {
+    if (latestAuraLook) {
       return {
-        eyebrow: latestAuraLookResponse.look.addToComplete.length ? "COMPLETE THE LOOK" : "BUILT FROM YOUR WARDROBE",
+        eyebrow: latestAuraLook.addToComplete.length ? "COMPLETE THE LOOK" : "BUILT FROM YOUR WARDROBE",
         title:
           weather.permission === "granted" && weather.state === "ready"
             ? "Recommended for today"
             : "Built from your wardrobe",
         subtitle:
-          latestAuraLookResponse.look.addToComplete.length
+          latestAuraLook.addToComplete.length
             ? "Use what you own and add one or two sharp pieces to finish it."
             : "AURA kept this grounded in pieces you can actually wear now.",
       };
     }
-    if (latestSavedLook?.look) {
+    if (latestSavedLookForHome) {
       return {
         eyebrow: "SAVED LOOK",
-        title: latestSavedLook.title || "A look worth keeping",
+        title: latestSavedLook?.title || "A look worth keeping",
         subtitle: "A saved AURA look you can keep building on.",
       };
     }
@@ -702,8 +909,9 @@ export default function HomeScreen() {
     };
   }, [
     hasMinimalWardrobe,
-    latestAuraLookResponse?.look,
-    latestSavedLook,
+    latestAuraLook,
+    latestSavedLook?.title,
+    latestSavedLookForHome,
     styleProfile.recommendationEmphasis,
     unwornCount,
     weather.permission,
@@ -805,7 +1013,8 @@ export default function HomeScreen() {
           });
           return;
         }
-      } catch {
+      } catch (error) {
+        if (isRateLimitError(error)) throw error;
         // The structured batch path is preferred, but the chat stream can still return a visual look.
       }
 
@@ -871,7 +1080,7 @@ export default function HomeScreen() {
           ...analyticsErrorProperties(error),
         },
       });
-      Alert.alert("AURA", error?.message ?? "Unable to regenerate this outfit right now.");
+      Alert.alert("AURA", getFriendlyErrorMessage(error));
     } finally {
       setRegeneratingLook(false);
     }
@@ -956,6 +1165,8 @@ export default function HomeScreen() {
         ? buildAdHocWardrobeSuggestion(missingPieces[0])
         : wardrobeSuggestions[0] ?? null;
       if (suggestion) {
+        setActiveShopRecommendations(null);
+        setActiveShopSourceScreen("outfit_card");
         setActiveShopSuggestion(suggestion);
         return;
       }
@@ -999,8 +1210,8 @@ export default function HomeScreen() {
         result.alreadyMarked ? "Already marked worn today" : "Marked as worn today",
         result.alreadyMarked ? "AURA will not double-count it." : undefined,
       );
-    } catch (error: any) {
-      Toast.error("Couldn't mark worn. Try again.", error?.message);
+    } catch {
+      Toast.error("Couldn't mark worn. Try again.");
     }
   }
 
@@ -1064,6 +1275,35 @@ export default function HomeScreen() {
   // discoverable during future product passes without reintroducing clutter now.
   void HOME_DEFERRED_FEATURES;
 
+  const openHomeShoppingRecommendations = React.useCallback(() => {
+    const nextRecommendations = dedupeShoppingRecommendations(shoppingRecommendations).slice(0, 4);
+    if (!nextRecommendations.length) return;
+    setActiveShopRecommendations(nextRecommendations);
+    setActiveShopSourceScreen("home");
+    setActiveShopSuggestion(
+      buildShoppingSheetSuggestion(
+        "Recommended for your wardrobe",
+        nextRecommendations,
+        "A few shopping options that fit your wardrobe and preferences.",
+      ),
+    );
+  }, [shoppingRecommendations]);
+
+  const handleShoppingFeedbackRecorded = React.useCallback((record: ShoppingFeedbackRecord) => {
+    if (record.action === "saved" || record.action === "purchased") {
+      setSavedShoppingProductIds((current) => appendUniqueId(current, record.productId));
+    }
+    if (record.action === "dismissed") {
+      setDismissedShoppingProductIds((current) => appendUniqueId(current, record.productId));
+      setShoppingRecommendations((current) =>
+        current.filter((recommendation) => recommendation.product.id !== record.productId),
+      );
+      setActiveShopRecommendations((current) =>
+        current?.filter((recommendation) => recommendation.product.id !== record.productId) ?? null,
+      );
+    }
+  }, []);
+
   if (loading) {
     return <HomeLoadingSkeleton />;
   }
@@ -1105,7 +1345,7 @@ export default function HomeScreen() {
             personalHint={assistantHint}
             stylistNote={heroStylistNote}
             guidancePhrases={heroGuidancePhrases}
-            record={todayRecord}
+            record={displayTodayRecord}
             itemsById={itemsById}
             onPrimaryAction={() => openAIWithPrompt("Build me a strong outfit from my wardrobe for today.")}
             onWearToday={handleWearTodayFromHome}
@@ -1160,12 +1400,25 @@ export default function HomeScreen() {
               </RevealSection>
             ) : null}
 
-            <RevealSection delay={160}>
+            <RevealSection delay={140}>
+              <HomeShoppingRecommendations
+                colors={colors}
+                recommendations={shoppingRecommendations}
+                savedProductIds={savedShoppingProductIds}
+                preferencesSparse={shoppingPreferencesSparse}
+                loading={shoppingRecommendationsLoading}
+                error={shoppingRecommendationsError}
+                onOpen={openHomeShoppingRecommendations}
+                onRetry={() => setShoppingRecommendationsRefreshKey((key) => key + 1)}
+              />
+            </RevealSection>
+
+            <RevealSection delay={180}>
               <SmartToolsGrid compact colors={colors} tools={smartTools} columns={layout.smartGridColumns} />
             </RevealSection>
 
             {latestChatThread?.chatId && latestChatThread.lastMessagePreview ? (
-              <RevealSection delay={200}>
+              <RevealSection delay={220}>
                 <ContinueChatCard
                   colors={colors}
                   title={latestChatThread.title}
@@ -1182,8 +1435,16 @@ export default function HomeScreen() {
         visible={Boolean(activeShopSuggestion)}
         suggestion={activeShopSuggestion}
         userId={uid}
-        sourceScreen="outfit_card"
-        onDismiss={() => setActiveShopSuggestion(null)}
+        sourceScreen={activeShopSourceScreen}
+        shoppingRecommendations={activeShopRecommendations}
+        savedShoppingProductIds={savedShoppingProductIds}
+        dismissedShoppingProductIds={dismissedShoppingProductIds}
+        onShoppingFeedbackRecorded={handleShoppingFeedbackRecorded}
+        onDismiss={() => {
+          setActiveShopSuggestion(null);
+          setActiveShopRecommendations(null);
+          setActiveShopSourceScreen("outfit_card");
+        }}
       />
     </View>
   );

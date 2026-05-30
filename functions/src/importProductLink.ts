@@ -1,5 +1,5 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import OpenAI from "openai";
 
@@ -16,9 +16,20 @@ import {
   redactUid,
 } from "./shared/rateLimit";
 import { redactUrlForLogs } from "./shared/safeFetch";
+import {
+  buildProductLinkLogMetadata,
+  isProductLinkExtractionV2Enabled,
+  logProductLinkEvent,
+  productLinkFailureCodeForError,
+  productLinkUserMessageForFailure,
+  resultStatusForProductLink,
+  warningCodesForProductLinkDiagnostics,
+} from "./shared/productLinkRelease";
 
 function messageForError(error: unknown) {
-  if (error instanceof ProductLinkError) return error.message;
+  if (error instanceof ProductLinkError) {
+    return productLinkUserMessageForFailure(productLinkFailureCodeForError(error, "import"), "import");
+  }
   if (error instanceof Error) return error.message;
   return "Could not import that product link.";
 }
@@ -42,7 +53,12 @@ function codeForError(
   }
 }
 
-async function markImportFailed(uid: string, itemId: string | null, message: string) {
+async function markImportFailed(
+  uid: string,
+  itemId: string | null,
+  message: string,
+  failureCode: string | null,
+) {
   if (!itemId) return;
   await getFirestore()
     .collection("users")
@@ -57,7 +73,7 @@ async function markImportFailed(uid: string, itemId: string | null, message: str
         ingestion: {
           status: "failed",
           lastRunAt: FieldValue.serverTimestamp(),
-          error: { message },
+          error: { message, code: failureCode },
         },
         updatedAt: Date.now(),
       },
@@ -67,11 +83,12 @@ async function markImportFailed(uid: string, itemId: string | null, message: str
 
 export const importProductLink = onCall(
   { secrets: ["OPENAI_API_KEY"] },
-  async (request) => {
+  tracedHandler(async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
+    setLogContext({ uidHash: redactUid(uid) });
 
     const url = String(request.data?.url ?? "").trim();
     if (!url) {
@@ -79,6 +96,14 @@ export const importProductLink = onCall(
     }
     await assertFunctionRateLimit(uid, "productLink", RATE_LIMITS.productLink);
     const itemId = String(request.data?.itemId ?? "").trim() || null;
+    const startedAt = Date.now();
+    const featureFlagEnabled = isProductLinkExtractionV2Enabled();
+    logProductLinkEvent("product_link_import_started", buildProductLinkLogMetadata({
+      rawUrl: url,
+      featureFlagEnabled,
+      resultStatus: "partial",
+      durationMs: 0,
+    }));
 
     try {
       logger.info("[SNAP_DONE_LINK] importing product link", {
@@ -92,13 +117,44 @@ export const importProductLink = onCall(
       const extraction = await rankProductExtractionImages({
         client,
         extraction: await extractProductFromUrl(url),
+        preferNikeFootwearLeftProfile: true,
       });
       const created = await createDraftItemFromProductLink({
         uid,
         itemId: itemId ?? undefined,
         prompt: "Quick add product link",
         extraction,
+        useV2ClosetDraft: featureFlagEnabled,
       });
+      const warningCodes = warningCodesForProductLinkDiagnostics(
+        extraction.metadata.extractionDiagnostics,
+        [],
+        {
+          ...extraction.metadata,
+          imageUrl: extraction.imageUrls[0] ?? null,
+          imageUrls: extraction.imageUrls,
+        },
+      );
+      const resultStatus = resultStatusForProductLink({
+        warningCodes,
+        missingFields: extraction.metadata.extractionDiagnostics?.missingFields ?? [],
+        hasTitle: !!extraction.metadata.title,
+        hasImage: extraction.imageUrls.length > 0,
+      });
+      logProductLinkEvent(
+        resultStatus === "partial" ? "product_link_import_partial" : "product_link_import_succeeded",
+        buildProductLinkLogMetadata({
+          rawUrl: url,
+          metadata: extraction.metadata,
+          diagnostics: extraction.metadata.extractionDiagnostics,
+          selectedImageReason: extraction.selectedImageReason,
+          candidateImageCount: extraction.imageCandidateCount ?? extraction.imageUrls.length,
+          primaryImageUrl: extraction.imageUrls[0] ?? null,
+          durationMs: Date.now() - startedAt,
+          featureFlagEnabled,
+          resultStatus,
+        }),
+      );
       logger.info("[SNAP_DONE_LINK] product draft created", {
         uidHash: redactUid(uid),
         itemId: created.itemId,
@@ -108,7 +164,16 @@ export const importProductLink = onCall(
       return { ok: true, itemId: created.itemId, imageCount: created.imageCount };
     } catch (error) {
       if (error instanceof HttpsError) throw error;
+      const failureCode = productLinkFailureCodeForError(error, "import");
       const message = messageForError(error);
+      logProductLinkEvent("product_link_import_failed", buildProductLinkLogMetadata({
+        rawUrl: url,
+        failureCode,
+        extraWarnings: [failureCode],
+        durationMs: Date.now() - startedAt,
+        featureFlagEnabled,
+        resultStatus: "failed",
+      }));
       logger.error("[SNAP_DONE_LINK] import failed", {
         uidHash: redactUid(uid),
         url: redactUrlForLogs(url),
@@ -116,8 +181,10 @@ export const importProductLink = onCall(
         code: error instanceof ProductLinkError ? error.code : null,
         error: message,
       });
-      await markImportFailed(uid, itemId, message);
-      throw new HttpsError(codeForError(error), message);
+      await markImportFailed(uid, itemId, message, failureCode);
+      throw new HttpsError(codeForError(error), message, {
+        failureCode,
+      });
     }
-  }
+  })
 );

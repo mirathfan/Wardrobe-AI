@@ -1,12 +1,21 @@
 import { createHash } from "node:crypto";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
-import { logger } from "firebase-functions/v2";
+import { logger } from "./logger";
 import {
   SafeFetchError,
   redactUrlForLogs,
   safeFetch,
   validateSafeUrlForFetch,
 } from "./safeFetch";
+import {
+  extractGenericProductDataSync,
+  normalizeProductUrl,
+  rankGenericProductImages,
+  type ProductExtractionDiagnostics,
+  type ProductExtractionResult,
+  type ProductFieldConfidence,
+} from "./productExtractionPipeline";
+import { type ProductLinkWarningCode } from "./productLinkRelease";
 import { redactUid } from "./rateLimit";
 
 export type ProductMetadata = {
@@ -30,6 +39,9 @@ export type ProductMetadata = {
   displayColors?: string[] | null;
   description?: string | null;
   productDescription?: string | null;
+  canonicalUrl?: string | null;
+  category?: string | null;
+  subCategory?: string | null;
   categoryHints?: string[];
   material?: string | null;
   materials?: string[];
@@ -46,6 +58,25 @@ export type ProductMetadata = {
   collaborationName?: string | null;
   sizeHints?: string[];
   sku?: string | null;
+  styleId?: string | null;
+  productId?: string | null;
+  availability?: string | null;
+  selectedSize?: string | null;
+  sizes?: string[];
+  extractionSource?: string | null;
+  adapterName?: string | null;
+  priceUnavailable?: boolean;
+  marketPriceUnavailable?: boolean;
+  titleConfidence?: ProductFieldConfidence;
+  brandConfidence?: ProductFieldConfidence;
+  priceConfidence?: ProductFieldConfidence;
+  imageConfidence?: ProductFieldConfidence;
+  categoryConfidence?: ProductFieldConfidence;
+  subcategoryConfidence?: ProductFieldConfidence;
+  colorConfidence?: ProductFieldConfidence;
+  extractionDiagnostics?: ProductExtractionDiagnostics;
+  warningCodes?: ProductLinkWarningCode[];
+  selectedImageReason?: string | null;
 };
 
 export type ProductExtraction = {
@@ -53,6 +84,7 @@ export type ProductExtraction = {
   imageUrls: string[];
   imageExtractionSource?: ProductImageExtractionSource | null;
   imageCandidateCount?: number | null;
+  selectedImageReason?: string | null;
   confidence?: number | null;
   status?: "ready" | "needs_review";
   partialData?: {
@@ -80,6 +112,7 @@ type ProductLinkAdapter = {
 
 const MAX_HTML_BYTES = 3 * 1024 * 1024;
 const MAX_HTML_CHARS = 1_500_000;
+const PRODUCT_LINK_FETCH_TIMEOUT_MS = 8_000;
 const USER_AGENT =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) " +
   "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
@@ -88,8 +121,8 @@ const BLOCKED_STORE_SUBTEXT = "You can try again, paste another link, or add the
 const DEBUG_PRODUCT_LINK_LOGS =
   process.env.DEBUG_AURA_CANDIDATE_LOGS === "1" ||
   process.env.DEBUG_AURA_CANDIDATE_LOGS === "true" ||
-  process.env.AURA_DEBUG === "1" ||
-  process.env.AURA_DEBUG === "true";
+  (process.env.FUNCTIONS_EMULATOR === "true" &&
+    (process.env.AURA_DEBUG === "1" || process.env.AURA_DEBUG === "true"));
 
 export type ProductImageExtractionSource =
   | "json_ld"
@@ -102,6 +135,7 @@ type ProductImageExtraction = {
   urls: string[];
   source: ProductImageExtractionSource | null;
   candidateCount: number;
+  selectedImageReason?: string | null;
 };
 
 const adapters: ProductLinkAdapter[] = [
@@ -841,10 +875,28 @@ function extractSizesFromValues(values: unknown[]) {
 
 function extractColorFromText(value?: string | null) {
   const text = String(value ?? "").trim();
-  const slashColor = text.match(/^([A-Za-z]+(?:\s+[A-Za-z]+){0,2})\s*\//)?.[1];
-  if (slashColor) return cleanText(slashColor.toLowerCase(), 80);
-  const known = text.match(/\b(light blue|dark blue|navy blue|sky blue|cream|ecru|beige|black|white|gray|grey|red|green|blue|yellow|pink|purple|orange|brown|khaki|olive|stone|ivory|silver|gold)\b/i)?.[1];
-  return known ? known.toLowerCase() : null;
+  if (!text) return null;
+  const colorWord =
+    "(?:summit\\s+white|light\\s+bone|dark\\s+heather\\s+grey|dark\\s+heather\\s+gray|heather\\s+grey|heather\\s+gray|light\\s+blue|dark\\s+blue|navy\\s+blue|sky\\s+blue|off\\s+white|sail|cream|ecru|beige|black|white|gray|grey|red|green|blue|yellow|pink|purple|orange|brown|khaki|olive|stone|ivory|silver|gold|tan|navy|charcoal|burgundy|natural|bone)";
+  const colorway = new RegExp(`\\b(?:colou?r|colorway)\\s*[:/-]\\s*(${colorWord}(?:\\s*/\\s*${colorWord}){0,4})`, "i").exec(text)?.[1];
+  if (colorway) return titleCaseColor(colorway);
+  const slashColor = new RegExp(`\\b(${colorWord}(?:\\s*/\\s*${colorWord}){1,4})\\b`, "i").exec(text)?.[1];
+  if (slashColor) return titleCaseColor(slashColor);
+  const inColor = new RegExp(`\\bin\\s+(${colorWord}(?:\\s+${colorWord}){0,1})\\b`, "i").exec(text)?.[1];
+  if (inColor) return titleCaseColor(inColor);
+  const dashColor = new RegExp(`(?:-|–|—)\\s*(${colorWord}(?:\\s*/\\s*${colorWord}){0,3})\\s*$`, "i").exec(text)?.[1];
+  if (dashColor) return titleCaseColor(dashColor);
+  const known = new RegExp(`\\b(${colorWord})\\b`, "i").exec(text)?.[1];
+  return known ? titleCaseColor(known) : null;
+}
+
+function titleCaseColor(value: string) {
+  return cleanText(value, 120)
+    ?.toLowerCase()
+    .split(/(\s+|\/|-)/)
+    .map((part) => (/^[a-z]/.test(part) ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .join("")
+    .replace(/\bGrey\b/g, "Grey") ?? null;
 }
 
 function extractAttributeHintsFromText(text: string): Partial<ProductMetadata> {
@@ -911,6 +963,9 @@ function productNounFromHints(hints: string[], fallbackTitle?: string | null) {
 
 function removeBrandWords(title: string, brand?: string | null) {
   let next = title;
+  if (/\bessentials\b/i.test(String(brand ?? ""))) {
+    return next.replace(/^Fear\s+of\s+God\s+/i, "").replace(/\s+/g, " ").trim();
+  }
   const brands = [brand, "H&M", "Zara", "Uniqlo", "Nike", "Adidas", "Aritzia", "Amazon", "Foot Locker", "JD Sports", "Macy's", "Macy’s", "New Balance"]
     .map((value) => cleanText(value, 80))
     .filter((value): value is string => !!value);
@@ -932,7 +987,7 @@ function titleDerivedBrand(title?: string | null) {
   if (isLicensedGraphicText(firstSegment)) return null;
   const words = firstSegment.split(/\s+/).filter(Boolean);
   if (!words.length || words.length > 3) return null;
-  if (/\b(light|dark|blue|black|white|cream|loose|regular|slim|fit|shirt|jacket|dress|pants|trousers|sneakers?)\b/i.test(firstSegment)) {
+  if (/\b(light|dark|blue|black|white|cream|natural|loose|regular|slim|fit|shirt|jacket|dress|pants|trousers|sneakers?|tote|bag|hoodie|sweater|shoe|boot)\b/i.test(firstSegment)) {
     return null;
   }
   return cleanText(firstSegment, 120);
@@ -950,15 +1005,14 @@ function cleanRetailProductTitle(params: {
   const raw = cleanText(params.rawTitle, 260);
   if (!raw) return null;
   let title = raw
+    .replace(/^AllSaints\s+(?:US|UK|EU)\s*:\s*/i, "")
+    .replace(/^Amazon\.[A-Za-z.]+\s*:\s*/i, "")
     .replace(/\s*\|\s*H\s*&\s*M(?:\s+[A-Z]{2})?\s*$/i, "")
     .replace(/\s*\|\s*Zara\s*$/i, "")
-    .replace(/\s*\|\s*Nike\s*$/i, "")
+    .replace(/\s*(?:\||\.|-|–)\s*Nike(?:\.com)?\s*$/i, "")
     .replace(/\s*(?:\||-|–)\s*(?:Aritzia|Amazon(?:\.[A-Za-z.]+)?|Foot\s*Locker|JD\s*Sports|Macy[’']?s|New\s*Balance)\s*$/i, "")
     .replace(/\s*(?:\||-|–)\s*(?:Men[’']s|Women[’']s)\s*(?:\||-|–)\s*(?:Foot\s*Locker|JD\s*Sports|Macy[’']?s)\s*$/i, "")
     .replace(/\s*(?:\||-|–)\s*(?:Men[’']s|Women[’']s)\s*$/i, "")
-    .replace(/^Men[’']s\s+/i, "")
-    .replace(/^Women[’']s\s+/i, "")
-    .replace(/^Ladies[’']?\s+/i, "")
     .trim();
 
   title = title.replace(/^([^/]{2,36})\/([A-Za-z0-9&'.-]+)\s+/i, (_match, colorPart: string, slashPart: string) => {
@@ -993,6 +1047,252 @@ function cleanRetailProductTitle(params: {
     .filter((value, index, array) => array.findIndex((entry) => sameBrand(entry, value)) === index);
   const rebuilt = parts.join(" ").replace(/\s+/g, " ").trim();
   return rebuilt ? rebuilt.charAt(0).toUpperCase() + rebuilt.slice(1) : title || raw;
+}
+
+function removeRetailerSuffix(title?: string | null, retailer?: string | null) {
+  let next = cleanText(title, 260);
+  if (!next) return null;
+  const labels = [
+    retailer,
+    "Nike.com",
+    "Amazon.com",
+    "Amazon.co.uk",
+    "Fear of God",
+    "AllSaints",
+    "AllSaints US",
+    "Macy's",
+    "JD Sports",
+    "Foot Locker",
+    "StockX",
+  ]
+    .filter((entry): entry is string => !!entry)
+    .map((entry) => entry.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  for (const label of labels) {
+    next = next
+      .replace(new RegExp(`\\s*(?:\\||-|–|—|\\.)\\s*${label}\\s*$`, "i"), "")
+      .replace(new RegExp(`^${label}\\s*(?::|\\||-|–|—)\\s*`, "i"), "");
+  }
+  return next.replace(/^Amazon\.[A-Za-z.]+\s*:\s*/i, "").replace(/\s{2,}/g, " ").trim();
+}
+
+function removeDuplicateBrandPrefix(title?: string | null, brand?: string | null) {
+  const cleanedTitle = cleanText(title, 260);
+  const cleanedBrand = cleanText(brand, 120);
+  if (!cleanedTitle || !cleanedBrand) return cleanedTitle;
+
+  const candidates =
+    /\bessentials\b/i.test(cleanedBrand)
+      ? ["Fear of God"]
+      : [cleanedBrand];
+  let next = cleanedTitle;
+  for (const candidate of candidates) {
+    const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const stripped = next.replace(new RegExp(`^${escaped}\\s+`, "i"), "").trim();
+    if (stripped && stripped.length >= 4 && /\p{L}|\d/u.test(stripped)) {
+      next = stripped;
+    }
+  }
+  return next;
+}
+
+export function cleanProductLinkTitle(title?: string | null, brand?: string | null, retailer?: string | null) {
+  let next = removeRetailerSuffix(title, retailer);
+  if (!next) return null;
+  next = next
+    .replace(/^Amazon\.[A-Za-z.]+\s*:\s*/i, "")
+    .replace(/\s*:\s*(?:Clothing,\s*Shoes\s*&\s*Jewelry|Beauty\s*&\s*Personal\s*Care|Health\s*&\s*Household|Home\s*&\s*Kitchen|Sports\s*&\s*Outdoors|Cell\s*Phones\s*&\s*Accessories|Electronics|Books)\s*$/i, "")
+    .replace(/^AllSaints\s+(?:US|UK|EU)\s*:\s*/i, "")
+    .trim();
+  next = removeDuplicateBrandPrefix(next, brand) ?? next;
+  return next.replace(/\s{2,}/g, " ").trim() || null;
+}
+
+function isMarketplaceRetailer(value?: string | null) {
+  return /\b(?:amazon|macy'?s|stockx)\b/i.test(String(value ?? ""));
+}
+
+export function inferBrand(metadata: Partial<ProductMetadata>, domain?: string | null) {
+  const titleText = `${metadata.title ?? ""} ${metadata.description ?? ""} ${(metadata.categoryHints ?? []).join(" ")}`;
+  const explicit = cleanText(metadata.brand, 120);
+  const retailer = cleanText(metadata.retailer, 120);
+  if (explicit && !/^amazon(?:\.[a-z.]+)?$/i.test(explicit)) {
+    if (/\bessentials\b/i.test(titleText) && /fear\s+of\s+god/i.test(`${explicit} ${retailer} ${domain ?? ""}`)) {
+      return { brand: "Fear of God ESSENTIALS", confidence: "high" as ProductFieldConfidence };
+    }
+    if (!(isMarketplaceRetailer(retailer) && sameBrand(explicit, retailer))) {
+      return { brand: explicit, confidence: metadata.brandConfidence ?? "high" as ProductFieldConfidence };
+    }
+  }
+  if (/allsaints\.com$/i.test(String(domain ?? ""))) {
+    return { brand: "AllSaints", confidence: "medium" as ProductFieldConfidence };
+  }
+  if (/fearofgod\.com$/i.test(String(domain ?? ""))) {
+    return {
+      brand: /\bessentials\b/i.test(titleText) ? "Fear of God ESSENTIALS" : "Fear of God",
+      confidence: "medium" as ProductFieldConfidence,
+    };
+  }
+  if (/nike\.com$/i.test(String(domain ?? ""))) {
+    return { brand: "Nike", confidence: "medium" as ProductFieldConfidence };
+  }
+  return { brand: explicit && !/^amazon/i.test(explicit) ? explicit : null, confidence: explicit ? "low" as ProductFieldConfidence : "missing" as ProductFieldConfidence };
+}
+
+type ClosetCategoryResult = {
+  category: string;
+  subCategory: string | null;
+  categoryConfidence: ProductFieldConfidence;
+  subcategoryConfidence: ProductFieldConfidence;
+};
+
+function classifyClosetCategoryText(text: string): Omit<ClosetCategoryResult, "categoryConfidence" | "subcategoryConfidence"> | null {
+  const value = text.toLowerCase().replace(/[_-]+/g, " ");
+  if (/\b(running shoes?|runner|running sneaker|basketball shoes?|air jordan|jordan\s+\d+)\b/.test(value)) {
+    return { category: "footwear", subCategory: /\bbasketball\b/.test(value) ? "basketball shoes" : "running shoes" };
+  }
+  if (/\b(sneakers?|trainers?|shoes?|footwear)\b/.test(value)) return { category: "footwear", subCategory: "sneaker" };
+  if (/\bboots?\b/.test(value)) return { category: "footwear", subCategory: "boot" };
+  if (/\bloafers?\b/.test(value)) return { category: "footwear", subCategory: "loafer" };
+  if (/\bsandals?\b/.test(value)) return { category: "footwear", subCategory: "sandal" };
+  if (/\bheels?\b/.test(value)) return { category: "footwear", subCategory: "heel" };
+  if (/\bflats?\b/.test(value)) return { category: "footwear", subCategory: "flat" };
+  if (/\bslides?\b/.test(value)) return { category: "footwear", subCategory: "slide" };
+
+  if (/\b(handbags?|totes?|backpacks?|crossbod(?:y|ies)|clutches?|bags?)\b/.test(value)) {
+    const subCategory =
+      value.match(/\btotes?\b/) ? "tote" :
+        value.match(/\bbackpacks?\b/) ? "backpack" :
+          value.match(/\bcrossbod(?:y|ies)\b/) ? "crossbody" :
+            value.match(/\bclutches?\b/) ? "clutch" :
+              value.match(/\bhandbags?\b/) ? "handbag" :
+                "bag";
+    return { category: "accessory", subCategory };
+  }
+  if (/\b(necklaces?|bracelets?|earrings?|rings?|jewelry|jewellery)\b/.test(value)) {
+    const subCategory =
+      value.match(/\bnecklaces?\b/) ? "necklace" :
+        value.match(/\bbracelets?\b/) ? "bracelet" :
+          value.match(/\bearrings?\b/) ? "earrings" :
+            value.match(/\brings?\b/) ? "ring" :
+              "jewelry";
+    return { category: "accessory", subCategory };
+  }
+  if (/\b(hats?|caps?|beanies?|belts?|scarves?|sunglasses?|wallets?|watches?)\b/.test(value)) {
+    const subCategory =
+      value.match(/\bbeanies?\b/) ? "beanie" :
+        value.match(/\bcaps?\b/) ? "cap" :
+          value.match(/\bhats?\b/) ? "hat" :
+            value.match(/\bbelts?\b/) ? "belt" :
+              value.match(/\bscarves?\b/) ? "scarf" :
+                value.match(/\bsunglasses?\b/) ? "sunglasses" :
+                  value.match(/\bwallets?\b/) ? "wallet" :
+                    "watch";
+    return { category: "accessory", subCategory };
+  }
+
+  if (/\b(hoodies?)\b/.test(value)) return { category: "top", subCategory: "hoodie" };
+  if (/\b(sweatshirts?)\b/.test(value)) return { category: "top", subCategory: "sweatshirt" };
+  if (/\b(sweaters?|jumpers?|knits?)\b/.test(value)) return { category: "top", subCategory: "sweater" };
+  if (/\b(tanks?|tank tops?|vests?)\b/.test(value)) return { category: "top", subCategory: "tank" };
+  if (/\bpolos?\b/.test(value)) return { category: "top", subCategory: "polo" };
+  if (/\bblouses?\b/.test(value)) return { category: "top", subCategory: "blouse" };
+  if (/\b(t-?shirts?|tees?)\b/.test(value)) return { category: "top", subCategory: "tshirt" };
+  if (/\bshirts?\b/.test(value)) return { category: "top", subCategory: "shirt" };
+
+  if (/\bjeans?\b/.test(value)) return { category: "bottom", subCategory: "jeans" };
+  if (/\btrousers?\b/.test(value)) return { category: "bottom", subCategory: "trousers" };
+  if (/\bpants?\b/.test(value)) return { category: "bottom", subCategory: "pants" };
+  if (/\bshorts?\b/.test(value)) return { category: "bottom", subCategory: "shorts" };
+  if (/\bskirts?\b/.test(value)) return { category: "bottom", subCategory: "skirt" };
+  if (/\bleggings?\b/.test(value)) return { category: "bottom", subCategory: "leggings" };
+  if (/\bsweatpants?\b|\bjoggers?\b/.test(value)) return { category: "bottom", subCategory: "sweatpants" };
+
+  if (/\btrench(?:es)?\b/.test(value)) return { category: "outerwear", subCategory: "trench" };
+  if (/\bblazers?\b/.test(value)) return { category: "outerwear", subCategory: "blazer" };
+  if (/\bvests?\b/.test(value)) return { category: "outerwear", subCategory: "vest" };
+  if (/\bcoats?\b/.test(value)) return { category: "outerwear", subCategory: "coat" };
+  if (/\bjackets?\b/.test(value)) return { category: "outerwear", subCategory: "jacket" };
+
+  if (/\bdresses?\b/.test(value)) return { category: "one_piece", subCategory: "dress" };
+  if (/\bjumpsuits?\b/.test(value)) return { category: "one_piece", subCategory: "jumpsuit" };
+  if (/\brompers?\b/.test(value)) return { category: "one_piece", subCategory: "romper" };
+  return null;
+}
+
+export function inferClosetCategoryFromProduct(metadata: Partial<ProductMetadata>): ClosetCategoryResult {
+  const structuredText = [
+    metadata.category,
+    metadata.subCategory,
+    ...(metadata.categoryHints ?? []),
+  ].filter((entry): entry is string => !!cleanText(entry, 120)).join(" ");
+  const fromStructured = classifyClosetCategoryText(structuredText);
+  if (fromStructured) {
+    return {
+      ...fromStructured,
+      categoryConfidence: metadata.categoryConfidence === "high" ? "high" : "medium",
+      subcategoryConfidence: fromStructured.subCategory ? "medium" : "missing",
+    };
+  }
+
+  const titleText = [metadata.title, metadata.description].filter(Boolean).join(" ");
+  const fromTitle = classifyClosetCategoryText(titleText);
+  if (fromTitle) {
+    return {
+      ...fromTitle,
+      categoryConfidence: "low",
+      subcategoryConfidence: fromTitle.subCategory ? "low" : "missing",
+    };
+  }
+  return {
+    category: "unknown",
+    subCategory: null,
+    categoryConfidence: "missing",
+    subcategoryConfidence: "missing",
+  };
+}
+
+export function extractColorFromProduct(metadata: Partial<ProductMetadata>) {
+  const explicit = cleanText(metadata.color ?? metadata.displayColor, 120);
+  if (explicit) {
+    return { color: titleCaseColor(explicit), confidence: "high" as ProductFieldConfidence };
+  }
+  const fromHints = extractColorFromText((metadata.categoryHints ?? []).join(" "));
+  if (fromHints) return { color: fromHints, confidence: "medium" as ProductFieldConfidence };
+  const fromText = extractColorFromText([metadata.title, metadata.description].filter(Boolean).join(" "));
+  return {
+    color: fromText,
+    confidence: fromText ? "low" as ProductFieldConfidence : "missing" as ProductFieldConfidence,
+  };
+}
+
+function normalizeProductLinkMetadataForCloset(metadata: ProductMetadata): ProductMetadata {
+  const brand = inferBrand(metadata, metadata.domain);
+  const title = cleanProductLinkTitle(metadata.title, brand.brand, metadata.retailer) ?? metadata.title ?? null;
+  const color = extractColorFromProduct({ ...metadata, title });
+  const category = inferClosetCategoryFromProduct({ ...metadata, title, color: color.color });
+  const categoryHints = Array.from(new Set([
+    category.category,
+    category.subCategory,
+    ...(metadata.categoryHints ?? []),
+  ].filter((entry): entry is string => !!cleanText(entry, 120))));
+
+  return {
+    ...metadata,
+    brand: brand.brand,
+    brandConfidence: brand.confidence,
+    title,
+    titleConfidence: metadata.titleConfidence ?? (title ? "medium" : "missing"),
+    color: color.color,
+    displayColor: color.color,
+    displayColors: color.color ? [color.color] : metadata.displayColors ?? [],
+    colorConfidence: color.confidence,
+    category: category.category,
+    subCategory: category.subCategory,
+    categoryHints,
+    categoryConfidence: category.categoryConfidence,
+    subcategoryConfidence: category.subcategoryConfidence,
+    canonicalUrl: metadata.canonicalUrl ?? metadata.sourceUrl,
+  };
 }
 
 function hasUnsafePriceContext(context: string): boolean {
@@ -1368,6 +1668,30 @@ function rankImageCandidatesBySource(
     .sort((a, b) => b.score - a.score || a.index - b.index || a.url.localeCompare(b.url));
 }
 
+function genericImageExtractionFromResult(
+  result: ProductExtractionResult,
+  baseUrl: URL,
+): ProductImageExtraction | null {
+  const rankedImages = rankGenericProductImages(result, baseUrl);
+  const urls = rankedImages.map((image) => image.url).slice(0, 12);
+  if (!urls.length) return null;
+  const primarySource = rankedImages[0]?.source ?? result.extractionSource ?? null;
+  const source: ProductImageExtractionSource =
+    primarySource === "structured_data"
+      ? "json_ld"
+      : primarySource === "open_graph"
+        ? "og_image"
+        : primarySource === "embedded_app_state"
+          ? "fallback"
+          : "html_image";
+  return {
+    urls,
+    source,
+    candidateCount: rankedImages.length,
+    selectedImageReason: rankedImages[0]?.selectedImageReason ?? result.selectedImageReason ?? "generic_ranked_product_image",
+  };
+}
+
 function extractProductImagesWithSource(url: string, html: string): ProductImageExtraction {
   const baseUrl = new URL(url);
   if (isAmazonProductUrl(baseUrl)) {
@@ -1388,6 +1712,18 @@ function extractProductImagesWithSource(url: string, html: string): ProductImage
       source: "fallback",
       candidateCount: nikeVariantImages.length,
     };
+  }
+
+  const genericResult = extractGenericProductDataSync(baseUrl.toString(), html);
+  const genericImages = genericImageExtractionFromResult(genericResult, baseUrl);
+  if (genericImages) {
+    logger.info("[LINK_IMAGE_PRIMARY] generic pipeline primary image selected", {
+      sourceUrl: redactUrlForLogs(url),
+      selectedImageReason: genericImages.selectedImageReason,
+      primaryImageUrl: redactUrlForLogs(genericImages.urls[0]),
+      candidateCount: genericImages.candidateCount,
+    });
+    return genericImages;
   }
 
   let sourceIndex = 0;
@@ -1421,7 +1757,7 @@ function extractProductImagesWithSource(url: string, html: string): ProductImage
   const source = ranked[0]?.source ?? null;
   debugProductLinkInfo("[AURA_LINK_DEBUG] image extraction source", {
     host: baseUrl.hostname,
-    path: baseUrl.pathname,
+    hasPath: baseUrl.pathname.length > 1,
     extractionSource: source,
     candidateCount: ranked.length,
     selectedImageHost: urls[0] ? safeHost(urls[0]) : null,
@@ -1456,6 +1792,12 @@ function extractProductImagesWithSource(url: string, html: string): ProductImage
     urls,
     source,
     candidateCount: ranked.length,
+    selectedImageReason:
+      source === "json_ld"
+        ? "structured_data_primary_image"
+        : source === "og_image" || source === "twitter"
+          ? "open_graph_fallback_image"
+          : "generic_ranked_product_image",
   };
 }
 
@@ -1733,8 +2075,18 @@ export function extractProductMetadataFromHtml(
   const hmJson = extractHmJsonMetadata(parsed, html);
   const nikeVariant = extractNikeSelectedVariantData(parsed.toString(), html);
   const nikeMetadata: Partial<ProductMetadata> = nikeVariant?.metadata ?? {};
+  const generic = extractGenericProductDataSync(parsed.toString(), html);
+  const hmStructuredTitle = isHmProductUrl(parsed)
+    ? jsonLd.title ?? hmJson.title ?? null
+    : null;
+  const trustGenericBrand =
+    !isHmProductUrl(parsed) &&
+    !parsed.hostname.toLowerCase().endsWith("zara.com") &&
+    !parsed.hostname.toLowerCase().endsWith("nike.com");
   const rawTitle =
     nikeMetadata.title ??
+    hmStructuredTitle ??
+    generic.title ??
     jsonLd.title ??
     hmJson.title ??
     extractMeta(html, "og:title") ??
@@ -1742,6 +2094,7 @@ export function extractProductMetadataFromHtml(
     extractTitle(html);
   const rawDescription =
     nikeMetadata.description ??
+    generic.description ??
     jsonLd.description ??
     hmJson.description ??
     extractMeta(html, "og:description") ??
@@ -1755,6 +2108,7 @@ export function extractProductMetadataFromHtml(
   const jsonLdBrand = reliableJsonLdBrand(parsed, jsonLd.brand);
   const resolvedBrand =
     nikeMetadata.brand ??
+    (trustGenericBrand ? generic.brand : null) ??
     jsonLdBrand ??
     merchantBrand ??
     cleanText(siteName, 120) ??
@@ -1762,7 +2116,7 @@ export function extractProductMetadataFromHtml(
     titleDerivedBrand(rawTitle) ??
     null;
   const brandSource: ProductMetadata["brandSource"] =
-    nikeMetadata.brand || jsonLdBrand
+    nikeMetadata.brand || (trustGenericBrand && generic.brand) || jsonLdBrand
       ? "json_ld"
       : merchantBrand
         ? "merchant"
@@ -1777,22 +2131,26 @@ export function extractProductMetadataFromHtml(
   const textAttributes = extractAttributeHintsFromText(`${rawTitle ?? ""} ${rawDescription ?? ""} ${stripVisibleText(html).slice(0, 30_000)}`);
   const color =
     nikeMetadata.color ??
+    generic.color ??
     jsonLd.color ??
     hmJson.color ??
     extractMeta(html, "product:color") ??
     extractMeta(html, "color") ??
     extractColorFromText(rawTitle);
   const displayColors = Array.from(new Set([
+    generic.color,
     ...cleanList(jsonLd.displayColors, 8),
     ...cleanList(hmJson.displayColors, 8),
     color,
   ].filter((value): value is string => !!cleanText(value, 80))));
   const categoryHints = Array.from(new Set([
     ...(nikeMetadata.categoryHints ?? []),
+    ...[generic.category, generic.subcategory],
+    ...(generic.breadcrumbs ?? []),
     ...(jsonLd.categoryHints ?? []),
     ...(hmJson.categoryHints ?? []),
     ...inferCategoryHintsFromTitle(rawTitle),
-  ].filter(Boolean)));
+  ].filter((value): value is string => !!cleanText(value, 120))));
   const materials = Array.from(new Set([
     ...(nikeMetadata.materials ?? []),
     ...(jsonLd.materials ?? []),
@@ -1805,20 +2163,21 @@ export function extractProductMetadataFromHtml(
   ]));
   const fit = nikeMetadata.fit ?? jsonLd.fit ?? hmJson.fit ?? textAttributes.fit ?? normalizeFit(rawTitle);
   const pattern = nikeMetadata.pattern ?? jsonLd.pattern ?? hmJson.pattern ?? textAttributes.pattern ?? normalizePattern(rawTitle);
-  const cleanTitle = cleanRetailProductTitle({
-    rawTitle,
-    brand: resolvedBrand,
-    color,
-    fit,
-    pattern,
-    categoryHints,
-    graphicText,
-  });
+  const cleanTitle = hmStructuredTitle
+    ? cleanProductLinkTitle(hmStructuredTitle, resolvedBrand, retailer)
+    : cleanRetailProductTitle({
+        rawTitle,
+        brand: resolvedBrand,
+        color,
+        fit,
+        pattern,
+        categoryHints,
+        graphicText,
+      });
   const sizeOptions = Array.from(new Set([
     ...(nikeMetadata.sizeOptions ?? nikeMetadata.sizeHints ?? []),
     ...(jsonLd.sizeOptions ?? jsonLd.sizeHints ?? []),
     ...(hmJson.sizeOptions ?? hmJson.sizeHints ?? []),
-    ...(textAttributes.sizeOptions ?? textAttributes.sizeHints ?? []),
   ])).slice(0, 16);
   const careInstructions = Array.from(new Set([
     ...(nikeMetadata.careInstructions ?? []),
@@ -1827,15 +2186,17 @@ export function extractProductMetadataFromHtml(
     ...(textAttributes.careInstructions ?? []),
   ])).slice(0, 6);
   const metadata: ProductMetadata = {
-    sourceUrl: nikeMetadata.sourceUrl ?? parsed.toString(),
-    domain: nikeMetadata.domain ?? domain,
-    retailer: nikeMetadata.retailer ?? retailer,
+    sourceUrl: nikeMetadata.sourceUrl ?? generic.canonicalUrl ?? parsed.toString(),
+    canonicalUrl: generic.canonicalUrl ?? nikeMetadata.sourceUrl ?? parsed.toString(),
+    domain: nikeMetadata.domain ?? generic.sourceDomain ?? domain,
+    retailer: nikeMetadata.retailer ?? generic.retailer ?? retailer,
     merchantBrand,
     brand: resolvedBrand,
     brandSource,
     title: cleanTitle,
     price:
       extractedPrice?.display ??
+      generic.price ??
       jsonLd.price ??
       extractMeta(html, "product:price:amount") ??
       extractMeta(html, "og:price:amount") ??
@@ -1843,16 +2204,19 @@ export function extractProductMetadataFromHtml(
       extractMeta(html, "twitter:data1"),
     currency:
       extractedPrice?.currency ??
+      generic.currency ??
       jsonLd.currency ??
       extractMeta(html, "product:price:currency") ??
       extractMeta(html, "og:price:currency") ??
       extractMeta(html, "currency"),
-    priceAmount: extractedPrice?.amount ?? jsonLd.priceAmount ?? null,
-    priceCurrency: extractedPrice?.currency ?? jsonLd.priceCurrency ?? null,
-    priceDisplay: extractedPrice?.display ?? jsonLd.priceDisplay ?? null,
-    salePrice: extractedPrices.salePrice,
-    originalPrice: extractedPrices.originalPrice,
+    priceAmount: extractedPrice?.amount ?? generic.priceAmount ?? jsonLd.priceAmount ?? null,
+    priceCurrency: extractedPrice?.currency ?? generic.currency ?? jsonLd.priceCurrency ?? null,
+    priceDisplay: extractedPrice?.display ?? generic.price ?? jsonLd.priceDisplay ?? null,
+    salePrice: extractedPrices.salePrice ?? generic.salePrice ?? null,
+    originalPrice: extractedPrices.originalPrice ?? generic.originalPrice ?? null,
     priceExtractionSource: extractedPrice?.source ?? jsonLd.priceExtractionSource ?? null,
+    category: generic.category ?? null,
+    subCategory: generic.subcategory ?? null,
     color,
     displayColor: color,
     displayColors,
@@ -1875,17 +2239,40 @@ export function extractProductMetadataFromHtml(
     collaborationName: graphicText && /\bcollab|collaboration\b/i.test(`${rawTitle ?? ""} ${rawDescription ?? ""}`) ? graphicText : null,
     sku:
       nikeMetadata.sku ??
+      generic.sku ??
       jsonLd.sku ??
       hmJson.sku ??
       extractMeta(html, "product:retailer_item_id") ??
       extractMeta(html, "sku"),
+    styleId: generic.styleId ?? null,
+    productId: generic.productId ?? null,
+    availability: generic.availability ?? null,
+    selectedSize: generic.selectedSize ?? null,
+    sizes: generic.sizes ?? [],
+    extractionSource: generic.extractionSource ?? null,
+    adapterName: generic.adapterName ?? null,
+    priceUnavailable: generic.priceUnavailable ?? undefined,
+    marketPriceUnavailable: generic.marketPriceUnavailable ?? undefined,
+    titleConfidence: generic.titleConfidence,
+    brandConfidence: generic.brandConfidence,
+    priceConfidence: generic.priceConfidence,
+    imageConfidence: generic.imageConfidence,
+    categoryConfidence: generic.categoryConfidence,
+    extractionDiagnostics: generic.diagnostics,
+    warningCodes: generic.diagnostics?.warningCodes,
+    selectedImageReason: generic.selectedImageReason ?? null,
   };
-  return metadata;
+  return normalizeProductLinkMetadataForCloset(metadata);
 }
 
 function amazonAsinFromUrl(url: URL) {
-  const match = url.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
-  return match?.[1]?.toUpperCase() ?? null;
+  const match = url.pathname.match(/\/(?:dp|gp\/product|product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
+  if (match?.[1]) return match[1].toUpperCase();
+  for (const key of ["asin", "ASIN", "pd_rd_i"]) {
+    const value = url.searchParams.get(key);
+    if (value && /^[A-Z0-9]{10}$/i.test(value)) return value.toUpperCase();
+  }
+  return null;
 }
 
 function cleanAmazonTitle(value: string | null) {
@@ -2014,13 +2401,24 @@ function amazonConfidence(params: {
 }
 
 export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult {
-  const asin = amazonAsinFromUrl(url);
-  const domain = normalizedDomain(url.hostname);
-  const title = cleanAmazonTitle(extractMeta(html, "og:title") ?? extractTitle(html));
-  const imageUrls = amazonImagesFromStructuredHtml(url, html);
-  const brand = extractAmazonBrandFromTitle(title);
+  const normalized = normalizeProductUrl(url);
+  const asin = normalized.amazonAsin ?? amazonAsinFromUrl(url);
+  const domain = normalizedDomain(normalized.url.hostname);
+  const generic = extractGenericProductDataSync(normalized.url.toString(), html);
+  const title = cleanAmazonTitle(generic.title ?? extractMeta(html, "og:title") ?? extractTitle(html));
+  const genericImages = rankGenericProductImages(generic, normalized.url).map((image) => image.url);
+  const imageUrls = (genericImages.length ? genericImages : amazonImagesFromStructuredHtml(normalized.url, html)).slice(0, 6);
+  const brand = generic.brand ?? extractAmazonBrandFromTitle(title);
   const inferred = inferAmazonCategoryFromTitle(title);
-  const extractedPrice = extractProductPriceFromHtml(url.toString(), html);
+  const hasStructuredPrice = !!generic.debug?.sources?.includes("structured_data") && typeof generic.priceAmount === "number";
+  const extractedPrice = hasStructuredPrice
+    ? {
+        amount: generic.priceAmount ?? null,
+        currency: generic.currency ?? null,
+        display: generic.price ?? (generic.currency && generic.priceAmount ? `${generic.currency} ${generic.priceAmount}` : String(generic.priceAmount)),
+        source: "json_ld" as const,
+      }
+    : null;
   const confidence = amazonConfidence({
     title,
     imageUrls,
@@ -2029,8 +2427,9 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
     subCategory: inferred.subCategory,
   });
   const status = confidence < 0.6 ? "needs_review" : "ready";
-  const metadata: ProductMetadata = {
-    sourceUrl: url.toString(),
+  const metadata = normalizeProductLinkMetadataForCloset({
+    sourceUrl: normalized.normalizedUrl,
+    canonicalUrl: normalized.normalizedUrl,
     domain,
     retailer: "amazon",
     merchantBrand: "Amazon",
@@ -2044,7 +2443,18 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
     priceCurrency: extractedPrice?.currency ?? null,
     priceDisplay: extractedPrice?.display ?? null,
     priceExtractionSource: extractedPrice?.source ?? null,
-  };
+    productId: asin,
+    priceUnavailable: !extractedPrice,
+    availability: hasStructuredPrice ? generic.availability ?? null : null,
+    titleConfidence: generic.titleConfidence,
+    brandConfidence: generic.brandConfidence,
+    priceConfidence: extractedPrice ? generic.priceConfidence ?? "high" : "missing",
+    imageConfidence: generic.imageConfidence,
+    categoryConfidence: generic.categoryConfidence,
+    extractionDiagnostics: generic.diagnostics,
+    warningCodes: generic.diagnostics?.warningCodes,
+    selectedImageReason: imageUrls.length ? generic.selectedImageReason ?? "open_graph_fallback_image" : null,
+  });
   logger.info("[AMAZON_LINK] extraction", {
     asin,
     sourceUrl: redactUrlForLogs(url.toString()),
@@ -2056,6 +2466,7 @@ export function handleAmazonLink(url: URL, html: string): AmazonExtractionResult
     category: inferred.category,
     subCategory: inferred.subCategory,
     imageCount: imageUrls.length,
+    diagnostics: metadata.extractionDiagnostics ?? null,
   });
   return {
     metadata,
@@ -2133,19 +2544,20 @@ async function tryHmProductContentFallback(
     try {
       debugProductLinkInfo("[AURA_LINK_DEBUG] trying H&M content fallback", {
         host: url.hostname,
-        fallbackPath: fallbackParsed.pathname,
+        hasFallbackPath: fallbackParsed.pathname.length > 1,
         originalStatus,
         originalError: originalError instanceof Error ? originalError.message : null,
       });
       const response = await safeFetch(fallbackParsed, {
         expectedKind: "json",
+        timeoutMs: PRODUCT_LINK_FETCH_TIMEOUT_MS,
         maxBytes: MAX_HTML_BYTES,
         maxRedirects: 3,
         headers: browserProductHeaders(url, "json"),
       });
       debugProductLinkInfo("[AURA_LINK_DEBUG] H&M content fallback status", {
         host: url.hostname,
-        fallbackPath: fallbackParsed.pathname,
+        hasFallbackPath: fallbackParsed.pathname.length > 1,
         status: response.status,
       });
       if (
@@ -2154,7 +2566,7 @@ async function tryHmProductContentFallback(
       ) {
         logger.info("[AURA_LINK_EXTRACT] fetched H&M content fallback", {
           host: url.hostname,
-          fallbackPath: fallbackParsed.pathname,
+          hasFallbackPath: fallbackParsed.pathname.length > 1,
           status: response.status,
           textLength: response.text.length,
           finalUrl: redactUrlForLogs(response.finalUrl),
@@ -2167,7 +2579,7 @@ async function tryHmProductContentFallback(
     } catch (error) {
       debugProductLinkInfo("[AURA_LINK_DEBUG] H&M content fallback failed", {
         host: url.hostname,
-        fallbackPath: fallbackParsed.pathname,
+        hasFallbackPath: fallbackParsed.pathname.length > 1,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -2191,9 +2603,14 @@ function blockedStoreError(status: number | null, host: string) {
 export async function fetchResolvedProductPage(url: URL): Promise<FetchedProductPage> {
   let originalStatus: number | null = null;
   let originalError: unknown = null;
+  const hmJsonFallback = await tryHmProductContentFallback(url, null, null);
+  if (hmJsonFallback) return hmJsonFallback;
   try {
+    // Product-link extraction must stay bounded; safeFetch enforces timeout,
+    // redirect, content-type, and body-size limits for every product page read.
     const response = await safeFetch(url, {
       expectedKind: "html",
+      timeoutMs: PRODUCT_LINK_FETCH_TIMEOUT_MS,
       maxBytes: MAX_HTML_BYTES,
       maxRedirects: 3,
       headers: browserProductHeaders(url, "html"),
@@ -2201,7 +2618,7 @@ export async function fetchResolvedProductPage(url: URL): Promise<FetchedProduct
     originalStatus = response.status;
     debugProductLinkInfo("[AURA_LINK_DEBUG] product fetch status", {
       host: url.hostname,
-      path: url.pathname,
+      hasPath: url.pathname.length > 1,
       status: response.status,
       finalHost: response.finalUrl.hostname,
     });
@@ -2211,7 +2628,7 @@ export async function fetchResolvedProductPage(url: URL): Promise<FetchedProduct
       if (isBlockedHttpStatus(response.status)) {
         debugProductLinkInfo("[AURA_LINK_DEBUG] blocked-store fallback used", {
           host: url.hostname,
-          path: url.pathname,
+          hasPath: url.pathname.length > 1,
           status: response.status,
         });
         throw blockedStoreError(response.status, url.hostname);
@@ -2260,11 +2677,13 @@ function applyAdapter(
     imageUrls: overrides.imageUrls ?? extraction.imageUrls,
     imageExtractionSource: extraction.imageExtractionSource,
     imageCandidateCount: extraction.imageCandidateCount,
+    selectedImageReason: extraction.selectedImageReason,
   };
 }
 
 export async function extractProductFromUrl(rawUrl: string): Promise<ProductExtraction> {
-  const url = await validateProductUrl(rawUrl);
+  const validatedUrl = await validateProductUrl(rawUrl);
+  const url = normalizeProductUrl(validatedUrl).url;
   logger.info("[AURA_LINK_EXTRACT] fetching product page", {
     domain: url.hostname,
   });
@@ -2317,9 +2736,11 @@ export async function extractProductFromUrl(rawUrl: string): Promise<ProductExtr
     imageUrls: imageExtraction.urls,
     imageExtractionSource: imageExtraction.source,
     imageCandidateCount: imageExtraction.candidateCount,
+    selectedImageReason: imageExtraction.selectedImageReason ?? metadata.selectedImageReason ?? null,
   });
   const extraction = {
     ...rawExtraction,
+    selectedImageReason: rawExtraction.selectedImageReason ?? imageExtraction.selectedImageReason ?? metadata.selectedImageReason ?? null,
     imageUrls: await filterSafeExternalImageUrls(rawExtraction.imageUrls, {
       domain: metadata.domain,
     }),
@@ -2330,6 +2751,7 @@ export async function extractProductFromUrl(rawUrl: string): Promise<ProductExtr
     hasTitle: !!metadata.title,
     hasBrand: !!metadata.brand,
     hasPrice: typeof metadata.priceAmount === "number",
+    diagnostics: metadata.extractionDiagnostics ?? null,
     imageExtractionSource: extraction.imageExtractionSource,
     imageCandidateCount: extraction.imageCandidateCount,
     imageCount: extraction.imageUrls.length,
@@ -2363,32 +2785,125 @@ function sourceHashFor(urls: string[]): string {
 }
 
 function priceFieldsFromMetadata(metadata: ProductMetadata): Record<string, unknown> | null {
-  const amount =
+  const currentAmount =
     typeof metadata.salePrice === "number" && Number.isFinite(metadata.salePrice)
       ? metadata.salePrice
       : typeof metadata.priceAmount === "number" && Number.isFinite(metadata.priceAmount)
       ? metadata.priceAmount
       : parsePriceAmount(metadata.price);
-  if (amount == null) return null;
+  if (currentAmount == null || metadata.priceUnavailable || metadata.marketPriceUnavailable) return null;
+  const originalAmount =
+    typeof metadata.originalPrice === "number" &&
+    Number.isFinite(metadata.originalPrice) &&
+    metadata.originalPrice > currentAmount
+      ? metadata.originalPrice
+      : null;
+  const saleAmount = originalAmount ? currentAmount : null;
   const currency =
     normalizeCurrencyCode(metadata.priceCurrency) ??
     normalizeCurrencyCode(metadata.currency) ??
     currencyFromPriceText(metadata.priceDisplay ?? metadata.price ?? "");
   const priceDisplay =
     cleanText(metadata.priceDisplay ?? metadata.price, 120) ??
-    (currency ? `${currency} ${amount}` : String(amount));
+    (currency ? `${currency} ${currentAmount}` : String(currentAmount));
   return {
-    retailPrice: amount,
-    purchasePrice: amount,
-    estimatedValue: amount,
+    retailPrice: originalAmount ?? currentAmount,
+    purchasePrice: currentAmount,
+    estimatedValue: currentAmount,
     ...(currency ? { currency, originalCurrency: currency, priceCurrency: currency } : {}),
-    originalPrice: metadata.originalPrice ?? amount,
-    salePrice: metadata.salePrice ?? null,
+    originalPrice: originalAmount,
+    salePrice: saleAmount,
     priceSource: "product_link",
     priceDisplay,
-    priceAmount: amount,
-    price: amount,
+    priceAmount: currentAmount,
+    price: currentAmount,
     productUrl: metadata.sourceUrl,
+  };
+}
+
+export function buildClosetDraftFieldsFromProductExtraction(
+  extraction: ProductExtraction,
+  options: { includePriceFields?: boolean } = {},
+): Record<string, unknown> {
+  const metadata = normalizeProductLinkMetadataForCloset(extraction.metadata);
+  const category = inferClosetCategoryFromProduct(metadata);
+  const primaryUrl = extraction.imageUrls[0] ?? null;
+  const sizeOptions = Array.from(new Set([
+    ...(metadata.sizeOptions ?? []),
+    ...(metadata.availableSizes ?? []),
+    ...(metadata.sizes ?? []),
+  ].map((entry) => cleanText(entry, 40)).filter((entry): entry is string => !!entry))).slice(0, 32);
+  const selectedSize = cleanText(metadata.selectedSize, 40) ?? sizeOptions[0] ?? null;
+  const priceFields = options.includePriceFields ? priceFieldsFromMetadata(metadata) : null;
+  const imageSourceReason = extraction.selectedImageReason ?? metadata.selectedImageReason ?? "product_link_extraction_primary";
+
+  return {
+    category: category.category,
+    subCategory: category.subCategory ?? "",
+    wearSlot: category.category === "accessory" ? "accessory" : "core",
+    imageSourceReason,
+    sourceUrl: metadata.sourceUrl,
+    canonicalUrl: metadata.canonicalUrl ?? metadata.sourceUrl,
+    productUrl: metadata.canonicalUrl ?? metadata.sourceUrl,
+    retailer: metadata.retailer,
+    domain: metadata.domain,
+    linkMetadata: metadata,
+    ...(metadata.title ? { name: metadata.title } : {}),
+    ...(metadata.brand ? { brand: metadata.brand } : {}),
+    ...(metadata.color ? { colorLabel: metadata.color, displayColor: metadata.displayColor ?? metadata.color } : {}),
+    ...(metadata.displayColors?.length ? { displayColors: metadata.displayColors, colors: metadata.displayColors } : {}),
+    ...(metadata.material ? { material: metadata.material } : {}),
+    ...(metadata.materials?.length ? { materials: metadata.materials } : {}),
+    ...(metadata.fit ? { fit: metadata.fit } : {}),
+    ...(metadata.pattern ? { pattern: metadata.pattern } : {}),
+    ...(metadata.sleeveLength ? { sleeveLength: metadata.sleeveLength } : {}),
+    ...(metadata.collar ? { collar: metadata.collar } : {}),
+    ...(metadata.length ? { length: metadata.length } : {}),
+    ...(sizeOptions.length ? { sizeOptions, availableSizes: sizeOptions } : {}),
+    ...(selectedSize ? { selectedSize, size: selectedSize } : {}),
+    ...(metadata.careInstructions?.length ? { careInstructions: metadata.careInstructions } : {}),
+    ...(metadata.productDescription ? { productDescription: metadata.productDescription } : {}),
+    ...(metadata.graphicText ? { graphicText: metadata.graphicText, motif: metadata.motif ?? metadata.graphicText } : {}),
+    ...(metadata.collaborationName ? { collaborationName: metadata.collaborationName } : {}),
+    ...(metadata.productId ? { productId: metadata.productId } : {}),
+    ...(metadata.styleId ? { styleId: metadata.styleId } : {}),
+    ...(metadata.availability ? { availability: metadata.availability } : {}),
+    ...(priceFields ?? {}),
+    ...(primaryUrl ? { originalImageUrl: primaryUrl, photoUrl: primaryUrl } : {}),
+  };
+}
+
+export function buildCompatibilityClosetDraftFieldsFromProductExtraction(
+  extraction: ProductExtraction,
+  options: { includePriceFields?: boolean } = {},
+): Record<string, unknown> {
+  const metadata = normalizeProductLinkMetadataForCloset(extraction.metadata);
+  const primaryUrl = extraction.imageUrls[0] ?? null;
+  const priceFields = options.includePriceFields ? priceFieldsFromMetadata(metadata) : null;
+  const imageSourceReason = extraction.selectedImageReason ?? metadata.selectedImageReason ?? "product_link_extraction_primary";
+  return {
+    category: "top",
+    subCategory: "",
+    wearSlot: "core",
+    imageSourceReason,
+    sourceUrl: metadata.sourceUrl,
+    canonicalUrl: metadata.canonicalUrl ?? metadata.sourceUrl,
+    productUrl: metadata.canonicalUrl ?? metadata.sourceUrl,
+    retailer: metadata.retailer,
+    domain: metadata.domain,
+    linkMetadata: metadata,
+    ...(metadata.title ? { name: metadata.title } : {}),
+    ...(metadata.brand ? { brand: metadata.brand } : {}),
+    ...(metadata.color ? { colorLabel: metadata.color, displayColor: metadata.displayColor ?? metadata.color } : {}),
+    ...(metadata.displayColors?.length ? { displayColors: metadata.displayColors, colors: metadata.displayColors } : {}),
+    ...(metadata.sizeOptions?.length ? { sizeOptions: metadata.sizeOptions, availableSizes: metadata.sizeOptions } : {}),
+    ...(metadata.selectedSize ? { selectedSize: metadata.selectedSize, size: metadata.selectedSize } : {}),
+    ...(metadata.productDescription ? { productDescription: metadata.productDescription } : {}),
+    ...(metadata.productId ? { productId: metadata.productId } : {}),
+    ...(metadata.styleId ? { styleId: metadata.styleId } : {}),
+    ...(metadata.availability ? { availability: metadata.availability } : {}),
+    ...(priceFields ?? {}),
+    ...(primaryUrl ? { originalImageUrl: primaryUrl, photoUrl: primaryUrl } : {}),
   };
 }
 
@@ -2412,6 +2927,7 @@ export async function createDraftItemFromProductLink(params: {
   itemId?: string;
   draftState?: "photo_uploaded" | "awaiting_confirmation";
   ingestionStatus?: "pending" | "awaiting_confirmation";
+  useV2ClosetDraft?: boolean;
 }): Promise<{ itemId: string; imageCount: number; metadata: ProductMetadata }> {
   const {
     uid,
@@ -2420,6 +2936,7 @@ export async function createDraftItemFromProductLink(params: {
     itemId,
     draftState = "photo_uploaded",
     ingestionStatus = "pending",
+    useV2ClosetDraft = true,
   } = params;
   const now = Date.now();
   const images = extraction.imageUrls.map((url, index) => ({
@@ -2444,13 +2961,20 @@ export async function createDraftItemFromProductLink(params: {
       const existingData = existingSnap.exists ? existingSnap.data() : undefined;
       shouldWritePriceFields = !hasExistingManualPrice(existingData);
     }
+    const closetDraftFields = useV2ClosetDraft
+      ? buildClosetDraftFieldsFromProductExtraction(extraction, {
+        includePriceFields: shouldWritePriceFields,
+      })
+      : buildCompatibilityClosetDraftFieldsFromProductExtraction(extraction, {
+        includePriceFields: shouldWritePriceFields,
+      });
+    const normalizedMetadata = closetDraftFields.linkMetadata as ProductMetadata;
+    const imageSourceReason = String(closetDraftFields.imageSourceReason ?? "product_link_extraction_primary");
     const itemData = {
         isDraft: true,
         draftState,
         itemLifecycleStatus: draftState === "awaiting_confirmation" ? "needs_review" : "processing",
         status: "AVAILABLE",
-        category: "top",
-        subCategory: "",
         wearCountSinceWash: 0,
         ingestionStatus,
         ingestion: {
@@ -2460,35 +2984,13 @@ export async function createDraftItemFromProductLink(params: {
         ingestionSource: {
           sourceHash: sourceHashFor(extraction.imageUrls),
           sourceType: "aura_product_link",
-          sourceUrl: extraction.metadata.sourceUrl,
-          domain: extraction.metadata.domain,
-          imageSourceReason: "product_link_extraction_primary",
+          sourceUrl: normalizedMetadata.sourceUrl,
+          domain: normalizedMetadata.domain,
+          imageSourceReason,
         },
         source: "product_link",
-        imageSourceReason: "product_link_extraction_primary",
-        sourceUrl: extraction.metadata.sourceUrl,
-        productUrl: extraction.metadata.sourceUrl,
-        retailer: extraction.metadata.retailer,
-        domain: extraction.metadata.domain,
         auraPrompt: prompt,
-        linkMetadata: extraction.metadata,
-        ...(extraction.metadata.title ? { name: extraction.metadata.title } : {}),
-        ...(extraction.metadata.brand ? { brand: extraction.metadata.brand } : {}),
-        ...(extraction.metadata.color ? { colorLabel: extraction.metadata.color, displayColor: extraction.metadata.displayColor ?? extraction.metadata.color } : {}),
-        ...(extraction.metadata.displayColors?.length ? { displayColors: extraction.metadata.displayColors, colors: extraction.metadata.displayColors } : {}),
-        ...(extraction.metadata.material ? { material: extraction.metadata.material } : {}),
-        ...(extraction.metadata.materials?.length ? { materials: extraction.metadata.materials } : {}),
-        ...(extraction.metadata.fit ? { fit: extraction.metadata.fit } : {}),
-        ...(extraction.metadata.pattern ? { pattern: extraction.metadata.pattern } : {}),
-        ...(extraction.metadata.sleeveLength ? { sleeveLength: extraction.metadata.sleeveLength } : {}),
-        ...(extraction.metadata.collar ? { collar: extraction.metadata.collar } : {}),
-        ...(extraction.metadata.length ? { length: extraction.metadata.length } : {}),
-        ...(extraction.metadata.sizeOptions?.length ? { sizeOptions: extraction.metadata.sizeOptions, availableSizes: extraction.metadata.availableSizes ?? extraction.metadata.sizeOptions } : {}),
-        ...(extraction.metadata.careInstructions?.length ? { careInstructions: extraction.metadata.careInstructions } : {}),
-        ...(extraction.metadata.productDescription ? { productDescription: extraction.metadata.productDescription } : {}),
-        ...(extraction.metadata.graphicText ? { graphicText: extraction.metadata.graphicText, motif: extraction.metadata.motif ?? extraction.metadata.graphicText } : {}),
-        ...(extraction.metadata.collaborationName ? { collaborationName: extraction.metadata.collaborationName } : {}),
-        ...(shouldWritePriceFields ? priceFields : {}),
+        ...closetDraftFields,
         images,
         imageUrls: extraction.imageUrls,
         originalImageUrl: primaryUrl,
@@ -2521,7 +3023,7 @@ export async function createDraftItemFromProductLink(params: {
     logger.info("[AURA_LINK_DRAFT] draft item created", {
       uidHash: redactUid(uid),
       itemId: createdItemId,
-      domain: extraction.metadata.domain,
+      domain: normalizedMetadata.domain,
       imageCount: images.length,
       triggerCompatible: true,
       sourceType: "aura_product_link",
@@ -2544,7 +3046,7 @@ export async function createDraftItemFromProductLink(params: {
     return {
       itemId: createdItemId ?? "",
       imageCount: images.length,
-      metadata: extraction.metadata,
+      metadata: normalizedMetadata,
     };
   } catch (error) {
     logger.error("[AURA_LINK_DRAFT] draft item creation failed", {

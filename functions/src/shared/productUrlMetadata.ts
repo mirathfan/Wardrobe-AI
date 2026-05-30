@@ -1,20 +1,29 @@
 import * as cheerio from "cheerio";
-import { logger } from "firebase-functions/v2";
+import { logger } from "./logger";
 import {
   BLOCKED_STORE_MESSAGE,
   ProductLinkError,
   extractAmazonLinkData,
+  extractProductFromUrl,
   filterSafeExternalImageUrls,
   extractNikeSelectedVariantData,
   extractProductImagesFromHtml,
   extractProductMetadataFromHtml,
   isAmazonProductUrl,
+  type ProductExtraction,
   validateProductUrl,
 } from "./productLinkExtractor";
+import {
+  type ProductExtractionDiagnostics,
+  type ProductFieldConfidence,
+  normalizeProductUrl,
+} from "./productExtractionPipeline";
+import { type ProductLinkWarningCode } from "./productLinkRelease";
 import { redactUrlForLogs, safeFetch, SafeFetchExpectedKind } from "./safeFetch";
 
 export type ProductUrlMetadata = {
   sourceUrl: string;
+  canonicalUrl?: string | null;
   title: string | null;
   imageUrl: string | null;
   imageUrls?: string[];
@@ -46,6 +55,26 @@ export type ProductUrlMetadata = {
   graphicText?: string | null;
   motif?: string | null;
   collaborationName?: string | null;
+  sku?: string | null;
+  styleId?: string | null;
+  productId?: string | null;
+  availability?: string | null;
+  selectedSize?: string | null;
+  sizes?: string[];
+  extractionSource?: string | null;
+  adapterName?: string | null;
+  priceUnavailable?: boolean;
+  marketPriceUnavailable?: boolean;
+  titleConfidence?: ProductFieldConfidence;
+  brandConfidence?: ProductFieldConfidence;
+  priceConfidence?: ProductFieldConfidence;
+  imageConfidence?: ProductFieldConfidence;
+  categoryConfidence?: ProductFieldConfidence;
+  subcategoryConfidence?: ProductFieldConfidence;
+  colorConfidence?: ProductFieldConfidence;
+  extractionDiagnostics?: ProductExtractionDiagnostics;
+  warningCodes?: ProductLinkWarningCode[];
+  selectedImageReason?: string | null;
   confidence?: number | null;
   status?: "ready" | "needs_review";
 };
@@ -55,10 +84,15 @@ const USER_AGENT =
   "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 const PRODUCT_PAGE_FAILURE_MESSAGE =
   "I couldn't read this product page. Try another link, upload a screenshot, or add manually.";
+const PRODUCT_URL_METADATA_FETCH_TIMEOUT_MS = 8_000;
 
 function isHmHost(url: URL) {
   const hostname = url.hostname.toLowerCase();
   return hostname === "hm.com" || hostname.endsWith(".hm.com");
+}
+
+function isHmProductUrl(url: URL) {
+  return isHmHost(url) && /\/productpage\.\d+\.html$/i.test(url.pathname);
 }
 
 function isZaraHost(url: URL) {
@@ -73,9 +107,7 @@ function zaraProductIdFromUrl(url: URL) {
 }
 
 function hmContentFallbackUrls(url: URL) {
-  if (!isHmHost(url) || !/\/productpage\.\d+\.html$/i.test(url.pathname)) {
-    return [];
-  }
+  if (!isHmProductUrl(url)) return [];
   return [
     new URL(`${url.pathname}/_jcr_content.product.json`, url).toString(),
     new URL(`${url.pathname}/_jcr_content/product.json`, url).toString(),
@@ -90,6 +122,7 @@ async function fetchTextWithTimeout(
   const response = await safeFetch(url, {
     expectedKind,
     headers,
+    timeoutMs: PRODUCT_URL_METADATA_FETCH_TIMEOUT_MS,
     maxRedirects: 3,
   });
   return {
@@ -127,6 +160,14 @@ function normalizeImageUrl(baseUrl: URL, value: string | undefined) {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
     parsed.hash = "";
     return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function safeUrlHost(value: string | null | undefined) {
+  try {
+    return value ? new URL(value).hostname.toLowerCase() : null;
   } catch {
     return null;
   }
@@ -174,8 +215,8 @@ async function extractZaraProductUrlMetadata(url: URL): Promise<ProductUrlMetada
   detailsUrl.searchParams.set("productIds", productId);
   logger.info("[AURA_URL_FETCH] trying Zara product details API", {
     host: url.hostname,
-    productId,
-    path: detailsUrl.pathname,
+    hasProductId: !!productId,
+    hasPath: detailsUrl.pathname.length > 1,
   });
 
   const { response, text } = await fetchTextWithTimeout(
@@ -233,7 +274,7 @@ async function extractZaraProductUrlMetadata(url: URL): Promise<ProductUrlMetada
     host: url.hostname,
     productId,
     hasTitle: !!metadata.title,
-    imageCount: metadata.imageUrls.length,
+    imageCount: Array.isArray(metadata.imageUrls) ? metadata.imageUrls.length : 0,
     selectedColor: cleanText(selectedColor?.name, 80),
   });
   return metadata.imageUrl || metadata.title || metadata.description ? metadata : null;
@@ -252,12 +293,12 @@ async function fetchHtml(url: URL) {
 
   logger.info("[AURA_URL_FETCH] fetching product URL", {
     host: url.hostname,
-    path: url.pathname,
+    hasPath: url.pathname.length > 1,
   });
   const fallbackUrls = hmContentFallbackUrls(url);
   if (fallbackUrls.length) {
-  const fallbackHtml = await tryHmContentFallback(url, fallbackUrls, headers, null, null);
-  if (fallbackHtml) return fallbackHtml;
+    const fallbackHtml = await tryHmContentFallback(url, fallbackUrls, headers, null, null);
+    if (fallbackHtml) return fallbackHtml;
   }
 
   let originalStatus: number | null = null;
@@ -333,7 +374,7 @@ async function tryHmContentFallback(
     try {
       logger.info("[AURA_URL_FETCH] trying H&M content fallback", {
         host: url.hostname,
-        fallbackPath: new URL(fallbackUrl).pathname,
+        hasFallbackPath: new URL(fallbackUrl).pathname.length > 1,
         originalStatus,
         originalError: originalError instanceof Error ? originalError.message : null,
       });
@@ -351,7 +392,7 @@ async function tryHmContentFallback(
         });
         return {
           html: fallbackResult.text,
-          finalUrl,
+          finalUrl: url,
         };
       }
       logger.warn("[AURA_URL_FETCH] H&M content fallback unusable", {
@@ -432,8 +473,100 @@ function detectProductPageFailure($: cheerio.CheerioAPI, finalUrl: URL) {
   });
 }
 
+export function productUrlMetadataFromProductExtraction(extraction: ProductExtraction): ProductUrlMetadata {
+  const metadata = extraction.metadata;
+  return {
+    sourceUrl: metadata.sourceUrl,
+    canonicalUrl: metadata.canonicalUrl ?? metadata.sourceUrl,
+    title: metadata.title ?? null,
+    imageUrl: extraction.imageUrls[0] ?? null,
+    imageUrls: extraction.imageUrls,
+    description: metadata.description ?? metadata.productDescription ?? null,
+    brand: metadata.brand ?? null,
+    category: metadata.category ?? metadata.categoryHints?.[0] ?? null,
+    subCategory: metadata.subCategory ?? metadata.categoryHints?.[1] ?? null,
+    color: metadata.color ?? null,
+    price: metadata.price ?? null,
+    currency: metadata.currency ?? null,
+    priceAmount: metadata.priceAmount ?? null,
+    priceCurrency: metadata.priceCurrency ?? null,
+    priceDisplay: metadata.priceDisplay ?? null,
+    salePrice: metadata.salePrice ?? null,
+    originalPrice: metadata.originalPrice ?? null,
+    material: metadata.material ?? null,
+    materials: metadata.materials ?? [],
+    fit: metadata.fit ?? null,
+    sleeveLength: metadata.sleeveLength ?? null,
+    collar: metadata.collar ?? null,
+    length: metadata.length ?? null,
+    pattern: metadata.pattern ?? null,
+    displayColor: metadata.displayColor ?? metadata.color ?? null,
+    displayColors: metadata.displayColors ?? [],
+    sizeOptions: metadata.sizeOptions ?? metadata.sizeHints ?? [],
+    availableSizes: metadata.availableSizes ?? metadata.sizeOptions ?? [],
+    careInstructions: metadata.careInstructions ?? [],
+    productDescription: metadata.productDescription ?? metadata.description ?? null,
+    graphicText: metadata.graphicText ?? null,
+    motif: metadata.motif ?? null,
+    collaborationName: metadata.collaborationName ?? null,
+    sku: metadata.sku ?? null,
+    styleId: metadata.styleId ?? null,
+    productId: metadata.productId ?? null,
+    availability: metadata.availability ?? null,
+    selectedSize: metadata.selectedSize ?? null,
+    sizes: metadata.sizes ?? metadata.sizeOptions ?? [],
+    extractionSource: metadata.extractionSource ?? null,
+    adapterName: metadata.adapterName ?? null,
+    priceUnavailable: metadata.priceUnavailable ?? undefined,
+    marketPriceUnavailable: metadata.marketPriceUnavailable ?? undefined,
+    titleConfidence: metadata.titleConfidence,
+    brandConfidence: metadata.brandConfidence,
+    priceConfidence: metadata.priceConfidence,
+    imageConfidence: metadata.imageConfidence,
+    categoryConfidence: metadata.categoryConfidence,
+    subcategoryConfidence: metadata.subcategoryConfidence,
+    colorConfidence: metadata.colorConfidence,
+    extractionDiagnostics: metadata.extractionDiagnostics,
+    warningCodes: metadata.warningCodes ?? metadata.extractionDiagnostics?.warningCodes,
+    selectedImageReason:
+      extraction.selectedImageReason ??
+      metadata.selectedImageReason ??
+      null,
+    confidence: extraction.confidence ?? null,
+    status: extraction.status ?? "ready",
+  };
+}
+
+async function extractHmProductUrlMetadata(url: URL): Promise<ProductUrlMetadata | null> {
+  if (!isHmProductUrl(url)) return null;
+  try {
+    const extraction = await extractProductFromUrl(url.toString());
+    const metadata = productUrlMetadataFromProductExtraction(extraction);
+    logger.info("[AURA_URL_METADATA] extracted H&M product URL metadata via dedicated path", {
+      host: url.hostname,
+      hasTitle: !!metadata.title,
+      hasImageUrl: !!metadata.imageUrl,
+      imageCount: metadata.imageUrls?.length ?? 0,
+      hasPrice: typeof metadata.priceAmount === "number",
+      imageHost: safeUrlHost(metadata.imageUrl),
+      sourceUrl: redactUrlForLogs(metadata.sourceUrl),
+    });
+    return metadata.imageUrl || metadata.title || metadata.description ? metadata : null;
+  } catch (error) {
+    logger.warn("[AURA_URL_METADATA] H&M dedicated extraction failed; falling back to generic metadata path", {
+      host: url.hostname,
+      code: error instanceof ProductLinkError ? error.code : null,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 export async function extractProductUrlMetadata(rawUrl: string): Promise<ProductUrlMetadata> {
-  const url = await validateProductUrl(rawUrl);
+  const validatedUrl = await validateProductUrl(rawUrl);
+  const url = normalizeProductUrl(validatedUrl).url;
+  const hmMetadata = await extractHmProductUrlMetadata(url);
+  if (hmMetadata?.imageUrl) return hmMetadata;
   const zaraMetadata = await extractZaraProductUrlMetadata(url);
   if (zaraMetadata?.imageUrl) return zaraMetadata;
 
@@ -447,15 +580,16 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
     const imageUrls = await filterSafeExternalImageUrls(amazon.imageUrls, {
       domain: finalUrl.hostname,
     });
-    return {
+    const metadata: ProductUrlMetadata = {
       sourceUrl: amazon.metadata.sourceUrl,
+      canonicalUrl: amazon.metadata.canonicalUrl ?? amazon.metadata.sourceUrl,
       title: amazon.metadata.title ?? amazon.partialData?.title ?? null,
       imageUrl: imageUrls[0] ?? null,
       imageUrls,
       description: null,
       brand: amazon.status === "ready" ? amazon.metadata.brand ?? null : null,
-      category: amazon.status === "ready" ? amazon.metadata.categoryHints?.[0] ?? null : null,
-      subCategory: amazon.status === "ready" ? amazon.metadata.categoryHints?.[1] ?? null : null,
+      category: amazon.status === "ready" ? amazon.metadata.category ?? amazon.metadata.categoryHints?.[0] ?? null : null,
+      subCategory: amazon.status === "ready" ? amazon.metadata.subCategory ?? amazon.metadata.categoryHints?.[1] ?? null : null,
       price: amazon.metadata.price ?? null,
       currency: amazon.metadata.currency ?? null,
       priceAmount: amazon.metadata.priceAmount ?? null,
@@ -463,9 +597,37 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
       priceDisplay: amazon.metadata.priceDisplay ?? null,
       salePrice: amazon.metadata.salePrice ?? null,
       originalPrice: amazon.metadata.originalPrice ?? null,
+      sku: amazon.metadata.sku ?? null,
+      productId: amazon.metadata.productId ?? null,
+      availability: amazon.metadata.availability ?? null,
+      extractionSource: amazon.metadata.extractionSource ?? null,
+      adapterName: amazon.metadata.adapterName ?? null,
+      priceUnavailable: amazon.metadata.priceUnavailable ?? undefined,
+      marketPriceUnavailable: amazon.metadata.marketPriceUnavailable ?? undefined,
+      titleConfidence: amazon.metadata.titleConfidence,
+      brandConfidence: amazon.metadata.brandConfidence,
+      priceConfidence: amazon.metadata.priceConfidence,
+      imageConfidence: amazon.metadata.imageConfidence,
+      categoryConfidence: amazon.metadata.categoryConfidence,
+      subcategoryConfidence: amazon.metadata.subcategoryConfidence,
+      colorConfidence: amazon.metadata.colorConfidence,
+      extractionDiagnostics: amazon.metadata.extractionDiagnostics,
+      warningCodes: amazon.metadata.warningCodes ?? amazon.metadata.extractionDiagnostics?.warningCodes,
+      selectedImageReason: amazon.metadata.selectedImageReason ?? null,
       confidence: amazon.confidence,
       status: amazon.status,
     };
+    logger.info("[AURA_URL_METADATA] extracted Amazon product URL metadata", {
+      host: finalUrl.hostname,
+      hasTitle: !!metadata.title,
+      hasImageUrl: !!metadata.imageUrl,
+      imageCount: metadata.imageUrls?.length ?? 0,
+      hasPrice: typeof metadata.priceAmount === "number",
+      imageHost: safeUrlHost(metadata.imageUrl),
+      diagnostics: metadata.extractionDiagnostics ?? null,
+      sourceUrl: redactUrlForLogs(metadata.sourceUrl),
+    });
+    return metadata;
   }
   const $ = page;
   const nikeVariant = extractNikeSelectedVariantData(finalUrl.toString(), html);
@@ -479,8 +641,9 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
     (imageUrls.length ? imageUrls : [ogImage ?? firstLargeImage($, finalUrl)].filter((value): value is string => !!value)),
     { domain: finalUrl.hostname },
   );
-  const metadata = {
-    sourceUrl: nikeVariant?.metadata?.sourceUrl ?? finalUrl.toString(),
+  const metadata: ProductUrlMetadata = {
+    sourceUrl: nikeVariant?.metadata?.sourceUrl ?? productMetadata.sourceUrl ?? finalUrl.toString(),
+    canonicalUrl: productMetadata.canonicalUrl ?? nikeVariant?.metadata?.sourceUrl ?? productMetadata.sourceUrl ?? finalUrl.toString(),
     title:
       nikeVariant?.metadata?.title ??
       productMetadata.title ??
@@ -494,8 +657,8 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
       metaContent($, "og:description") ??
       metaContent($, "description"),
     brand: productMetadata.brand ?? null,
-    category: productMetadata.categoryHints?.[0] ?? null,
-    subCategory: productMetadata.categoryHints?.[1] ?? null,
+    category: productMetadata.category ?? productMetadata.categoryHints?.[0] ?? null,
+    subCategory: productMetadata.subCategory ?? productMetadata.categoryHints?.[1] ?? null,
     color: productMetadata.color ?? null,
     price: productMetadata.price ?? null,
     currency: productMetadata.currency ?? null,
@@ -520,15 +683,36 @@ export async function extractProductUrlMetadata(rawUrl: string): Promise<Product
     graphicText: productMetadata.graphicText ?? null,
     motif: productMetadata.motif ?? null,
     collaborationName: productMetadata.collaborationName ?? null,
+    sku: productMetadata.sku ?? null,
+    styleId: productMetadata.styleId ?? null,
+    productId: productMetadata.productId ?? null,
+    availability: productMetadata.availability ?? null,
+    selectedSize: productMetadata.selectedSize ?? null,
+    sizes: productMetadata.sizes ?? productMetadata.sizeOptions ?? [],
+    extractionSource: productMetadata.extractionSource ?? null,
+    adapterName: productMetadata.adapterName ?? null,
+    priceUnavailable: productMetadata.priceUnavailable ?? undefined,
+    marketPriceUnavailable: productMetadata.marketPriceUnavailable ?? undefined,
+    titleConfidence: productMetadata.titleConfidence,
+    brandConfidence: productMetadata.brandConfidence,
+    priceConfidence: productMetadata.priceConfidence,
+    imageConfidence: productMetadata.imageConfidence,
+    categoryConfidence: productMetadata.categoryConfidence,
+    subcategoryConfidence: productMetadata.subcategoryConfidence,
+    colorConfidence: productMetadata.colorConfidence,
+    extractionDiagnostics: productMetadata.extractionDiagnostics,
+    warningCodes: productMetadata.warningCodes ?? productMetadata.extractionDiagnostics?.warningCodes,
+    selectedImageReason: productMetadata.selectedImageReason ?? null,
   };
   logger.info("[AURA_URL_METADATA] extracted product URL metadata", {
     host: finalUrl.hostname,
     hasTitle: !!metadata.title,
     hasImageUrl: !!metadata.imageUrl,
-    imageCount: metadata.imageUrls.length,
+    imageCount: Array.isArray(metadata.imageUrls) ? metadata.imageUrls.length : 0,
     hasDescription: !!metadata.description,
     hasPrice: typeof metadata.priceAmount === "number",
-    imageHost: metadata.imageUrl ? new URL(metadata.imageUrl).hostname : null,
+    imageHost: safeUrlHost(metadata.imageUrl),
+    diagnostics: metadata.extractionDiagnostics ?? null,
     sourceUrl: redactUrlForLogs(metadata.sourceUrl),
   });
   return metadata;
