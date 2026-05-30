@@ -1,9 +1,29 @@
 import { getFunctions, httpsCallable } from "firebase/functions";
-import { Platform } from "react-native";
+import { Alert, Platform } from "react-native";
 
 import { auth, app } from "@/src/lib/firebase";
+import { getFriendlyErrorMessage, isRateLimitError } from "@/src/lib/errors";
 import type { AuraResponse } from "@/src/types/aura";
 import type { ChatAttachment } from "@/src/components/ai/chatTypes";
+
+export type ClientProductLinkPreview = {
+  sourceUrl: string;
+  title?: string | null;
+  imageUrl?: string | null;
+  imageUrls?: string[];
+  description?: string | null;
+  brand?: string | null;
+  category?: string | null;
+  subCategory?: string | null;
+  color?: string | null;
+  price?: string | null;
+  currency?: string | null;
+  priceAmount?: number | null;
+  priceCurrency?: string | null;
+  priceDisplay?: string | null;
+  sku?: string | null;
+  productId?: string | null;
+};
 
 type AskAuraArgs = {
   message: string;
@@ -20,13 +40,7 @@ type AskAuraArgs = {
     condition?: string | null;
   } | null;
   clientIntent?: string | null;
-  linkPreview?: {
-    sourceUrl: string;
-    title?: string | null;
-    imageUrl?: string | null;
-    imageUrls?: string[];
-    description?: string | null;
-  } | null;
+  linkPreview?: ClientProductLinkPreview | null;
   clientContext?: {
     minimumCloset?: {
       itemCount: number;
@@ -57,6 +71,11 @@ const ENABLE_CLIENT_LINK_PREVIEW =
 const DEBUG_AURA_CLIENT = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const AURA_STREAM_TIMEOUT_MS = 45_000;
 const AURA_STREAM_WITH_IMAGE_TIMEOUT_MS = 90_000;
+
+function alertCallableError(error: unknown) {
+  if (__DEV__) console.log("[callable error]", error);
+  Alert.alert("Hold on", getFriendlyErrorMessage(error));
+}
 
 function sanitizeUserInput(input: string): string {
   return input
@@ -140,8 +159,16 @@ export async function askAura(args: AskAuraArgs): Promise<AuraResponse> {
     functions,
     "askAura"
   );
-  const result = await callable(safeArgs);
-  return normalizeAuraCandidatePayload(result.data.data);
+  try {
+    const result = await callable(safeArgs);
+    return normalizeAuraCandidatePayload(result.data.data);
+  } catch (error) {
+    alertCallableError(error);
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_ERROR]", "callable askAura failed", getFriendlyErrorMessage(error));
+    }
+    throw error;
+  }
 }
 
 type AskAuraStreamCallbacks = {
@@ -157,6 +184,15 @@ const MAX_STREAM_SEGMENT_LENGTH = 12;
 function createAuraStreamAbortError() {
   const error = new Error("AURA stream stopped.");
   error.name = "AbortError";
+  return error;
+}
+
+function createAuraStreamError(message: string, code?: string) {
+  const error = new Error(message || "AURA stream failed.") as Error & { code?: string };
+  const normalizedMessage = error.message.toLowerCase();
+  if (code || normalizedMessage.includes("resource-exhausted") || normalizedMessage.includes("rate limit")) {
+    error.code = code ?? "functions/resource-exhausted";
+  }
   return error;
 }
 
@@ -372,6 +408,72 @@ function jsonLdProductNodes(html: string) {
   });
 }
 
+function selectedJsonLdProductNode(sourceUrl: string, html: string) {
+  const products = jsonLdProductNodes(html);
+  if (!products.length) return null;
+  const articleId = hmArticleIdFromUrl(sourceUrl);
+  if (!articleId) return products[0] ?? null;
+  return products.find((node) =>
+    [node.sku, node.mpn, node.productID, node.productId, node.url]
+      .map((value) => String(value ?? ""))
+      .some((value) => value.includes(articleId)),
+  ) ?? products[0] ?? null;
+}
+
+function cleanClientText(value: unknown, maxLength = 300) {
+  const text = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
+function stringFromJsonLdValue(value: unknown) {
+  if (typeof value === "string" || typeof value === "number") return cleanClientText(value, 240);
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return cleanClientText(object.name ?? object.value ?? object.label, 240);
+  }
+  return null;
+}
+
+function firstJsonLdOffer(product: Record<string, unknown> | null) {
+  const offers = product?.offers;
+  if (Array.isArray(offers)) {
+    return offers.find((offer) => offer && typeof offer === "object") as Record<string, unknown> | undefined;
+  }
+  return offers && typeof offers === "object" ? offers as Record<string, unknown> : null;
+}
+
+function priceAmountFromJsonLd(value: unknown) {
+  const normalized = String(value ?? "").replace(/[^\d.,]/g, "").replace(/,/g, "");
+  if (!normalized) return null;
+  const amount = Number.parseFloat(normalized);
+  return Number.isFinite(amount) ? amount : null;
+}
+
+function clientProductMetadataFromHtml(sourceUrl: string, html: string): Partial<ClientProductLinkPreview> {
+  const product = selectedJsonLdProductNode(sourceUrl, html);
+  if (!product) return {};
+  const offer = firstJsonLdOffer(product);
+  const priceAmount = priceAmountFromJsonLd(offer?.price ?? product.price);
+  const currency = cleanClientText(offer?.priceCurrency ?? product.priceCurrency, 12);
+  const category = stringFromJsonLdValue(product.category);
+  return {
+    title: cleanClientText(product.name, 220),
+    brand: stringFromJsonLdValue(product.brand),
+    color: stringFromJsonLdValue(product.color),
+    description: cleanClientText(product.description, 700),
+    category,
+    priceAmount,
+    price: priceAmount != null && currency ? `${currency} ${priceAmount}` : priceAmount != null ? String(priceAmount) : null,
+    currency,
+    priceCurrency: currency,
+    priceDisplay: priceAmount != null && currency ? `${currency} ${priceAmount}` : null,
+    sku: cleanClientText(product.sku ?? product.mpn ?? product.productID, 120),
+    productId: cleanClientText(product.productID ?? product.productId ?? product.sku, 120),
+  };
+}
+
 function scopedHmPreviewImages(sourceUrl: string, html: string) {
   if (!isHmProductUrl(sourceUrl)) return null;
   const articleId = hmArticleIdFromUrl(sourceUrl);
@@ -516,12 +618,14 @@ export async function buildClientProductLinkPreview(sourceUrl: string) {
       metaContent(html, "og:image") ?? metaContent(html, "twitter:image"),
     );
     const imageUrls = stablePreviewImages(sourceUrl, html);
-    const preview = {
+    const productMetadata = clientProductMetadataFromHtml(sourceUrl, html);
+    const preview: ClientProductLinkPreview = {
       sourceUrl,
-      title: metaContent(html, "og:title") ?? titleTag(html),
+      ...productMetadata,
+      title: productMetadata.title ?? metaContent(html, "og:title") ?? titleTag(html),
       imageUrl: imageUrls[0] ?? imageUrl,
       imageUrls,
-      description: metaContent(html, "og:description") ?? metaContent(html, "description"),
+      description: productMetadata.description ?? metaContent(html, "og:description") ?? metaContent(html, "description"),
     };
     if (DEBUG_AURA_CLIENT) {
       console.log("[AURA_LINK_PREVIEW]", "client preview fetch complete", {
@@ -531,7 +635,7 @@ export async function buildClientProductLinkPreview(sourceUrl: string) {
         htmlLength: html.length,
         hasTitle: !!preview.title,
         hasImageUrl: !!preview.imageUrl,
-        imageCount: preview.imageUrls.length,
+        imageCount: preview.imageUrls?.length ?? 0,
         hasDescription: !!preview.description,
       });
     }
@@ -636,7 +740,7 @@ function processEventLines(
       callbacks.onFinal?.(data);
     }
     if (event.type === "error") {
-      throw new Error(event.error || "AURA stream failed.");
+      throw createAuraStreamError(event.error || "AURA stream failed.");
     }
   }, Promise.resolve());
 }
@@ -693,7 +797,7 @@ async function askAuraStreamWithXhr(
 
     const settleError = (error: unknown) => {
       if (isSettled) return;
-      if (!isAuraStreamAbortError(error) && settlePartialIfUseful()) return;
+      if (!isAuraStreamAbortError(error) && !isRateLimitError(error) && settlePartialIfUseful()) return;
       isSettled = true;
       cleanupAbortListener();
       reject(error instanceof Error ? error : new Error("AURA stream failed."));
@@ -755,7 +859,8 @@ async function askAuraStreamWithXhr(
             }
 
             if (xhr.status < 200 || xhr.status >= 300) {
-              throw new Error(xhr.responseText || "AURA stream failed.");
+              const code = xhr.status === 429 ? "functions/resource-exhausted" : undefined;
+              throw createAuraStreamError(xhr.responseText || "AURA stream failed.", code);
             }
 
             if (finalData) {
@@ -802,9 +907,13 @@ export async function askAuraStream(
       return await askAuraStreamWithXhr(enrichedArgs, token, callbacks);
     } catch (error) {
       if (isAuraStreamAbortError(error)) throw error;
+      if (isRateLimitError(error)) {
+        alertCallableError(error);
+        throw error;
+      }
       if (DEBUG_AURA_CLIENT) {
         console.log("[AURA_STREAM_FALLBACK]", "xhr stream failed, using callable fallback", {
-          error: error instanceof Error ? error.message : String(error),
+          error: getFriendlyErrorMessage(error),
         });
       }
       const fallback = await askAura(enrichedArgs);
@@ -845,9 +954,13 @@ export async function askAuraStream(
   } catch (error) {
     clearStreamTimeout();
     if (callbacks.signal?.aborted && isAuraStreamAbortError(error)) throw error;
+    if (isRateLimitError(error)) {
+      alertCallableError(error);
+      throw error;
+    }
     if (DEBUG_AURA_CLIENT) {
       console.log("[AURA_STREAM_FALLBACK]", "fetch stream failed before response, using callable fallback", {
-        error: streamTimedOut ? "AURA stream request timed out." : error instanceof Error ? error.message : String(error),
+        error: streamTimedOut ? "AURA stream request timed out." : getFriendlyErrorMessage(error),
       });
     }
     const fallback = await askAura(enrichedArgs);
@@ -857,6 +970,15 @@ export async function askAuraStream(
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (response.status === 429 || /resource-exhausted|rate limit/i.test(errorText)) {
+      clearStreamTimeout();
+      const rateLimitError = createAuraStreamError(
+        errorText || "Rate limit exceeded. Please wait a moment and try again.",
+        "functions/resource-exhausted",
+      );
+      alertCallableError(rateLimitError);
+      throw rateLimitError;
+    }
     if (DEBUG_AURA_CLIENT) {
       console.log("[AURA_STREAM_FALLBACK]", "fetch stream returned non-200, using callable fallback", {
         status: response.status,
@@ -920,6 +1042,10 @@ export async function askAuraStream(
     clearStreamTimeout();
     if (callbacks.signal?.aborted && isAuraStreamAbortError(error)) throw error;
     if (finalData) return finalData;
+    if (isRateLimitError(error)) {
+      alertCallableError(error);
+      throw error;
+    }
     const partial = partialStreamResponse();
     if (partial) {
       callbacks.onFinal?.(partial);
@@ -927,7 +1053,7 @@ export async function askAuraStream(
     }
     if (DEBUG_AURA_CLIENT) {
       console.log("[AURA_STREAM_FALLBACK]", "fetch stream failed while reading, using callable fallback", {
-        error: streamTimedOut ? "AURA stream request timed out." : error instanceof Error ? error.message : String(error),
+        error: streamTimedOut ? "AURA stream request timed out." : getFriendlyErrorMessage(error),
       });
     }
     const fallback = await askAura(enrichedArgs);
@@ -963,8 +1089,16 @@ export async function transcribeAuraAudio(params: {
     functions,
     "transcribeAuraAudio"
   );
-  const result = await callable(params);
-  return result.data.transcript;
+  try {
+    const result = await callable(params);
+    return result.data.transcript;
+  } catch (error) {
+    alertCallableError(error);
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_ERROR]", "transcribeAuraAudio failed", getFriendlyErrorMessage(error));
+    }
+    throw error;
+  }
 }
 
 export async function importProductLinkToWardrobe(
@@ -979,9 +1113,17 @@ export async function importProductLinkToWardrobe(
     functions,
     "importProductLink"
   );
-  const result = await callable({ url, ...(itemId ? { itemId } : {}) });
-  return {
-    itemId: result.data.itemId,
-    imageCount: result.data.imageCount,
-  };
+  try {
+    const result = await callable({ url, ...(itemId ? { itemId } : {}) });
+    return {
+      itemId: result.data.itemId,
+      imageCount: result.data.imageCount,
+    };
+  } catch (error) {
+    alertCallableError(error);
+    if (DEBUG_AURA_CLIENT) {
+      console.log("[AURA_ERROR]", "importProductLink failed", getFriendlyErrorMessage(error));
+    }
+    throw error;
+  }
 }

@@ -54,6 +54,11 @@ import {
   type AuraLayoutItem,
   type AuraLayoutVariant,
 } from "@/src/lib/auraLookLayouts";
+import {
+  filterOutfitItemsToLiveCloset,
+  getMissingClosetReferences,
+} from "@/src/lib/outfitLiveCloset";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type {
   AuraLook,
@@ -138,10 +143,6 @@ const ACCESSORY_IMAGE_STYLE_BY_VARIANT: Partial<
   },
 };
 
-function firstNonEmpty<T>(...values: (T | null | undefined)[]): T | undefined {
-  return values.find(Boolean) as T | undefined;
-}
-
 function getAccessoryImageStyle(
   variant: AuraLayoutVariant,
   slotName: string,
@@ -157,8 +158,9 @@ function getAccessoryImageStyle(
 }
 
 function getImageSourceForBoardItem(item?: AuraLayoutItem | null) {
-  const uri = firstNonEmpty(item?.image, item?.cleanedImageUrl, item?.imageUrl);
-  return uri ? { uri } : null;
+  if (!item) return null;
+  const resolved = resolveItemImage(item, { variant: "thumb", surface: "aura_look_card" });
+  return resolved.uri ? { uri: resolved.uri, resolved } : null;
 }
 
 function titleCase(value: string) {
@@ -232,14 +234,30 @@ function looksLikeRawOutfitTitle(value?: string | null) {
   );
 }
 
+function looksLikeGenericAuraTitle(value?: string | null) {
+  return /\b(wardrobe reset|safe wardrobe|easy color story|smart outfit|closest closet look|aura edit)\b/i.test(
+    value ?? "",
+  );
+}
+
 function deriveEditorialLookTitle(look: AuraLook) {
   const explicit = (look.lookTitle ?? "").trim();
-  if (explicit && !looksLikeRawOutfitTitle(explicit)) {
+  if (explicit && !looksLikeRawOutfitTitle(explicit) && !looksLikeGenericAuraTitle(explicit)) {
     return titleCase(explicit);
   }
   const base =
     cleanShortLabel(look.vibe) || cleanShortLabel(look.personalizationLabel);
   if (!base) return "Aura Edit";
+  if (/date night/i.test(base)) return "Easy Date Night Uniform";
+  if (/first date/i.test(base)) return "Easy First Date Fit";
+  if (/coffee date/i.test(base)) return "Coffee Date Casual";
+  if (/vacation|warm weather/i.test(base)) return "Warm Weather Casual";
+  if (/streetwear/i.test(base)) return "Soft Streetwear Reset";
+  if (/elevated/i.test(base)) return "Elevated Off-Duty Look";
+  if (/minimal/i.test(base)) return "Minimal Sneaker Fit";
+  if (/clean|casual/i.test(base)) return "Clean Casual Fit";
+  if (/formal/i.test(base)) return "Polished Formal Fit";
+  if (/interview/i.test(base)) return "Clean Interview Fit";
   if (/\b(reset|edit|uniform|casual)\b/i.test(base)) return base;
   if (base.split(/\s+/).length <= 2) return `${base} Reset`;
   return base;
@@ -313,6 +331,10 @@ function deriveOwnershipSummary(closetItems: string[], missingPieces: string[], 
       ? "Complete from your closet"
       : "";
   return [ownedLabel, missingLabel].filter(Boolean).join(" · ");
+}
+
+function removedClosetPieceLabel(label: string) {
+  return `Removed from closet${label ? `: ${label}` : ""}`;
 }
 
 type OverflowLookAction = {
@@ -674,6 +696,7 @@ function BoardImage({
               transform: [{ rotate: `${rotation}deg` }],
             },
           ]}
+          onError={() => logResolvedItemImageLoadFailure(source.resolved)}
         />
       </TouchableOpacity>
     </Animated.View>
@@ -725,48 +748,71 @@ export const AuraLookCard = memo(function AuraLookCard({
   const boardHeight = Math.round(
     boardWidth * (isHome ? HOME_BOARD_ASPECT_RATIO : BOARD_ASPECT_RATIO),
   );
-  const displayTitle = deriveEditorialLookTitle(look);
-  const displayReason = deriveEditorialSubtitle(look);
-  const stylingIntelligenceLine = deriveStylingIntelligenceLine(look);
+  const liveItemIds = useMemo(
+    () => (itemsById ? new Set(itemsById.keys()) : null),
+    [itemsById],
+  );
+  const missingClosetReferences = useMemo(
+    () => getMissingClosetReferences(look, liveItemIds),
+    [liveItemIds, look],
+  );
+  const renderLook = useMemo(
+    () => filterOutfitItemsToLiveCloset(look, liveItemIds),
+    [liveItemIds, look],
+  );
+  const displayTitle = deriveEditorialLookTitle(renderLook);
+  const displayReason = deriveEditorialSubtitle(renderLook);
+  const stylingIntelligenceLine = deriveStylingIntelligenceLine(renderLook);
   const directionLabel = normalizeDirectionLabel(
     option?.optionLabel,
-    look.personalizationLabel,
-    look.vibe,
+    renderLook.personalizationLabel,
+    renderLook.vibe,
   );
   const vibeLabelSource =
-    cleanShortLabel(look.vibe) || cleanShortLabel(look.personalizationLabel);
+    cleanShortLabel(renderLook.vibe) || cleanShortLabel(renderLook.personalizationLabel);
   const vibeLabel = shouldShowVibeLabel(vibeLabelSource, directionLabel)
     ? vibeLabelSource
     : "";
   const closetItems = useMemo(
-    () => Array.from(new Set((look.fromCloset ?? []).filter(Boolean))),
-    [look.fromCloset],
+    () => Array.from(new Set((renderLook.fromCloset ?? []).filter(Boolean))),
+    [renderLook.fromCloset],
   );
 
   const renderPlan = useMemo(
-    () => buildRenderPlan(look, itemsById, { variant: effectiveVariant }),
-    [effectiveVariant, itemsById, look],
+    () => buildRenderPlan(renderLook, itemsById, { variant: effectiveVariant }),
+    [effectiveVariant, itemsById, renderLook],
   );
   const animationKey = useMemo(() => {
-    const maybeLookId = (look as AuraLook & { id?: string | null }).id;
+    const maybeLookId = (renderLook as AuraLook & { id?: string | null }).id;
     return (
       maybeLookId ??
-      `${look.lookTitle}|${look.vibe}|${look.pieces
+      `${renderLook.lookTitle}|${renderLook.vibe}|${renderLook.pieces
         .map(
           (piece) =>
             `${piece.itemId ?? piece.itemName}:${piece.role}:${piece.imageUrl ?? ""}`,
         )
         .join("|")}`
     );
-  }, [look]);
+  }, [renderLook]);
 
   useEffect(() => {
     setClosetSheetVisible(false);
     setActionSheetVisible(false);
   }, [animationKey]);
+  const addToCompleteCount = renderLook.addToComplete?.filter(Boolean).length ?? 0;
   const missingPieces = useMemo(
-    () => Array.from(new Set((look.addToComplete ?? []).filter(Boolean))),
-    [look.addToComplete],
+    () =>
+      Array.from(
+        new Set([
+          ...(renderLook.addToComplete ?? []).filter(Boolean),
+          ...missingClosetReferences.map((reference) =>
+            removedClosetPieceLabel(
+              reference.label === "Removed from closet" ? "" : reference.label,
+            ),
+          ),
+        ]),
+      ),
+    [missingClosetReferences, renderLook.addToComplete],
   );
   const ownershipSummary = deriveOwnershipSummary(
     closetItems,
@@ -775,45 +821,50 @@ export const AuraLookCard = memo(function AuraLookCard({
   );
   const editorialMeta = [directionLabel, vibeLabel].filter(Boolean).join(" / ");
   const primaryAction: AuraLookAction =
-    look.actions?.includes("wearToday") && onAction && !onPressSave
+    renderLook.actions?.includes("wearToday") && onAction && !onPressSave
       ? "wearToday"
       : "saveLook";
   const primaryLabel = primaryAction === "wearToday" ? "Wear this" : "Save look";
   const primaryPress =
     primaryAction === "wearToday"
       ? onAction
-        ? () => onAction("wearToday", look, option ?? undefined)
+        ? () => onAction("wearToday", renderLook, option ?? undefined)
         : undefined
       : onPressSave ??
         (onAction
-          ? () => onAction("saveLook", look, option ?? undefined)
+          ? () => onAction("saveLook", renderLook, option ?? undefined)
           : undefined);
   const overflowActions = useMemo(
     () =>
       buildOverflowActions({
-        look,
+        look: renderLook,
         option: option ?? undefined,
         onAction,
         onPressPlan,
         onPressRegenerate,
         regenerating,
-        missingPiecesCount: missingPieces.length,
+        missingPiecesCount: addToCompleteCount,
         primaryAction,
       }),
     [
-      look,
-      missingPieces.length,
+      addToCompleteCount,
       onAction,
       onPressPlan,
       onPressRegenerate,
       option,
       primaryAction,
+      renderLook,
       regenerating,
     ],
   );
   const hasActionRow = Boolean(primaryPress) || overflowActions.length > 0;
   const isBoardEmpty =
     !renderPlan.placedItems.length && !renderPlan.stripItems.length;
+  const selectedItemRemoved =
+    !!selectedItem?.itemId &&
+    selectedItem.source === "closet" &&
+    !!liveItemIds &&
+    !liveItemIds.has(selectedItem.itemId);
 
   const boardContent = (
     <View
@@ -1033,7 +1084,7 @@ export const AuraLookCard = memo(function AuraLookCard({
             >
               {closetItems.map((item, index) => (
                 <View
-                  key={`${look.lookTitle}-sheet-${item}`}
+                  key={`${renderLook.lookTitle}-sheet-${item}`}
                   style={[
                     styles.closetSheetRow,
                     {
@@ -1101,9 +1152,11 @@ export const AuraLookCard = memo(function AuraLookCard({
       <ItemDetailSheet
         item={selectedItem}
         visible={Boolean(selectedItem)}
+        removed={selectedItemRemoved}
         onDismiss={() => setSelectedItem(null)}
+        onRefresh={() => setSelectedItem(null)}
         onViewInCloset={(item) => {
-          if (!item.itemId) return;
+          if (!item.itemId || selectedItemRemoved) return;
           router.push({
             pathname: "/(tabs)/item/[id]",
             params: {

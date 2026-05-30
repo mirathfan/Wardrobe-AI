@@ -5,6 +5,10 @@ import {
   type WardrobeItem,
 } from "./outfitEngine";
 import {
+  classifyAuraStylingIntent,
+  shouldGenerateOutfitForMessage,
+} from "../../../shared/auraStylingIntelligence";
+import {
   itemText,
   roleForStylingItem,
   type StylingItem,
@@ -384,6 +388,8 @@ function lookFromOutfitEngine(userMessage: string, closetItems: ClosetRecord[]) 
 export function isConcreteOutfitIntent(message: string, hasContext = false) {
   const text = clean(message);
   if (!text) return false;
+  const intent = classifyAuraStylingIntent(text, { hasPreviousOutfit: hasContext });
+  if (shouldGenerateOutfitForMessage(intent, { hasPreviousOutfit: hasContext })) return true;
   if (CONCRETE_OUTFIT_INTENT_RE.test(text)) return true;
   return hasContext && /\b(make|style|wear|better|dressier|casual|warmer|cooler|sharper|shoes?)\b/i.test(text);
 }

@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
-import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, Pressable, RefreshControl, Text, View } from "react-native";
+import { Animated, FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, RefreshControl, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
 import { AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
+import { captureSafeException } from "@/src/lib/sentry";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLookAction, AuraLookOptionMeta, AuraOutfitPhotoAction } from "@/src/types/aura";
 
 import ChatMessage from "./ChatMessage";
-import type { AIMessage } from "./chatTypes";
+import type { AIMessage, ChatMessageActionAnchor } from "./chatTypes";
 
 const FOLLOW_DISTANCE_THRESHOLD = 96;
 const FOCUS_MESSAGE_VIEW_POSITION = 0;
@@ -28,6 +29,10 @@ class ChatErrorBoundary extends React.Component<
 
   static getDerivedStateFromError() {
     return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    captureSafeException(error, { boundary: "aura_chat_message" });
   }
 
   componentDidUpdate(prevProps: { resetKey: string }) {
@@ -159,7 +164,7 @@ export default function ChatList({
   onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
   onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
   onRetryAuraResponse?: (message: AIMessage) => void;
-  onMessageLongPress?: (message: AIMessage) => void;
+  onMessageLongPress?: (message: AIMessage, anchor: ChatMessageActionAnchor) => void;
 }) {
   const listRef = useRef<FlatList<AIMessage>>(null);
   const previousCountRef = useRef(messages.length);
@@ -485,27 +490,22 @@ export default function ChatList({
     ({ item }: { item: AIMessage }) => {
       return (
         <ChatErrorBoundary colors={colors} resetKey={`${item.id}:${item.createdAt ?? ""}:${item.streaming ? "streaming" : "done"}`}>
-          <Pressable
-            delayLongPress={260}
-            onLongPress={() => onMessageLongPress?.(item)}
-            disabled={!onMessageLongPress}
-          >
-            <ChatMessage
-              colors={colors}
-              message={item}
-              itemsById={itemsById}
-              savingId={savingId}
-              memoryHint={memoryHint}
-              onSaveOutfit={onSaveOutfit}
-              onMoreLikeThis={onMoreLikeThis}
-              onSwapOutfit={onSwapOutfit}
-              onAuraAction={onAuraAction}
-              onAuraCandidateAction={onAuraCandidateAction}
-              onAuraOutfitPhotoAction={onAuraOutfitPhotoAction}
-              onAuraLaundryAction={onAuraLaundryAction}
-              onRetryAuraResponse={onRetryAuraResponse}
-            />
-          </Pressable>
+          <ChatMessage
+            colors={colors}
+            message={item}
+            itemsById={itemsById}
+            savingId={savingId}
+            memoryHint={memoryHint}
+            onSaveOutfit={onSaveOutfit}
+            onMoreLikeThis={onMoreLikeThis}
+            onSwapOutfit={onSwapOutfit}
+            onAuraAction={onAuraAction}
+            onAuraCandidateAction={onAuraCandidateAction}
+            onAuraOutfitPhotoAction={onAuraOutfitPhotoAction}
+            onAuraLaundryAction={onAuraLaundryAction}
+            onRetryAuraResponse={onRetryAuraResponse}
+            onMessageActionPress={onMessageLongPress}
+          />
         </ChatErrorBoundary>
       );
     },
@@ -518,8 +518,8 @@ export default function ChatList({
       onAuraLaundryAction,
       onAuraOutfitPhotoAction,
       onMoreLikeThis,
-      onRetryAuraResponse,
       onMessageLongPress,
+      onRetryAuraResponse,
       onSaveOutfit,
       onSwapOutfit,
       savingId,

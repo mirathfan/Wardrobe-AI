@@ -1,4 +1,4 @@
-import { logger } from "firebase-functions/v2";
+import { logger } from "./logger";
 import OpenAI from "openai";
 
 import {
@@ -9,12 +9,14 @@ import {
   rankProductLinkImages,
   type AuraCandidateItem,
 } from "./auraCandidatePreview";
+import { NIKE_FOOTWEAR_LEFT_PROFILE_REASON } from "./nikeFootwearImageRanking";
 import type { ProductUrlMetadata } from "./productUrlMetadata";
 import { redactUid } from "./rateLimit";
 import { redactUrlForLogs } from "./safeFetch";
 
 export type AuraLinkPreview = {
   sourceUrl: string;
+  canonicalUrl?: string | null;
   title: string | null;
   imageUrl: string | null;
   imageUrls?: string[];
@@ -46,6 +48,17 @@ export type AuraLinkPreview = {
   graphicText?: string | null;
   motif?: string | null;
   collaborationName?: string | null;
+  sku?: string | null;
+  styleId?: string | null;
+  productId?: string | null;
+  availability?: string | null;
+  selectedSize?: string | null;
+  sizes?: string[];
+  extractionSource?: string | null;
+  adapterName?: string | null;
+  priceUnavailable?: boolean;
+  marketPriceUnavailable?: boolean;
+  selectedImageReason?: string | null;
   status?: "ready" | "needs_review";
 };
 
@@ -132,11 +145,51 @@ export function isHmProductUrl(rawUrl?: string | null) {
   }
 }
 
+function isHmProductImageUrl(rawUrl?: string | null) {
+  try {
+    const url = new URL(String(rawUrl ?? ""));
+    return url.hostname.toLowerCase() === "image.hm.com";
+  } catch {
+    return false;
+  }
+}
+
+export function hmProductIdFromUrl(rawUrl?: string | null) {
+  try {
+    return new URL(String(rawUrl ?? "")).pathname.match(/\/productpage\.(\d+)\.html$/i)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function hmPreviewHasSafeProductImage(preview: AuraLinkPreview | null | undefined) {
+  const urls = [
+    preview?.imageUrl,
+    ...(Array.isArray(preview?.imageUrls) ? preview.imageUrls : []),
+  ];
+  return urls.some((url) => isHmProductImageUrl(url));
+}
+
+export function canUseHmBlockedStorePreviewFallback(
+  rawUrl: string,
+  preview: AuraLinkPreview | null | undefined,
+) {
+  return (
+    isHmProductUrl(rawUrl) &&
+    isHmProductUrl(preview?.sourceUrl) &&
+    !!cleanPreviewText(preview?.title, 220) &&
+    hmPreviewHasSafeProductImage(preview)
+  );
+}
+
 export function hmSingleImageClientPreview(preview: AuraLinkPreview | null): AuraLinkPreview | null {
-  if (!preview || !isHmProductUrl(preview.sourceUrl) || !preview.imageUrl) return null;
+  const imageUrl = preview?.imageUrl ?? null;
+  if (!imageUrl) return null;
+  if (!preview || !isHmProductUrl(preview.sourceUrl) || !isHmProductImageUrl(imageUrl)) return null;
   return {
     ...preview,
-    imageUrls: [preview.imageUrl],
+    imageUrl,
+    imageUrls: [imageUrl],
   };
 }
 
@@ -148,12 +201,7 @@ export function hmSanitizedClientPreview(preview: AuraLinkPreview | null): AuraL
   ]
     .map((url) => String(url ?? "").trim())
     .filter((url) => {
-      try {
-        const parsed = new URL(url);
-        return parsed.hostname.toLowerCase() === "image.hm.com";
-      } catch {
-        return false;
-      }
+      return isHmProductImageUrl(url);
     });
   const seen = new Set<string>();
   const imageUrls = urls
@@ -164,7 +212,7 @@ export function hmSanitizedClientPreview(preview: AuraLinkPreview | null): AuraL
       return true;
     })
     .slice(0, 24);
-  const imageUrl = imageUrls[0] ?? preview.imageUrl;
+  const imageUrl = imageUrls[0] ?? null;
   return imageUrl
     ? {
         ...preview,
@@ -181,7 +229,7 @@ export function brandFromSourceUrl(sourceUrl?: string | null) {
     if (host.endsWith("zara.com")) return "Zara";
     if (host.endsWith("nike.com")) return "Nike";
     if (host.endsWith("aritzia.com")) return "Aritzia";
-    if (host.endsWith("amazon.com")) return "Amazon";
+    if (host.includes("amazon.")) return null;
     if (host.endsWith("footlocker.com")) return "Foot Locker";
     if (host.endsWith("jdsports.com")) return "JD Sports";
     if (host.endsWith("macys.com")) return "Macy's";
@@ -239,12 +287,9 @@ function cleanProductTitle(title?: string | null, brand?: string | null) {
   next = next
     .replace(/\s*\|\s*H\s*&\s*M(?:\s+[A-Z]{2})?\s*$/i, "")
     .replace(/\s*\|\s*Zara\s*$/i, "")
-    .replace(/\s*\|\s*Nike\s*$/i, "")
+    .replace(/\s*(?:\||\.|-|–)\s*Nike(?:\.com)?\s*$/i, "")
     .replace(/\s*(?:\||-|–)\s*(?:Aritzia|Amazon(?:\.[A-Za-z.]+)?|Foot\s*Locker|JD\s*Sports|Macy[’']?s|New\s*Balance)\s*$/i, "")
     .replace(/\s*(?:\||-|–)\s*(?:Men[’']s|Women[’']s)\s*$/i, "")
-    .replace(/^Men[’']s\s+/i, "")
-    .replace(/^Women[’']s\s+/i, "")
-    .replace(/^Ladies[’']?\s+/i, "")
     .trim();
   if (brand) {
     next = next
@@ -324,7 +369,7 @@ function mergeUrlMetadataIntoCandidate(
     collaborationName: "collaborationName" in metadata ? metadata.collaborationName ?? null : null,
     confidence: candidate.confidence ?? ("confidence" in metadata ? metadata.confidence ?? null : null),
     ...priceFields,
-    productUrl: metadata.sourceUrl,
+    productUrl: ("canonicalUrl" in metadata ? metadata.canonicalUrl ?? metadata.sourceUrl : metadata.sourceUrl),
     sourceType: "link",
     sourceUrl: metadata.sourceUrl,
     status: "status" in metadata && metadata.status === "needs_review"
@@ -337,6 +382,7 @@ export async function buildUrlCandidatePreview(params: {
   client: OpenAI;
   uid?: string | null;
   metadata: UrlCandidateMetadata;
+  preferNikeFootwearLeftProfile?: boolean;
 }) {
   const rawImageUrls = [
     ...("imageUrls" in params.metadata && Array.isArray(params.metadata.imageUrls)
@@ -356,9 +402,20 @@ export async function buildUrlCandidatePreview(params: {
     title: params.metadata.title,
     description: params.metadata.description,
     sourceUrl: params.metadata.sourceUrl,
+    categoryHints: params.preferNikeFootwearLeftProfile
+      ? [
+          "category" in params.metadata ? params.metadata.category : null,
+          "subCategory" in params.metadata ? params.metadata.subCategory : null,
+        ]
+      : undefined,
+    preferNikeFootwearLeftProfile: params.preferNikeFootwearLeftProfile,
   });
   const rankedImageUrls = rankedImages.map((image) => image.url);
   const primaryImageUrl = rankedImageUrls[0] ?? null;
+  const selectedImageReason =
+    rankedImages[0]?.selectedImageReason === NIKE_FOOTWEAR_LEFT_PROFILE_REASON
+      ? NIKE_FOOTWEAR_LEFT_PROFILE_REASON
+      : null;
   const titleHints = productCategoryHintsFromText(params.metadata.title, params.metadata.description);
   logger.info("[LINK_EXTRACTION_TARGET]", {
     uidHash: params.uid ? redactUid(params.uid) : null,
@@ -368,6 +425,7 @@ export async function buildUrlCandidatePreview(params: {
     hintedCategory: titleHints.category,
     hintedSubCategory: titleHints.subCategory,
     chosenImage: redactUrlForLogs(primaryImageUrl),
+    selectedImageReason,
     chosenImageReasons: rankedImages[0]?.reasons ?? [],
     rawImageCount: rawImageUrls.length,
     rankedImageCount: rankedImageUrls.length,
@@ -410,7 +468,7 @@ export async function buildUrlCandidatePreview(params: {
   candidate.primaryImageUrl = candidate.imageUrls[0] ?? null;
   candidate.secondaryImageUrls = candidate.imageUrls.slice(1);
   candidate.imageSourceReason = candidate.primaryImageUrl
-    ? "product_link_ranked_image"
+    ? selectedImageReason ?? "product_link_ranked_image"
     : "product_link_no_usable_image";
   logger.info("[LINK_IMAGE_REVIEW_SET]", {
     uidHash: params.uid ? redactUid(params.uid) : null,
@@ -466,5 +524,6 @@ export async function buildUrlCandidatePreview(params: {
     rawImageUrls,
     rankedImages,
     rankedImageUrls,
+    selectedImageReason,
   };
 }

@@ -10,6 +10,23 @@ import {
   getAccessorySlot,
   type AccessorySlot,
 } from "../../../shared/accessorySlots";
+import {
+  AURA_OCCASION_RULES,
+  classifyAuraStylingIntent,
+  isItemIncompatibleWithOccasion,
+  scoreAuraOutfitQuality,
+  scoreAuraItemForIntent,
+  type AuraOccasion,
+} from "../../../shared/auraStylingIntelligence";
+import {
+  isCapOrHat,
+  isCleanBaseLayer,
+  isLoungeBottom,
+  isOfficeFootwear,
+  isStructuredLayer,
+  isTankOrSleeveless,
+  scoreOutfitForOccasion,
+} from "../../../shared/auraOutfitCritic";
 import { scoreOutfitStyling } from "./styling/stylingScore";
 import type {
   StylingItem,
@@ -66,6 +83,11 @@ export type OutfitIntentV1 = {
   avoidLogos: boolean;
   excludeLaundry: boolean;
   requireOuterwear?: boolean;
+  occasionDetail?: AuraOccasion;
+  vibe?: string;
+  requestedChanges?: string[];
+  excludedCategories?: string[];
+  explicitSportsContext?: boolean;
 };
 
 export type OutfitChatConstraints = {
@@ -284,6 +306,34 @@ export function inferWarmth(prompt: string): number {
   return 0.5;
 }
 
+function legacyOccasionFromAuraOccasion(
+  occasion: AuraOccasion | undefined,
+  prompt: string,
+): OutfitIntentV1["occasion"] {
+  if (!occasion) {
+    const normalized = prompt.toLowerCase();
+    return (
+      ["casual", "formal", "gym", "date", "work", "party", "travel"] as const
+    ).find((value) => normalized.includes(value)) ?? "unknown";
+  }
+  if (occasion === "first_date" || occasion === "date_night" || occasion === "coffee_date") return "date";
+  if (occasion === "fancy_dinner" || occasion === "wedding" || occasion === "formal") return "formal";
+  if (occasion === "interview" || occasion === "business_casual") return "work";
+  if (occasion === "club" || occasion === "rave") return "party";
+  if (occasion === "airport") return "travel";
+  if (occasion === "gym") return "gym";
+  return "casual";
+}
+
+function formalityForAuraOccasion(
+  occasion: AuraOccasion | undefined,
+  fallback: number,
+) {
+  if (!occasion) return fallback;
+  const range = AURA_OCCASION_RULES[occasion]?.preferredFormality;
+  return range ? (range[0] + range[1]) / 2 : fallback;
+}
+
 function wantsOuterwear(prompt: string): boolean {
   const normalized = normalizedText(prompt);
   if (!normalized) return false;
@@ -317,15 +367,17 @@ function wantsOuterwear(prompt: string): boolean {
 
 export function fallbackIntent(prompt: string): OutfitIntentV1 {
   const normalized = prompt.toLowerCase();
-  const occasion = (
-    ["casual", "formal", "gym", "date", "work", "party", "travel"] as const
-  ).find((value) => normalized.includes(value)) ?? "unknown";
+  const auraIntent = classifyAuraStylingIntent(prompt);
+  const occasion = legacyOccasionFromAuraOccasion(auraIntent.occasion, prompt);
   const warmthTarget = inferWarmth(prompt);
   const needsOuterwear = wantsOuterwear(prompt);
 
   return {
     occasion,
-    formalityTarget: FORMALITY_BY_OCCASION[occasion] ?? 0.5,
+    formalityTarget: formalityForAuraOccasion(
+      auraIntent.occasion,
+      FORMALITY_BY_OCCASION[occasion] ?? 0.5,
+    ),
     warmthTarget,
     needs: ["top", "bottom", "footwear"],
     niceToHave:
@@ -334,10 +386,15 @@ export function fallbackIntent(prompt: string): OutfitIntentV1 {
       ALLOWED_COLORS.filter((color) => normalized.includes(color)),
       2
     ),
-    colorsAvoid: [],
+    colorsAvoid: normalizeColorList(auraIntent.excludedColors, 3),
     avoidLogos: normalized.includes("no logo") || normalized.includes("avoid logo"),
     excludeLaundry: true,
     requireOuterwear: needsOuterwear,
+    occasionDetail: auraIntent.occasion,
+    vibe: auraIntent.vibe,
+    requestedChanges: auraIntent.requestedChanges,
+    excludedCategories: auraIntent.excludedCategories,
+    explicitSportsContext: auraIntent.explicitSportsContext,
   };
 }
 
@@ -346,8 +403,9 @@ export function normalizeParsedIntent(
   sourceText: string
 ): OutfitIntentV1 {
   if (!parsed) return fallbackIntent(sourceText);
+  const auraIntent = classifyAuraStylingIntent(sourceText);
 
-  const occasion = (
+  const parsedOccasion = (
     [
       "casual",
       "smart_casual",
@@ -362,6 +420,10 @@ export function normalizeParsedIntent(
   ).includes((parsed.occasion ?? "unknown") as OutfitIntentV1["occasion"])
     ? (parsed.occasion as OutfitIntentV1["occasion"])
     : "unknown";
+  const occasion =
+    parsedOccasion === "unknown" && auraIntent.occasion
+      ? legacyOccasionFromAuraOccasion(auraIntent.occasion, sourceText)
+      : parsedOccasion;
 
   const needs = Array.isArray(parsed.needs)
     ? parsed.needs.filter((value): value is "top" | "bottom" | "footwear" =>
@@ -383,16 +445,34 @@ export function normalizeParsedIntent(
     occasion,
     formalityTarget: clamp01(
       parsed.formalityTarget,
-      FORMALITY_BY_OCCASION[occasion] ?? 0.5
+      formalityForAuraOccasion(auraIntent.occasion, FORMALITY_BY_OCCASION[occasion] ?? 0.5)
     ),
     warmthTarget: clamp01(parsed.warmthTarget, inferWarmth(sourceText)),
     needs: needs.length > 0 ? needs : ["top", "bottom", "footwear"],
     niceToHave: enrichedNiceToHave,
     colorsWanted: normalizeColorList(parsed.colorsWanted, 2),
-    colorsAvoid: normalizeColorList(parsed.colorsAvoid, 2),
+    colorsAvoid: normalizeColorList(
+      [
+        ...(Array.isArray(parsed.colorsAvoid) ? parsed.colorsAvoid : []),
+        ...auraIntent.excludedColors,
+      ],
+      3,
+    ),
     avoidLogos: !!parsed.avoidLogos,
     excludeLaundry: parsed.excludeLaundry !== false,
     requireOuterwear: needsOuterwear,
+    occasionDetail: auraIntent.occasion ?? parsed.occasionDetail,
+    vibe: auraIntent.vibe ?? parsed.vibe,
+    requestedChanges: auraIntent.requestedChanges.length
+      ? auraIntent.requestedChanges
+      : parsed.requestedChanges ?? [],
+    excludedCategories: Array.from(new Set([
+      ...(Array.isArray(parsed.excludedCategories)
+        ? parsed.excludedCategories.map((value) => String(value).trim().toLowerCase()).filter(Boolean)
+        : []),
+      ...auraIntent.excludedCategories.map((value) => String(value).trim().toLowerCase()).filter(Boolean),
+    ])).slice(0, 8),
+    explicitSportsContext: auraIntent.explicitSportsContext || parsed.explicitSportsContext === true,
   };
 }
 
@@ -815,6 +895,13 @@ function scoreItem(
   const categoryBias = categoryPreferenceScore(item, preferenceBias);
   const fitBias = fitPreferenceScore(item, preferenceBias);
   const experimentationScore = experimentationBias(item, preferenceBias);
+  const auraCompatibility = scoreAuraItemForIntent(item, {
+    occasion: intent.occasionDetail ?? intent.occasion,
+    vibe: intent.vibe,
+    excludedColors: intent.colorsAvoid,
+    excludedCategories: intent.excludedCategories,
+    explicitSportsContext: intent.explicitSportsContext,
+  });
 
   const score =
     0.35 * closeness(formalityScore, intent.formalityTarget) +
@@ -828,15 +915,17 @@ function scoreItem(
     0.12 * learnedColorBias +
     categoryBias +
     fitBias +
-    experimentationScore;
+    experimentationScore +
+    auraCompatibility.score * 0.75;
 
   return score;
 }
 
 const DEBUG_OUTFIT_ACCESSORIES =
-  process.env.AURA_DEBUG === "1" ||
-  process.env.EXPO_PUBLIC_AURA_DEBUG === "1" ||
+  (process.env.FUNCTIONS_EMULATOR === "true" && process.env.AURA_DEBUG === "1") ||
   process.env.FUNCTIONS_EMULATOR === "true";
+const DEBUG_AURA_CRITIC =
+  process.env.FUNCTIONS_EMULATOR === "true" && process.env.AURA_DEBUG === "1";
 const accessoryDiscardDebugKeys = new Set<string>();
 
 type AccessoryMood = "safe" | "balanced" | "bold";
@@ -1067,8 +1156,33 @@ function buildReason(
   intent: OutfitIntentV1,
   picks: Array<{slot: Slot; item: WardrobeItem}>
 ): string {
+  const quality = scoreAuraOutfitQuality(
+    picks.map((pick) => pick.item),
+    {occasion: intent.occasionDetail ?? intent.occasion, vibe: intent.vibe},
+  );
   const reasons: string[] = [];
   const hasOuterwear = picks.some((pick) => pick.slot === "outerwear");
+  if (intent.occasionDetail === "business_casual" || intent.occasion === "work" || intent.occasion === "smart_casual") {
+    const critic = scoreOutfitForOccasion({
+      userPrompt: [intent.occasion, intent.occasionDetail, intent.vibe].filter(Boolean).join(" "),
+      occasion: intent.occasionDetail ?? intent.occasion,
+      vibe: intent.vibe,
+      items: picks.map((pick) => pick.item),
+    });
+    return critic.positiveSignals.length
+      ? `Office-ready because it has ${critic.positiveSignals.slice(0, 2).join(" and ")}.`
+      : "A smart casual office base from the closet pieces available.";
+  }
+  if (intent.occasionDetail === "first_date" || intent.occasionDetail === "date_night" || intent.occasionDetail === "coffee_date" || intent.occasionDetail === "fancy_dinner" || intent.occasion === "date") {
+    return quality.signals.length
+      ? `Date-ready because it adds ${quality.signals.slice(0, 2).join(" and ")}.`
+      : "A clean date base from the closet pieces available.";
+  }
+  if (intent.vibe && /\b(clean|minimal|classy|luxury|aura)\b/i.test(intent.vibe)) {
+    return quality.signals.length
+      ? `Cleaner because it leans on ${quality.signals.slice(0, 2).join(" and ")}.`
+      : "A cleaner casual base from the closet pieces available.";
+  }
   if (intent.warmthTarget > 0.65) {
     reasons.push("Warm enough for colder weather");
   } else if (intent.warmthTarget < 0.35) {
@@ -1095,6 +1209,9 @@ function buildReason(
     if (colors.size > 0) {
       reasons.push(`balanced around ${Array.from(colors).slice(0, 2).join("/")} neutrals`);
     }
+  }
+  if (quality.signals.length) {
+    reasons.push(quality.signals.slice(0, 2).join(" and "));
   }
 
   return `${reasons.join(", ")}.`;
@@ -1131,6 +1248,200 @@ function selectTopCandidates(
     .map((item) => ({item, slot, score: scoreItem(item, intent, preferenceBias)}))
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+}
+
+function criticPromptForIntent(intent: OutfitIntentV1): string {
+  return [intent.occasion, intent.occasionDetail, intent.vibe].filter(Boolean).join(" ");
+}
+
+function criticFeedbackForItems(items: WardrobeItem[], intent: OutfitIntentV1) {
+  return scoreOutfitForOccasion({
+    userPrompt: criticPromptForIntent(intent),
+    occasion: intent.occasionDetail ?? intent.occasion,
+    vibe: intent.vibe,
+    items,
+  });
+}
+
+function criticScoreAdjustment(feedback: ReturnType<typeof scoreOutfitForOccasion>): number {
+  return (
+    ((feedback.score - 72) / 100) * 0.34 -
+    feedback.blockingIssues.length * 0.28 -
+    feedback.warnings.length * 0.045
+  );
+}
+
+function debugAuraCritic(
+  label: string,
+  items: WardrobeItem[],
+  feedback: ReturnType<typeof scoreOutfitForOccasion>,
+  extra: Record<string, unknown> = {},
+) {
+  if (!DEBUG_AURA_CRITIC) return;
+  console.log("[AURA_CRITIC]", label, {
+    score: feedback.score,
+    shouldRegenerate: feedback.shouldRegenerate,
+    blockingIssues: feedback.blockingIssues.map((issue) => issue.code),
+    warnings: feedback.warnings.map((issue) => issue.code),
+    itemIds: items.map((item) => item.id),
+    ...extra,
+  });
+}
+
+function officeReplacementScore(
+  entry: ScoredItem,
+  slot: Slot,
+  usedIds: Set<string>,
+  intent: OutfitIntentV1,
+  preferenceBias: PreferenceBiasContext,
+): number {
+  const item = entry.item;
+  if (usedIds.has(item.id)) return -999;
+  if (entry.slot !== slot) return -999;
+  if (isItemIncompatibleWithOccasion(item, intent.occasionDetail ?? intent.occasion, intent.explicitSportsContext)) return -999;
+  let score = scoreItem(item, intent, preferenceBias) + entry.score;
+  const text = itemAccessoryText(item);
+  if (slot === "top") {
+    if (isTankOrSleeveless(item)) return -999;
+    if (isCleanBaseLayer(item)) score += 0.18;
+    if (/\b(button|polo|knit|sweater|collared|dress shirt|oxford)\b/.test(text)) score += 0.22;
+  }
+  if (slot === "bottom") {
+    if (isLoungeBottom(item)) return -999;
+    if (/\b(trouser|chino|slack|tailored|dark denim|clean denim)\b/.test(text)) score += 0.24;
+  }
+  if (slot === "footwear") {
+    score += isOfficeFootwear(item) ? 0.24 : -0.16;
+  }
+  if (slot === "outerwear" && isStructuredLayer(item)) score += 0.18;
+  if (slot === "accessory" && isCapOrHat(item)) return -999;
+  return score;
+}
+
+function chooseOfficeReplacement(
+  pool: ScoredItem[],
+  slot: Slot,
+  usedIds: Set<string>,
+  intent: OutfitIntentV1,
+  preferenceBias: PreferenceBiasContext,
+): ScoredItem | null {
+  return pool
+    .map((entry) => ({
+      entry,
+      score: officeReplacementScore(entry, slot, usedIds, intent, preferenceBias),
+    }))
+    .filter((entry) => entry.score > -50)
+    .sort((a, b) => b.score - a.score)[0]?.entry ?? null;
+}
+
+function repairCandidateWithCritic(params: {
+  candidate: OutfitCandidate;
+  itemsById: Map<string, WardrobeItem>;
+  topItems: ScoredItem[];
+  bottomItems: ScoredItem[];
+  footwearItems: ScoredItem[];
+  outerwearItems: ScoredItem[];
+  accessoryItems: ScoredItem[];
+  intent: OutfitIntentV1;
+  preferenceBias: PreferenceBiasContext;
+  lockedItemIds?: Set<string>;
+}): OutfitCandidate {
+  const currentItems = params.candidate.picks
+    .map((pick) => params.itemsById.get(pick.itemId))
+    .filter((item): item is WardrobeItem => !!item);
+  const feedback = criticFeedbackForItems(currentItems, params.intent);
+  if (!feedback.shouldRegenerate) return params.candidate;
+
+  const nextPicks = params.candidate.picks.map((pick) => ({...pick}));
+  const usedIds = new Set(nextPicks.map((pick) => pick.itemId));
+  const lockedItemIds = params.lockedItemIds ?? new Set<string>();
+  let repaired = false;
+
+  const replaceSlot = (slot: Slot, pool: ScoredItem[], predicate: (item: WardrobeItem) => boolean) => {
+    const index = nextPicks.findIndex((pick) => {
+      const item = params.itemsById.get(pick.itemId);
+      return pick.slot === slot && !!item && !lockedItemIds.has(pick.itemId) && predicate(item);
+    });
+    if (index < 0) return;
+    const previousId = nextPicks[index].itemId;
+    usedIds.delete(previousId);
+    const replacement = chooseOfficeReplacement(pool, slot, usedIds, params.intent, params.preferenceBias);
+    if (!replacement) {
+      usedIds.add(previousId);
+      return;
+    }
+    nextPicks[index] = {slot, itemId: replacement.item.id};
+    usedIds.add(replacement.item.id);
+    repaired = true;
+  };
+
+  replaceSlot("top", params.topItems, (item) => {
+    const text = itemAccessoryText(item);
+    return isTankOrSleeveless(item) || (!isCleanBaseLayer(item) && !/\b(button|polo|knit|sweater|collared|dress shirt|oxford)\b/.test(text));
+  });
+  replaceSlot("bottom", params.bottomItems, (item) =>
+    isLoungeBottom(item) || /\b(gym|athletic|shorts|sweatpants|joggers|drawstring)\b/.test(itemAccessoryText(item))
+  );
+  replaceSlot("footwear", params.footwearItems, (item) => !isOfficeFootwear(item));
+
+  const accessoryIndex = nextPicks.findIndex((pick) => {
+    const item = params.itemsById.get(pick.itemId);
+    return pick.slot === "accessory" && !!item && !lockedItemIds.has(pick.itemId) && isCapOrHat(item);
+  });
+  if (accessoryIndex >= 0) {
+    const previousId = nextPicks[accessoryIndex].itemId;
+    usedIds.delete(previousId);
+    const replacement = chooseOfficeReplacement(params.accessoryItems, "accessory", usedIds, params.intent, params.preferenceBias);
+    if (replacement) {
+      nextPicks[accessoryIndex] = {slot: "accessory", itemId: replacement.item.id};
+      usedIds.add(replacement.item.id);
+    } else {
+      nextPicks.splice(accessoryIndex, 1);
+    }
+    repaired = true;
+  }
+
+  const hasOuterwear = nextPicks.some((pick) => pick.slot === "outerwear");
+  const hasTee = nextPicks.some((pick) => {
+    const item = params.itemsById.get(pick.itemId);
+    return pick.slot === "top" && !!item && isCleanBaseLayer(item) && /\b(tee|t shirt|tshirt)\b/.test(itemAccessoryText(item));
+  });
+  if (!hasOuterwear && hasTee) {
+    const layer = chooseOfficeReplacement(
+      params.outerwearItems.filter((entry) => isStructuredLayer(entry.item)),
+      "outerwear",
+      usedIds,
+      params.intent,
+      params.preferenceBias,
+    );
+    if (layer) {
+      nextPicks.push({slot: "outerwear", itemId: layer.item.id});
+      repaired = true;
+    }
+  }
+
+  if (!repaired) return params.candidate;
+  const nextItems = nextPicks
+    .map((pick) => params.itemsById.get(pick.itemId))
+    .filter((item): item is WardrobeItem => !!item);
+  const nextFeedback = criticFeedbackForItems(nextItems, params.intent);
+  debugAuraCritic("repaired_candidate", nextItems, nextFeedback, {
+    previousScore: feedback.score,
+    previousIssues: feedback.blockingIssues.map((issue) => issue.code),
+  });
+  return {
+    ...params.candidate,
+    picks: nextPicks,
+    itemIds: nextPicks.map((pick) => pick.itemId),
+    score:
+      params.candidate.score -
+      criticScoreAdjustment(feedback) +
+      criticScoreAdjustment(nextFeedback) +
+      (nextFeedback.shouldRegenerate ? 0 : 0.08),
+    reason: nextFeedback.shouldRegenerate
+      ? params.candidate.reason
+      : "AURA tightened this for office so it reads smart casual instead of weekend casual.",
+  };
 }
 
 function assembleOutfits(
@@ -1219,10 +1530,21 @@ function assembleOutfits(
               stylingItemsForOutfit(chosen),
               stylingIntentForOutfit(intent),
             );
+            const outfitQuality = scoreAuraOutfitQuality(
+              chosen.map((value) => value.item),
+              {occasion: intent.occasionDetail ?? intent.occasion, vibe: intent.vibe},
+            );
+            const outfitCritic = criticFeedbackForItems(
+              chosen.map((value) => value.item),
+              intent,
+            );
             // Keep the legacy item score shape, but let deterministic styling
             // quality break ties and lift outfits with better fit/color/identity.
             const outfitScore =
-              baseOutfitScore + ((stylingIntelligence.overallScore - 72) / 100) * 0.22;
+              baseOutfitScore +
+              ((stylingIntelligence.overallScore - 72) / 100) * 0.22 +
+              outfitQuality.qualityScore * 0.035 +
+              criticScoreAdjustment(outfitCritic);
             const picks = chosen.map((value) => ({
               slot: value.slot,
               itemId: value.item.id,
@@ -1247,6 +1569,29 @@ function assembleOutfits(
   const dedupedCombos = Array.from(
     new Map(combos.map((combo) => [combo.itemIds.slice().sort().join("|"), combo])).values()
   ).sort((a, b) => b.score - a.score);
+  const itemsById = new Map(
+    [
+      ...topItems,
+      ...bottomItems,
+      ...footwearItems,
+      ...outerwearItems,
+      ...accessoryItems,
+    ].map((entry) => [entry.item.id, entry.item]),
+  );
+  const reviewedCombos = dedupedCombos.map((combo) =>
+    repairCandidateWithCritic({
+      candidate: combo,
+      itemsById,
+      topItems,
+      bottomItems,
+      footwearItems,
+      outerwearItems,
+      accessoryItems,
+      intent,
+      preferenceBias,
+      lockedItemIds: new Set(Object.values(lockedBySlot ?? {}).map((item) => item.id)),
+    }),
+  ).sort((a, b) => b.score - a.score);
 
   const selected: OutfitCandidate[] = [];
   const usedTops = new Set<string>();
@@ -1256,7 +1601,7 @@ function assembleOutfits(
   const usedAccessories = new Set<string>();
   const usedSignatures = new Set<string>();
 
-  const candidatePool = dedupedCombos
+  const candidatePool = reviewedCombos
     .slice(0, Math.max(count * 6, 18))
     .map((combo) => ({
       combo,
@@ -1307,11 +1652,11 @@ function assembleOutfits(
     const outerwearId = combo.picks.find((pick) => pick.slot === "outerwear")?.itemId ?? "";
     const accessoryId = combo.picks.find((pick) => pick.slot === "accessory")?.itemId ?? "";
     const canUseFresh =
-      (!topId || !usedTops.has(topId) || selected.length >= dedupedCombos.length - 1) &&
-      (!bottomId || !usedBottoms.has(bottomId) || selected.length >= dedupedCombos.length - 1) &&
-      (!footwearId || !usedFootwear.has(footwearId) || selected.length >= dedupedCombos.length - 1) &&
-      (!outerwearId || !usedOuterwear.has(outerwearId) || selected.length >= dedupedCombos.length - 1) &&
-      (!accessoryId || !usedAccessories.has(accessoryId) || selected.length >= dedupedCombos.length - 1);
+      (!topId || !usedTops.has(topId) || selected.length >= reviewedCombos.length - 1) &&
+      (!bottomId || !usedBottoms.has(bottomId) || selected.length >= reviewedCombos.length - 1) &&
+      (!footwearId || !usedFootwear.has(footwearId) || selected.length >= reviewedCombos.length - 1) &&
+      (!outerwearId || !usedOuterwear.has(outerwearId) || selected.length >= reviewedCombos.length - 1) &&
+      (!accessoryId || !usedAccessories.has(accessoryId) || selected.length >= reviewedCombos.length - 1);
     if (!canUseFresh && selected.length < count - 1) {
       candidatePool.splice(
         candidatePool.findIndex((entry) => entry.combo === combo),
@@ -1321,6 +1666,15 @@ function assembleOutfits(
     }
 
     selected.push(combo);
+    if (DEBUG_AURA_CRITIC) {
+      const selectedItems = combo.picks
+        .map((pick) => itemsById.get(pick.itemId))
+        .filter((item): item is WardrobeItem => !!item);
+      debugAuraCritic("selected_candidate", selectedItems, criticFeedbackForItems(selectedItems, intent), {
+        selectedIndex: selected.length - 1,
+        candidateScore: combo.score,
+      });
+    }
     usedSignatures.add(signature);
     usedTops.add(topId);
     usedBottoms.add(bottomId);
@@ -1334,7 +1688,7 @@ function assembleOutfits(
   }
 
   if (selected.length < count) {
-    for (const combo of dedupedCombos) {
+    for (const combo of reviewedCombos) {
       const signature = combo.itemIds.slice().sort().join("|");
       if (usedSignatures.has(signature)) {
         continue;
@@ -1491,7 +1845,22 @@ function buildCandidatesFromPool(
   const constrained = applyConstraints(pool, baseIntent, memoryConstraints);
   const preferenceBias = buildPreferenceBiasContext(memory);
   const explicitExclude = new Set(options.excludeItemIds ?? []);
-  const finalItems = constrained.items.filter((item) => !explicitExclude.has(item.id));
+  const finalItems = constrained.items.filter((item) => {
+    if (explicitExclude.has(item.id)) return false;
+    const auraCompatibility = scoreAuraItemForIntent(item, {
+      occasion: constrained.intent.occasionDetail ?? constrained.intent.occasion,
+      vibe: constrained.intent.vibe,
+      excludedColors: constrained.intent.colorsAvoid,
+      excludedCategories: constrained.intent.excludedCategories,
+      explicitSportsContext: constrained.intent.explicitSportsContext,
+    });
+    if (auraCompatibility.penalties.some((penalty) => penalty.startsWith("excluded_"))) return false;
+    return !isItemIncompatibleWithOccasion(
+      item,
+      constrained.intent.occasionDetail ?? constrained.intent.occasion,
+      constrained.intent.explicitSportsContext,
+    );
+  });
   const topBucket = finalItems.filter((item) => bucketForItem(item) === "top");
   const bottomBucket = finalItems.filter((item) => bucketForItem(item) === "bottom");
   const footwearBucket = finalItems.filter((item) => bucketForItem(item) === "footwear");

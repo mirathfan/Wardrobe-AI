@@ -4,6 +4,11 @@ import type {
 } from "@/src/components/ai/chatTypes";
 import { summarizeChatTitle, type AIChatThread } from "@/src/lib/aiChats";
 import type { AuraLook } from "@/src/types/aura";
+import {
+  classifyAuraStylingIntent,
+  shouldGenerateOutfitForMessage,
+  type AuraIntentResult,
+} from "@/shared/auraStylingIntelligence";
 
 const MULTI_OUTFIT_REQUEST_RE =
   /\b((?:2|3|4|two|three|four)\s+(?:more\s+)?(?:outfits?|looks?|options?|directions?)|multiple\s+(?:outfits?|looks?|options?)|few\s+outfits?)\b/i;
@@ -30,6 +35,8 @@ export type AuraChatIntent =
   | "STYLE_EXISTING"
   | "MODIFY_OUTFIT"
   | "GENERAL_CHAT";
+
+export type AuraStructuredChatIntent = AuraIntentResult;
 
 export type AuraOutfitDiversityContext = {
   shouldAvoidRepeats: boolean;
@@ -223,6 +230,22 @@ export function classifyAuraChatIntent(
 ): AuraChatIntent {
   const normalized = String(prompt ?? "").trim();
   if (!normalized) return "GENERAL_CHAT";
+  const intelligence = classifyAuraStylingIntent(normalized, {
+    hasPreviousOutfit: !!options?.hasPreviousLook || !!options?.hasRecentItemAnchor,
+  });
+  if (shouldGenerateOutfitForMessage(intelligence, { hasPreviousOutfit: !!options?.hasPreviousLook })) {
+    if (intelligence.intent === "outfit_iteration") return "GENERATE_MORE";
+    if (
+      intelligence.intent === "outfit_feedback" ||
+      intelligence.intent === "occasion_change" ||
+      intelligence.intent === "vibe_shift" ||
+      intelligence.intent === "replace_piece" ||
+      intelligence.intent === "improve_fit"
+    ) {
+      return "MODIFY_OUTFIT";
+    }
+    return "GENERATE_OUTFIT";
+  }
   if (isAuraOutfitDiversityFollowup(normalized) || MORE_OUTFIT_REQUEST_RE.test(normalized)) {
     return "GENERATE_MORE";
   }
@@ -360,6 +383,14 @@ export function wantsStructuredOutfitRequest(
   if (attachmentCount !== 0) return false;
   const normalized = String(prompt ?? "").trim();
   if (!normalized) return false;
+  const intelligence = classifyAuraStylingIntent(normalized, {
+    hasPreviousOutfit: latestAuraLookCount(messages) > 0 || !!options?.hasRecentItemAnchor,
+  });
+  if (shouldGenerateOutfitForMessage(intelligence, {
+    hasPreviousOutfit: latestAuraLookCount(messages) > 0,
+  })) {
+    return true;
+  }
   const intent = classifyAuraChatIntent(normalized, {
     hasPreviousLook: latestAuraLookCount(messages) > 0,
     hasRecentItemAnchor: options?.hasRecentItemAnchor,

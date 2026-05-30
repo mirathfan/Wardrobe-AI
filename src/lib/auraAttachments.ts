@@ -8,9 +8,25 @@ import { normalizeCutoutImage } from "@/src/lib/cutoutNormalize";
 import { db, storage } from "@/src/lib/firebase";
 import { normalizeCurrencyCode } from "@/src/lib/currency";
 import { optimizeImageForUpload } from "@/src/lib/imageOptimization";
+import {
+  createPhotoPipelineTraceId,
+  logPhotoPipeline,
+  photoPipelineDuration,
+  photoPipelineNow,
+  safeErrorData,
+  safeUriType,
+  summarizeImageQuality,
+} from "@/src/lib/photoPipelineLogger";
+import { runProductPolishForLocalImage } from "@/src/lib/productPolish";
 import { uploadItemPhoto } from "@/src/lib/uploadImage";
 import { analyzeCutoutVisualNormalization } from "@/src/lib/visualNormalization";
 import type { AuraCandidateItem, AuraDetectedOutfitPiece } from "@/src/types/aura";
+import type {
+  ItemImageSource,
+  ProductImageQuality,
+  ProductImageVariant,
+  ProductPolishMetadata,
+} from "@/src/types/ProductImageQuality";
 
 const AURA_UPLOAD_LOG = "[AURA_UPLOAD]";
 const AURA_DRAFT_LOG = "[AURA_DRAFT]";
@@ -64,8 +80,18 @@ function priceFieldsFromCandidate(candidate: AuraCandidateItem): Record<string, 
 export type AuraCandidateLocalPhoto = {
   localUri: string;
   attachmentUri?: string | null;
+  traceId?: string | null;
   width?: number | null;
   height?: number | null;
+};
+
+type QuickAddPolishResult = {
+  localPhoto: AuraCandidateLocalPhoto;
+  sourceKind: ProductImageVariant;
+  imageQuality: ProductImageQuality | null;
+  productPolish: ProductPolishMetadata | null;
+  refinedLocalUri: string | null;
+  refinedImageUrl: string | null;
 };
 
 function normalizeFileUri(uri: string) {
@@ -74,6 +100,45 @@ function normalizeFileUri(uri: string) {
   if (value.startsWith("file://")) return value;
   if (value.startsWith("/")) return `file://${value}`;
   return value;
+}
+
+function itemImageSourceFor(sourceKind: ProductImageVariant, hasUsableCutout: boolean): ItemImageSource {
+  if (sourceKind === "polished") {
+    return hasUsableCutout ? "polished_cutout" : "polished";
+  }
+  return hasUsableCutout ? "original_cutout" : "original";
+}
+
+function safePathToken(value: string) {
+  return String(value || "photo")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "photo";
+}
+
+async function localFileInfo(uri?: string | null) {
+  const value = normalizeFileUri(String(uri ?? ""));
+  if (!value || !value.startsWith("file://")) {
+    return {
+      exists: value ? null : false,
+      size: null as number | null,
+      uriType: safeUriType(value),
+    };
+  }
+  try {
+    const info = await FileSystem.getInfoAsync(value);
+    return {
+      exists: Boolean(info.exists),
+      size: info.exists && typeof (info as any).size === "number" ? Number((info as any).size) : null,
+      uriType: safeUriType(value),
+    };
+  } catch {
+    return {
+      exists: false,
+      size: null as number | null,
+      uriType: safeUriType(value),
+    };
+  }
 }
 
 async function blobFromFileUri(localUri: string): Promise<Blob> {
@@ -251,6 +316,7 @@ export async function uploadAuraTranscriptionAudio(
 
 function imageRecordForAttachment(attachment: ChatImageAttachment, isPrimary: boolean) {
   return {
+    traceId: attachment.traceId ?? null,
     originalUrl: attachment.uri,
     isPrimary,
   };
@@ -307,12 +373,14 @@ export async function createAuraItemDraftsFromImages(params: {
       auraPrompt: prompt,
       images: records,
       imageUrls: records.map((record) => record.originalUrl),
+      photoPipelineTraceId: primary.traceId ?? null,
       originalImageUrl: primary.uri,
       cleanedImageUrl: null,
       photoUrl: primary.uri,
       cleanedSource: null,
       photos: {
         primaryUrl: primary.uri,
+        traceId: primary.traceId ?? null,
         urls: records.map((record) => record.originalUrl),
         images: records,
       },
@@ -343,6 +411,7 @@ export async function createAuraItemDraftsFromImages(params: {
       localPhoto: {
         localUri: primary.localUri ?? primary.uri,
         attachmentUri: primary.uri,
+        traceId: primary.traceId ?? null,
         width: primary.width ?? null,
         height: primary.height ?? null,
       },
@@ -418,6 +487,188 @@ function imageRecordForUrl(url: string, isPrimary: boolean) {
   };
 }
 
+async function maybeRunQuickAddProductPolish(params: {
+  uid: string;
+  candidateId: string;
+  sourceType: "image" | "link" | "batch";
+  localPhoto: AuraCandidateLocalPhoto;
+  category: string;
+  subCategory?: string | null;
+  traceId: string;
+}): Promise<QuickAddPolishResult> {
+  const originalPhoto = {
+    ...params.localPhoto,
+    localUri: normalizeFileUri(params.localPhoto.localUri),
+    traceId: params.traceId,
+  };
+  const canPolish =
+    params.sourceType !== "link" &&
+    !!originalPhoto.localUri &&
+    !/^https?:\/\//i.test(originalPhoto.localUri);
+
+  if (!canPolish) {
+    logPhotoPipeline({
+      traceId: params.traceId,
+      step: "product_polish_decision",
+      status: "skip",
+      data: {
+        reason: params.sourceType === "link" ? "product_link_image" : "no_local_photo",
+        sourceType: params.sourceType,
+      },
+    });
+    return {
+      localPhoto: originalPhoto,
+      sourceKind: "original",
+      imageQuality: null,
+      productPolish: null,
+      refinedLocalUri: null,
+      refinedImageUrl: null,
+    };
+  }
+
+  const startedAt = photoPipelineNow();
+  try {
+    const result = await runProductPolishForLocalImage({
+      uid: params.uid,
+      localUri: originalPhoto.localUri,
+      width: originalPhoto.width ?? null,
+      height: originalPhoto.height ?? null,
+      photoHash: safePathToken(`${params.candidateId}-${originalPhoto.localUri}`),
+      traceId: params.traceId,
+      garmentMetadata: {
+        category: params.category,
+        subCategory: params.subCategory ?? null,
+      },
+    });
+    logPhotoPipeline({
+      traceId: params.traceId,
+      step: "refined_image_received",
+      status: result.refinementApplied && result.refinedImageUrl ? "success" : "skip",
+      data: {
+        mode: "closet_quick_add",
+        refinementApplied: result.refinementApplied,
+        hasRefinedImageUrl: !!result.refinedImageUrl,
+        hasRefinedStoragePath: !!result.refinedStoragePath,
+        modelUsed: result.modelUsed ?? null,
+        imageQuality: summarizeImageQuality(result.imageQuality),
+      },
+    });
+
+    const refinedInfo = await localFileInfo(result.refinedLocalUri);
+    const hasUsableRefinement =
+      result.refinementApplied &&
+      !!result.refinedLocalUri &&
+      refinedInfo.exists === true &&
+      typeof refinedInfo.size === "number" &&
+      refinedInfo.size > 0;
+    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+    const productPolish: ProductPolishMetadata = {
+      source: "photo_upload",
+      status: hasUsableRefinement ? "applied" : result.refinementApplied ? "failed" : "not_needed",
+      activeVariant: hasUsableRefinement ? "polished" : "original",
+      traceId: params.traceId,
+      modelUsed: result.modelUsed ?? null,
+      sourceStoragePath: result.sourceStoragePath,
+      refinedStoragePath: result.refinedStoragePath ?? null,
+      refinedImageUrl: result.refinedImageUrl ?? null,
+      warnings:
+        result.refinementApplied && !hasUsableRefinement
+          ? [...warnings, "refined_local_file_unavailable"]
+          : warnings,
+      errorMessage:
+        result.refinementApplied && !hasUsableRefinement
+          ? "Cleaned image could not be prepared."
+          : null,
+      appliedAt: hasUsableRefinement ? Date.now() : null,
+    };
+
+    if (!hasUsableRefinement) {
+      logPhotoPipeline({
+        traceId: params.traceId,
+        step: "product_polish_decision",
+        status: result.refinementApplied ? "fallback" : "skip",
+        durationMs: photoPipelineDuration(startedAt),
+        data: {
+          mode: "closet_quick_add",
+          reason: result.refinementApplied ? "refined_local_unavailable" : "refinement_not_needed",
+          refinedFileExists: refinedInfo.exists,
+          refinedByteSize: refinedInfo.size,
+          hasRefinedImageUrl: !!result.refinedImageUrl,
+        },
+      });
+      return {
+        localPhoto: originalPhoto,
+        sourceKind: "original",
+        imageQuality: result.imageQuality ?? null,
+        productPolish,
+        refinedLocalUri: null,
+        refinedImageUrl: result.refinedImageUrl ?? null,
+      };
+    }
+
+    const refinedLocalUri = String(result.refinedLocalUri);
+    logPhotoPipeline({
+      traceId: params.traceId,
+      step: "product_polish_decision",
+      status: "success",
+      durationMs: photoPipelineDuration(startedAt),
+      data: {
+        mode: "closet_quick_add",
+        sourceKind: "polished",
+        refinedUriType: safeUriType(result.refinedLocalUri),
+        refinedFileExists: refinedInfo.exists,
+        refinedByteSize: refinedInfo.size,
+      },
+    });
+
+    return {
+      localPhoto: {
+        ...originalPhoto,
+        localUri: refinedLocalUri,
+        attachmentUri: result.refinedImageUrl ?? originalPhoto.attachmentUri ?? null,
+        traceId: params.traceId,
+      },
+      sourceKind: "polished",
+      imageQuality: result.imageQuality ?? null,
+      productPolish,
+      refinedLocalUri,
+      refinedImageUrl: result.refinedImageUrl ?? null,
+    };
+  } catch (error) {
+    logPhotoPipeline({
+      traceId: params.traceId,
+      step: "product_polish_decision",
+      status: "fallback",
+      durationMs: photoPipelineDuration(startedAt),
+      data: {
+        mode: "closet_quick_add",
+        reason: "product_polish_failed",
+        ...safeErrorData(error),
+      },
+    });
+    return {
+      localPhoto: originalPhoto,
+      sourceKind: "original",
+      imageQuality: null,
+      productPolish: {
+        source: "photo_upload",
+        status: "failed",
+        activeVariant: "original",
+        traceId: params.traceId,
+        modelUsed: null,
+        sourceStoragePath: null,
+        refinedStoragePath: null,
+        refinedImageUrl: null,
+        warnings: ["product_polish_unavailable"],
+        errorMessage: "Cleaned image was unavailable.",
+        appliedAt: null,
+      },
+      refinedLocalUri: null,
+      refinedImageUrl: null,
+    };
+  }
+}
+
 async function runPostSavePrimaryImageCutout(params: {
   uid: string;
   itemId: string;
@@ -470,6 +721,7 @@ async function runPostSavePrimaryImageCutout(params: {
       imageUrl: primaryUrl,
     })) ??
     undefined;
+  const traceId = String(resolvedLocalPhoto?.traceId ?? "").trim() || createPhotoPipelineTraceId();
 
   if (!resolvedLocalPhoto?.localUri) {
     debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
@@ -487,15 +739,28 @@ async function runPostSavePrimaryImageCutout(params: {
     return;
   }
 
+  const polish = await maybeRunQuickAddProductPolish({
+    uid,
+    candidateId,
+    sourceType,
+    localPhoto: { ...resolvedLocalPhoto, traceId },
+    category,
+    subCategory: subCategory ?? null,
+    traceId,
+  });
+
   const cutout = await prepareAuraCandidateCutout({
     uid,
     candidateId,
-    localPhoto: resolvedLocalPhoto,
+    localPhoto: polish.localPhoto,
     category,
     subCategory: subCategory ?? null,
+    traceId,
+    sourceKind: polish.sourceKind,
   });
+  const hasUsableCutout = !!cutout?.cleanedLocalUri;
 
-  if (!cutout?.cleanedLocalUri) {
+  if (!hasUsableCutout && polish.sourceKind !== "polished") {
     debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] failure fallback", {
       uid,
       itemId,
@@ -512,22 +777,37 @@ async function runPostSavePrimaryImageCutout(params: {
   }
 
   try {
+    const imageSource = itemImageSourceFor(polish.sourceKind, hasUsableCutout);
+    const cutoutSourceKind = hasUsableCutout ? polish.sourceKind : null;
     const uploaded = await uploadItemPhoto({
       uid,
       itemId,
-      localUri: resolvedLocalPhoto.localUri,
-      cleanedLocalUri: cutout.cleanedLocalUri,
-      normalizedLocalUri: cutout.normalizedLocalUri,
-      originalWidth: resolvedLocalPhoto.width ?? null,
-      saveNormalizedAsCleaned: true,
+      localUri: polish.localPhoto.localUri,
+      cleanedLocalUri: cutout?.cleanedLocalUri ?? null,
+      normalizedLocalUri: cutout?.normalizedLocalUri ?? null,
+      sourceOriginalLocalUri:
+        polish.sourceKind === "polished" ? resolvedLocalPhoto.localUri : null,
+      refinedLocalUri: polish.refinedLocalUri,
+      originalWidth: polish.localPhoto.width ?? resolvedLocalPhoto.width ?? null,
+      originalHeight: polish.localPhoto.height ?? resolvedLocalPhoto.height ?? null,
+      imageQuality: polish.imageQuality,
+      productPolish: polish.productPolish,
+      imageSource,
+      cutoutSourceKind,
+      traceId,
+      saveNormalizedAsCleaned: hasUsableCutout,
     });
     const nextImages = [
       {
+        traceId,
         originalUrl: uploaded.primaryUrl,
         aiUrl: uploaded.aiUrl,
+        ...(uploaded.refinedUrl ? { refinedUrl: uploaded.refinedUrl } : {}),
         ...(uploaded.cleanedUrl ? { cleanedUrl: uploaded.cleanedUrl } : {}),
+        imageSource,
+        cutoutSourceKind,
         isPrimary: true,
-        sourceOriginalUrl: primaryUrl,
+        sourceOriginalUrl: uploaded.sourceOriginalUrl ?? primaryUrl,
       },
       ...secondaryUrls.map((url) => imageRecordForUrl(url, false)),
     ];
@@ -537,30 +817,66 @@ async function runPostSavePrimaryImageCutout(params: {
       images: nextImages,
       imageUrls: nextImageUrls,
       originalImageUrl: uploaded.originalUrl,
+      refinedImageUrl: uploaded.refinedUrl ?? null,
       photoUrl: primaryDisplayUrl,
       cleanedImageUrl: uploaded.cleanedUrl ?? null,
       cleanedSource: uploaded.cleanedUrl ? "vision" : null,
+      imageQuality: polish.imageQuality,
+      productPolish: polish.productPolish,
+      imageSource,
+      cutoutSourceKind,
+      photoPipelineTraceId: traceId,
+      backgroundRemovalMethod: uploaded.cleanedUrl ? "client" : "none",
       "photos.originalUrl": uploaded.originalUrl,
       "photos.primaryUrl": primaryDisplayUrl,
       "photos.aiUrl": uploaded.aiUrl,
+      "photos.refinedUrl": uploaded.refinedUrl ?? null,
+      "photos.imageQuality": polish.imageQuality,
+      "photos.productPolish": polish.productPolish,
+      "photos.imageSource": imageSource,
+      "photos.cutoutSourceKind": cutoutSourceKind,
+      "photos.traceId": traceId,
       "photos.urls": nextImageUrls,
       "photos.images": nextImages,
       "photos.cleanedUrl": uploaded.cleanedUrl ?? null,
       "photos.cleanedSource": uploaded.cleanedUrl ? "vision" : null,
       "photos.normalizedUrl": uploaded.normalizedUrl ?? null,
-      ...(cutout.visualNormalization ? { visualNormalization: cutout.visualNormalization } : {}),
+      ...(cutout?.visualNormalization ? { visualNormalization: cutout.visualNormalization } : {}),
       primaryImageProcessingStatus: "complete",
-      primaryImageProcessingError: null,
+      primaryImageProcessingError:
+        !uploaded.cleanedUrl && polish.sourceKind === "polished"
+          ? "Background removal failed; using polished image."
+          : null,
       primaryImageProcessedAt: Date.now(),
       updatedAt: Date.now(),
+    });
+    logPhotoPipeline({
+      traceId,
+      step: "final_image_selected",
+      status: "success",
+      data: {
+        mode: "closet_quick_add",
+        imageSource,
+        cutoutSourceKind,
+        sourceKind: polish.sourceKind,
+        hasCleanedUrl: !!uploaded.cleanedUrl,
+        hasRefinedUrl: !!uploaded.refinedUrl,
+        fallbackReason:
+          !uploaded.cleanedUrl && polish.sourceKind === "polished"
+            ? "polished_cutout_failed_using_polished"
+            : null,
+      },
     });
     debugAuraAttachmentLog("[PRIMARY_POSTSAVE_CUTOUT] success with cleaned fields written", {
       uid,
       itemId,
       candidateId,
+      sourceKind: polish.sourceKind,
+      imageSource,
       originalImageUrl: uploaded.originalUrl,
       photoUrl: primaryDisplayUrl,
       cleanedImageUrl: uploaded.cleanedUrl ?? null,
+      refinedImageUrl: uploaded.refinedUrl ?? null,
       photosPrimaryUrl: primaryDisplayUrl,
       photosCleanedUrl: uploaded.cleanedUrl ?? null,
     });
@@ -902,18 +1218,45 @@ async function prepareAuraCandidateCutout(params: {
   localPhoto: AuraCandidateLocalPhoto;
   category: string;
   subCategory?: string | null;
+  traceId?: string | null;
+  sourceKind?: ProductImageVariant;
 }) {
-  const { uid, candidateId, localPhoto, category, subCategory } = params;
+  const { uid, candidateId, localPhoto, category, subCategory, traceId = null, sourceKind = "original" } = params;
   const localUri = normalizeFileUri(localPhoto.localUri);
   if (!localUri) return null;
 
   try {
+    logPhotoPipeline({
+      traceId,
+      step: "cutout_input_selected",
+      status: "success",
+      data: {
+        mode: "closet_quick_add",
+        sourceKind,
+        inputUriType: safeUriType(localUri),
+        hasAttachmentUri: !!localPhoto.attachmentUri,
+        width: localPhoto.width ?? null,
+        height: localPhoto.height ?? null,
+      },
+    });
     debugAuraAttachmentLog(AURA_CUTOUT_LOG, "starting client cutout for AURA candidate", {
       uid,
       candidateId,
+      sourceKind,
       hasAttachmentUri: !!localPhoto.attachmentUri,
       width: localPhoto.width ?? null,
       height: localPhoto.height ?? null,
+    });
+    const visionStartedAt = photoPipelineNow();
+    logPhotoPipeline({
+      traceId,
+      step: "vision_start",
+      status: "start",
+      data: {
+        mode: "closet_quick_add",
+        sourceKind,
+        inputUriType: safeUriType(localUri),
+      },
     });
     const cutout = await withTimeout(
       removeBackground(localUri, {
@@ -937,11 +1280,27 @@ async function prepareAuraCandidateCutout(params: {
     debugAuraAttachmentLog(AURA_CUTOUT_LOG, "client cutout finished", {
       uid,
       candidateId,
+      sourceKind,
       usableCutout,
       canNormalizePrimary,
       hasTransparency: cutout.hasTransparency,
       transparentPixelRatio: cutout.transparentPixelRatio,
       hasContentBounds: !!cutout.contentBounds,
+    });
+    logPhotoPipeline({
+      traceId,
+      step: usableCutout || canNormalizePrimary ? "vision_success" : "vision_failure",
+      status: usableCutout || canNormalizePrimary ? "success" : "failure",
+      durationMs: photoPipelineDuration(visionStartedAt),
+      data: {
+        mode: "closet_quick_add",
+        sourceKind,
+        usableCutout,
+        canNormalizePrimary,
+        hasTransparency: cutout.hasTransparency,
+        transparentPixelRatio: cutout.transparentPixelRatio,
+        hasContentBounds: !!cutout.contentBounds,
+      },
     });
     if (!usableCutout && !canNormalizePrimary) return null;
 
@@ -975,8 +1334,19 @@ async function prepareAuraCandidateCutout(params: {
     debugAuraAttachmentLog(AURA_CUTOUT_LOG, "client cutout failed; saving original only", {
       uid,
       candidateId,
+      sourceKind,
       errorMessage: error instanceof Error ? error.message : String(error),
       error,
+    });
+    logPhotoPipeline({
+      traceId,
+      step: "vision_failure",
+      status: "failure",
+      data: {
+        mode: "closet_quick_add",
+        sourceKind,
+        ...safeErrorData(error),
+      },
     });
     return null;
   }

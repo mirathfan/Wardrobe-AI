@@ -41,6 +41,7 @@ import { useAuth } from "@/src/hooks/useAuth";
 import { logAuraLookStyleEvent } from "@/src/lib/auraMemory";
 import { saveAuraFavoriteOutfit } from "@/src/lib/auraLooks";
 import { saveAuraOutfitFeedback } from "@/src/lib/auraOutfitFeedback";
+import { getFriendlyErrorMessage } from "@/src/lib/errors";
 import { Toast } from "@/src/lib/toast";
 import {
   feedbackTypeForSwipe,
@@ -49,6 +50,11 @@ import {
   type AuraSwipeDirectionLabel,
 } from "@/src/lib/auraSwipe";
 import { isVisibleWardrobeItem, listenToItems, toCanonicalCategory } from "@/src/lib/items";
+import {
+  buildLiveClosetItemIdSet,
+  filterOutfitItemsToLiveCloset,
+  hasDeletedClosetReferences,
+} from "@/src/lib/outfitLiveCloset";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 const SWIPE_X_THRESHOLD = 110;
@@ -128,6 +134,23 @@ function dedupeSwipeLooks(looks: AuraSwipeBatchLook[]) {
   });
 }
 
+function filterSwipeLooksToLiveCloset(looks: AuraSwipeBatchLook[], itemIds: Set<string>) {
+  return looks
+    .filter((lookEntry) => !hasDeletedClosetReferences(lookEntry.look, itemIds))
+    .map((lookEntry) => {
+      const look = filterOutfitItemsToLiveCloset(lookEntry.look, itemIds);
+      const liveLookItemIds = look.pieces
+        .filter((piece) => piece.source === "closet")
+        .map((piece) => String(piece.itemId ?? "").trim())
+        .filter(Boolean);
+      return {
+        ...lookEntry,
+        look,
+        itemIds: liveLookItemIds,
+      };
+    });
+}
+
 function swipeToastTitle(direction: AuraSwipeDirectionLabel) {
   if (direction === "right") return "Got it — more like this";
   if (direction === "left") return "Less of this";
@@ -172,6 +195,7 @@ export default function AuraSwipeScreen() {
   const [processingSwipe, setProcessingSwipe] = React.useState(false);
 
   const itemsById = React.useMemo(() => createEmptyItemsMap(items), [items]);
+  const liveItemIds = React.useMemo(() => buildLiveClosetItemIdSet(items), [items]);
   const counts = React.useMemo(() => wardrobeCounts(items), [items]);
   const canGenerate = counts.tops > 0 && counts.bottoms > 0 && counts.shoes > 0;
   const progress = React.useRef(new Animated.Value(0)).current;
@@ -245,7 +269,7 @@ export default function AuraSwipeScreen() {
       if (DEBUG_AURA_SWIPE_SCREEN) {
         console.log("[AURA_SWIPE] normalized response", result);
       }
-      setBatch(dedupeSwipeLooks(result.lookOptions));
+      setBatch(dedupeSwipeLooks(filterSwipeLooksToLiveCloset(result.lookOptions, liveItemIds)));
       setBatchId(result.batchId);
       setCurrentIndex(0);
       progress.setValue(0);
@@ -254,11 +278,22 @@ export default function AuraSwipeScreen() {
       if (DEBUG_AURA_SWIPE_SCREEN) {
         console.log("[AURA_SWIPE] loadBatch failed", loadError);
       }
-      setError(loadError instanceof Error ? loadError.message : "Unable to load swipe looks.");
+      setError(getFriendlyErrorMessage(loadError));
     } finally {
       setLoading(false);
     }
-  }, [canGenerate, items, progress, resetMotionValues, uid]);
+  }, [canGenerate, items, liveItemIds, progress, resetMotionValues, uid]);
+
+  React.useEffect(() => {
+    setBatch((currentBatch) => filterSwipeLooksToLiveCloset(currentBatch, liveItemIds));
+    setCurrentIndex((index) => Math.max(0, Math.min(index, Math.max(0, batch.length - 1))));
+  }, [batch.length, liveItemIds]);
+
+  React.useEffect(() => {
+    if (detailsLook && hasDeletedClosetReferences(detailsLook.look, liveItemIds)) {
+      setDetailsLook(null);
+    }
+  }, [detailsLook, liveItemIds]);
 
   React.useEffect(() => {
     if (!uid) return;

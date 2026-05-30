@@ -33,7 +33,30 @@ export const AURA_CHAT_INTENT_FIXTURES: AuraChatIntentFixture[] = [
     prompt: "make this outfit better",
     hasPreviousLook: true,
     expectedIntent: "MODIFY_OUTFIT",
-    expectedStructuredOutfit: false,
+    expectedStructuredOutfit: true,
+  },
+  {
+    prompt: "give me another version",
+    hasPreviousLook: true,
+    expectedIntent: "GENERATE_MORE",
+    expectedStructuredOutfit: true,
+  },
+  {
+    prompt: "switch the shoes",
+    hasPreviousLook: true,
+    expectedIntent: "MODIFY_OUTFIT",
+    expectedStructuredOutfit: true,
+  },
+  {
+    prompt: "nah too loud, something cleaner",
+    hasPreviousLook: true,
+    expectedIntent: "MODIFY_OUTFIT",
+    expectedStructuredOutfit: true,
+  },
+  {
+    prompt: "what should I wear for a first date?",
+    expectedIntent: "GENERATE_OUTFIT",
+    expectedStructuredOutfit: true,
   },
   {
     prompt: "complete this look",

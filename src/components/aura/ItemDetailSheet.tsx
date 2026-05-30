@@ -4,18 +4,22 @@ import { Animated, Easing, Modal, Pressable, StyleSheet, Text, View } from "reac
 
 import { Colors } from "@/constants/theme";
 import type { BoardPiece } from "@/src/lib/auraLookLayouts";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 
 type Props = {
   item: BoardPiece | null;
   visible: boolean;
   editable?: boolean;
+  removed?: boolean;
   onDismiss: () => void;
+  onRefresh?: () => void;
   onViewInCloset?: (item: BoardPiece) => void;
   onRemove?: (item: BoardPiece) => void;
 };
 
 function imageFor(item: BoardPiece) {
-  return item.image ?? item.cleanedImageUrl ?? item.imageUrl ?? null;
+  const resolved = resolveItemImage(item, { variant: "thumb", surface: "aura_look_card" });
+  return resolved.uri ? { uri: resolved.uri, resolved } : null;
 }
 
 function formatDate(value?: number | null) {
@@ -33,7 +37,9 @@ export function ItemDetailSheet({
   item,
   visible,
   editable = false,
+  removed = false,
   onDismiss,
+  onRefresh,
   onViewInCloset,
   onRemove,
 }: Props) {
@@ -76,17 +82,31 @@ export function ItemDetailSheet({
         <Pressable style={StyleSheet.absoluteFill} onPress={closeWithAnimation} />
         <Animated.View style={[styles.sheet, { transform: [{ translateY }] }]}>
           <View style={styles.handle} />
-          {item ? (
+          {removed ? (
+            <View style={styles.removedState}>
+              <Text style={styles.removedTitle}>This item was removed from your closet.</Text>
+              <Pressable
+                style={[styles.actionButton, styles.primaryAction, styles.refreshButton]}
+                onPress={() => {
+                  closeWithAnimation();
+                  onRefresh?.();
+                }}
+              >
+                <Text style={styles.primaryActionText}>Refresh</Text>
+              </Pressable>
+            </View>
+          ) : item ? (
             <>
               <View style={styles.header}>
                 <View style={styles.imageFrame}>
                   {image ? (
                     <AppImage
                       source={{
-                        uri: image,
+                        uri: image.uri,
                       }}
                       resizeMode="contain"
                       style={styles.image}
+                      onError={() => logResolvedItemImageLoadFailure(image.resolved)}
                     />
                   ) : (
                     <Text style={styles.imageFallbackText}>{item.itemName.slice(0, 1).toUpperCase()}</Text>
@@ -288,6 +308,20 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: "600",
     lineHeight: 19,
+  },
+  removedState: {
+    gap: 16,
+    paddingBottom: 6,
+    paddingTop: 4,
+  },
+  removedTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "600",
+    lineHeight: 24,
+  },
+  refreshButton: {
+    alignSelf: "stretch",
   },
   actions: {
     flexDirection: "row",

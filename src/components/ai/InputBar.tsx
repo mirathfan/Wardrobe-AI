@@ -80,6 +80,7 @@ export default function InputBar({
   onMicPress,
   recording,
   attachments = [],
+  focusSignal,
 }: {
   colors: AppColors;
   value: string;
@@ -101,6 +102,7 @@ export default function InputBar({
   onMicPress: () => void;
   recording?: boolean;
   attachments?: ChatAttachment[];
+  focusSignal?: number;
 }) {
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !loading;
   const canStop = loading && !!onStop;
@@ -115,6 +117,7 @@ export default function InputBar({
   const sendVisibilityAnim = React.useRef(new Animated.Value(canSend ? 1 : 0)).current;
   const sendMotionAnim = React.useRef(new Animated.Value(0)).current;
   const inputRef = React.useRef<TextInput>(null);
+  const lastFocusSignalRef = React.useRef(focusSignal);
   const lastAppliedHeightRef = React.useRef(BASE_ROW_HEIGHT);
   const nativeValueRef = React.useRef(value);
   const mirroredPropValueRef = React.useRef(value);
@@ -163,6 +166,15 @@ export default function InputBar({
       useNativeDriver: true,
     }).start();
   }, [menuAnim, menuOpen]);
+
+  React.useEffect(() => {
+    if (focusSignal == null || focusSignal === lastFocusSignalRef.current) return;
+    lastFocusSignalRef.current = focusSignal;
+    const frame = requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusSignal]);
 
   React.useEffect(() => {
     Animated.parallel([

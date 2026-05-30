@@ -1,5 +1,5 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import { getStorage } from "firebase-admin/storage";
 import OpenAI, { toFile } from "openai";
 
@@ -27,13 +27,14 @@ function isAllowedAudioContentType(value: string | null | undefined) {
 
 export const transcribeAuraAudio = onCall(
   { secrets: ["OPENAI_API_KEY"] },
-  async (request) => {
+  tracedHandler(async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw customError("unauthenticated", "unauthorized", "User must be signed in.");
     }
     await assertFunctionRateLimit(uid, "voiceTranscription", RATE_LIMITS.voiceTranscription);
     const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
 
     const storagePath = String(request.data?.storagePath ?? "").trim();
     const requestedMimeType = String(request.data?.mimeType ?? "").trim() || null;
@@ -109,5 +110,5 @@ export const transcribeAuraAudio = onCall(
         });
       });
     }
-  },
+  }),
 );

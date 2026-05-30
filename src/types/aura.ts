@@ -118,9 +118,14 @@ export type AuraCandidateAction =
 export type AuraLook = {
   id?: string | null;
   lookTitle: string;
+  occasion?: string | null;
   vibe: string;
   shortExplanation: string;
   stylingNote?: string;
+  confidence?: number | null;
+  warnings?: string[];
+  replacedFromOutfitId?: string | null;
+  mutationSummary?: string[];
   personalizationLabel?: string;
   personalizationNote?: string;
   stylingIntelligence?: StylingIntelligenceSummary | null;

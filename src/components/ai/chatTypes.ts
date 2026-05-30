@@ -7,6 +7,7 @@ export type ChatImageAttachment = {
   type: "image";
   uri: string;
   localUri?: string | null;
+  traceId?: string | null;
   mimeType?: string | null;
   storagePath?: string | null;
   groupId?: string | null;
@@ -27,6 +28,13 @@ export type ChatAudioAttachment = {
 };
 
 export type ChatAttachment = ChatImageAttachment | ChatAudioAttachment;
+
+export type ChatMessageActionAnchor = {
+  pageX: number;
+  pageY: number;
+  width?: number;
+  height?: number;
+};
 
 export type ChatOutfit = {
   id: string;

@@ -1,7 +1,7 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import {
   clampNumOutfits,
   MODEL,
@@ -230,8 +230,10 @@ async function parseOutfitIntent(
             role: "system",
             content: [
               "Extract outfit intent from user text.",
-              "Return JSON only with keys: occasion, formalityTarget, warmthTarget, needs, niceToHave, colorsWanted, colorsAvoid, avoidLogos, excludeLaundry, numOutfits.",
+              "Return JSON only with keys: occasion, formalityTarget, warmthTarget, needs, niceToHave, colorsWanted, colorsAvoid, excludedCategories, avoidLogos, excludeLaundry, numOutfits.",
               "No markdown. No prose. No additional keys.",
+              "Map detailed occasions into this enum: first date/date night/coffee date => date; fancy dinner/wedding/formal => formal; interview/business casual/work => work; club/rave => party; airport/travel => travel; gym => gym; casual/streetwear/lounge/beach/winter/summer => casual.",
+              "For date, wedding, interview, business casual, and formal requests, treat sports/team jerseys, gym shorts, slides, and overly sporty pieces as inappropriate unless the user explicitly requests sports bar, game day, football game, watch party, or a jersey.",
               "occasion enum: casual, smart_casual, formal, gym, date, work, party, travel, unknown.",
               "needs defaults to [top,bottom,footwear]. niceToHave may include outerwear and accessory.",
               "excludeLaundry defaults true.",
@@ -270,13 +272,14 @@ async function parseOutfitIntent(
 
 export const generateOutfitsV1 = onCall(
   {secrets: ["OPENAI_API_KEY"]},
-  async (request) => {
+  tracedHandler(async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
     await assertFunctionRateLimit(uid, "outfitGeneration", RATE_LIMITS.outfitGeneration);
     const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
 
     const intentText = String(request.data?.intentText ?? "").trim();
     if (!intentText) {
@@ -288,11 +291,19 @@ export const generateOutfitsV1 = onCall(
       request.data?.numOutfits ?? parsed.numOutfits ?? inferRequestedOutfitCount(intentText) ?? 3;
     const numOutfits = clampNumOutfits(requestedNumOutfits, 3);
     const requiredItemIds = requiredItemIdsFromRequest(request.data);
+    const requestExcludedCategories = cleanItemIdList(request.data?.excludedCategories, 8)
+      .map((value) => value.toLowerCase());
     const anchorItemIds = cleanItemIdList([
       ...requiredItemIds,
       ...(Array.isArray(request.data?.anchorItemIds) ? request.data.anchorItemIds : []),
     ], requiredItemIds.length ? 8 : 3);
-    const parsedIntent = parsed.intent;
+    const parsedIntent: OutfitIntentV1 = {
+      ...parsed.intent,
+      excludedCategories: Array.from(new Set([
+        ...(parsed.intent.excludedCategories ?? []),
+        ...requestExcludedCategories,
+      ])).slice(0, 8),
+    };
     logger.info("generateOutfitsV1 parsed intent", {
       uidHash,
       parsedIntentKeys: Object.keys(parsedIntent ?? {}),
@@ -401,5 +412,5 @@ export const generateOutfitsV1 = onCall(
     });
 
     return {outfits};
-  }
+  })
 );

@@ -1,15 +1,31 @@
 import { ClothingItem } from "../types/ClothingItem";
-import { MAX_WEARS_BEFORE_WASH, normalizeLaundryStatus, toCanonicalCategory } from "./items";
+import { isVisibleWardrobeItem, MAX_WEARS_BEFORE_WASH, normalizeLaundryStatus, toCanonicalCategory } from "./items";
 import {
   ACCESSORY_SLOT_ORDER,
   getAccessorySlot,
   type AccessorySlot,
 } from "@/shared/accessorySlots";
+import {
+  classifyAuraStylingIntent,
+  isItemIncompatibleWithOccasion,
+  scoreAuraOutfitQuality,
+  scoreAuraItemForIntent,
+} from "@/shared/auraStylingIntelligence";
+import {
+  isCapOrHat,
+  isCleanBaseLayer,
+  isLoungeBottom,
+  isOfficeFootwear,
+  isStructuredLayer,
+  isTankOrSleeveless,
+  scoreOutfitForOccasion,
+} from "@/shared/auraOutfitCritic";
 
 export type OutfitIntent = {
   occasion?: string;
   vibe?: string;
   colorPreference?: string[];
+  excludedCategories?: string[];
   includeOuterwear?: boolean;
   includeAccessory?: boolean;
   allowRewearToday?: boolean;
@@ -174,7 +190,45 @@ function colorPreferenceBonus(items: ClothingItem[], intent: OutfitIntent) {
   return bonus;
 }
 
+function uniqueNormalizedStrings(values: (string | null | undefined)[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const next = norm(value);
+    if (!next || seen.has(next)) continue;
+    seen.add(next);
+    out.push(next);
+  }
+  return out;
+}
+
+function auraIntentContext(intent: OutfitIntent) {
+  const classified = classifyAuraStylingIntent(
+    [intent.occasion, intent.vibe].filter(Boolean).join(" "),
+  );
+  return {
+    occasion: classified.occasion ?? intent.occasion,
+    vibe: classified.vibe ?? intent.vibe,
+    excludedColors: classified.excludedColors,
+    excludedCategories: uniqueNormalizedStrings([
+      ...(intent.excludedCategories ?? []),
+      ...classified.excludedCategories,
+    ]),
+    explicitSportsContext: classified.explicitSportsContext,
+  };
+}
+
+function auraCompatibilityScore(items: ClothingItem[], intent: OutfitIntent) {
+  const context = auraIntentContext(intent);
+  return items.reduce((sum, item) => {
+    const scored = scoreAuraItemForIntent(item, context);
+    return sum + scored.score * 3.5 - scored.penalties.length * 2.5;
+  }, 0);
+}
+
 const DEBUG_AURA_ACCESSORIES =
+  __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
+const DEBUG_AURA_CRITIC =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 const accessoryDiscardDebugKeys = new Set<string>();
 
@@ -395,10 +449,31 @@ function capitalize(v: string) {
 }
 
 function reasonText(items: ClothingItem[], intent: OutfitIntent) {
-  const base = [
-    "Balanced top, bottom, and shoes selection",
-    "good color harmony",
-  ];
+  const context = auraIntentContext(intent);
+  const quality = scoreAuraOutfitQuality(items, context);
+  const critic = scoreOutfitForOccasion({
+    userPrompt: intentText(intent),
+    occasion: context.occasion ?? intent.occasion,
+    vibe: context.vibe ?? intent.vibe,
+    items,
+  });
+  const occasion = norm(context.occasion);
+  if (occasion === "business_casual" || /\b(office|work|business casual|smart casual)\b/.test(intentText(intent))) {
+    return critic.positiveSignals.length
+      ? `Office-ready because it has ${critic.positiveSignals.slice(0, 2).join(" and ")}.`
+      : "A smart casual office base from the closet pieces available.";
+  }
+  if (occasion.includes("date")) {
+    return quality.signals.length
+      ? `Date-ready because it adds ${quality.signals.slice(0, 2).join(" and ")}.`
+      : "A clean date base from the closet pieces available.";
+  }
+  if (norm(context.vibe).includes("clean") || norm(context.vibe).includes("minimal")) {
+    return quality.signals.length
+      ? `Cleaner because it leans on ${quality.signals.slice(0, 2).join(" and ")}.`
+      : "A cleaner casual base from your closet.";
+  }
+  const base = ["Pulled together from your closet"];
 
   if ((intent.colorPreference ?? []).length > 0) {
     base.push("matches your color preference");
@@ -408,8 +483,203 @@ function reasonText(items: ClothingItem[], intent: OutfitIntent) {
   if (brands.length === 1 && brands[0]) {
     base.push(`consistent ${brands[0]} brand tone`);
   }
+  if (quality.signals.length) {
+    base.push(quality.signals.slice(0, 2).join(" and "));
+  }
 
   return `${base.join(", ")}.`;
+}
+
+function criticFeedbackForItems(
+  items: ClothingItem[],
+  intent: OutfitIntent,
+  context = auraIntentContext(intent),
+) {
+  return scoreOutfitForOccasion({
+    userPrompt: intentText(intent),
+    occasion: context.occasion ?? intent.occasion,
+    vibe: context.vibe ?? intent.vibe,
+    items,
+  });
+}
+
+function criticScoreAdjustment(feedback: ReturnType<typeof scoreOutfitForOccasion>) {
+  return (
+    (feedback.score - 72) * 0.18 -
+    feedback.blockingIssues.length * 12 -
+    feedback.warnings.length * 2.5
+  );
+}
+
+function debugAuraCritic(
+  label: string,
+  items: ClothingItem[],
+  feedback: ReturnType<typeof scoreOutfitForOccasion>,
+  extra: Record<string, unknown> = {},
+) {
+  if (!DEBUG_AURA_CRITIC) return;
+  console.log("[AURA_CRITIC]", label, {
+    score: feedback.score,
+    shouldRegenerate: feedback.shouldRegenerate,
+    blockingIssues: feedback.blockingIssues.map((issue) => issue.code),
+    warnings: feedback.warnings.map((issue) => issue.code),
+    itemIds: items.map((item) => item.id),
+    ...extra,
+  });
+}
+
+function itemRole(item: ClothingItem): "top" | "bottom" | "shoes" | "outerwear" | "accessory" {
+  const category = toCanonicalCategory(item.category);
+  return category === "one_piece" ? "top" : category;
+}
+
+function officeReplacementScore(
+  item: ClothingItem,
+  role: ReturnType<typeof itemRole>,
+  usedIds: Set<string>,
+  intent: OutfitIntent,
+  context: ReturnType<typeof auraIntentContext>,
+) {
+  if (usedIds.has(item.id)) return -999;
+  if (itemRole(item) !== role) return -999;
+  if (isItemIncompatibleWithOccasion(item, context.occasion, context.explicitSportsContext)) return -999;
+  const scored = scoreAuraItemForIntent(item, context);
+  if (scored.penalties.some((penalty) => penalty.startsWith("excluded_"))) return -999;
+  let score = scored.score;
+  if (role === "top") {
+    if (isTankOrSleeveless(item)) return -999;
+    if (isCleanBaseLayer(item)) score += 3.5;
+    if (/\b(button|polo|knit|sweater|collared|dress shirt|oxford)\b/.test(itemStyleText(item))) score += 3.5;
+  }
+  if (role === "bottom") {
+    if (isLoungeBottom(item)) return -999;
+    if (/\b(trouser|chino|slack|tailored|dark denim|clean denim)\b/.test(itemStyleText(item))) score += 4;
+  }
+  if (role === "shoes") {
+    if (!isOfficeFootwear(item)) score -= 2.5;
+    else score += 4;
+  }
+  if (role === "outerwear") {
+    if (isStructuredLayer(item)) score += 4;
+  }
+  if (role === "accessory" && isCapOrHat(item)) return -999;
+  score += colorPreferenceBonus([item], intent);
+  return score;
+}
+
+function chooseOfficeReplacement(
+  pool: ClothingItem[],
+  role: ReturnType<typeof itemRole>,
+  usedIds: Set<string>,
+  intent: OutfitIntent,
+  context: ReturnType<typeof auraIntentContext>,
+) {
+  return pool
+    .map((item) => ({
+      item,
+      score: officeReplacementScore(item, role, usedIds, intent, context),
+    }))
+    .filter((entry) => entry.score > -50)
+    .sort((a, b) => b.score - a.score)[0]?.item ?? null;
+}
+
+function repairCandidateWithCritic(params: {
+  candidate: ScoredOutfit;
+  itemsById: Map<string, ClothingItem>;
+  tops: ClothingItem[];
+  bottoms: ClothingItem[];
+  shoes: ClothingItem[];
+  outerwear: ClothingItem[];
+  accessories: ClothingItem[];
+  intent: OutfitIntent;
+  context: ReturnType<typeof auraIntentContext>;
+}) {
+  const currentItems = params.candidate.itemIds
+    .map((itemId) => params.itemsById.get(itemId))
+    .filter((item): item is ClothingItem => !!item);
+  const feedback = criticFeedbackForItems(currentItems, params.intent, params.context);
+  if (!feedback.shouldRegenerate) return params.candidate;
+
+  const nextIds = params.candidate.itemIds.slice();
+  const usedIds = new Set(nextIds);
+  let repaired = false;
+
+  const replaceRole = (role: ReturnType<typeof itemRole>, pool: ClothingItem[], predicate: (item: ClothingItem) => boolean) => {
+    const index = nextIds.findIndex((itemId) => {
+      const item = params.itemsById.get(itemId);
+      return !!item && itemRole(item) === role && predicate(item);
+    });
+    if (index < 0) return;
+    const previousId = nextIds[index];
+    usedIds.delete(previousId);
+    const replacement = chooseOfficeReplacement(pool, role, usedIds, params.intent, params.context);
+    if (!replacement) {
+      usedIds.add(previousId);
+      return;
+    }
+    nextIds[index] = replacement.id;
+    usedIds.add(replacement.id);
+    repaired = true;
+  };
+
+  replaceRole("top", params.tops, (item) => isTankOrSleeveless(item) || (!isCleanBaseLayer(item) && !/\b(button|polo|knit|sweater|collared|dress shirt|oxford)\b/.test(itemStyleText(item))));
+  replaceRole("bottom", params.bottoms, (item) => isLoungeBottom(item) || /\b(gym|athletic|shorts|sweatpants|joggers|drawstring)\b/.test(itemStyleText(item)));
+  replaceRole("shoes", params.shoes, (item) => !isOfficeFootwear(item));
+
+  const accessoryIndex = nextIds.findIndex((itemId) => {
+    const item = params.itemsById.get(itemId);
+    return !!item && itemRole(item) === "accessory" && isCapOrHat(item);
+  });
+  if (accessoryIndex >= 0) {
+    const previousId = nextIds[accessoryIndex];
+    usedIds.delete(previousId);
+    const replacement = chooseOfficeReplacement(params.accessories, "accessory", usedIds, params.intent, params.context);
+    if (replacement) {
+      nextIds[accessoryIndex] = replacement.id;
+      usedIds.add(replacement.id);
+    } else {
+      nextIds.splice(accessoryIndex, 1);
+    }
+    repaired = true;
+  }
+
+  const hasOuterwear = nextIds.some((itemId) => {
+    const item = params.itemsById.get(itemId);
+    return !!item && itemRole(item) === "outerwear";
+  });
+  const hasTee = nextIds.some((itemId) => {
+    const item = params.itemsById.get(itemId);
+    return !!item && itemRole(item) === "top" && isCleanBaseLayer(item) && /\b(tee|t shirt|tshirt)\b/.test(itemStyleText(item));
+  });
+  if (!hasOuterwear && hasTee) {
+    const layer = chooseOfficeReplacement(params.outerwear.filter(isStructuredLayer), "outerwear", usedIds, params.intent, params.context);
+    if (layer) {
+      nextIds.push(layer.id);
+      repaired = true;
+    }
+  }
+
+  if (!repaired) return params.candidate;
+  const nextItems = nextIds
+    .map((itemId) => params.itemsById.get(itemId))
+    .filter((item): item is ClothingItem => !!item);
+  const nextFeedback = criticFeedbackForItems(nextItems, params.intent, params.context);
+  debugAuraCritic("repaired_candidate", nextItems, nextFeedback, {
+    previousScore: feedback.score,
+    previousIssues: feedback.blockingIssues.map((issue) => issue.code),
+  });
+  return {
+    ...params.candidate,
+    itemIds: nextIds,
+    score:
+      params.candidate.score -
+      criticScoreAdjustment(feedback) +
+      criticScoreAdjustment(nextFeedback) +
+      (nextFeedback.shouldRegenerate ? 0 : 4),
+    reason: nextFeedback.shouldRegenerate
+      ? params.candidate.reason
+      : "AURA tightened this for office so it reads smart casual instead of weekend casual.",
+  };
 }
 
 function buildAccessoryOptions(
@@ -504,6 +774,7 @@ function generateSparseOutfits({
       .map((pool) => pool[index % pool.length])
       .filter((item, itemIndex, list) => list.findIndex((entry) => entry.id === item.id) === itemIndex);
     if (!comboItems.length) continue;
+    const critic = criticFeedbackForItems(comboItems, intent);
     candidates.push({
       itemIds: comboItems.map((item) => item.id),
       score:
@@ -512,7 +783,10 @@ function generateSparseOutfits({
         brandContinuityScore(comboItems) +
         colorPreferenceBonus(comboItems, intent) -
         wearPenalty(comboItems) -
-        diversityPenalty(comboItems.map((item) => item.id), intent),
+        diversityPenalty(comboItems.map((item) => item.id), intent) +
+        auraCompatibilityScore(comboItems, intent) +
+        scoreAuraOutfitQuality(comboItems, auraIntentContext(intent)).qualityScore * 0.85 +
+        criticScoreAdjustment(critic),
       title: "",
       reason:
         missingSuggestions.length > 0
@@ -521,9 +795,27 @@ function generateSparseOutfits({
     });
   }
 
-  candidates.sort((a, b) => b.score - a.score || b.itemIds.length - a.itemIds.length);
+  const itemsById = new Map(
+    [...tops, ...bottoms, ...shoes, ...outerwear, ...accessories].map((item) => [item.id, item]),
+  );
+  const auraContext = auraIntentContext(intent);
+  const reviewedCandidates = candidates.map((candidate) =>
+    repairCandidateWithCritic({
+      candidate,
+      itemsById,
+      tops,
+      bottoms,
+      shoes,
+      outerwear,
+      accessories,
+      intent,
+      context: auraContext,
+    }),
+  );
 
-  return candidates.slice(0, requestedOutfitCount(intent)).map((candidate, index) => ({
+  reviewedCandidates.sort((a, b) => b.score - a.score || b.itemIds.length - a.itemIds.length);
+
+  return reviewedCandidates.slice(0, requestedOutfitCount(intent)).map((candidate, index) => ({
     itemIds: candidate.itemIds,
     title: `Closest Closet Look ${index + 1}`,
     reason: candidate.reason,
@@ -535,10 +827,19 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
   const today = new Date();
   const allowWornStatus = !!intent.allowRewearToday || !!intent.allowOverWearLimit;
   const excludeSet = new Set((intent.excludeItemIds ?? []).map((id) => String(id).trim()).filter(Boolean));
+  const auraContext = auraIntentContext(intent);
 
   const filtered = items.filter((item) => {
     if (!item?.id) return false;
+    if (!isVisibleWardrobeItem(item)) return false;
     if (excludeSet.has(item.id)) return false;
+    const auraCompatibility = scoreAuraItemForIntent(item, auraContext);
+    if (auraCompatibility.penalties.some((penalty) => penalty.startsWith("excluded_"))) {
+      return false;
+    }
+    if (isItemIncompatibleWithOccasion(item, auraContext.occasion, auraContext.explicitSportsContext)) {
+      return false;
+    }
     const laundryStatus = normalizeLaundryStatus(item);
     if (laundryStatus === "in_laundry") return false;
     if (!allowWornStatus && laundryStatus !== "clean") return false;
@@ -568,6 +869,7 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
 
   const outerOptions = intent.includeOuterwear ? [null, ...outerwear.slice(0, 8)] : [null];
   const candidates: ScoredOutfit[] = [];
+  const itemsById = new Map(filtered.map((item) => [item.id, item]));
   let created = 0;
 
   for (const top of tops.slice(0, 16)) {
@@ -586,13 +888,17 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
               ...baseItems,
               ...dedupeAccessorySelection(acc, baseItems, intent),
             ];
+            const critic = criticFeedbackForItems(comboItems, intent, auraContext);
 
             const score =
               comboColorScore(comboItems) +
               brandContinuityScore(comboItems) +
               colorPreferenceBonus(comboItems, intent) -
               wearPenalty(comboItems) -
-              diversityPenalty(comboItems.map((x) => x.id), intent);
+              diversityPenalty(comboItems.map((x) => x.id), intent) +
+              auraCompatibilityScore(comboItems, intent) +
+              scoreAuraOutfitQuality(comboItems, auraContext).qualityScore * 0.85 +
+              criticScoreAdjustment(critic);
 
             candidates.push({
               itemIds: comboItems.map((x) => x.id),
@@ -613,16 +919,37 @@ export function generateOutfits(items: ClothingItem[], intent: OutfitIntent): Ou
     if (created >= 2000) break;
   }
 
-  candidates.sort((a, b) => b.score - a.score || a.itemIds.join("|").localeCompare(b.itemIds.join("|")));
+  const reviewedCandidates = candidates.map((candidate) =>
+    repairCandidateWithCritic({
+      candidate,
+      itemsById,
+      tops,
+      bottoms,
+      shoes,
+      outerwear,
+      accessories,
+      intent,
+      context: auraContext,
+    }),
+  );
+
+  reviewedCandidates.sort((a, b) => b.score - a.score || a.itemIds.join("|").localeCompare(b.itemIds.join("|")));
 
   const unique: OutfitSuggestion[] = [];
   const seen = new Set<string>();
   const targetCount = requestedOutfitCount(intent);
 
-  for (const c of candidates) {
+  for (const c of reviewedCandidates) {
     const key = [...c.itemIds].sort().join("|");
     if (seen.has(key)) continue;
     seen.add(key);
+    const selectedItems = c.itemIds
+      .map((itemId) => itemsById.get(itemId))
+      .filter((item): item is ClothingItem => !!item);
+    debugAuraCritic("selected_candidate", selectedItems, criticFeedbackForItems(selectedItems, intent, auraContext), {
+      selectedIndex: unique.length,
+      candidateScore: c.score,
+    });
     unique.push({
       itemIds: c.itemIds,
       reason: c.reason,

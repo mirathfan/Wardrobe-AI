@@ -1,7 +1,7 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 
 import {
   MODEL,
@@ -26,6 +26,7 @@ import {
   assertFunctionRateLimit,
   redactUid,
 } from "./shared/rateLimit";
+import { normalizeAuraLookCardMetadata } from "../../shared/auraStylingIntelligence";
 
 if (!getApps().length) {
   initializeApp();
@@ -59,7 +60,7 @@ type SwipeLookPayload = {
     fromCloset: string[];
     addToComplete: string[];
     alternates: string[];
-    actions: [];
+    actions: string[];
   };
 };
 
@@ -92,8 +93,10 @@ async function parseSwipeIntent(
             role: "system",
             content: [
               "Extract outfit intent from user text.",
-              "Return JSON only with keys: occasion, formalityTarget, warmthTarget, needs, niceToHave, colorsWanted, colorsAvoid, avoidLogos, excludeLaundry, numOutfits.",
+              "Return JSON only with keys: occasion, formalityTarget, warmthTarget, needs, niceToHave, colorsWanted, colorsAvoid, excludedCategories, avoidLogos, excludeLaundry, numOutfits.",
               "No markdown. No prose. No additional keys.",
+              "Map detailed occasions into this enum: first date/date night/coffee date => date; fancy dinner/wedding/formal => formal; interview/business casual/work => work; club/rave => party; airport/travel => travel; gym => gym; casual/streetwear/lounge/beach/winter/summer => casual.",
+              "For date, wedding, interview, business casual, and formal requests, treat sports/team jerseys, gym shorts, slides, and overly sporty pieces as inappropriate unless the user explicitly requests sports bar, game day, football game, watch party, or a jersey.",
               "occasion enum: casual, smart_casual, formal, gym, date, work, party, travel, unknown.",
               "needs defaults to [top,bottom,footwear]. niceToHave may include outerwear and accessory.",
               "excludeLaundry defaults true.",
@@ -244,6 +247,7 @@ function toSwipeLook(
   index: number,
   total: number,
   learnedSummary: string | null,
+  intentText: string,
 ): SwipeLookPayload {
   const pieces = outfit.picks.flatMap((pick) => {
     const item = itemsById.get(pick.itemId);
@@ -259,6 +263,21 @@ function toSwipeLook(
 
   const fromCloset = pieces.map((piece) => piece.itemName).filter(Boolean);
   const directionLabel = buildDirectionLabel(index, total);
+  const look = normalizeAuraLookCardMetadata({
+    id: `swipe_${index + 1}_${outfit.picks.map((pick) => pick.itemId).join("_").slice(0, 80)}`,
+    lookTitle: buildLookTitle(outfit, itemsById, index),
+    vibe: directionLabel ? `${directionLabel} direction` : "wardrobe direction",
+    shortExplanation: cleanString(outfit.reason) || "AURA built this from your wardrobe.",
+    stylingNote: outfit.stylingIntelligence?.stylingNotes[0] ?? buildStylingNote(outfit, itemsById),
+    personalizationLabel: directionLabel ? directionLabel.toUpperCase() : undefined,
+    personalizationNote: learnedSummary || undefined,
+    stylingIntelligence: outfit.stylingIntelligence ?? null,
+    pieces,
+    fromCloset,
+    addToComplete: [],
+    alternates: [],
+    actions: [],
+  }, { prompt: intentText });
 
   return {
     id: `swipe_${index + 1}`,
@@ -269,37 +288,33 @@ function toSwipeLook(
     stylingIntelligence: outfit.stylingIntelligence,
     directionLabel,
     itemIds: outfit.picks.map((pick) => pick.itemId),
-    look: {
-      id: `swipe_${index + 1}_${outfit.picks.map((pick) => pick.itemId).join("_").slice(0, 80)}`,
-      lookTitle: buildLookTitle(outfit, itemsById, index),
-      vibe: directionLabel ? `${directionLabel} direction` : "wardrobe direction",
-      shortExplanation: cleanString(outfit.reason) || "AURA built this from your wardrobe.",
-      stylingNote: outfit.stylingIntelligence?.stylingNotes[0] ?? buildStylingNote(outfit, itemsById),
-      personalizationLabel: directionLabel ? directionLabel.toUpperCase() : undefined,
-      personalizationNote: learnedSummary || undefined,
-      stylingIntelligence: outfit.stylingIntelligence ?? null,
-      pieces,
-      fromCloset,
-      addToComplete: [],
-      alternates: [],
-      actions: [],
-    },
+    look,
   };
 }
 
 export const generateAuraSwipeBatch = onCall(
   { secrets: ["OPENAI_API_KEY"] },
-  async (request) => {
+  tracedHandler(async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
     await assertFunctionRateLimit(uid, "outfitGeneration", RATE_LIMITS.outfitGeneration);
     const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
 
     const intentText = cleanString(request.data?.intentText) ||
       "Build a varied batch of outfit directions from my wardrobe. Keep them polished, wearable, and distinct.";
     const parsed = await parseSwipeIntent(intentText);
+    const requestExcludedCategories = cleanItemIdList(request.data?.excludedCategories, 8)
+      .map((value) => value.toLowerCase());
+    const parsedIntent: OutfitIntentV1 = {
+      ...parsed.intent,
+      excludedCategories: Array.from(new Set([
+        ...(parsed.intent.excludedCategories ?? []),
+        ...requestExcludedCategories,
+      ])).slice(0, 8),
+    };
     const requestedNumOutfits =
       request.data?.numOutfits ?? parsed.numOutfits ?? inferRequestedOutfitCount(intentText) ?? 8;
     const numOutfits = clampNumOutfits(requestedNumOutfits, 8);
@@ -336,7 +351,7 @@ export const generateAuraSwipeBatch = onCall(
     if (requiredItemIds.length && Object.keys(lockedItemsBySlot ?? {}).length < requiredItemIds.length) {
       throw new HttpsError("failed-precondition", "Selected closet item cannot be used as an outfit anchor.");
     }
-    let generated = generateOutfitCandidates(allItems, parsed.intent, {
+    let generated = generateOutfitCandidates(allItems, parsedIntent, {
       numOutfits,
       memory,
       excludeItemIds,
@@ -356,7 +371,7 @@ export const generateAuraSwipeBatch = onCall(
       throw new HttpsError("failed-precondition", "Could not build an outfit with the selected closet item.");
     }
     if (!generated.outfits.length && lockedItemsBySlot) {
-      generated = generateOutfitCandidates(allItems, parsed.intent, {
+      generated = generateOutfitCandidates(allItems, parsedIntent, {
         numOutfits,
         memory,
         excludeItemIds,
@@ -376,7 +391,7 @@ export const generateAuraSwipeBatch = onCall(
       throw new HttpsError("failed-precondition", "Could not build an outfit with the selected closet item.");
     }
     if (!generated.outfits.length && excludeItemIds.length) {
-      generated = generateOutfitCandidates(allItems, parsed.intent, {
+      generated = generateOutfitCandidates(allItems, parsedIntent, {
         numOutfits,
         memory,
         excludeItemIds: [],
@@ -417,7 +432,7 @@ export const generateAuraSwipeBatch = onCall(
     });
 
     const lookOptions = generated.outfits.map((outfit, index) =>
-      toSwipeLook(outfit, itemsById, index, generated.outfits.length, memory.learnedProfile?.summaryShort ?? null),
+      toSwipeLook(outfit, itemsById, index, generated.outfits.length, memory.learnedProfile?.summaryShort ?? null, intentText),
     );
 
     logger.info("generateAuraSwipeBatch response payload", {
@@ -434,5 +449,5 @@ export const generateAuraSwipeBatch = onCall(
       primaryLook: lookOptions[0] ?? null,
       looks: lookOptions,
     };
-  },
+  }),
 );

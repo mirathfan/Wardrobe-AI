@@ -1,6 +1,6 @@
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import { HttpsError, onRequest } from "firebase-functions/v2/https";
 import OpenAI from "openai";
 
@@ -64,6 +64,8 @@ import {
   isRateLimitError,
   redactUid,
 } from "./shared/rateLimit";
+import { allowedWebOrigins } from "./shared/cors";
+import { sanitizeUserInput } from "./shared/sanitize";
 import { buildManualOutfitLookFromPrompt } from "./shared/manualOutfitLook";
 import { buildConcreteOutfitLook } from "./shared/auraConcreteLook";
 import { scoreLookStylingFromPieces } from "./shared/styling/stylingScore";
@@ -77,21 +79,9 @@ const AURA_BACKEND_VERSION = "candidate-preview-url-v9-zara-product-api";
 const DEBUG_AURA_SPARSE =
   process.env.FUNCTIONS_EMULATOR === "true" || process.env.NODE_ENV !== "production";
 const DEBUG_AURA_DIVERSITY =
-  process.env.AURA_DEBUG === "1" ||
-  process.env.EXPO_PUBLIC_AURA_DEBUG === "1" ||
+  (process.env.FUNCTIONS_EMULATOR === "true" && process.env.AURA_DEBUG === "1") ||
   process.env.FUNCTIONS_EMULATOR === "true";
-
-function sanitizeUserInput(input: string): string {
-  return input
-    .trim()
-    .replace(/\0/g, "")
-    .slice(0, 2000)
-    .replace(/ignore previous instructions/gi, "")
-    .replace(/forget everything/gi, "")
-    .replace(/you are now/gi, "")
-    .replace(/system:/gi, "")
-    .replace(/assistant:/gi, "");
-}
+const ALLOWED_ORIGINS = allowedWebOrigins();
 
 function styleCoreNoteFromClientContext(value: unknown) {
   const context = (value && typeof value === "object"
@@ -582,9 +572,8 @@ function enforceOutfitDiversity(
       if (signature) selectedSignatures.add(signature);
     }
     return {
-      title: look.lookTitle,
-      itemIds,
-      signature,
+      pieceCount: itemIds.length,
+      hasSignature: !!signature,
       previousOverlap,
       duplicateWithinResponse,
       tooSimilar,
@@ -595,16 +584,15 @@ function enforceOutfitDiversity(
 
   if (DEBUG_AURA_DIVERSITY) {
     logger.info("[AURA_DIVERSITY] final look guard", {
-      previousItemIds: diversity.previousLookItemIds,
-      excludedItemIds: diversity.excludedItemIds,
-      recentItemIds: diversity.recentItemIds,
-      previousLookSignatures: diversity.previousLookSignatures,
+      previousItemCount: diversity.previousLookItemIds.length,
+      excludedItemCount: diversity.excludedItemIds.length,
+      recentItemCount: diversity.recentItemIds.length,
+      previousLookSignatureCount: diversity.previousLookSignatures.length,
       maxOverlap: diversity.maxOverlap,
       candidates: rejected,
       selected: selected.map((look) => ({
-        title: look.lookTitle,
-        itemIds: itemIdsForAuraLook(look),
-        signature: signatureForAuraLook(look),
+        pieceCount: itemIdsForAuraLook(look).length,
+        hasSignature: !!signatureForAuraLook(look),
         overlap: overlapWithPreviousLook(look, diversity),
       })),
     });
@@ -735,9 +723,14 @@ function normalizeAuraResponse(
 
     if (eligibleFootwear.length > 0 && selectedOwnedFootwear.length === 0) {
       logger.info("AURA stream footwear mismatch", {
-        eligibleFootwear,
-        selectedSuggestedFootwear,
-        selectedPieces: response.look.pieces,
+        eligibleFootwearCount: eligibleFootwear.length,
+        selectedSuggestedFootwearCount: selectedSuggestedFootwear.length,
+        selectedPieceSummary: response.look.pieces.map((piece) => ({
+          role: piece.role,
+          source: piece.source,
+          hasItemId: !!piece.itemId,
+          hasImageUrl: !!piece.imageUrl,
+        })),
       });
     }
   }
@@ -753,15 +746,15 @@ function normalizeAuraResponse(
   if (multiRequested && !response.lookOptions?.length && response.look) {
     logger.warn("[AURA_MULTI] stream multi-look request returned only one structured look", {
       requestedCount: parseRequestedLookCount(userMessage ?? ""),
-      lookTitle: response.look.lookTitle,
+      lookTitleLength: String(response.look.lookTitle ?? "").length,
     });
     response.lookOptions = [response.look];
   }
   if (multiRequested && !response.look && !response.lookOptions?.length) {
     logger.warn("[AURA_MULTI] stream multi-look request returned no structured looks", {
       requestedCount: parseRequestedLookCount(userMessage ?? ""),
-      title: response.title,
-      reply: response.reply,
+      titleLength: String(response.title ?? "").length,
+      replyLength: String(response.reply ?? "").length,
       ownedPiecesCount: response.ownedPieces?.length ?? 0,
       recommendedAdditionsCount: response.recommendedAdditions?.length ?? 0,
       outfitItemsCount: response.outfitItems?.length ?? 0,
@@ -810,12 +803,13 @@ function normalizeAuraResponse(
       isSparseWardrobe: auraContext?.isSparseWardrobe ?? false,
       categoryCounts: auraContext?.categoryCounts ?? null,
       detectedGaps: {
-        missingCore: gapContext?.missingCore?.map((gap) => gap.label) ?? [],
-        weakAreas: gapContext?.weakAreas?.map((gap) => gap.label) ?? [],
+        missingCoreCount: gapContext?.missingCore?.length ?? 0,
+        weakAreasCount: gapContext?.weakAreas?.length ?? 0,
+        suggestionCount: gapContext?.suggestions?.length ?? 0,
       },
-      missingPieces: response.missingPieces ?? [],
-      upgradeSuggestions: response.upgradeSuggestions ?? [],
-      upgradeSuggestionItems: response.upgradeSuggestionItems ?? [],
+      missingPiecesCount: response.missingPieces?.length ?? 0,
+      upgradeSuggestionsCount: response.upgradeSuggestions?.length ?? 0,
+      upgradeSuggestionItemsCount: response.upgradeSuggestionItems?.length ?? 0,
     });
   }
 
@@ -1105,8 +1099,8 @@ async function emitUrlCandidatePreview(params: {
 }
 
 export const askAuraStream = onRequest(
-  { cors: true, secrets: ["OPENAI_API_KEY"], timeoutSeconds: 120 },
-  async (req, res) => {
+  { cors: ALLOWED_ORIGINS, secrets: ["OPENAI_API_KEY"], timeoutSeconds: 120 },
+  tracedHandler(async (req, res) => {
     setupAuraStreamResponse(res);
 
     if (req.method === "OPTIONS") {
@@ -1140,6 +1134,7 @@ export const askAuraStream = onRequest(
       const uid = decodedToken.uid;
       await assertFunctionRateLimit(uid, "auraChat", RATE_LIMITS.auraChat);
       const uidHash = redactUid(uid);
+      setLogContext({ uidHash });
       const userMessage = sanitizeUserInput(String(req.body?.message ?? ""));
       const styleCoreNote = styleCoreNoteFromClientContext(req.body?.clientContext);
       const requiredItemIds = requiredItemIdsFromClientContext(req.body?.clientContext);
@@ -1536,7 +1531,7 @@ export const askAuraStream = onRequest(
           `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
           "Product link context:\nNo product links.\n\n" +
           "Attachments:\nNone.\n\n" +
-          `User request:\n${userMessage}`;
+          `User request:\n<user_message>\n${userMessage}\n</user_message>`;
 
         writeStatus(res, "responding");
         logger.info("[AURA_ROUTE] simple chat stream starting", {
@@ -1656,7 +1651,7 @@ export const askAuraStream = onRequest(
         `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
         `Product link context:\n${linkProductContext}\n\n` +
         `Attachments:\n${attachmentContextText(attachments)}\n\n` +
-        `User request:\n${userMessage}` +
+        `User request:\n<user_message>\n${userMessage}\n</user_message>` +
         buildMultiLookRequestNote(userMessage);
 
       writeStatus(res, "responding");
@@ -1933,5 +1928,5 @@ export const askAuraStream = onRequest(
       writeError(res, "AURA could not respond right now.");
       res.end();
     }
-  }
+  })
 );

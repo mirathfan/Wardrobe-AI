@@ -6,7 +6,12 @@ import { Text, View } from "react-native";
 import type { AppColors } from "@/constants/theme";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import { ACTION_GAP, CHIP_BORDER_WIDTH, CHIP_HEIGHT, CHIP_HORIZONTAL_PADDING, PILL_RADIUS } from "@/src/constants/auraControls";
-import { getItemImageDecoration, getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
+import { getItemImageDecoration, getItemImagePresentation } from "@/src/lib/itemImage";
+import {
+  filterOutfitItemsToLiveCloset,
+  getMissingClosetItemIds,
+} from "@/src/lib/outfitLiveCloset";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
@@ -45,7 +50,16 @@ function OutfitMessage({
   onMoreLikeThis,
   onSwap,
 }: OutfitMessageProps) {
-  const pickedItems = outfit.picks
+  const liveItemIds = React.useMemo(() => new Set(itemsById.keys()), [itemsById]);
+  const liveOutfit = React.useMemo(
+    () => filterOutfitItemsToLiveCloset(outfit, liveItemIds),
+    [liveItemIds, outfit],
+  );
+  const missingItemIds = React.useMemo(
+    () => getMissingClosetItemIds(outfit, liveItemIds),
+    [liveItemIds, outfit],
+  );
+  const pickedItems = liveOutfit.picks
     .map((pick) => ({
       slot: pick.slot,
       item: itemsById.get(pick.itemId),
@@ -116,9 +130,29 @@ function OutfitMessage({
         {cleanReason}
       </Text>
 
+      {missingItemIds.length ? (
+        <View
+          style={{
+            paddingHorizontal: 12,
+            paddingVertical: 9,
+            borderRadius: 15,
+            backgroundColor: colors.surfaceMuted,
+            borderWidth: CHIP_BORDER_WIDTH,
+            borderColor: colors.border,
+          }}
+        >
+          <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 17, fontWeight: "600" }}>
+            {missingItemIds.length === 1
+              ? "1 piece was removed from your closet."
+              : `${missingItemIds.length} pieces were removed from your closet.`}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={{ flexDirection: "row", gap: 10 }}>
         {pickedItems.map(({ slot, item }) => {
-          const imageUri = getItemImageUrl(item, { variant: "thumb" });
+          const resolvedImage = resolveItemImage(item, { variant: "thumb", surface: "ai_outfit" });
+          const imageUri = resolvedImage.uri;
           const imagePresentation = getItemImagePresentation(item, { surface: "ai_outfit" });
           const imageDecoration = getItemImageDecoration(item, "ai_outfit");
           return (
@@ -162,6 +196,7 @@ function OutfitMessage({
                       { width: "100%", height: "100%", borderRadius: 14 },
                       imagePresentation.imageStyle,
                     ]}
+                    onError={() => logResolvedItemImageLoadFailure(resolvedImage)}
                   />
                 ) : (
                   <View
@@ -190,7 +225,7 @@ function OutfitMessage({
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: ACTION_GAP }}>
         <AuraPressable
           onPress={onSave}
-          disabled={saving}
+          disabled={saving || !pickedItems.length}
           haptic="light"
           hapticTrigger="press"
           pressedScale={0.96}
@@ -206,13 +241,14 @@ function OutfitMessage({
             borderColor: colors.ctaCream,
             alignItems: "center",
             justifyContent: "center",
-            opacity: saving ? 0.6 : 1,
+            opacity: saving || !pickedItems.length ? 0.6 : 1,
           }}
         >
           <Text style={{ color: colors.ctaText, fontSize: 12, fontWeight: "600" }}>{saving ? "Saving..." : "Save to Today"}</Text>
         </AuraPressable>
         <AuraPressable
-          onPress={() => onSwap(outfit)}
+          onPress={() => onSwap(liveOutfit)}
+          disabled={!pickedItems.length}
           haptic="selection"
           hapticTrigger="press"
           pressedScale={0.96}
@@ -233,7 +269,8 @@ function OutfitMessage({
           <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "600" }}>Swap item</Text>
         </AuraPressable>
         <AuraPressable
-          onPress={() => onMoreLikeThis(outfit)}
+          onPress={() => onMoreLikeThis(liveOutfit)}
+          disabled={!pickedItems.length}
           haptic="selection"
           hapticTrigger="press"
           pressedScale={0.96}

@@ -105,8 +105,8 @@ export async function handleSharedAuraLookAction({
       });
       void onAfterPlan?.();
       Toast.success("Planned", "This look is now attached to today.");
-    } catch (error: any) {
-      Toast.error("Plan failed", error?.message ?? "Unable to plan this look for today.");
+    } catch {
+      Toast.error("Plan failed", "Unable to plan this look for today.");
     }
     return true;
   }
@@ -124,8 +124,8 @@ export async function handleSharedAuraLookAction({
         result.alreadyMarked ? "Already marked worn today" : "Marked as worn today",
         result.alreadyMarked ? "AURA will not double-count it." : undefined,
       );
-    } catch (error: any) {
-      Toast.error("Couldn't mark worn. Try again.", error?.message);
+    } catch {
+      Toast.error("Couldn't mark worn. Try again.");
     }
     return true;
   }

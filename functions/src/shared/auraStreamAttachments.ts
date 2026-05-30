@@ -1,4 +1,4 @@
-import { logger } from "firebase-functions/v2";
+import { logger } from "./logger";
 
 import { redactUid } from "./rateLimit";
 import { redactUrlForLogs, validateSafeUrlForFetch } from "./safeFetch";

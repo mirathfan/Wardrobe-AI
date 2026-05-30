@@ -1,7 +1,7 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import {
   applyFollowupToIntent,
   clampNumOutfits,
@@ -353,6 +353,9 @@ async function parseChatAction(params: {
             "Use one of these actions: generate_outfits, swap_item, tweak, ask_clarify, none.",
             "Return JSON keys only: assistantText, action, intentText, outfitCount, constraints, references, followup.",
             "constraints keys only: occasion, formalityTarget, warmthTarget, colorsWanted, colorsAvoid, avoidLogos, excludeLaundry, mustInclude, avoidItems, notes.",
+            "Indirect styling requests like 'give me a fit', 'another version', 'nah too loud', 'make it date appropriate', and 'switch the shoes' must use an outfit action, not action=none.",
+            "Map detailed occasions into constraints.occasion: first date/date night/coffee date => date; fancy dinner/wedding/formal => formal; interview/business casual/work => work; club/rave => party; airport/travel => travel.",
+            "For date, wedding, interview, business casual, and formal requests, add sports jerseys, team jerseys, gym shorts, slides, and overly sporty pieces to avoidItems unless the user explicitly requests sports bar, game day, football game, watch party, or a jersey.",
             "mustInclude entries may contain slot and itemHint. avoidItems entries may contain itemHint.",
             "references keys only: outfitId, slot.",
             "followup keys only: type.",
@@ -416,13 +419,14 @@ function buildIncompleteWardrobeMessage(slotCounts: Record<Slot, number>): strin
 
 export const outfitChatV1 = onCall(
   {secrets: ["OPENAI_API_KEY"]},
-  async (request) => {
+  tracedHandler(async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
-    await assertFunctionRateLimit(uid, "outfitGeneration", RATE_LIMITS.outfitGeneration);
+    await assertFunctionRateLimit(uid, "outfitChat", RATE_LIMITS.outfitChat);
     const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
 
     const message = String(request.data?.message ?? "").trim();
     const incomingThreadId = String(request.data?.threadId ?? "").trim() || null;
@@ -678,5 +682,5 @@ export const outfitChatV1 = onCall(
       assistantMessage: {text: assistantText},
       ...(outfits.length > 0 ? {outfits} : {}),
     };
-  }
+  })
 );

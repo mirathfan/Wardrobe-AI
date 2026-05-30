@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { logger } from "firebase-functions/v2";
+import { logger } from "./logger";
 
 export type AuraAttachmentForOutfitAnalysis = {
   type?: "image" | "audio";

@@ -1,5 +1,10 @@
 import OpenAI from "openai";
 import type { ProductExtraction } from "./productLinkExtractor";
+import {
+  applyNikeFootwearImagePreference,
+  isNikeProductUrlForImageRanking,
+  NIKE_FOOTWEAR_LEFT_PROFILE_REASON,
+} from "./nikeFootwearImageRanking";
 import { redactUrlForLogs } from "./safeFetch";
 
 const DEBUG_AURA_CANDIDATE_LOGS =
@@ -79,6 +84,8 @@ export type RankedProductImage = {
   isLifestyleOrBanner: boolean;
   isSideProfileFootwear?: boolean;
   isOverheadFootwear?: boolean;
+  toePointsLeft?: boolean;
+  selectedImageReason?: string | null;
   bucket?: ProductImageBucket;
 };
 
@@ -97,6 +104,7 @@ type RawProductImageRanking = {
   isLifestyleOrBanner: boolean;
   isSideProfileFootwear: boolean;
   isOverheadFootwear: boolean;
+  toePointsLeft?: boolean;
   containsMultipleGarments: boolean;
   reasons: string[];
 };
@@ -409,8 +417,9 @@ function productImageScore(params: {
   bucket: ProductImageBucket;
   url: string;
   isFootwearProduct?: boolean;
+  preferNikeFootwearLeftProfile?: boolean;
 }) {
-  const { result, bucket, url, isFootwearProduct } = params;
+  const { result, bucket, url, isFootwearProduct, preferNikeFootwearLeftProfile } = params;
   const baseScore = Math.max(0, Math.min(100, Number(result?.score ?? 20)));
   const signals = urlImageSignals(url);
   let score = baseScore + signals.score;
@@ -436,6 +445,14 @@ function productImageScore(params: {
       !result?.isLifestyleOrBanner;
     if (usableFootwearProductImage && result?.isSideProfileFootwear) {
       score += 170;
+    }
+    if (
+      preferNikeFootwearLeftProfile &&
+      usableFootwearProductImage &&
+      result?.isSideProfileFootwear &&
+      result?.toePointsLeft
+    ) {
+      score += 260;
     }
     if (usableFootwearProductImage && result?.isOverheadFootwear) {
       score -= 80;
@@ -515,26 +532,26 @@ function logProductImageBuckets(params: {
     buckets[item.bucket ?? "unknown"].push(item.url);
   }
   debugAuraCandidateInfo("[LINK_PRIMARY_BUCKETS]", {
-    sourceUrl: params.sourceUrl ?? null,
+    sourceUrl: redactUrlForLogs(params.sourceUrl),
     garmentOnlyCount: buckets.garment_only.length,
     modelEditorialCount: buckets.model_editorial.length,
     detailOrCropCount: buckets.detail_or_crop.length,
     unknownCount: buckets.unknown.length,
-    garmentOnlyUrls: buckets.garment_only,
-    modelEditorialUrls: buckets.model_editorial,
-    detailOrCropUrls: buckets.detail_or_crop,
-    unknownUrls: buckets.unknown,
+    garmentOnlyUrls: buckets.garment_only.map((url) => redactUrlForLogs(url)),
+    modelEditorialUrls: buckets.model_editorial.map((url) => redactUrlForLogs(url)),
+    detailOrCropUrls: buckets.detail_or_crop.map((url) => redactUrlForLogs(url)),
+    unknownUrls: buckets.unknown.map((url) => redactUrlForLogs(url)),
   });
   debugAuraCandidateInfo("[LINK_IMAGE_BUCKETS]", {
-    sourceUrl: params.sourceUrl ?? null,
+    sourceUrl: redactUrlForLogs(params.sourceUrl),
     garmentOnlyCount: buckets.garment_only.length,
     modelEditorialCount: buckets.model_editorial.length,
     detailOrCropCount: buckets.detail_or_crop.length,
     unknownCount: buckets.unknown.length,
-    garmentOnlyUrls: buckets.garment_only,
-    modelEditorialUrls: buckets.model_editorial,
-    detailOrCropUrls: buckets.detail_or_crop,
-    unknownUrls: buckets.unknown,
+    garmentOnlyUrls: buckets.garment_only.map((url) => redactUrlForLogs(url)),
+    modelEditorialUrls: buckets.model_editorial.map((url) => redactUrlForLogs(url)),
+    detailOrCropUrls: buckets.detail_or_crop.map((url) => redactUrlForLogs(url)),
+    unknownUrls: buckets.unknown.map((url) => redactUrlForLogs(url)),
   });
 }
 
@@ -574,13 +591,13 @@ function logRankedProductImages(params: {
   selected: RankedProductImage | undefined;
 }) {
   debugAuraCandidateInfo("[LINK_IMAGE_RANKING_SUMMARY]", {
-    sourceUrl: params.sourceUrl ?? null,
-    selectedPrimaryImageUrl: params.selected?.url ?? null,
+    sourceUrl: redactUrlForLogs(params.sourceUrl),
+    selectedPrimaryImageUrl: redactUrlForLogs(params.selected?.url),
     selectedScore: params.selected?.score ?? null,
     selectedReasons: params.selected?.reasons ?? [],
     rankings: params.items.map((item) => ({
       sourceIndex: item.sourceIndex,
-      url: item.url,
+      url: redactUrlForLogs(item.url),
       score: item.score,
       urlScore: item.urlScore,
       bucket: item.bucket ?? "unknown",
@@ -594,17 +611,85 @@ function logRankedProductImages(params: {
       isLifestyleOrBanner: item.isLifestyleOrBanner,
       isSideProfileFootwear: item.isSideProfileFootwear ?? false,
       isOverheadFootwear: item.isOverheadFootwear ?? false,
+      toePointsLeft: item.toePointsLeft ?? false,
+      selectedImageReason: item.selectedImageReason ?? null,
       reasons: item.reasons,
     })),
   });
 }
 
-function isFootwearProductText(title?: string | null, description?: string | null) {
+function isFootwearProductText(
+  title?: string | null,
+  description?: string | null,
+  categoryHints?: Array<string | null | undefined>,
+) {
+  const categoryText = (categoryHints ?? []).filter(Boolean).join(" ");
+  if (/\b(footwear|shoes?|sneakers?|trainers?|boots?|sandals?|loafers?)\b/i.test(categoryText)) {
+    return true;
+  }
   const hints = productCategoryHintsFromText(title, description);
   if (hints.category === "footwear") return true;
   return /\b(air force|jordan|dunk|shoe|shoes|sneaker|sneakers|trainer|trainers|boot|boots|loafer|loafers|sandal|sandals|footwear)\b/i.test(
     `${title ?? ""} ${description ?? ""}`,
   );
+}
+
+function maybeApplyNikeFootwearImagePreference(params: {
+  ranked: RankedProductImage[];
+  preferNikeFootwearLeftProfile?: boolean;
+  sourceUrl?: string | null;
+  title?: string | null;
+  description?: string | null;
+  categoryHints?: Array<string | null | undefined>;
+}): {
+  ranked: RankedProductImage[];
+  selectedImageReason: string | null;
+} {
+  if (!params.preferNikeFootwearLeftProfile) {
+    return {
+      ranked: params.ranked,
+      selectedImageReason: null as string | null,
+    };
+  }
+  const preference = applyNikeFootwearImagePreference(params.ranked, {
+    sourceUrl: params.sourceUrl,
+    title: params.title,
+    description: params.description,
+    categoryHints: params.categoryHints,
+  });
+  if (!preference.selectedImageReason || !preference.candidates.length) {
+    return {
+      ranked: params.ranked,
+      selectedImageReason: null as string | null,
+    };
+  }
+  const selectedImageReason = preference.selectedImageReason;
+  const ranked: RankedProductImage[] = preference.candidates.map((item, index) =>
+    index === 0
+      ? {
+          ...item,
+          selectedImageReason,
+          reasons: Array.from(new Set([selectedImageReason, ...item.reasons])),
+        }
+      : item,
+  );
+  debugAuraCandidateInfo("[LINK_IMAGE_NIKE_FOOTWEAR_PREFERENCE]", {
+    sourceUrl: redactUrlForLogs(params.sourceUrl),
+    selectedImageReason: preference.selectedImageReason,
+    selectedImageUrl: redactUrlForLogs(ranked[0]?.url),
+    rankings: preference.rankedCandidates.slice(0, 8).map((entry) => ({
+      url: redactUrlForLogs(entry.url),
+      score: entry.nikeFootwearScore,
+      confidence: entry.leftFacingConfidence,
+      rejected: entry.isRejectedNikeFootwearImage,
+      confidentLeftProfile: entry.isConfidentLeftProfile,
+      reasons: entry.nikeFootwearReasons,
+    })),
+  });
+  return {
+    ranked,
+    selectedImageReason,
+  };
 }
 
 export async function rankProductLinkImages(params: {
@@ -613,25 +698,42 @@ export async function rankProductLinkImages(params: {
   title?: string | null;
   description?: string | null;
   sourceUrl?: string | null;
+  categoryHints?: Array<string | null | undefined>;
+  preferNikeFootwearLeftProfile?: boolean;
 }): Promise<RankedProductImage[]> {
   const extractedImageCount = params.imageUrls.length;
   const imageUrls = stableUniqueUrls(params.imageUrls).slice(0, 24);
-  const isFootwearProduct = isFootwearProductText(params.title, params.description);
+  const shouldConsiderNikeFootwearPreference =
+    !!params.preferNikeFootwearLeftProfile && isNikeProductUrlForImageRanking(params.sourceUrl);
+  const isFootwearProduct = isFootwearProductText(
+    params.title,
+    params.description,
+    shouldConsiderNikeFootwearPreference ? params.categoryHints : undefined,
+  );
   const urlOnlyRanked = imageUrls.map((url, index) => rankedImageFromUrlOnly(url, index));
   const visionRankCandidates = selectVisionRankCandidates(urlOnlyRanked);
   debugAuraCandidateInfo("[LINK_IMAGE_CANDIDATES]", {
-    sourceUrl: params.sourceUrl ?? null,
+    sourceUrl: redactUrlForLogs(params.sourceUrl),
     candidateCount: imageUrls.length,
-    urls: imageUrls,
+    urls: imageUrls.map((url) => redactUrlForLogs(url)),
     title: params.title ?? null,
     isFootwearProduct,
   });
   if (imageUrls.length <= 1) {
-    const ranked = imageUrls.map((url, index) => ({
+    const urlRanked = imageUrls.map((url, index) => ({
       ...rankedImageFromUrlOnly(url, index),
       score: 50 + urlImageSignals(url).score,
       reasons: ["only image candidate", ...urlImageSignals(url).reasons],
     }));
+    const nikePreference = maybeApplyNikeFootwearImagePreference({
+      ranked: urlRanked,
+      preferNikeFootwearLeftProfile: params.preferNikeFootwearLeftProfile,
+      sourceUrl: params.sourceUrl,
+      title: params.title,
+      description: params.description,
+      categoryHints: params.categoryHints,
+    });
+    const ranked = nikePreference.ranked;
     logProductImageBuckets({ sourceUrl: params.sourceUrl, items: ranked });
     logRankedProductImages({
       sourceUrl: params.sourceUrl,
@@ -644,31 +746,40 @@ export async function rankProductLinkImages(params: {
       dedupedImageCount: imageUrls.length,
       visionRankedImageCount: 0,
       selected: ranked[0],
-      selectedReason: ranked[0]?.reasons[0] ?? "only image candidate",
+      selectedReason: nikePreference.selectedImageReason ?? ranked[0]?.reasons[0] ?? "only image candidate",
     });
     debugAuraCandidateInfo("[LINK_PRIMARY_CHOSEN]", {
-      sourceUrl: params.sourceUrl ?? null,
-      primaryImageUrl: ranked[0]?.url ?? null,
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
+      primaryImageUrl: redactUrlForLogs(ranked[0]?.url),
       bucket: ranked[0]?.bucket ?? null,
       score: ranked[0]?.score ?? null,
       reasons: ranked[0]?.reasons ?? [],
       garmentOnlyAvailable: ranked.some((item) => item.bucket === "garment_only"),
     });
     debugAuraCandidateInfo("[LINK_IMAGE_PRIMARY]", {
-      sourceUrl: params.sourceUrl ?? null,
-      primaryImageUrl: ranked[0]?.url ?? null,
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
+      primaryImageUrl: redactUrlForLogs(ranked[0]?.url),
       primaryReasons: ranked[0]?.reasons ?? [],
       primaryIsGarmentOnly: ranked[0]?.isGarmentOnly ?? false,
     });
     debugAuraCandidateInfo("[LINK_IMAGE_SECONDARY]", {
-      sourceUrl: params.sourceUrl ?? null,
-      secondaryImageUrls: ranked.slice(1).map((item) => item.url),
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
+      secondaryImageUrls: ranked.slice(1).map((item) => redactUrlForLogs(item.url)),
     });
     return ranked;
   }
 
   if (!visionRankCandidates.length) {
-    const ranked = orderProductImageBuckets(urlOnlyRanked);
+    const bucketRanked = orderProductImageBuckets(urlOnlyRanked);
+    const nikePreference = maybeApplyNikeFootwearImagePreference({
+      ranked: bucketRanked,
+      preferNikeFootwearLeftProfile: params.preferNikeFootwearLeftProfile,
+      sourceUrl: params.sourceUrl,
+      title: params.title,
+      description: params.description,
+      categoryHints: params.categoryHints,
+    });
+    const ranked = nikePreference.ranked;
     logProductImageBuckets({ sourceUrl: params.sourceUrl, items: ranked });
     logRankedProductImages({
       sourceUrl: params.sourceUrl,
@@ -681,9 +792,62 @@ export async function rankProductLinkImages(params: {
       dedupedImageCount: imageUrls.length,
       visionRankedImageCount: 0,
       selected: ranked[0],
-      selectedReason: ranked[0]?.reasons[0] ?? "URL heuristic only",
+      selectedReason: nikePreference.selectedImageReason ?? ranked[0]?.reasons[0] ?? "URL heuristic only",
     });
     return ranked;
+  }
+
+  const shouldPreferNikeFootwearLeftProfile =
+    shouldConsiderNikeFootwearPreference && isFootwearProduct;
+  const developerInstruction =
+    "Rank retail product images for wardrobe item ingestion. Prefer a clean garment-only/product-only packshot over model/editorial images when both clearly show the product. The primary wardrobe image should show the complete target garment/product clearly. For footwear, if a clean side/lateral profile product photo of the shoe is available, prefer it as primary over top-down, overhead, pair, sole, or detail views. A side/lateral footwear profile is a horizontal shoe image from the side, often toe pointing left or right; only prefer it when the full shoe is visible and it is not cropped. Penalize detail crops, fabric/texture shots, zoomed logos or chest graphics, thumbnails, banners, social previews, and lifestyle images where the item is not the clear product. A garment-only/product-only image has no visible person, model, limbs, head, torso, mannequin, or full outfit; it is usually a standalone garment on a plain studio background or flat lay. Any image with a person wearing the item, even if the target product is visible, is model/editorial. A full clean model shot is better than a cropped detail close-up only when no garment-only/product-only packshot is available. If the title says shirt, shorts, jeans, or another specific garment, a full-body model wearing other garments is not garment-only." +
+    (shouldPreferNikeFootwearLeftProfile
+      ? " For Nike footwear only, set toePointsLeft true only when the shoe is a side/profile product image and the toe/front clearly points left. Do not infer left-facing from a vague product URL alone."
+      : "");
+  const userInstruction =
+    "For each image index, score 0-100 for usefulness as the primary wardrobe item image and classify whether it is garment-only/product-only, model/editorial, front-facing/canonical, whether the full target product is visible, whether it is a footwear side/lateral profile view, whether it is a footwear overhead/top-down view, whether it is a detail close-up, cropped/partial, thumbnail, social/banner/lifestyle image, and whether it contains multiple visible garments." +
+    (shouldPreferNikeFootwearLeftProfile
+      ? " For Nike footwear, also classify toePointsLeft; true means the toe/front clearly points left in a clean side-profile product image."
+      : "") +
+    " Return JSON only.";
+  const rankingProperties: Record<string, unknown> = {
+    index: { type: "number" },
+    score: { type: "number" },
+    isGarmentOnly: { type: "boolean" },
+    isModelImage: { type: "boolean" },
+    isFrontFacing: { type: "boolean" },
+    hasFullProductVisible: { type: "boolean" },
+    isDetailCloseUp: { type: "boolean" },
+    isCropped: { type: "boolean" },
+    isThumbnail: { type: "boolean" },
+    isLifestyleOrBanner: { type: "boolean" },
+    isSideProfileFootwear: { type: "boolean" },
+    isOverheadFootwear: { type: "boolean" },
+    containsMultipleGarments: { type: "boolean" },
+    reasons: {
+      type: "array",
+      items: { type: "string" },
+    },
+  };
+  const rankingRequired = [
+    "index",
+    "score",
+    "isGarmentOnly",
+    "isModelImage",
+    "isFrontFacing",
+    "hasFullProductVisible",
+    "isDetailCloseUp",
+    "isCropped",
+    "isThumbnail",
+    "isLifestyleOrBanner",
+    "isSideProfileFootwear",
+    "isOverheadFootwear",
+    "containsMultipleGarments",
+    "reasons",
+  ];
+  if (shouldPreferNikeFootwearLeftProfile) {
+    rankingProperties.toePointsLeft = { type: "boolean" };
+    rankingRequired.push("toePointsLeft");
   }
 
   try {
@@ -692,8 +856,7 @@ export async function rankProductLinkImages(params: {
       input: [
         {
           role: "developer",
-          content:
-            "Rank retail product images for wardrobe item ingestion. Prefer a clean garment-only/product-only packshot over model/editorial images when both clearly show the product. The primary wardrobe image should show the complete target garment/product clearly. For footwear, if a clean side/lateral profile product photo of the shoe is available, prefer it as primary over top-down, overhead, pair, sole, or detail views. A side/lateral footwear profile is a horizontal shoe image from the side, often toe pointing left or right; only prefer it when the full shoe is visible and it is not cropped. Penalize detail crops, fabric/texture shots, zoomed logos or chest graphics, thumbnails, banners, social previews, and lifestyle images where the item is not the clear product. A garment-only/product-only image has no visible person, model, limbs, head, torso, mannequin, or full outfit; it is usually a standalone garment on a plain studio background or flat lay. Any image with a person wearing the item, even if the target product is visible, is model/editorial. A full clean model shot is better than a cropped detail close-up only when no garment-only/product-only packshot is available. If the title says shirt, shorts, jeans, or another specific garment, a full-body model wearing other garments is not garment-only.",
+          content: developerInstruction,
         },
         {
           role: "user",
@@ -703,7 +866,7 @@ export async function rankProductLinkImages(params: {
               text:
                 `Product title: ${params.title ?? "unknown"}\n` +
                 `Description: ${params.description ?? "unknown"}\n` +
-                "For each image index, score 0-100 for usefulness as the primary wardrobe item image and classify whether it is garment-only/product-only, model/editorial, front-facing/canonical, whether the full target product is visible, whether it is a footwear side/lateral profile view, whether it is a footwear overhead/top-down view, whether it is a detail close-up, cropped/partial, thumbnail, social/banner/lifestyle image, and whether it contains multiple visible garments. Return JSON only.",
+                userInstruction,
             },
             ...visionRankCandidates.flatMap((item) => [
               {
@@ -732,41 +895,8 @@ export async function rankProductLinkImages(params: {
                 items: {
                   type: "object",
                   additionalProperties: false,
-                  properties: {
-                    index: { type: "number" },
-                    score: { type: "number" },
-                    isGarmentOnly: { type: "boolean" },
-                    isModelImage: { type: "boolean" },
-                    isFrontFacing: { type: "boolean" },
-                    hasFullProductVisible: { type: "boolean" },
-                    isDetailCloseUp: { type: "boolean" },
-                    isCropped: { type: "boolean" },
-                    isThumbnail: { type: "boolean" },
-                    isLifestyleOrBanner: { type: "boolean" },
-                    isSideProfileFootwear: { type: "boolean" },
-                    isOverheadFootwear: { type: "boolean" },
-                    containsMultipleGarments: { type: "boolean" },
-                    reasons: {
-                      type: "array",
-                      items: { type: "string" },
-                    },
-                  },
-                  required: [
-                    "index",
-                    "score",
-                    "isGarmentOnly",
-                    "isModelImage",
-                    "isFrontFacing",
-                    "hasFullProductVisible",
-                    "isDetailCloseUp",
-                    "isCropped",
-                    "isThumbnail",
-                    "isLifestyleOrBanner",
-                    "isSideProfileFootwear",
-                    "isOverheadFootwear",
-                    "containsMultipleGarments",
-                    "reasons",
-                  ],
+                  properties: rankingProperties,
+                  required: rankingRequired,
                 },
               },
             },
@@ -789,6 +919,7 @@ export async function rankProductLinkImages(params: {
         isLifestyleOrBanner: boolean;
         isSideProfileFootwear: boolean;
         isOverheadFootwear: boolean;
+        toePointsLeft?: boolean;
         containsMultipleGarments: boolean;
         reasons: string[];
       }[];
@@ -809,7 +940,13 @@ export async function rankProductLinkImages(params: {
         signals.detailPenalty || signals.thumbnailPenalty || signals.socialPenalty
           ? "detail_or_crop"
           : productImageBucket(result);
-      const score = productImageScore({ result, bucket, url, isFootwearProduct });
+      const score = productImageScore({
+        result,
+        bucket,
+        url,
+        isFootwearProduct,
+        preferNikeFootwearLeftProfile: shouldPreferNikeFootwearLeftProfile,
+      });
       const combinedReasons = [
         ...(result?.reasons?.slice(0, 4) ?? ["not ranked by model"]),
         ...signals.reasons.slice(0, 3),
@@ -830,12 +967,13 @@ export async function rankProductLinkImages(params: {
         isLifestyleOrBanner: !!result?.isLifestyleOrBanner || signals.socialPenalty,
         isSideProfileFootwear: !!result?.isSideProfileFootwear,
         isOverheadFootwear: !!result?.isOverheadFootwear,
+        toePointsLeft: shouldPreferNikeFootwearLeftProfile ? !!result?.toePointsLeft : false,
         bucket,
       };
       debugAuraCandidateInfo("[LINK_PRIMARY_SCORE]", {
-        sourceUrl: params.sourceUrl ?? null,
+        sourceUrl: redactUrlForLogs(params.sourceUrl),
         index,
-        url,
+        url: redactUrlForLogs(url),
         bucket: item.bucket,
         baseScore: result?.score ?? null,
         urlScore: item.urlScore,
@@ -850,13 +988,14 @@ export async function rankProductLinkImages(params: {
         isLifestyleOrBanner: item.isLifestyleOrBanner,
         isSideProfileFootwear: item.isSideProfileFootwear,
         isOverheadFootwear: item.isOverheadFootwear,
+        toePointsLeft: item.toePointsLeft,
         containsMultipleGarments: !!result?.containsMultipleGarments,
         reasons: item.reasons,
       });
       debugAuraCandidateInfo("[LINK_IMAGE_SCORE]", {
-        sourceUrl: params.sourceUrl ?? null,
+        sourceUrl: redactUrlForLogs(params.sourceUrl),
         index,
-        url,
+        url: redactUrlForLogs(url),
         score: item.score,
         urlScore: item.urlScore,
         isGarmentOnly: item.isGarmentOnly,
@@ -869,12 +1008,22 @@ export async function rankProductLinkImages(params: {
         isLifestyleOrBanner: item.isLifestyleOrBanner,
         isSideProfileFootwear: item.isSideProfileFootwear,
         isOverheadFootwear: item.isOverheadFootwear,
+        toePointsLeft: item.toePointsLeft,
         reasons: item.reasons,
       });
       return item;
     });
     logProductImageBuckets({ sourceUrl: params.sourceUrl, items: scored });
-    const ranked = orderProductImageBuckets(scored);
+    const bucketRanked = orderProductImageBuckets(scored);
+    const nikePreference = maybeApplyNikeFootwearImagePreference({
+      ranked: bucketRanked,
+      preferNikeFootwearLeftProfile: params.preferNikeFootwearLeftProfile,
+      sourceUrl: params.sourceUrl,
+      title: params.title,
+      description: params.description,
+      categoryHints: params.categoryHints,
+    });
+    const ranked = nikePreference.ranked;
     logRankedProductImages({
       sourceUrl: params.sourceUrl,
       items: ranked,
@@ -886,39 +1035,48 @@ export async function rankProductLinkImages(params: {
       dedupedImageCount: imageUrls.length,
       visionRankedImageCount: visionRankCandidates.length,
       selected: ranked[0],
-      selectedReason: ranked[0]?.reasons[0] ?? "vision and URL ranking",
+      selectedReason: nikePreference.selectedImageReason ?? ranked[0]?.reasons[0] ?? "vision and URL ranking",
     });
     debugAuraCandidateInfo("[LINK_PRIMARY_CHOSEN]", {
-      sourceUrl: params.sourceUrl ?? null,
-      primaryImageUrl: ranked[0]?.url ?? null,
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
+      primaryImageUrl: redactUrlForLogs(ranked[0]?.url),
       bucket: ranked[0]?.bucket ?? null,
       score: ranked[0]?.score ?? null,
       reasons: ranked[0]?.reasons ?? [],
       garmentOnlyAvailable: scored.some((item) => item.bucket === "garment_only"),
     });
     debugAuraCandidateInfo("[LINK_IMAGE_PRIMARY]", {
-      sourceUrl: params.sourceUrl ?? null,
-      primaryImageUrl: ranked[0]?.url ?? null,
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
+      primaryImageUrl: redactUrlForLogs(ranked[0]?.url),
       primaryReasons: ranked[0]?.reasons ?? [],
       primaryIsGarmentOnly: ranked[0]?.isGarmentOnly ?? false,
     });
     debugAuraCandidateInfo("[LINK_IMAGE_SECONDARY]", {
-      sourceUrl: params.sourceUrl ?? null,
-      secondaryImageUrls: ranked.slice(1).map((item) => item.url),
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
+      secondaryImageUrls: ranked.slice(1).map((item) => redactUrlForLogs(item.url)),
     });
     return ranked;
   } catch (error) {
     debugAuraCandidateWarn("[LINK_IMAGE_SCORE]", "visual ranking failed; using deterministic URL ranking", {
-      sourceUrl: params.sourceUrl ?? null,
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
       error,
     });
-    const ranked = orderProductImageBuckets(urlOnlyRanked);
+    const bucketRanked = orderProductImageBuckets(urlOnlyRanked);
+    const nikePreference = maybeApplyNikeFootwearImagePreference({
+      ranked: bucketRanked,
+      preferNikeFootwearLeftProfile: params.preferNikeFootwearLeftProfile,
+      sourceUrl: params.sourceUrl,
+      title: params.title,
+      description: params.description,
+      categoryHints: params.categoryHints,
+    });
+    const ranked = nikePreference.ranked;
     logProductImageBuckets({ sourceUrl: params.sourceUrl, items: ranked });
     for (const item of ranked) {
       debugAuraCandidateInfo("[LINK_IMAGE_SCORE]", {
-        sourceUrl: params.sourceUrl ?? null,
+        sourceUrl: redactUrlForLogs(params.sourceUrl),
         index: item.sourceIndex,
-        url: item.url,
+        url: redactUrlForLogs(item.url),
         score: item.score,
         urlScore: item.urlScore,
         bucket: item.bucket,
@@ -936,25 +1094,25 @@ export async function rankProductLinkImages(params: {
       dedupedImageCount: imageUrls.length,
       visionRankedImageCount: visionRankCandidates.length,
       selected: ranked[0],
-      selectedReason: ranked[0]?.reasons[0] ?? "deterministic URL fallback",
+      selectedReason: nikePreference.selectedImageReason ?? ranked[0]?.reasons[0] ?? "deterministic URL fallback",
     });
     debugAuraCandidateInfo("[LINK_PRIMARY_CHOSEN]", {
-      sourceUrl: params.sourceUrl ?? null,
-      primaryImageUrl: ranked[0]?.url ?? null,
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
+      primaryImageUrl: redactUrlForLogs(ranked[0]?.url),
       bucket: ranked[0]?.bucket ?? null,
       score: ranked[0]?.score ?? null,
       reasons: ranked[0]?.reasons ?? [],
       garmentOnlyAvailable: false,
     });
     debugAuraCandidateInfo("[LINK_IMAGE_PRIMARY]", {
-      sourceUrl: params.sourceUrl ?? null,
-      primaryImageUrl: ranked[0]?.url ?? null,
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
+      primaryImageUrl: redactUrlForLogs(ranked[0]?.url),
       primaryReasons: ranked[0]?.reasons ?? [],
       primaryIsGarmentOnly: ranked[0]?.isGarmentOnly ?? false,
     });
     debugAuraCandidateInfo("[LINK_IMAGE_SECONDARY]", {
-      sourceUrl: params.sourceUrl ?? null,
-      secondaryImageUrls: ranked.slice(1).map((item) => item.url),
+      sourceUrl: redactUrlForLogs(params.sourceUrl),
+      secondaryImageUrls: ranked.slice(1).map((item) => redactUrlForLogs(item.url)),
     });
     return ranked;
   }
@@ -963,6 +1121,7 @@ export async function rankProductLinkImages(params: {
 export async function rankProductExtractionImages(params: {
   client: OpenAI;
   extraction: ProductExtraction;
+  preferNikeFootwearLeftProfile?: boolean;
 }): Promise<ProductExtraction> {
   const rankedImages = await rankProductLinkImages({
     client: params.client,
@@ -970,21 +1129,36 @@ export async function rankProductExtractionImages(params: {
     title: params.extraction.metadata.title,
     description: params.extraction.metadata.description,
     sourceUrl: params.extraction.metadata.sourceUrl,
+    categoryHints: params.preferNikeFootwearLeftProfile
+      ? params.extraction.metadata.categoryHints
+      : undefined,
+    preferNikeFootwearLeftProfile: params.preferNikeFootwearLeftProfile,
   });
   const imageUrls = rankedImages.map((image) => image.url);
+  const selectedImageReason =
+    rankedImages[0]?.selectedImageReason === NIKE_FOOTWEAR_LEFT_PROFILE_REASON
+      ? NIKE_FOOTWEAR_LEFT_PROFILE_REASON
+      : params.extraction.selectedImageReason ?? null;
   debugAuraCandidateInfo("[LINK_IMAGE_EXTRACTION_RANKED]", {
-    sourceUrl: params.extraction.metadata.sourceUrl,
-    primaryImageUrl: imageUrls[0] ?? null,
-    imageUrls,
+    sourceUrl: redactUrlForLogs(params.extraction.metadata.sourceUrl),
+    primaryImageUrl: redactUrlForLogs(imageUrls[0]),
+    selectedImageReason,
+    imageUrls: imageUrls.map((url) => redactUrlForLogs(url)),
     rankings: rankedImages.map((image) => ({
-      url: image.url,
+      url: redactUrlForLogs(image.url),
       score: image.score,
       bucket: image.bucket ?? "unknown",
+      selectedImageReason: image.selectedImageReason ?? null,
       reasons: image.reasons,
     })),
   });
   return {
     ...params.extraction,
+    selectedImageReason,
+    metadata: {
+      ...params.extraction.metadata,
+      selectedImageReason,
+    },
     imageUrls: imageUrls.length ? imageUrls : params.extraction.imageUrls,
     partialData: params.extraction.partialData
       ? {

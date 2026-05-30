@@ -1,6 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, Easing, Text, View, type DimensionValue } from "react-native";
+import {
+  ActivityIndicator,
+  Animated,
+  Easing,
+  Image as RNImage,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type DimensionValue,
+  type GestureResponderEvent,
+} from "react-native";
 import Reanimated, {
   Easing as ReanimatedEasing,
   useAnimatedStyle,
@@ -12,7 +26,6 @@ import { Fonts, type AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import AppImage from "@/src/components/common/AppImage";
-import { AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { formatOutfitAnalysisSentence } from "@/src/lib/auraOutfitAnalysisDisplay";
 import { formatUrlForDisplay, isUrlOnlyMessage } from "@/src/lib/formatChatText";
@@ -22,7 +35,7 @@ import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLook, Aura
 
 import AuraReplyCard from "./AuraReplyCard";
 import OutfitMessage from "./OutfitMessage";
-import type { AIMessage, ChatAttachment, ChatImageAttachment } from "./chatTypes";
+import type { AIMessage, ChatAttachment, ChatImageAttachment, ChatMessageActionAnchor } from "./chatTypes";
 import { auraShadow } from "./aiTheme";
 
 const USER_SINGLE_IMAGE_MIN_WIDTH = 180;
@@ -32,6 +45,42 @@ const USER_MULTI_IMAGE_MAX_GRID_WIDTH = 248;
 const USER_MULTI_IMAGE_MIN_GRID_WIDTH = 196;
 const USER_IMAGE_RADIUS = 20;
 const STREAM_TAIL_REVEAL_MS = 130;
+
+function actionAnchorFromEvent(event: GestureResponderEvent): ChatMessageActionAnchor {
+  return {
+    pageX: event.nativeEvent.pageX,
+    pageY: event.nativeEvent.pageY,
+  };
+}
+
+function measuredAnchorFromRect(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fallback: ChatMessageActionAnchor,
+): ChatMessageActionAnchor {
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    return fallback;
+  }
+  return { pageX: x, pageY: y, width, height };
+}
+
+function measureActionAnchor(
+  ref: React.RefObject<React.ComponentRef<typeof View> | null>,
+  event: GestureResponderEvent,
+  onAnchor: (anchor: ChatMessageActionAnchor) => void,
+) {
+  const fallback = actionAnchorFromEvent(event);
+  const node = ref.current;
+  if (!node?.measureInWindow) {
+    onAnchor(fallback);
+    return;
+  }
+  node.measureInWindow((x, y, width, height) => {
+    onAnchor(measuredAnchorFromRect(x, y, width, height, fallback));
+  });
+}
 
 function TypingDots({ colors, pulse }: { colors: AppColors; pulse: Animated.Value }) {
   return (
@@ -238,38 +287,38 @@ function FormattedAuraText({
 
   if (!blocks.length) return null;
 
+  const selectableText = blocks
+    .map((block) =>
+      block
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .join("\n\n");
+
   return (
-    <View style={{ gap: 12, marginLeft, marginRight, maxWidth }}>
-      {blocks.map((block, blockIndex) => {
-        const lines = block
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean);
-        return (
-          <View key={`${blockIndex}-${lines[0] ?? "block"}`} style={{ gap: lines.length > 1 ? 6 : 0 }}>
-            {lines.map((line, lineIndex) => {
-              const isListLine = /^[-•]\s+/.test(line) || /^\d+[.)]\s+/.test(line);
-              const isHeaderLine = !isListLine && line.endsWith(":") && line.length <= 64;
-              return (
-                <AuraText
-                  key={`${blockIndex}-${lineIndex}-${line}`}
-                  variant={isHeaderLine ? "bodyStrong" : "body"}
-                  tone="primary"
-                  style={{
-                    color: isHeaderLine ? colors.textPrimary : colors.textSecondary,
-                    fontSize: isHeaderLine ? 14.5 : 15,
-                    lineHeight: isHeaderLine ? 20 : 23,
-                    paddingLeft: isListLine ? 8 : 0,
-                  }}
-                >
-                  {line}
-                </AuraText>
-              );
-            })}
-          </View>
-        );
-      })}
-    </View>
+    <TextInput
+      value={selectableText}
+      editable={false}
+      multiline
+      scrollEnabled={false}
+      textAlignVertical="top"
+      keyboardAppearance="dark"
+      selectionColor={colors.aiAccent}
+      style={{
+        marginLeft,
+        marginRight,
+        width: maxWidth,
+        color: colors.textSecondary,
+        fontSize: 15,
+        lineHeight: 23,
+        fontWeight: "400",
+        fontFamily: Fonts.sans,
+        padding: 0,
+        backgroundColor: "transparent",
+      }}
+    />
   );
 }
 
@@ -287,6 +336,7 @@ type ChatMessageProps = {
   onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
   onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
   onRetryAuraResponse?: (message: AIMessage) => void;
+  onMessageActionPress?: (message: AIMessage, anchor: ChatMessageActionAnchor) => void;
 };
 
 function ChatMessage({
@@ -303,6 +353,7 @@ function ChatMessage({
   onAuraOutfitPhotoAction,
   onAuraLaundryAction,
   onRetryAuraResponse,
+  onMessageActionPress,
 }: ChatMessageProps) {
   const layout = useResponsiveLayout();
   const fade = useRef(new Animated.Value(0)).current;
@@ -332,6 +383,25 @@ function ChatMessage({
   );
   const nonImageAttachments = messageAttachments.filter((attachment) => attachment.type !== "image");
   const hasUserImageAttachments = isUser && imageAttachments.length > 0;
+  const userImageTextBubbleRef = useRef<React.ComponentRef<typeof View>>(null);
+  const userBubbleRef = useRef<React.ComponentRef<typeof View>>(null);
+  const [previewImage, setPreviewImage] = useState<ChatImageAttachment | null>(null);
+  const openMessageActionsFromRef = React.useCallback(
+    (event: GestureResponderEvent, anchorRef: React.RefObject<React.ComponentRef<typeof View> | null>) => {
+      if (message.streaming) return;
+      if (!onMessageActionPress) return;
+      measureActionAnchor(anchorRef, event, (anchor) => onMessageActionPress(message, anchor));
+    },
+    [message, onMessageActionPress],
+  );
+  const imagePreviewModal = previewImage ? (
+    <ImagePreviewModal
+      attachment={previewImage}
+      colors={colors}
+      visible
+      onClose={() => setPreviewImage(null)}
+    />
+  ) : null;
 
   useEffect(() => {
     if (isStructuredCard) {
@@ -431,67 +501,75 @@ function ChatMessage({
 
   if (message.type === "outfit" && message.outfits?.length) {
     return (
-      <View style={{ gap: 10 }}>
-        <Animated.View style={{ opacity: introFade, transform: [{ translateY: rise }, { scale }] }}>
-          <StructuredAuraIntro colors={colors} text={structuredIntroText} compact />
-        </Animated.View>
-        <OutfitCardEntry>
-          <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }], gap: 12 }}>
-            {message.outfits.map((outfit, index) => (
-              <OutfitMessage
-                key={`${message.id}-${outfit.id}`}
-                colors={colors}
-                outfit={outfit}
-                itemsById={itemsById}
-                saving={savingId === outfit.id}
-                index={index}
-                memoryHint={memoryHint}
-                onSave={() => onSaveOutfit(outfit.id)}
-                onMoreLikeThis={onMoreLikeThis}
-                onSwap={onSwapOutfit}
-              />
-            ))}
+      <>
+        <View style={{ gap: 10 }}>
+          <Animated.View style={{ opacity: introFade, transform: [{ translateY: rise }, { scale }] }}>
+            <StructuredAuraIntro colors={colors} text={structuredIntroText} compact />
           </Animated.View>
-        </OutfitCardEntry>
-      </View>
+          <AssistantActionButton colors={colors} message={message} onOpen={onMessageActionPress} />
+          <OutfitCardEntry>
+            <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }], gap: 12 }}>
+              {message.outfits.map((outfit, index) => (
+                <OutfitMessage
+                  key={`${message.id}-${outfit.id}`}
+                  colors={colors}
+                  outfit={outfit}
+                  itemsById={itemsById}
+                  saving={savingId === outfit.id}
+                  index={index}
+                  memoryHint={memoryHint}
+                  onSave={() => onSaveOutfit(outfit.id)}
+                  onMoreLikeThis={onMoreLikeThis}
+                  onSwap={onSwapOutfit}
+                />
+              ))}
+            </Animated.View>
+          </OutfitCardEntry>
+        </View>
+        {imagePreviewModal}
+      </>
     );
   }
 
   if (message.kind === "aura_card" && message.aura) {
     const isLookSurface = !!message.aura.look || !!message.aura.lookOptions?.length;
     return (
-      <View
-        style={{
-          alignItems: "stretch",
-          marginLeft: 0,
-          marginRight: isLookSurface ? 0 : 8,
-          gap: 10,
-        }}
-      >
-        <Animated.View style={{ opacity: introFade, transform: [{ translateY: rise }, { scale }] }}>
-          <StructuredAuraIntro colors={colors} text={structuredIntroText} compact={isLookSurface} />
-        </Animated.View>
-        <OutfitCardEntry>
-          <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }] }}>
-            <View style={{ maxWidth: "100%", marginLeft: 0, marginTop: 2 }}>
-              <AuraReplyCard
-                data={message.aura}
-                itemsById={itemsById}
-                onAction={onAuraAction ? (action, look, lookOption) => onAuraAction(action, message, look, lookOption) : undefined}
-                onCandidateAction={
-                  onAuraCandidateAction ? (action) => onAuraCandidateAction(action, message) : undefined
-                }
-                onOutfitPhotoAction={
-                  onAuraOutfitPhotoAction ? (action) => onAuraOutfitPhotoAction(action, message) : undefined
-                }
-                onLaundryAction={
-                  onAuraLaundryAction ? (action) => onAuraLaundryAction(action, message) : undefined
-                }
-              />
-            </View>
+      <>
+        <View
+          style={{
+            alignItems: "stretch",
+            marginLeft: 0,
+            marginRight: isLookSurface ? 0 : 8,
+            gap: 10,
+          }}
+        >
+          <Animated.View style={{ opacity: introFade, transform: [{ translateY: rise }, { scale }] }}>
+            <StructuredAuraIntro colors={colors} text={structuredIntroText} compact={isLookSurface} />
           </Animated.View>
-        </OutfitCardEntry>
-      </View>
+          <AssistantActionButton colors={colors} message={message} onOpen={onMessageActionPress} />
+          <OutfitCardEntry>
+            <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }] }}>
+              <View style={{ maxWidth: "100%", marginLeft: 0, marginTop: 2 }}>
+                <AuraReplyCard
+                  data={message.aura}
+                  itemsById={itemsById}
+                  onAction={onAuraAction ? (action, look, lookOption) => onAuraAction(action, message, look, lookOption) : undefined}
+                  onCandidateAction={
+                    onAuraCandidateAction ? (action) => onAuraCandidateAction(action, message) : undefined
+                  }
+                  onOutfitPhotoAction={
+                    onAuraOutfitPhotoAction ? (action) => onAuraOutfitPhotoAction(action, message) : undefined
+                  }
+                  onLaundryAction={
+                    onAuraLaundryAction ? (action) => onAuraLaundryAction(action, message) : undefined
+                  }
+                />
+              </View>
+            </Animated.View>
+          </OutfitCardEntry>
+        </View>
+        {imagePreviewModal}
+      </>
     );
   }
 
@@ -574,26 +652,30 @@ function ChatMessage({
 
   if (isAuraText) {
     return (
-      <Animated.View
-        style={{
-          opacity: fade,
-          transform: [{ translateY: rise }, { scale }],
-          alignItems: "stretch",
-          marginRight: 8,
-          marginLeft: 0,
-          gap: 6,
-        }}
-      >
-        {isStreamingPlaceholder ? (
-          <TypingDots colors={colors} pulse={pulse} />
-        ) : displayText ? (
-          message.streaming ? (
-            <SmoothStreamingText text={displayText} colors={colors} />
-          ) : (
-            <FormattedAuraText text={displayText} colors={colors} />
-          )
-        ) : null}
-      </Animated.View>
+      <>
+        <Animated.View
+          style={{
+            opacity: fade,
+            transform: [{ translateY: rise }, { scale }],
+            alignItems: "stretch",
+            marginRight: 8,
+            marginLeft: 0,
+            gap: 6,
+          }}
+        >
+          {isStreamingPlaceholder ? (
+            <TypingDots colors={colors} pulse={pulse} />
+          ) : displayText ? (
+            message.streaming ? (
+              <SmoothStreamingText text={displayText} colors={colors} />
+            ) : (
+              <FormattedAuraText text={displayText} colors={colors} />
+            )
+          ) : null}
+          <AssistantActionButton colors={colors} message={message} onOpen={onMessageActionPress} />
+        </Animated.View>
+        {imagePreviewModal}
+      </>
     );
   }
 
@@ -612,6 +694,7 @@ function ChatMessage({
           layoutWidth={layout.width}
           screenSize={layout.screenSize}
           colors={colors}
+          onImagePress={setPreviewImage}
         />
         {nonImageAttachments.length ? (
           <View
@@ -632,8 +715,13 @@ function ChatMessage({
           </View>
         ) : null}
         {formattedUserText ? (
-          <View
-            style={{
+          <Pressable
+            ref={userImageTextBubbleRef}
+            delayLongPress={260}
+            onLongPress={(event) => openMessageActionsFromRef(event, userImageTextBubbleRef)}
+            accessibilityRole="button"
+            accessibilityLabel="Open message actions"
+            style={({ pressed }) => ({
               maxWidth: isUserUrlOnly ? "68%" : "74%",
               borderRadius: 22,
               paddingHorizontal: 13,
@@ -643,8 +731,9 @@ function ChatMessage({
               borderColor: userBubbleBorder,
               marginLeft: 74,
               marginRight: 6,
+              opacity: pressed ? 0.92 : 1,
               ...auraShadow(0.06),
-            }}
+            })}
           >
             <Text
               numberOfLines={isUserUrlOnly ? 2 : undefined}
@@ -659,57 +748,81 @@ function ChatMessage({
             >
               {formattedUserText}
             </Text>
-          </View>
+          </Pressable>
         ) : null}
+        {imagePreviewModal}
       </Animated.View>
     );
   }
+
+  const fallbackBubbleStyle = {
+    maxWidth: isUserUrlOnly ? "68%" : isUser ? "74%" : isAuraText ? "76%" : "78%",
+    borderRadius: 22,
+    paddingHorizontal: isUser ? 13 : 15,
+    paddingVertical: isUserUrlOnly ? 7 : isUser ? 8 : 10,
+    backgroundColor: isUser ? userBubbleSurface : assistantSurface,
+    borderWidth: 1,
+    borderColor: isUser ? userBubbleBorder : assistantBorder,
+    marginLeft: isUser ? 74 : layout.screenSize === "compact" ? 4 : 6,
+    marginRight: isUser ? 6 : 28,
+    ...auraShadow(isUser ? 0.06 : 0.04),
+  } as const;
+  const fallbackBubbleContent = isStreamingPlaceholder ? (
+    <TypingDots colors={colors} pulse={pulse} />
+  ) : (
+    <>
+      {messageAttachments.length ? (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: displayText ? 8 : 0 }}>
+          <AttachmentPreviews
+            attachments={messageAttachments}
+            colors={colors}
+            isUser={isUser}
+            onImagePress={setPreviewImage}
+          />
+        </View>
+      ) : null}
+      {formattedUserText ? (
+        <Text
+          selectable={!isUser}
+          numberOfLines={isUserUrlOnly ? 2 : undefined}
+          ellipsizeMode={isUserUrlOnly ? "tail" : undefined}
+          style={{
+            color: colors.text,
+            fontSize: 14.5,
+            lineHeight: 21,
+            fontWeight: "400",
+            fontFamily: Fonts.sans,
+          }}
+        >
+          {formattedUserText}
+        </Text>
+      ) : null}
+    </>
+  );
 
   return (
     <Animated.View
       style={{ opacity: fade, transform: [{ translateY: rise }, { scale }], alignItems: isUser ? "flex-end" : "flex-start" }}
     >
-      <View
-          style={{
-            maxWidth: isUserUrlOnly ? "68%" : isUser ? "74%" : isAuraText ? "76%" : "78%",
-            borderRadius: 22,
-            paddingHorizontal: isUser ? 13 : 15,
-            paddingVertical: isUserUrlOnly ? 7 : isUser ? 8 : 10,
-            backgroundColor: isUser ? userBubbleSurface : assistantSurface,
-            borderWidth: 1,
-            borderColor: isUser ? userBubbleBorder : assistantBorder,
-            marginLeft: isUser ? 74 : layout.screenSize === "compact" ? 4 : 6,
-            marginRight: isUser ? 6 : 28,
-            ...auraShadow(isUser ? 0.06 : 0.04),
-          }}
-      >
-        {isStreamingPlaceholder ? (
-          <TypingDots colors={colors} pulse={pulse} />
-        ) : (
-          <>
-            {messageAttachments.length ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: displayText ? 8 : 0 }}>
-                <AttachmentPreviews attachments={messageAttachments} colors={colors} isUser={isUser} />
-              </View>
-            ) : null}
-            {formattedUserText ? (
-              <Text
-                numberOfLines={isUserUrlOnly ? 2 : undefined}
-                ellipsizeMode={isUserUrlOnly ? "tail" : undefined}
-                style={{
-                  color: isUser ? colors.text : colors.text,
-                  fontSize: 14.5,
-                  lineHeight: 21,
-                  fontWeight: "400",
-                  fontFamily: Fonts.sans,
-                }}
-              >
-                {formattedUserText}
-              </Text>
-            ) : null}
-          </>
-        )}
-      </View>
+      {isUser ? (
+        <Pressable
+          ref={userBubbleRef}
+          delayLongPress={260}
+          onLongPress={(event) => openMessageActionsFromRef(event, userBubbleRef)}
+          accessibilityRole="button"
+          accessibilityLabel="Open message actions"
+          style={({ pressed }) => [
+            fallbackBubbleStyle,
+            pressed ? { opacity: 0.92 } : null,
+          ]}
+        >
+          {fallbackBubbleContent}
+        </Pressable>
+      ) : (
+        <View style={fallbackBubbleStyle}>{fallbackBubbleContent}</View>
+      )}
+      {!isUser ? <AssistantActionButton colors={colors} message={message} onOpen={onMessageActionPress} /> : null}
+      {imagePreviewModal}
     </Animated.View>
   );
 }
@@ -719,17 +832,22 @@ function UserImageAttachmentMedia({
   layoutWidth,
   screenSize,
   colors,
+  onImagePress,
 }: {
   attachments: ChatImageAttachment[];
   layoutWidth: number;
   screenSize: string;
   colors: AppColors;
+  onImagePress: (attachment: ChatImageAttachment) => void;
 }) {
   if (attachments.length === 1) {
     const attachment = attachments[0];
     const width = getSingleImageWidth(layoutWidth, screenSize);
     return (
-      <View
+      <Pressable
+        onPress={() => onImagePress(attachment)}
+        accessibilityRole="button"
+        accessibilityLabel="Open image preview"
         style={{
           width,
           aspectRatio: getImageAspectRatio(attachment),
@@ -747,7 +865,7 @@ function UserImageAttachmentMedia({
           style={{ width: "100%", height: "100%" }}
           resizeMode="cover"
         />
-      </View>
+      </Pressable>
     );
   }
 
@@ -770,8 +888,11 @@ function UserImageAttachmentMedia({
       {visibleAttachments.map((attachment, index) => {
         const showOverflow = index === visibleAttachments.length - 1 && remainingCount > 0;
         return (
-          <View
+          <Pressable
             key={attachment.id}
+            onPress={() => onImagePress(attachment)}
+            accessibilityRole="button"
+            accessibilityLabel="Open image preview"
             style={{
               width: tileSize,
               height: tileSize,
@@ -802,10 +923,55 @@ function UserImageAttachmentMedia({
                 </Text>
               </View>
             ) : null}
-          </View>
+          </Pressable>
         );
       })}
     </View>
+  );
+}
+
+function AssistantActionButton({
+  colors,
+  message,
+  onOpen,
+}: {
+  colors: AppColors;
+  message: AIMessage;
+  onOpen?: (message: AIMessage, anchor: ChatMessageActionAnchor) => void;
+}) {
+  const actionButtonRef = React.useRef<React.ComponentRef<typeof View>>(null);
+  if (!onOpen || message.streaming) return null;
+
+  const handleOpen = (event: GestureResponderEvent) => {
+    measureActionAnchor(actionButtonRef, event, (anchor) => onOpen(message, anchor));
+  };
+
+  return (
+    <Pressable
+      ref={actionButtonRef}
+      onPress={handleOpen}
+      onLongPress={handleOpen}
+      delayLongPress={220}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel="Open assistant message actions"
+      style={({ pressed }) => ({
+        alignSelf: "flex-start",
+        minWidth: 34,
+        height: 28,
+        borderRadius: 999,
+        marginLeft: 2,
+        marginTop: 1,
+        paddingHorizontal: 9,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: pressed ? colors.surfaceElevated : "rgba(255,255,255,0.035)",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(251,228,216,0.12)",
+      })}
+    >
+      <Ionicons name="ellipsis-horizontal" size={16} color={colors.textSecondary} />
+    </Pressable>
   );
 }
 
@@ -813,16 +979,26 @@ function AttachmentPreviews({
   attachments,
   colors,
   isUser,
+  onImagePress,
 }: {
   attachments: ChatAttachment[];
   colors: AppColors;
   isUser: boolean;
+  onImagePress?: (attachment: ChatImageAttachment) => void;
 }) {
   return (
     <>
       {attachments.map((attachment) => (
-        <View
+        <Pressable
           key={attachment.id}
+          disabled={attachment.type !== "image" || !onImagePress}
+          onPress={
+            attachment.type === "image" && onImagePress
+              ? () => onImagePress(attachment)
+              : undefined
+          }
+          accessibilityRole={attachment.type === "image" ? "button" : undefined}
+          accessibilityLabel={attachment.type === "image" ? "Open image preview" : undefined}
           style={{
             width: 92,
             height: 92,
@@ -842,11 +1018,200 @@ function AttachmentPreviews({
               <Text style={{ color: colors.text, fontWeight: "600" }}>Voice note</Text>
             </View>
           )}
-        </View>
+        </Pressable>
       ))}
     </>
   );
 }
+
+function ImagePreviewModal({
+  attachment,
+  colors,
+  visible,
+  onClose,
+}: {
+  attachment: ChatImageAttachment | null;
+  colors: AppColors;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const layout = useResponsiveLayout();
+  const uri = attachment?.localUri ?? attachment?.uri ?? "";
+  const [loadError, setLoadError] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    setLoadError(false);
+    setLoading(!!uri);
+    setRetryKey(0);
+  }, [uri]);
+
+  if (!visible || !attachment) return null;
+
+  const retry = () => {
+    setLoadError(false);
+    setLoading(!!uri);
+    setRetryKey((value) => value + 1);
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      onRequestClose={onClose}
+    >
+      <View style={imagePreviewStyles.backdrop}>
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close image preview"
+          style={[
+            imagePreviewStyles.closeButton,
+            {
+              top: Math.max(16, layout.topContentInset - 10),
+              backgroundColor: "rgba(18,17,22,0.72)",
+              borderColor: "rgba(251,228,216,0.16)",
+            },
+          ]}
+        >
+          <Ionicons name="close" size={20} color={colors.text} />
+        </Pressable>
+
+        {uri && !loadError ? (
+          <ScrollView
+            style={StyleSheet.absoluteFill}
+            contentContainerStyle={[
+              imagePreviewStyles.zoomContent,
+              {
+                minHeight: layout.height,
+                minWidth: layout.width,
+              },
+            ]}
+            centerContent
+            maximumZoomScale={4}
+            minimumZoomScale={1}
+            bouncesZoom
+            showsHorizontalScrollIndicator={false}
+            showsVerticalScrollIndicator={false}
+          >
+            <RNImage
+              key={`${uri}:${retryKey}`}
+              source={{ uri }}
+              resizeMode="contain"
+              onLoadStart={() => {
+                setLoading(true);
+                setLoadError(false);
+              }}
+              onLoadEnd={() => setLoading(false)}
+              onError={() => {
+                setLoading(false);
+                setLoadError(true);
+              }}
+              style={{
+                width: layout.width,
+                height: layout.height,
+              }}
+            />
+          </ScrollView>
+        ) : (
+          <View style={imagePreviewStyles.fallback}>
+            <Ionicons name="image-outline" size={34} color={colors.textSecondary} />
+            <Text style={[imagePreviewStyles.fallbackTitle, { color: colors.text }]}>
+              {"Couldn't load image"}
+            </Text>
+            <Text style={[imagePreviewStyles.fallbackText, { color: colors.textSecondary }]}>
+              The image may still be uploading or unavailable.
+            </Text>
+            <Pressable
+              onPress={retry}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading image"
+              style={({ pressed }) => [
+                imagePreviewStyles.retryButton,
+                {
+                  opacity: pressed ? 0.82 : 1,
+                  borderColor: "rgba(251,228,216,0.18)",
+                  backgroundColor: colors.surfaceElevated,
+                },
+              ]}
+            >
+              <Text style={[imagePreviewStyles.retryText, { color: colors.text }]}>Retry</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {loading ? (
+          <View pointerEvents="none" style={imagePreviewStyles.loadingIndicator}>
+            <ActivityIndicator color={colors.text} />
+          </View>
+        ) : null}
+      </View>
+    </Modal>
+  );
+}
+
+const imagePreviewStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.96)",
+  },
+  closeButton: {
+    position: "absolute",
+    right: 16,
+    zIndex: 2,
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  zoomContent: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingIndicator: {
+    position: "absolute",
+    alignSelf: "center",
+    top: "50%",
+  },
+  fallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    gap: 10,
+  },
+  fallbackTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    fontFamily: Fonts.sans,
+  },
+  fallbackText: {
+    textAlign: "center",
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: Fonts.sans,
+  },
+  retryButton: {
+    marginTop: 8,
+    minHeight: 38,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  retryText: {
+    fontSize: 13,
+    fontWeight: "700",
+    fontFamily: Fonts.sans,
+  },
+});
 
 export default React.memo(
   ChatMessage,
@@ -862,7 +1227,8 @@ export default React.memo(
     prev.onAuraAction === next.onAuraAction &&
     prev.onAuraCandidateAction === next.onAuraCandidateAction &&
     prev.onAuraOutfitPhotoAction === next.onAuraOutfitPhotoAction &&
-    prev.onAuraLaundryAction === next.onAuraLaundryAction,
+    prev.onAuraLaundryAction === next.onAuraLaundryAction &&
+    prev.onMessageActionPress === next.onMessageActionPress,
 );
 
 function OutfitCardEntry({

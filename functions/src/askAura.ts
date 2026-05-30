@@ -1,5 +1,5 @@
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import OpenAI from "openai";
 import { getFirestore } from "firebase-admin/firestore";
 
@@ -34,6 +34,7 @@ import {
   assertFunctionRateLimit,
   redactUid,
 } from "./shared/rateLimit";
+import { sanitizeUserInput } from "./shared/sanitize";
 import { redactUrlForLogs, validateSafeUrlForFetch } from "./shared/safeFetch";
 import { buildManualOutfitLookFromPrompt } from "./shared/manualOutfitLook";
 import { buildConcreteOutfitLook } from "./shared/auraConcreteLook";
@@ -47,18 +48,6 @@ const db = getFirestore();
 const AURA_BACKEND_VERSION = "candidate-preview-url-v9-zara-product-api";
 const DEBUG_AURA_SPARSE =
   process.env.FUNCTIONS_EMULATOR === "true" || process.env.NODE_ENV !== "production";
-
-function sanitizeUserInput(input: string): string {
-  return input
-    .trim()
-    .replace(/\0/g, "")
-    .slice(0, 2000)
-    .replace(/ignore previous instructions/gi, "")
-    .replace(/forget everything/gi, "")
-    .replace(/you are now/gi, "")
-    .replace(/system:/gi, "")
-    .replace(/assistant:/gi, "");
-}
 
 function styleCoreNoteFromClientContext(value: unknown) {
   const context = (value && typeof value === "object"
@@ -648,9 +637,14 @@ function normalizeAuraResponse(
 
     if (eligibleFootwear.length > 0 && selectedOwnedFootwear.length === 0) {
       logger.info("AURA footwear mismatch", {
-        eligibleFootwear,
-        selectedSuggestedFootwear,
-        selectedPieces: response.look.pieces,
+        eligibleFootwearCount: eligibleFootwear.length,
+        selectedSuggestedFootwearCount: selectedSuggestedFootwear.length,
+        selectedPieceSummary: response.look.pieces.map((piece) => ({
+          role: piece.role,
+          source: piece.source,
+          hasItemId: !!piece.itemId,
+          hasImageUrl: !!piece.imageUrl,
+        })),
       });
     }
   }
@@ -667,15 +661,15 @@ function normalizeAuraResponse(
   if (multiRequested && !response.lookOptions?.length && response.look) {
     logger.warn("[AURA_MULTI] multi-look request returned only one structured look", {
       requestedCount: parseRequestedLookCount(userMessage ?? ""),
-      lookTitle: response.look.lookTitle,
+      lookTitleLength: String(response.look.lookTitle ?? "").length,
     });
     response.lookOptions = [response.look];
   }
   if (multiRequested && !response.look && !response.lookOptions?.length) {
     logger.warn("[AURA_MULTI] multi-look request returned no structured looks", {
       requestedCount: parseRequestedLookCount(userMessage ?? ""),
-      title: response.title,
-      reply: response.reply,
+      titleLength: String(response.title ?? "").length,
+      replyLength: String(response.reply ?? "").length,
       ownedPiecesCount: response.ownedPieces?.length ?? 0,
       recommendedAdditionsCount: response.recommendedAdditions?.length ?? 0,
       outfitItemsCount: response.outfitItems?.length ?? 0,
@@ -724,12 +718,13 @@ function normalizeAuraResponse(
       isSparseWardrobe: auraContext?.isSparseWardrobe ?? false,
       categoryCounts: auraContext?.categoryCounts ?? null,
       detectedGaps: {
-        missingCore: gapContext?.missingCore?.map((gap) => gap.label) ?? [],
-        weakAreas: gapContext?.weakAreas?.map((gap) => gap.label) ?? [],
+        missingCoreCount: gapContext?.missingCore?.length ?? 0,
+        weakAreasCount: gapContext?.weakAreas?.length ?? 0,
+        suggestionCount: gapContext?.suggestions?.length ?? 0,
       },
-      missingPieces: response.missingPieces ?? [],
-      upgradeSuggestions: response.upgradeSuggestions ?? [],
-      upgradeSuggestionItems: response.upgradeSuggestionItems ?? [],
+      missingPiecesCount: response.missingPieces?.length ?? 0,
+      upgradeSuggestionsCount: response.upgradeSuggestions?.length ?? 0,
+      upgradeSuggestionItemsCount: response.upgradeSuggestionItems?.length ?? 0,
     });
   }
 
@@ -901,7 +896,7 @@ function logCallableCandidatePayload(
 
 export const askAura = onCall(
   { secrets: ["OPENAI_API_KEY"], timeoutSeconds: 120 },
-  async (request) => {
+  tracedHandler(async (request) => {
     logger.info("[AURA_BACKEND_VERSION] askAura callable entry", {
       version: AURA_BACKEND_VERSION,
       requestKeys: Object.keys(request.data ?? {}),
@@ -924,6 +919,7 @@ export const askAura = onCall(
     const linkIntent = classifyAuraLinkIntent(userMessage);
     const detectedUrls = extractUrlsFromText(userMessage);
     const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
     logger.info("[AURA_SEND] callable request received", {
       uidHash,
       hasMessage: !!userMessage,
@@ -1190,7 +1186,7 @@ export const askAura = onCall(
                   `Recent conversation:\n${JSON.stringify(history, null, 2)}\n\n` +
                   `Product link context:\n${linkProductContext}\n\n` +
                   `Attachments:\n${attachmentContextText(attachments)}\n\n` +
-                  `User request:\n${userMessage}` +
+                  `User request:\n<user_message>\n${userMessage}\n</user_message>` +
                   buildMultiLookRequestNote(userMessage),
               },
               ...attachments
@@ -1435,5 +1431,5 @@ export const askAura = onCall(
       });
       throw new HttpsError("internal", "Aura could not respond right now.");
     }
-  }
+  })
 );

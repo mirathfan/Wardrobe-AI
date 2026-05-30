@@ -389,6 +389,7 @@ function AuraReplyCard({
             </View>
             {selectedLook ? (
               <>
+                <LookMutationSummary look={selectedLook} colors={colors} />
                 <LookActionRow
                   look={selectedLook}
                   option={selectedMeta}
@@ -413,6 +414,7 @@ function AuraReplyCard({
               hideActions
               compact
             />
+            <LookMutationSummary look={looks[0]} colors={colors} />
             <LookActionRow
               look={looks[0]}
               option={getLookOptionMeta(0, looks[0])}
@@ -487,6 +489,39 @@ function AuraReplyCard({
       ) : null}
 
       <LevelThisUpSection suggestions={levelUpSuggestions} colors={colors} />
+    </View>
+  );
+}
+
+function LookMutationSummary({
+  look,
+  colors,
+}: {
+  look?: AuraLook | null;
+  colors: ReturnType<typeof useAppTheme>["colors"];
+}) {
+  const summary = look?.mutationSummary?.filter(Boolean).slice(0, 2) ?? [];
+  if (!summary.length) return null;
+  return (
+    <View
+      style={{
+        borderRadius: 14,
+        borderWidth: CHIP_BORDER_WIDTH,
+        borderColor: colors.border,
+        backgroundColor: colors.chipBackground,
+        paddingHorizontal: 11,
+        paddingVertical: 9,
+        gap: 4,
+      }}
+    >
+      <AuraText variant="metadata" tone="muted" style={{ textTransform: "uppercase", fontSize: 10.5, lineHeight: 13 }}>
+        Changed
+      </AuraText>
+      {summary.map((line) => (
+        <AuraText key={line} variant="metadata" tone="secondary" style={{ fontSize: 11.5, lineHeight: 15 }}>
+          {line}
+        </AuraText>
+      ))}
     </View>
   );
 }

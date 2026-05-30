@@ -666,6 +666,30 @@ export async function appendMessageToChat(
   await batch.commit();
 }
 
+export async function deleteMessagesFromChat(uid: string, chatId: string, messageIds: string[]) {
+  const uniqueIds = Array.from(
+    new Set(messageIds.map((messageId) => String(messageId ?? "").trim()).filter(Boolean)),
+  );
+  if (!uniqueIds.length) return;
+
+  const refs = uniqueIds.map((messageId) => doc(messageCollectionRef(uid, chatId), messageId));
+  const snaps = await Promise.all(refs.map((ref) => getDoc(ref)));
+  const existingRefs = refs.filter((_ref, index) => snaps[index]?.exists());
+  if (!existingRefs.length) return;
+
+  const batch = writeBatch(db);
+  existingRefs.forEach((ref) => batch.delete(ref));
+  batch.set(
+    chatDocRef(uid, chatId),
+    {
+      updatedAt: Date.now(),
+      messageCount: increment(-existingRefs.length),
+    },
+    { merge: true },
+  );
+  await batch.commit();
+}
+
 export async function updateChatThread(uid: string, chatId: string, updates: Partial<Pick<AIChatThread, "threadId" | "title" | "updatedAt" | "lastMessagePreview" | "messageCount">>) {
   await setDoc(
     chatDocRef(uid, chatId),

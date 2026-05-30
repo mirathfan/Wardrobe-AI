@@ -2,7 +2,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Clipboard from "expo-clipboard";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, AppState, Image, Keyboard, KeyboardEvent, Platform, Share, View, type AlertButton } from "react-native";
+import { Alert, AppState, Image, Keyboard, KeyboardEvent, Platform, Share, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import AuraHeader from "@/src/components/ai/AuraHeader";
@@ -10,6 +10,7 @@ import AuraChatDrawer from "@/src/components/ai/AuraChatDrawer";
 import AuraQuickChips from "@/src/components/ai/AuraQuickChips";
 import ChatList from "@/src/components/ai/ChatList";
 import InputBar from "@/src/components/ai/InputBar";
+import MessageActionPopover, { type MessageAction } from "@/src/components/ai/MessageActionPopover";
 import ShopOptionsSheet from "@/src/components/shop/ShopOptionsSheet";
 import AuraGlowBackground from "@/src/components/aura/AuraGlowBackground";
 import { AuraButton, AuraText, AuraTopSafeAreaScrim } from "@/src/components/ui/auraStylePrimitives";
@@ -18,6 +19,7 @@ import { AURA_TRAINING_ROUTE } from "@/src/constants/routes";
 import { DOCK_HEIGHT, FLOATING_CONTROL_GAP } from "@/src/constants/dock";
 import type {
   AIMessage,
+  ChatMessageActionAnchor,
   ChatImageAttachment,
   ChatOutfit,
 } from "@/src/components/ai/chatTypes";
@@ -34,6 +36,7 @@ import {
   trackLaunchEvent,
 } from "@/src/lib/analytics";
 import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
+import { buildAuraOutfitMutationResponse } from "@/src/lib/auraOutfitMutation";
 import {
   appendUniqueSystemMessage,
   type AuraChatIntent,
@@ -58,6 +61,11 @@ import {
 } from "@/src/lib/auraChatHelpers";
 import { updateAuraSessionContextFromPrompt } from "@/src/lib/auraMemory";
 import {
+  classifyAuraStylingIntent,
+  normalizeAuraClosetItem,
+  normalizeAuraLookCardMetadata,
+} from "@/shared/auraStylingIntelligence";
+import {
   type AuraCandidateLocalPhoto,
   createAuraItemDraftsFromCandidates,
   createAuraItemDraftsFromDetectedOutfit,
@@ -65,10 +73,16 @@ import {
 } from "@/src/lib/auraAttachments";
 import { classifyAuraImageIntent } from "@/src/lib/auraIntent";
 import { generateAuraSwipeBatch } from "@/src/lib/auraSwipe";
+import { getFriendlyErrorMessage, isRateLimitError } from "@/src/lib/errors";
 import { runHaptic } from "@/src/lib/haptics";
 import { getItemImageUrl } from "@/src/lib/itemImage";
 import { listenToItems, updateLaundryStatus } from "@/src/lib/items";
 import { buildMinimumClosetSummary } from "@/src/lib/minimumCloset";
+import {
+  buildLiveClosetItemIdSet,
+  filterOutfitItemsToLiveCloset,
+  hasDeletedClosetReferences,
+} from "@/src/lib/outfitLiveCloset";
 import { formatOutfitAnalysisSentence } from "@/src/lib/auraOutfitAnalysisDisplay";
 import { loadUserProfilePreferences } from "@/src/lib/userProfile";
 import {
@@ -83,6 +97,7 @@ import {
   appendMessageToChat,
   createChatThread,
   deleteChatThread,
+  deleteMessagesFromChat,
   loadChatMessages,
   renameChatThread,
   setChatArchived,
@@ -103,7 +118,7 @@ import {
   clearCachedRecentMessages,
   getCachedRecentMessages,
 } from "@/src/lib/localCache";
-import type { AuraCandidateAction, AuraCandidateItem, AuraLaundryConfirmationAction, AuraLookAction, AuraLookOptionMeta, AuraResponse } from "@/src/types/aura";
+import type { AuraCandidateAction, AuraCandidateItem, AuraLaundryConfirmationAction, AuraLook, AuraLookAction, AuraLookOptionMeta, AuraResponse } from "@/src/types/aura";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 import { markAnalyzedOutfitWorn } from "@/src/utils/dailyOutfits";
@@ -142,9 +157,15 @@ const AURA_EMPTY_STATE_PROMPT = "Style me today";
 type AskAuraOptions = {
   retryUserMessage?: AIMessage;
   removeMessageId?: string;
+  removeMessageIds?: string[];
   forceOutfitDiversity?: boolean;
   diversityMessages?: AIMessage[];
   requiredItemIds?: string[];
+};
+
+type MessageActionMenuState = {
+  message: AIMessage;
+  anchor: ChatMessageActionAnchor;
 };
 
 function logAuraChatState(event: string, payload?: Record<string, unknown>) {
@@ -500,19 +521,28 @@ function formatAuraCandidatesForClipboard(candidates: AuraCandidateItem[]) {
 }
 
 function messageTextForClipboard(message: AIMessage) {
-  const parts = [
-    message.assistantIntroText,
-    message.text,
-  ];
+  if (message.type === "user") {
+    return sanitizeMultilineDisplayText(stripInternalItemIdsFromUserPrompt(message.text ?? "")) || "";
+  }
+  const parts: string[] = [];
+  const pushPart = (value?: string | null) => {
+    const cleaned = sanitizeMultilineDisplayText(value ?? "") || "";
+    if (!cleaned) return;
+    const normalized = cleaned.replace(/\s+/g, " ").trim().toLowerCase();
+    if (parts.some((part) => part.replace(/\s+/g, " ").trim().toLowerCase() === normalized)) return;
+    parts.push(cleaned);
+  };
+  pushPart(message.assistantIntroText);
+  pushPart(message.text);
   const aura = message.aura;
   if (aura) {
-    if (aura.outfitAnalysis) parts.push(formatOutfitAnalysisSentence(aura.outfitAnalysis));
-    if (aura.look) parts.push(formatAuraLookForClipboard(aura.look));
-    if (aura.lookOptions?.length) parts.push(aura.lookOptions.map(formatAuraLookForClipboard).filter(Boolean).join("\n\n"));
+    if (aura.outfitAnalysis) pushPart(formatOutfitAnalysisSentence(aura.outfitAnalysis));
+    if (aura.look) pushPart(formatAuraLookForClipboard(aura.look));
+    if (aura.lookOptions?.length) pushPart(aura.lookOptions.map(formatAuraLookForClipboard).filter(Boolean).join("\n\n"));
     const candidates = aura.candidateItems ?? aura.candidates ?? [];
-    if (candidates.length) parts.push(formatAuraCandidatesForClipboard(candidates));
+    if (candidates.length) pushPart(formatAuraCandidatesForClipboard(candidates));
     if (aura.wardrobeSuggestions?.length) {
-      parts.push(
+      pushPart(
         aura.wardrobeSuggestions
           .map((suggestion) =>
             [
@@ -527,7 +557,7 @@ function messageTextForClipboard(message: AIMessage) {
       );
     }
   }
-  return sanitizeMultilineDisplayText(parts.filter(Boolean).join("\n\n")) || "";
+  return sanitizeMultilineDisplayText(parts.join("\n\n")) || "";
 }
 
 function createAssistantMessage(
@@ -536,6 +566,12 @@ function createAssistantMessage(
   options?: { userRequest?: string }
 ): AIMessage {
   const candidateItems = data.candidateItems ?? data.candidates ?? [];
+  const normalizeLook = (look?: AuraLook | null) =>
+    look
+      ? normalizeAuraLookCardMetadata(look, {
+          prompt: options?.userRequest ?? data.reply,
+        })
+      : null;
   const surfaceData = candidateItems.length
     ? {
         ...data,
@@ -544,10 +580,19 @@ function createAssistantMessage(
         candidates: candidateItems,
       }
     : data;
-  const normalizedData = {
+  const coherentSurfaceData = {
     ...surfaceData,
-    look: hasRenderableAuraLook(surfaceData.look) ? surfaceData.look : null,
-    lookOptions: surfaceData.lookOptions?.filter(hasRenderableAuraLook),
+    look: normalizeLook(surfaceData.look),
+    lookOptions: surfaceData.lookOptions?.map((look) =>
+      normalizeAuraLookCardMetadata(look, {
+        prompt: options?.userRequest ?? data.reply,
+      }),
+    ),
+  };
+  const normalizedData = {
+    ...coherentSurfaceData,
+    look: hasRenderableAuraLook(coherentSurfaceData.look) ? coherentSurfaceData.look : null,
+    lookOptions: coherentSurfaceData.lookOptions?.filter(hasRenderableAuraLook),
   };
   const shouldUseCard =
     normalizedData.presentation === "card" ||
@@ -687,6 +732,21 @@ function enforceClientOutfitDiversity(
   }
 
   if (!selected.length) {
+    const fallbackLook = originalLooks[0] ?? response.look ?? null;
+    if (fallbackLook) {
+      return {
+        ...response,
+        presentation: "card",
+        reply:
+          "I could not make this meaningfully different with the closet pieces available, so I kept the closest valid outfit card visible.",
+        missingPieces: [
+          ...(response.missingPieces ?? []),
+          "More clean alternatives would help AURA change this further.",
+        ],
+        look: fallbackLook,
+        lookOptions: response.lookOptions?.length ? [fallbackLook] : response.lookOptions,
+      };
+    }
     return {
       title: "More pieces needed",
       presentation: "chat",
@@ -949,6 +1009,72 @@ function selectedItemIdsFromPrompt(prompt: string) {
   return uniquePromptItemIds(ids);
 }
 
+function normalizeAuraHint(value: unknown) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function auraHintTokens(value: unknown) {
+  return normalizeAuraHint(value)
+    .split(/\s+/g)
+    .map((token) => token.replace(/s$/, ""))
+    .filter((token) => token.length > 1);
+}
+
+function requiredItemHintScore(item: ClothingItem, hint: string) {
+  const normalizedItem = normalizeAuraClosetItem(item);
+  const hintText = normalizeAuraHint(hint);
+  if (!hintText) return 0;
+  const searchText = normalizeAuraHint([
+    normalizedItem.name,
+    normalizedItem.brand,
+    normalizedItem.category,
+    normalizedItem.subCategory,
+    normalizedItem.color,
+    item.name,
+    item.brand,
+    item.category,
+    item.subCategory,
+    item.type,
+    item.primaryColor,
+    item.colorLabel,
+    item.displayColor,
+    ...(item.colors ?? []),
+    ...(item.aestheticTags ?? []),
+    ...(item.occasionTags ?? []),
+    ...(item.seasonTags ?? []),
+  ].join(" "));
+  const tokens = auraHintTokens(hintText);
+  if (!tokens.length) return 0;
+  let score = searchText.includes(hintText) ? 1.15 : 0;
+  for (const token of tokens) {
+    if (searchText.includes(token)) score += token.length <= 2 ? 0.2 : 0.34;
+  }
+  if (tokens.every((token) => searchText.includes(token))) score += 0.45;
+  return score;
+}
+
+function requiredItemIdsFromAuraHints(items: ClothingItem[], hints: string[]) {
+  const resolved: string[] = [];
+  const used = new Set<string>();
+  for (const hint of hints) {
+    const ranked = items
+      .filter((item) => item?.id && !used.has(item.id))
+      .map((item) => ({ item, score: requiredItemHintScore(item, hint) }))
+      .filter((entry) => entry.score >= 0.85)
+      .sort((a, b) => b.score - a.score || a.item.id.localeCompare(b.item.id));
+    const best = ranked[0]?.item;
+    if (!best) continue;
+    used.add(best.id);
+    resolved.push(best.id);
+  }
+  return uniquePromptItemIds(resolved, 8);
+}
+
 function requiredItemIdsFromRouteParam(value: unknown) {
   const raw = Array.isArray(value) ? value.join(",") : String(value ?? "");
   return uniquePromptItemIds(raw.split(/[,|]/g), 8);
@@ -994,6 +1120,24 @@ function enforceRequiredItemsOnAuraResponse(
   const look =
     lookIncludesRequiredItemIds(response.look, requiredItemIds)
       ? response.look
+      : lookOptions[0] ?? null;
+  return {
+    ...response,
+    look,
+    lookOptions,
+  };
+}
+
+function filterAuraResponseToLiveCloset(
+  response: AuraResponse,
+  liveItemIds: Set<string>,
+): AuraResponse {
+  const lookOptions = (response.lookOptions ?? [])
+    .filter((look) => !hasDeletedClosetReferences(look, liveItemIds))
+    .map((look) => filterOutfitItemsToLiveCloset(look, liveItemIds));
+  const look =
+    response.look && !hasDeletedClosetReferences(response.look, liveItemIds)
+      ? filterOutfitItemsToLiveCloset(response.look, liveItemIds)
       : lookOptions[0] ?? null;
   return {
     ...response,
@@ -1272,7 +1416,7 @@ function listClosetOuterwear(items: ClothingItem[]) {
 }
 
 function buildOuterwearPiece(item: ClothingItem) {
-  const imageUrl = getItemImageUrl(item, { variant: "thumb" });
+  const imageUrl = getItemImageUrl(item, { variant: "thumb", surface: "ai_outfit" });
 
   return {
     role: "outerwear" as const,
@@ -1336,12 +1480,20 @@ function buildAuraResponseFromSwipeBatch(
   options?: { prompt?: string; items?: ClothingItem[] },
 ): AuraResponse {
   const wantsOuterwear = promptRequestsOuterwear(options?.prompt ?? "");
+  const intent = classifyAuraStylingIntent(options?.prompt ?? "");
   const availableOuterwearCount = countClosetOuterwear(options?.items ?? []);
   const repairedLookOptions =
     wantsOuterwear && availableOuterwearCount > 0
       ? ensureOuterwearLooks(batch.lookOptions.map((entry) => entry.look), options?.items ?? [])
       : batch.lookOptions.map((entry) => entry.look);
-  const lookOptions = repairedLookOptions;
+  const lookOptions = repairedLookOptions.map((look) => ({
+    ...normalizeAuraLookCardMetadata(look, {
+      prompt: options?.prompt ?? "",
+      occasion: intent.occasion,
+      vibe: intent.vibe,
+    }),
+    confidence: look.confidence ?? Math.max(0.72, Math.min(0.96, intent.confidence)),
+  }));
   const primaryLook = lookOptions[0] ?? null;
   const count = lookOptions.length;
   const hasOuterwearLooks = lookOptions.some((look) => lookHasOuterwear(look));
@@ -1371,12 +1523,12 @@ function buildAuraResponseFromSwipeBatch(
           : "Outfit Option",
     reply:
       wantsOuterwear && !hasOuterwearLooks && !hasOuterwearInCloset
-        ? "A jacket or layer would open this up. I’ll keep the current looks to pieces you already own."
+        ? "A jacket or layer would open this up. I built the cleanest closet option available for now."
         : wantsOuterwear && !hasOuterwearLooks
-          ? "I couldn't build reliable jacket looks from the current generator, so I repaired the closest structured options with outerwear from your closet."
+          ? "I added the best available layer so the card stays wearable."
           : count > 1
-        ? `Here are ${count} structured options from your closet.`
-        : "Here’s one structured option from your closet.",
+        ? `I pulled ${count} closet options that stay on the same style lane.`
+        : primaryLook?.shortExplanation || "I’d start here.",
     reason: "",
     outfitItems: primaryLook?.fromCloset ?? [],
     ownedPieces: primaryLook?.fromCloset ?? [],
@@ -1448,6 +1600,9 @@ function buildAuraHistory(messages: AIMessage[]) {
 }
 
 function userFacingAuraError(error: unknown) {
+  if (isRateLimitError(error)) {
+    return getFriendlyErrorMessage(error);
+  }
   const messageText =
     error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? "");
   const lower = messageText.toLowerCase();
@@ -1512,6 +1667,8 @@ export default function AIScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(DEFAULT_COMPOSER_HEIGHT);
   const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
+  const [messageActionMenu, setMessageActionMenu] = useState<MessageActionMenuState | null>(null);
+  const [composerFocusSignal, setComposerFocusSignal] = useState(0);
   const [focusScrollSignal, setFocusScrollSignal] = useState(0);
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
   const [chatRefreshing, setChatRefreshing] = useState(false);
@@ -1572,6 +1729,7 @@ export default function AIScreen() {
     debug: DEBUG_AURA_CLIENT,
   });
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const liveClosetItemIds = useMemo(() => buildLiveClosetItemIdSet(items), [items]);
   const minimumClosetSummary = useMemo(() => buildMinimumClosetSummary(items), [items]);
 
   useEffect(() => {
@@ -1732,6 +1890,7 @@ export default function AIScreen() {
 
       const retryUserMessage = options?.retryUserMessage;
       const isRetry = !!retryUserMessage;
+      setMessageActionMenu(null);
       const prompt = String(retryUserMessage?.text ?? override ?? message).trim();
       const requiredItemIds = uniquePromptItemIds([
         ...(retryUserMessage?.requiredItemIds ?? []),
@@ -1815,7 +1974,7 @@ export default function AIScreen() {
         });
         setLoading(false);
         setMessages((prev) => orderChatMessages(appendUniqueSystemMessage(prev, AURA_ATTACHMENT_FAILURE_MESSAGE)));
-        Alert.alert("Attachments", error?.message ?? AURA_ATTACHMENT_FAILURE_MESSAGE);
+        Alert.alert("Attachments", AURA_ATTACHMENT_FAILURE_MESSAGE);
         return;
       }
 
@@ -1831,8 +1990,14 @@ export default function AIScreen() {
         retry: isRetry,
       });
       const chatSeedText = buildChatSeedText(visiblePrompt, uploadedAttachments);
+      const removeMessageIds = new Set(
+        [
+          options?.removeMessageId,
+          ...(options?.removeMessageIds ?? []),
+        ].filter((messageId): messageId is string => typeof messageId === "string" && messageId.length > 0),
+      );
       const baselineMessages = latestMessagesRef.current.filter(
-        (entry) => entry.id !== options?.removeMessageId,
+        (entry) => !removeMessageIds.has(entry.id),
       );
       const retryBaselineMessages =
         isRetry && !baselineMessages.some((entry) => entry.id === userMessage.id)
@@ -1848,23 +2013,41 @@ export default function AIScreen() {
         : nextLocalMessages;
       const historyMessagesBeforeRequest = isRetry ? retryBaselineMessages : latestMessagesRef.current;
       const intentContextMessages = options?.diversityMessages ?? historyMessagesBeforeRequest;
-      const lastLookForIntent = latestAuraLook(intentContextMessages);
-      const promptAnchorItemIds = requiredItemIds;
+      const rawLastLookForIntent = latestAuraLook(intentContextMessages);
+      const lastLookForIntent =
+        rawLastLookForIntent && !hasDeletedClosetReferences(rawLastLookForIntent, liveClosetItemIds)
+          ? filterOutfitItemsToLiveCloset(rawLastLookForIntent, liveClosetItemIds)
+          : null;
       const outfitAnchorItemIds = recentOutfitAnchorItemIds(
         prompt,
         items,
         intentContextMessages,
       );
+      const preliminaryAnchorItemIds = uniquePromptItemIds([
+        ...requiredItemIds,
+        ...outfitAnchorItemIds,
+      ], 8);
+      const auraIntent = classifyAuraStylingIntent(prompt, {
+        hasPreviousOutfit: !!lastLookForIntent || preliminaryAnchorItemIds.length > 0,
+        previousOccasion: lastLookForIntent?.occasion,
+        previousVibe: lastLookForIntent?.vibe,
+      });
+      const textRequiredItemIds = requiredItemIdsFromAuraHints(items, auraIntent.requiredItems);
+      const effectiveRequiredItemIds = uniquePromptItemIds([
+        ...requiredItemIds,
+        ...textRequiredItemIds,
+      ], 8);
+      const promptAnchorItemIds = effectiveRequiredItemIds;
       const lockedOutfitAnchorItemIds = uniquePromptItemIds([
         ...promptAnchorItemIds,
         ...outfitAnchorItemIds,
-      ]);
+      ], 8);
       const chatIntent = classifyAuraChatIntent(prompt, {
         attachmentCount: uploadedAttachments.length,
         hasPreviousLook: !!lastLookForIntent,
         hasRecentItemAnchor: lockedOutfitAnchorItemIds.length > 0,
       });
-      const isManualSelectedOutfit = requiredItemIds.length > 0 || promptHasManualSelectedOutfit(prompt);
+      const isManualSelectedOutfit = effectiveRequiredItemIds.length > 0 || promptHasManualSelectedOutfit(prompt);
       const shouldForceConcreteRefinement =
         !!lastLookForIntent && isConcreteOutfitRefinementRequest(prompt);
       const structuredBatchPrompt = buildStructuredOutfitBatchPrompt(prompt, historyMessagesBeforeRequest);
@@ -1883,6 +2066,7 @@ export default function AIScreen() {
       const shouldRouteToExistingLook =
         !isManualSelectedOutfit &&
         !shouldForceConcreteRefinement &&
+        !shouldForceStructuredOutfit &&
         (chatIntent === "STYLE_EXISTING" || chatIntent === "MODIFY_OUTFIT");
       const routeChosen = shouldRouteToExistingLook
         ? lastLookForIntent
@@ -1914,10 +2098,13 @@ export default function AIScreen() {
         console.log("[AURA_INTENT]", "chat intent route", {
           prompt,
           detectedIntent: chatIntent,
+          structuredIntent: auraIntent,
           hasPreviousLook: !!lastLookForIntent,
           routeChosen,
           outfitGeneratorWillRun: !shouldRouteToExistingLook && shouldForceStructuredOutfit,
           anchorItemIds: lockedOutfitAnchorItemIds,
+          textRequiredItemIds,
+          effectiveRequiredItemCount: effectiveRequiredItemIds.length,
         });
       }
       if (DEBUG_AURA_CLIENT && outfitDiversity.shouldAvoidRepeats) {
@@ -1950,7 +2137,7 @@ export default function AIScreen() {
           source: routeChosen,
           retry: isRetry,
           attachmentCount: uploadedAttachments.length,
-          requiredItemCount: requiredItemIds.length,
+          requiredItemCount: effectiveRequiredItemIds.length,
           closetItemCount: items.length,
           chatIntent,
         },
@@ -1970,6 +2157,9 @@ export default function AIScreen() {
         }
 
         void updateAuraSessionContextFromPrompt(uid, chatId, prompt);
+        if (isRetry && removeMessageIds.size > 0) {
+          await deleteMessagesFromChat(uid, chatId, Array.from(removeMessageIds));
+        }
         if (!isRetry) {
           await appendMessageToChat(uid, chatId, userMessage, { titleFromUserText: chatSeedText });
         }
@@ -1990,7 +2180,7 @@ export default function AIScreen() {
         if (DEBUG_AURA_CLIENT) {
           console.log("[AURA_STREAM_REQUEST]", "ai screen request args", {
             prompt,
-            requiredItemCount: requiredItemIds.length,
+            requiredItemCount: effectiveRequiredItemIds.length,
             clientIntent: imageIntent,
             attachmentCount: uploadedAttachments.length,
             attachments: uploadedAttachments.map((attachment) => ({
@@ -2012,9 +2202,9 @@ export default function AIScreen() {
           });
         }
 
-        if (requiredItemIds.length) {
+        if (effectiveRequiredItemIds.length) {
           const itemIdSet = new Set(items.map((item) => item.id));
-          const missingRequiredItemIds = requiredItemIds.filter((itemId) => !itemIdSet.has(itemId));
+          const missingRequiredItemIds = effectiveRequiredItemIds.filter((itemId) => !itemIdSet.has(itemId));
           if (missingRequiredItemIds.length) {
             const response = buildRequiredItemUnavailableResponse();
             const assistantMessage = createAssistantMessage(response, {
@@ -2152,9 +2342,83 @@ export default function AIScreen() {
           if (DEBUG_AURA_CLIENT) {
             console.log("[AURA_INTENT]", "outfit generator route selected", {
               detectedIntent: chatIntent,
+              structuredIntent: auraIntent,
               outfitGeneratorCalled: true,
               structuredBatch: shouldForceStructuredBatch,
             });
+          }
+          const mutationResponse =
+            lastLookForIntent && !isManualSelectedOutfit
+              ? buildAuraOutfitMutationResponse({
+                  prompt,
+                  previousLook: lastLookForIntent,
+                  items,
+                  intent: auraIntent,
+                })
+              : null;
+          if (mutationResponse?.look) {
+            const liveMutationResponse = filterAuraResponseToLiveCloset(
+              mutationResponse,
+              liveClosetItemIds,
+            );
+            if (!liveMutationResponse.look && !(liveMutationResponse.lookOptions?.length)) {
+              if (DEBUG_AURA_CLIENT) {
+                console.log("[AURA_MUTATION]", "skipped stale mutation response");
+              }
+            } else {
+              if (DEBUG_AURA_CLIENT) {
+                console.log("[AURA_MUTATION]", "local outfit mutation selected", {
+                  prompt,
+                  intent: auraIntent.intent,
+                  occasion: auraIntent.occasion ?? null,
+                  vibe: auraIntent.vibe ?? null,
+                  targetItemCategory: auraIntent.targetItemCategory ?? null,
+                  requestedChanges: auraIntent.requestedChanges,
+                  mutationSummary: liveMutationResponse.look?.mutationSummary ?? [],
+                  warnings: liveMutationResponse.look?.warnings ?? [],
+                  previousLookId: lastLookForIntent?.id ?? null,
+                  nextLookId: liveMutationResponse.look?.id ?? null,
+                });
+              }
+              const assistantMessage = createAssistantMessage(liveMutationResponse, {
+                id: streamingMessageId,
+                createdAt: streamingMessageCreatedAt,
+                clientCreatedAt: streamingMessageCreatedAt,
+                localSequence: streamingMessageLocalSequence,
+                replyToMessageId: userMessage.id,
+                streaming: false,
+              }, {
+                userRequest: prompt,
+              });
+              logAuraChatState("message_created", {
+                messageId: assistantMessage.id,
+                type: assistantMessage.type,
+                kind: assistantMessage.kind,
+                source: "outfit_mutation",
+                mutationSummary: liveMutationResponse.look?.mutationSummary ?? [],
+              });
+              trackAuraResponseSucceeded({
+                userId: uid,
+                source: "outfit_mutation",
+                response: liveMutationResponse,
+                startedAt,
+                properties: {
+                  route: routeChosen,
+                  chatIntent,
+                  structuredIntent: auraIntent.intent,
+                  requestedChanges: auraIntent.requestedChanges,
+                  requiredItemCount: effectiveRequiredItemIds.length,
+                },
+              });
+              setMessages(orderChatMessages([...nextLocalMessages, assistantMessage]));
+              setQuickChips(liveMutationResponse.chips?.length ? liveMutationResponse.chips : DEFAULT_CHIPS);
+              await appendMessageToChat(uid, chatId, assistantMessage);
+              await updateChatThread(uid, chatId, {
+                title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
+              });
+              await refreshRecentThreads();
+              return;
+            }
           }
           const desiredLookCount = shouldForceStructuredBatch
             ? resolveStructuredBatchLookCount(
@@ -2171,52 +2435,6 @@ export default function AIScreen() {
               latestLookCount: latestAuraLookCount(latestMessagesRef.current),
             });
           }
-          if (promptRequestsOuterwear(structuredOutfitPrompt) && !closetHasOuterwear(items)) {
-            const noOuterwearResponse: AuraResponse = {
-              title: "No outerwear found",
-              reply:
-                "A jacket or layer would open this up. Add one jacket, blazer, hoodie, coat, or overshirt and I can build layered looks without inventing pieces you do not own.",
-              reason: "",
-              outfitItems: [],
-              ownedPieces: [],
-              recommendedAdditions: [],
-              swapSuggestion: "",
-              chips: DEFAULT_CHIPS,
-            };
-            const assistantMessage = createAssistantMessage(noOuterwearResponse, {
-              id: streamingMessageId,
-              createdAt: streamingMessageCreatedAt,
-              clientCreatedAt: streamingMessageCreatedAt,
-              localSequence: streamingMessageLocalSequence,
-              replyToMessageId: userMessage.id,
-              streaming: false,
-            }, {
-              userRequest: prompt,
-            });
-            logAuraChatState("message_created", {
-              messageId: assistantMessage.id,
-              type: assistantMessage.type,
-              kind: assistantMessage.kind,
-              source: "structured_batch_no_outerwear",
-            });
-            trackAuraResponseSucceeded({
-              userId: uid,
-              source: "structured_batch_no_outerwear",
-              response: noOuterwearResponse,
-              startedAt,
-              properties: {
-                route: routeChosen,
-                chatIntent,
-              },
-            });
-            setMessages(orderChatMessages([...nextLocalMessages, assistantMessage]));
-            await appendMessageToChat(uid, chatId, assistantMessage);
-            await updateChatThread(uid, chatId, {
-              title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
-            });
-            await refreshRecentThreads();
-            return;
-          }
           let outfitBatch: Awaited<ReturnType<typeof generateAuraSwipeBatch>>;
           try {
             outfitBatch = await generateAuraSwipeBatch({
@@ -2224,7 +2442,8 @@ export default function AIScreen() {
               numOutfits: desiredLookCount,
               items,
               anchorItemIds: lockedOutfitAnchorItemIds,
-              requiredItemIds,
+              requiredItemIds: effectiveRequiredItemIds,
+              excludedCategories: auraIntent.excludedCategories,
               excludeItemIds: outfitDiversity.excludedItemIds,
               recentItemIds: outfitDiversity.recentItemIds,
               previousLookItemIds: outfitDiversity.previousLookItemIds,
@@ -2232,7 +2451,8 @@ export default function AIScreen() {
               maxOverlap: outfitDiversity.maxOverlap,
             });
           } catch (error) {
-            if (!requiredItemIds.length) throw error;
+            if (isRateLimitError(error)) throw error;
+            if (!effectiveRequiredItemIds.length) throw error;
             const response = buildRequiredItemNoOutfitResponse();
             const assistantMessage = createAssistantMessage(response, {
               id: streamingMessageId,
@@ -2253,15 +2473,18 @@ export default function AIScreen() {
             await refreshRecentThreads();
             return;
           }
-          const batchResponse = enforceClientOutfitDiversity(
-            enforceRequiredItemsOnAuraResponse(
-              buildAuraResponseFromSwipeBatch(outfitBatch, {
-                prompt: structuredOutfitPrompt,
-                items,
-              }),
-              requiredItemIds,
+          const batchResponse = filterAuraResponseToLiveCloset(
+            enforceClientOutfitDiversity(
+              enforceRequiredItemsOnAuraResponse(
+                buildAuraResponseFromSwipeBatch(outfitBatch, {
+                  prompt: structuredOutfitPrompt,
+                  items,
+                }),
+                effectiveRequiredItemIds,
+              ),
+              outfitDiversity,
             ),
-            outfitDiversity,
+            liveClosetItemIds,
           );
           if (DEBUG_AURA_CLIENT) {
             console.log("[AURA_MULTI]", "frontend batch fallback response", {
@@ -2297,7 +2520,7 @@ export default function AIScreen() {
               route: routeChosen,
               chatIntent,
               desiredLookCount,
-              requiredItemCount: requiredItemIds.length,
+                requiredItemCount: effectiveRequiredItemIds.length,
             },
           });
           setMessages(orderChatMessages([...nextLocalMessages, assistantMessage]));
@@ -2389,7 +2612,7 @@ export default function AIScreen() {
             clientContext: {
               minimumCloset: minimumClosetSummary,
               outfitDiversity,
-              requiredItemIds,
+              requiredItemIds: effectiveRequiredItemIds,
             },
           },
           {
@@ -2444,7 +2667,8 @@ export default function AIScreen() {
             numOutfits: desiredLookCount,
             items,
             anchorItemIds: lockedOutfitAnchorItemIds,
-            requiredItemIds,
+            requiredItemIds: effectiveRequiredItemIds,
+            excludedCategories: auraIntent.excludedCategories,
             excludeItemIds: outfitDiversity.excludedItemIds,
             recentItemIds: outfitDiversity.recentItemIds,
             previousLookItemIds: outfitDiversity.previousLookItemIds,
@@ -2456,11 +2680,12 @@ export default function AIScreen() {
             items,
           });
         }
+        finalResult = filterAuraResponseToLiveCloset(finalResult, liveClosetItemIds);
         finalResult = enforceClientOutfitDiversity(
-          enforceRequiredItemsOnAuraResponse(finalResult, requiredItemIds),
+          enforceRequiredItemsOnAuraResponse(finalResult, effectiveRequiredItemIds),
           outfitDiversity,
         );
-        if (requiredItemIds.length && !finalResult.look && !(finalResult.lookOptions?.length)) {
+        if (effectiveRequiredItemIds.length && !finalResult.look && !(finalResult.lookOptions?.length)) {
           finalResult = buildRequiredItemNoOutfitResponse();
         }
         const elapsed = Date.now() - startedAt;
@@ -2496,7 +2721,7 @@ export default function AIScreen() {
           properties: {
             route: routeChosen,
             chatIntent,
-            requiredItemCount: requiredItemIds.length,
+            requiredItemCount: effectiveRequiredItemIds.length,
             attachmentCount: uploadedAttachments.length,
           },
         });
@@ -2581,7 +2806,7 @@ export default function AIScreen() {
             source: routeChosen,
             chatIntent,
             attachmentCount: uploadedAttachments.length,
-            requiredItemCount: requiredItemIds.length,
+            requiredItemCount: effectiveRequiredItemIds.length,
             elapsedMs: Date.now() - startedAt,
             ...analyticsErrorProperties(error),
           },
@@ -2636,6 +2861,7 @@ export default function AIScreen() {
       clearComposer,
       items,
       latestMessagesRef,
+      liveClosetItemIds,
       loading,
       message,
       minimumClosetSummary,
@@ -2663,22 +2889,35 @@ export default function AIScreen() {
       if (loading) return;
       const currentMessages = latestMessagesRef.current;
       const sourceIndex = currentMessages.findIndex((entry) => entry.id === sourceMessage.id);
-      const startIndex = sourceIndex >= 0 ? sourceIndex - 1 : currentMessages.length - 1;
-      let retryUserMessage: AIMessage | null = null;
-      for (let index = startIndex; index >= 0; index -= 1) {
-        const candidate = currentMessages[index];
-        if (candidate?.type === "user") {
-          retryUserMessage = candidate;
-          break;
+      const replyUserMessage = sourceMessage.replyToMessageId
+        ? currentMessages.find(
+            (entry) => entry.id === sourceMessage.replyToMessageId && entry.type === "user",
+          ) ?? null
+        : null;
+      let retryUserMessage: AIMessage | null = replyUserMessage;
+      if (!retryUserMessage) {
+        const startIndex = sourceIndex >= 0 ? sourceIndex - 1 : currentMessages.length - 1;
+        for (let index = startIndex; index >= 0; index -= 1) {
+          const candidate = currentMessages[index];
+          if (candidate?.type === "user") {
+            retryUserMessage = candidate;
+            break;
+          }
         }
       }
       if (!retryUserMessage) {
         Toast.error("Nothing to retry", "Send a new message and AURA will pick it up.");
         return;
       }
+      const removeMessageIds = new Set([sourceMessage.id]);
+      for (const message of currentMessages) {
+        if (message.type === "assistant" && message.replyToMessageId === retryUserMessage.id) {
+          removeMessageIds.add(message.id);
+        }
+      }
       void handleAsk(undefined, {
         retryUserMessage,
-        removeMessageId: sourceMessage.id,
+        removeMessageIds: Array.from(removeMessageIds),
         forceOutfitDiversity: true,
         diversityMessages:
           sourceIndex >= 0
@@ -2699,45 +2938,72 @@ export default function AIScreen() {
     Toast.success("Copied", "Message copied to clipboard.");
   }, []);
 
-  const handleMessageLongPress = React.useCallback(
+  const handleEditUserMessage = React.useCallback(
     (sourceMessage: AIMessage) => {
-      if (sourceMessage.streaming) return;
-      if (sourceMessage.type === "user") {
-        Alert.alert("Message", undefined, [
-          {
-            text: "Copy",
-            onPress: () => void handleCopyMessage(sourceMessage),
-          },
-          {
-            text: "Edit and resend",
-            onPress: () => {
-              setMessage(sanitizeMultilineDisplayText(sourceMessage.text ?? "") || "");
-              setPendingAttachments([]);
-            },
-          },
-          { text: "Cancel", style: "cancel" },
-        ]);
-        return;
-      }
-      if (sourceMessage.type === "assistant" || sourceMessage.type === "system/action") {
-        const buttons: AlertButton[] = [
-          {
-            text: "Copy",
-            onPress: () => void handleCopyMessage(sourceMessage),
-          },
-          ...(!loading
-            ? [{
-                text: "Regenerate",
-                onPress: () => handleRetryAuraResponse(sourceMessage),
-              }]
-            : []),
-          { text: "Cancel", style: "cancel" },
-        ];
-        Alert.alert("Message", undefined, buttons);
-      }
+      const nextMessage = sanitizeMultilineDisplayText(stripInternalItemIdsFromUserPrompt(sourceMessage.text ?? "")) || "";
+      setMessage(nextMessage);
+      setPendingAttachments([]);
+      setComposerFocusSignal((value) => value + 1);
     },
-    [handleCopyMessage, handleRetryAuraResponse, loading, setMessage, setPendingAttachments],
+    [setMessage, setPendingAttachments],
   );
+
+  const handleMessageLongPress = React.useCallback(
+    (sourceMessage: AIMessage, anchor: ChatMessageActionAnchor) => {
+      if (sourceMessage.streaming) return;
+      setMessageActionMenu({ message: sourceMessage, anchor });
+    },
+    [],
+  );
+
+  const messageActionItems = React.useMemo<MessageAction[]>(() => {
+    const sourceMessage = messageActionMenu?.message;
+    if (!sourceMessage) return [];
+    const closeMenu = () => setMessageActionMenu(null);
+    if (sourceMessage.type === "user") {
+      return [
+        {
+          key: "copy",
+          label: "Copy",
+          icon: "copy-outline",
+          onPress: () => {
+            closeMenu();
+            void handleCopyMessage(sourceMessage);
+          },
+        },
+        {
+          key: "edit",
+          label: "Edit",
+          icon: "create-outline",
+          onPress: () => {
+            closeMenu();
+            handleEditUserMessage(sourceMessage);
+          },
+        },
+      ];
+    }
+    return [
+      {
+        key: "copy",
+        label: "Copy",
+        icon: "copy-outline",
+        onPress: () => {
+          closeMenu();
+          void handleCopyMessage(sourceMessage);
+        },
+      },
+      {
+        key: "regenerate",
+        label: "Regenerate",
+        icon: "refresh-outline",
+        disabled: loading,
+        onPress: () => {
+          closeMenu();
+          handleRetryAuraResponse(sourceMessage);
+        },
+      },
+    ];
+  }, [handleCopyMessage, handleEditUserMessage, handleRetryAuraResponse, loading, messageActionMenu]);
 
   const handleAuraLookAction = React.useCallback(
     async (
@@ -2933,8 +3199,8 @@ export default function AIScreen() {
               ? "Added one outfit piece draft using the original photo as reference."
               : `Added ${created.length} outfit piece drafts using the original photo as reference.`
           );
-        } catch (error: any) {
-          Toast.error("Drafts failed", error?.message ?? "Unable to create outfit piece drafts.");
+        } catch {
+          Toast.error("Drafts failed", "Unable to create outfit piece drafts.");
         }
         return;
       }
@@ -2951,8 +3217,8 @@ export default function AIScreen() {
           });
           void runHaptic("light");
           Toast.success("Saved", "This outfit is saved as worn today.");
-        } catch (error: any) {
-          Toast.error("Save failed", error?.message ?? "Unable to save this worn outfit.");
+        } catch {
+          Toast.error("Save failed", "Unable to save this worn outfit.");
         }
       }
     },
@@ -2982,8 +3248,8 @@ export default function AIScreen() {
         if (activeChatId) {
           await appendMessageToChat(uid, activeChatId, systemMessage);
         }
-      } catch (error: any) {
-        Toast.error("Laundry update failed", error?.message ?? "Could not update that item.");
+      } catch {
+        Toast.error("Laundry update failed", "Could not update that item.");
       }
     },
     [activeChatId, itemsById, setMessages, uid]
@@ -3263,6 +3529,18 @@ export default function AIScreen() {
               />
             </View>
           ) : null}
+          <MessageActionPopover
+            visible={Boolean(messageActionMenu)}
+            anchor={messageActionMenu?.anchor ?? null}
+            actions={messageActionItems}
+            colors={colors}
+            screenWidth={layout.width}
+            screenHeight={layout.height}
+            keyboardHeight={keyboardHeight}
+            topInset={insets.top}
+            bottomInset={insets.bottom}
+            onDismiss={() => setMessageActionMenu(null)}
+          />
         </View>
 
         <InputBar
@@ -3286,6 +3564,7 @@ export default function AIScreen() {
         onRemoveAttachment={handleRemoveAttachment}
         onMicPress={() => void handleMicPress()}
         recording={recordingAudio}
+        focusSignal={composerFocusSignal}
         />
         <ShopOptionsSheet
           visible={Boolean(activeShopSuggestion)}
