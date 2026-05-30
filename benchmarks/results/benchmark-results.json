@@ -1,0 +1,1762 @@
+{
+  "environment": {
+    "measuredAt": "2026-05-25T04:13:51.408Z",
+    "node": "v24.12.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpuCount": 10,
+    "cpuModel": "Apple M4",
+    "repoRoot": "/Users/athfan/wardrobe-ai/closet",
+    "benchmarkMode": "Node.js microbenchmarks with deterministic synthetic closet datasets; Firebase, React Native, Expo, and network dependencies mocked unless explicitly noted."
+  },
+  "recommendations": {
+    "serverGenerateOutfitCandidates": [
+      {
+        "size": 50,
+        "runs": 8,
+        "minMs": 685.196,
+        "p50Ms": 693.813,
+        "meanMs": 720.088,
+        "p75Ms": 742.745,
+        "p95Ms": 804.457,
+        "maxMs": 804.457,
+        "resultSummary": {
+          "kind": "object",
+          "outfits": 5,
+          "eligibleCount": 47,
+          "slotCounts": {
+            "top": 15,
+            "bottom": 12,
+            "footwear": 8,
+            "outerwear": 5,
+            "accessory": 7
+          }
+        }
+      },
+      {
+        "size": 100,
+        "runs": 8,
+        "minMs": 911.303,
+        "p50Ms": 991.391,
+        "meanMs": 1092.292,
+        "p75Ms": 1140.737,
+        "p95Ms": 1409.632,
+        "maxMs": 1409.632,
+        "resultSummary": {
+          "kind": "object",
+          "outfits": 5,
+          "eligibleCount": 94,
+          "slotCounts": {
+            "top": 32,
+            "bottom": 24,
+            "footwear": 14,
+            "outerwear": 10,
+            "accessory": 14
+          }
+        }
+      },
+      {
+        "size": 250,
+        "runs": 6,
+        "minMs": 928.621,
+        "p50Ms": 965.515,
+        "meanMs": 1020.719,
+        "p75Ms": 1082.743,
+        "p95Ms": 1223.244,
+        "maxMs": 1223.244,
+        "resultSummary": {
+          "kind": "object",
+          "outfits": 5,
+          "eligibleCount": 236,
+          "slotCounts": {
+            "top": 81,
+            "bottom": 60,
+            "footwear": 36,
+            "outerwear": 24,
+            "accessory": 35
+          }
+        }
+      },
+      {
+        "size": 500,
+        "runs": 4,
+        "minMs": 937.486,
+        "p50Ms": 938.447,
+        "meanMs": 958.083,
+        "p75Ms": 959.816,
+        "p95Ms": 996.583,
+        "maxMs": 996.583,
+        "resultSummary": {
+          "kind": "object",
+          "outfits": 5,
+          "eligibleCount": 473,
+          "slotCounts": {
+            "top": 165,
+            "bottom": 119,
+            "footwear": 71,
+            "outerwear": 47,
+            "accessory": 71
+          }
+        }
+      },
+      {
+        "size": 800,
+        "runs": 3,
+        "minMs": 907.564,
+        "p50Ms": 910.376,
+        "meanMs": 923.129,
+        "p75Ms": 951.446,
+        "p95Ms": 951.446,
+        "maxMs": 951.446,
+        "resultSummary": {
+          "kind": "object",
+          "outfits": 5,
+          "eligibleCount": 757,
+          "slotCounts": {
+            "top": 264,
+            "bottom": 189,
+            "footwear": 114,
+            "outerwear": 76,
+            "accessory": 114
+          }
+        }
+      },
+      {
+        "size": 1000,
+        "runs": 2,
+        "minMs": 925.385,
+        "p50Ms": 925.385,
+        "meanMs": 932.964,
+        "p75Ms": 940.543,
+        "p95Ms": 940.543,
+        "maxMs": 940.543,
+        "resultSummary": {
+          "kind": "object",
+          "outfits": 5,
+          "eligibleCount": 947,
+          "slotCounts": {
+            "top": 331,
+            "bottom": 237,
+            "footwear": 142,
+            "outerwear": 95,
+            "accessory": 142
+          }
+        }
+      }
+    ],
+    "clientGenerateOutfits": [
+      {
+        "size": 50,
+        "runs": 5,
+        "minMs": 713.204,
+        "p50Ms": 790.209,
+        "meanMs": 763.196,
+        "p75Ms": 791.146,
+        "p95Ms": 807.938,
+        "maxMs": 807.938,
+        "resultSummary": {
+          "kind": "array",
+          "length": 5
+        }
+      },
+      {
+        "size": 100,
+        "runs": 5,
+        "minMs": 749.388,
+        "p50Ms": 811.883,
+        "meanMs": 845.852,
+        "p75Ms": 828.627,
+        "p95Ms": 1065.952,
+        "maxMs": 1065.952,
+        "resultSummary": {
+          "kind": "array",
+          "length": 5
+        }
+      },
+      {
+        "size": 250,
+        "runs": 4,
+        "minMs": 811.927,
+        "p50Ms": 815.135,
+        "meanMs": 820.866,
+        "p75Ms": 819.849,
+        "p95Ms": 836.554,
+        "maxMs": 836.554,
+        "resultSummary": {
+          "kind": "array",
+          "length": 5
+        }
+      },
+      {
+        "size": 500,
+        "runs": 3,
+        "minMs": 914.555,
+        "p50Ms": 933.356,
+        "meanMs": 942.936,
+        "p75Ms": 980.898,
+        "p95Ms": 980.898,
+        "maxMs": 980.898,
+        "resultSummary": {
+          "kind": "array",
+          "length": 5
+        }
+      },
+      {
+        "size": 800,
+        "runs": 3,
+        "minMs": 1062.944,
+        "p50Ms": 1072.419,
+        "meanMs": 1090.734,
+        "p75Ms": 1136.839,
+        "p95Ms": 1136.839,
+        "maxMs": 1136.839,
+        "resultSummary": {
+          "kind": "array",
+          "length": 5
+        }
+      },
+      {
+        "size": 1000,
+        "runs": 2,
+        "minMs": 1158.724,
+        "p50Ms": 1158.724,
+        "meanMs": 1160.294,
+        "p75Ms": 1161.863,
+        "p95Ms": 1161.863,
+        "maxMs": 1161.863,
+        "resultSummary": {
+          "kind": "array",
+          "length": 5
+        }
+      }
+    ],
+    "filterEligibleItems": [
+      {
+        "size": 50,
+        "runs": 70,
+        "minMs": 0.002,
+        "p50Ms": 0.002,
+        "meanMs": 0.002,
+        "p75Ms": 0.002,
+        "p95Ms": 0.002,
+        "maxMs": 0.003,
+        "resultSummary": {
+          "kind": "array",
+          "length": 47
+        }
+      },
+      {
+        "size": 100,
+        "runs": 70,
+        "minMs": 0.004,
+        "p50Ms": 0.004,
+        "meanMs": 0.007,
+        "p75Ms": 0.005,
+        "p95Ms": 0.02,
+        "maxMs": 0.049,
+        "resultSummary": {
+          "kind": "array",
+          "length": 94
+        }
+      },
+      {
+        "size": 250,
+        "runs": 70,
+        "minMs": 0.011,
+        "p50Ms": 0.011,
+        "meanMs": 0.017,
+        "p75Ms": 0.012,
+        "p95Ms": 0.033,
+        "maxMs": 0.21,
+        "resultSummary": {
+          "kind": "array",
+          "length": 236
+        }
+      },
+      {
+        "size": 500,
+        "runs": 70,
+        "minMs": 0.022,
+        "p50Ms": 0.022,
+        "meanMs": 0.022,
+        "p75Ms": 0.023,
+        "p95Ms": 0.023,
+        "maxMs": 0.023,
+        "resultSummary": {
+          "kind": "array",
+          "length": 473
+        }
+      },
+      {
+        "size": 800,
+        "runs": 70,
+        "minMs": 0.036,
+        "p50Ms": 0.037,
+        "meanMs": 0.053,
+        "p75Ms": 0.086,
+        "p95Ms": 0.111,
+        "maxMs": 0.132,
+        "resultSummary": {
+          "kind": "array",
+          "length": 757
+        }
+      },
+      {
+        "size": 1000,
+        "runs": 70,
+        "minMs": 0.046,
+        "p50Ms": 0.046,
+        "meanMs": 0.048,
+        "p75Ms": 0.047,
+        "p95Ms": 0.055,
+        "maxMs": 0.075,
+        "resultSummary": {
+          "kind": "array",
+          "length": 947
+        }
+      }
+    ],
+    "wardrobeSuggestions": [
+      {
+        "size": 50,
+        "runs": 70,
+        "minMs": 0.07,
+        "p50Ms": 0.074,
+        "meanMs": 0.104,
+        "p75Ms": 0.111,
+        "p95Ms": 0.188,
+        "maxMs": 0.422,
+        "resultSummary": {
+          "kind": "array",
+          "length": 0
+        }
+      },
+      {
+        "size": 100,
+        "runs": 70,
+        "minMs": 0.128,
+        "p50Ms": 0.14,
+        "meanMs": 0.175,
+        "p75Ms": 0.143,
+        "p95Ms": 0.377,
+        "maxMs": 1.098,
+        "resultSummary": {
+          "kind": "array",
+          "length": 0
+        }
+      },
+      {
+        "size": 250,
+        "runs": 70,
+        "minMs": 0.281,
+        "p50Ms": 0.304,
+        "meanMs": 0.388,
+        "p75Ms": 0.437,
+        "p95Ms": 0.7,
+        "maxMs": 1.127,
+        "resultSummary": {
+          "kind": "array",
+          "length": 0
+        }
+      },
+      {
+        "size": 500,
+        "runs": 70,
+        "minMs": 0.559,
+        "p50Ms": 0.576,
+        "meanMs": 0.682,
+        "p75Ms": 0.702,
+        "p95Ms": 1.276,
+        "maxMs": 1.418,
+        "resultSummary": {
+          "kind": "array",
+          "length": 0
+        }
+      },
+      {
+        "size": 800,
+        "runs": 70,
+        "minMs": 0.872,
+        "p50Ms": 0.913,
+        "meanMs": 0.984,
+        "p75Ms": 0.999,
+        "p95Ms": 1.399,
+        "maxMs": 1.5,
+        "resultSummary": {
+          "kind": "array",
+          "length": 0
+        }
+      },
+      {
+        "size": 1000,
+        "runs": 70,
+        "minMs": 1.088,
+        "p50Ms": 1.133,
+        "meanMs": 1.229,
+        "p75Ms": 1.204,
+        "p95Ms": 1.858,
+        "maxMs": 2.171,
+        "resultSummary": {
+          "kind": "array",
+          "length": 0
+        }
+      }
+    ]
+  },
+  "closet": {
+    "combinedRows": [
+      {
+        "size": 50,
+        "runs": 80,
+        "minMs": 0.071,
+        "p50Ms": 0.073,
+        "meanMs": 0.077,
+        "p75Ms": 0.075,
+        "p95Ms": 0.09,
+        "maxMs": 0.282,
+        "resultSummary": {
+          "kind": "array",
+          "length": 9
+        }
+      },
+      {
+        "size": 100,
+        "runs": 80,
+        "minMs": 0.142,
+        "p50Ms": 0.145,
+        "meanMs": 0.15,
+        "p75Ms": 0.149,
+        "p95Ms": 0.176,
+        "maxMs": 0.242,
+        "resultSummary": {
+          "kind": "array",
+          "length": 16
+        }
+      },
+      {
+        "size": 250,
+        "runs": 80,
+        "minMs": 0.342,
+        "p50Ms": 0.353,
+        "meanMs": 0.377,
+        "p75Ms": 0.365,
+        "p95Ms": 0.476,
+        "maxMs": 0.888,
+        "resultSummary": {
+          "kind": "array",
+          "length": 20
+        }
+      },
+      {
+        "size": 500,
+        "runs": 80,
+        "minMs": 0.681,
+        "p50Ms": 0.717,
+        "meanMs": 0.748,
+        "p75Ms": 0.738,
+        "p95Ms": 0.884,
+        "maxMs": 1.808,
+        "resultSummary": {
+          "kind": "array",
+          "length": 30
+        }
+      },
+      {
+        "size": 800,
+        "runs": 80,
+        "minMs": 1.093,
+        "p50Ms": 1.148,
+        "meanMs": 1.173,
+        "p75Ms": 1.195,
+        "p95Ms": 1.311,
+        "maxMs": 1.464,
+        "resultSummary": {
+          "kind": "array",
+          "length": 40
+        }
+      },
+      {
+        "size": 1000,
+        "runs": 80,
+        "minMs": 1.36,
+        "p50Ms": 1.438,
+        "meanMs": 1.456,
+        "p75Ms": 1.491,
+        "p95Ms": 1.584,
+        "maxMs": 1.733,
+        "resultSummary": {
+          "kind": "array",
+          "length": 47
+        }
+      }
+    ],
+    "individualOperations": [
+      {
+        "operation": "rankSearchItems",
+        "size": 50,
+        "runs": 80,
+        "minMs": 0.082,
+        "p50Ms": 0.085,
+        "meanMs": 0.091,
+        "p75Ms": 0.089,
+        "p95Ms": 0.123,
+        "maxMs": 0.17,
+        "resultSummary": {
+          "kind": "array",
+          "length": 4
+        }
+      },
+      {
+        "operation": "sortItemsRecentlyAdded",
+        "size": 50,
+        "runs": 80,
+        "minMs": 0.001,
+        "p50Ms": 0.001,
+        "meanMs": 0.003,
+        "p75Ms": 0.003,
+        "p95Ms": 0.004,
+        "maxMs": 0.065,
+        "resultSummary": {
+          "kind": "array",
+          "length": 50
+        }
+      },
+      {
+        "operation": "buildSections",
+        "size": 50,
+        "runs": 80,
+        "minMs": 0.062,
+        "p50Ms": 0.066,
+        "meanMs": 0.074,
+        "p75Ms": 0.07,
+        "p95Ms": 0.101,
+        "maxMs": 0.266,
+        "resultSummary": {
+          "kind": "array",
+          "length": 6
+        }
+      },
+      {
+        "operation": "buildRowsFromSections",
+        "size": 50,
+        "runs": 80,
+        "minMs": 0.062,
+        "p50Ms": 0.066,
+        "meanMs": 0.069,
+        "p75Ms": 0.069,
+        "p95Ms": 0.084,
+        "maxMs": 0.11,
+        "resultSummary": {
+          "kind": "array",
+          "length": 39
+        }
+      },
+      {
+        "operation": "rankSearchItems",
+        "size": 100,
+        "runs": 80,
+        "minMs": 0.132,
+        "p50Ms": 0.138,
+        "meanMs": 0.151,
+        "p75Ms": 0.164,
+        "p95Ms": 0.175,
+        "maxMs": 0.385,
+        "resultSummary": {
+          "kind": "array",
+          "length": 8
+        }
+      },
+      {
+        "operation": "sortItemsRecentlyAdded",
+        "size": 100,
+        "runs": 80,
+        "minMs": 0.001,
+        "p50Ms": 0.001,
+        "meanMs": 0.002,
+        "p75Ms": 0.001,
+        "p95Ms": 0.002,
+        "maxMs": 0.011,
+        "resultSummary": {
+          "kind": "array",
+          "length": 100
+        }
+      },
+      {
+        "operation": "buildSections",
+        "size": 100,
+        "runs": 80,
+        "minMs": 0.117,
+        "p50Ms": 0.123,
+        "meanMs": 0.14,
+        "p75Ms": 0.132,
+        "p95Ms": 0.241,
+        "maxMs": 0.382,
+        "resultSummary": {
+          "kind": "array",
+          "length": 6
+        }
+      },
+      {
+        "operation": "buildRowsFromSections",
+        "size": 100,
+        "runs": 80,
+        "minMs": 0.119,
+        "p50Ms": 0.121,
+        "meanMs": 0.128,
+        "p75Ms": 0.125,
+        "p95Ms": 0.15,
+        "maxMs": 0.383,
+        "resultSummary": {
+          "kind": "array",
+          "length": 64
+        }
+      },
+      {
+        "operation": "rankSearchItems",
+        "size": 250,
+        "runs": 80,
+        "minMs": 0.319,
+        "p50Ms": 0.331,
+        "meanMs": 0.341,
+        "p75Ms": 0.338,
+        "p95Ms": 0.406,
+        "maxMs": 0.545,
+        "resultSummary": {
+          "kind": "array",
+          "length": 18
+        }
+      },
+      {
+        "operation": "sortItemsRecentlyAdded",
+        "size": 250,
+        "runs": 80,
+        "minMs": 0.002,
+        "p50Ms": 0.002,
+        "meanMs": 0.002,
+        "p75Ms": 0.002,
+        "p95Ms": 0.003,
+        "maxMs": 0.017,
+        "resultSummary": {
+          "kind": "array",
+          "length": 250
+        }
+      },
+      {
+        "operation": "buildSections",
+        "size": 250,
+        "runs": 80,
+        "minMs": 0.285,
+        "p50Ms": 0.292,
+        "meanMs": 0.304,
+        "p75Ms": 0.299,
+        "p95Ms": 0.359,
+        "maxMs": 0.486,
+        "resultSummary": {
+          "kind": "array",
+          "length": 6
+        }
+      },
+      {
+        "operation": "buildRowsFromSections",
+        "size": 250,
+        "runs": 80,
+        "minMs": 0.288,
+        "p50Ms": 0.299,
+        "meanMs": 0.307,
+        "p75Ms": 0.306,
+        "p95Ms": 0.354,
+        "maxMs": 0.497,
+        "resultSummary": {
+          "kind": "array",
+          "length": 139
+        }
+      },
+      {
+        "operation": "rankSearchItems",
+        "size": 500,
+        "runs": 80,
+        "minMs": 0.633,
+        "p50Ms": 0.655,
+        "meanMs": 0.678,
+        "p75Ms": 0.668,
+        "p95Ms": 0.82,
+        "maxMs": 1.028,
+        "resultSummary": {
+          "kind": "array",
+          "length": 36
+        }
+      },
+      {
+        "operation": "sortItemsRecentlyAdded",
+        "size": 500,
+        "runs": 80,
+        "minMs": 0.004,
+        "p50Ms": 0.004,
+        "meanMs": 0.004,
+        "p75Ms": 0.004,
+        "p95Ms": 0.004,
+        "maxMs": 0.005,
+        "resultSummary": {
+          "kind": "array",
+          "length": 500
+        }
+      },
+      {
+        "operation": "buildSections",
+        "size": 500,
+        "runs": 80,
+        "minMs": 0.557,
+        "p50Ms": 0.572,
+        "meanMs": 0.585,
+        "p75Ms": 0.58,
+        "p95Ms": 0.67,
+        "maxMs": 0.769,
+        "resultSummary": {
+          "kind": "array",
+          "length": 6
+        }
+      },
+      {
+        "operation": "buildRowsFromSections",
+        "size": 500,
+        "runs": 80,
+        "minMs": 0.565,
+        "p50Ms": 0.579,
+        "meanMs": 0.6,
+        "p75Ms": 0.602,
+        "p95Ms": 0.699,
+        "maxMs": 0.851,
+        "resultSummary": {
+          "kind": "array",
+          "length": 264
+        }
+      },
+      {
+        "operation": "rankSearchItems",
+        "size": 800,
+        "runs": 80,
+        "minMs": 1.017,
+        "p50Ms": 1.058,
+        "meanMs": 1.082,
+        "p75Ms": 1.096,
+        "p95Ms": 1.226,
+        "maxMs": 1.283,
+        "resultSummary": {
+          "kind": "array",
+          "length": 58
+        }
+      },
+      {
+        "operation": "sortItemsRecentlyAdded",
+        "size": 800,
+        "runs": 80,
+        "minMs": 0.007,
+        "p50Ms": 0.007,
+        "meanMs": 0.007,
+        "p75Ms": 0.007,
+        "p95Ms": 0.007,
+        "maxMs": 0.008,
+        "resultSummary": {
+          "kind": "array",
+          "length": 800
+        }
+      },
+      {
+        "operation": "buildSections",
+        "size": 800,
+        "runs": 80,
+        "minMs": 0.895,
+        "p50Ms": 0.918,
+        "meanMs": 0.992,
+        "p75Ms": 0.958,
+        "p95Ms": 1.6,
+        "maxMs": 1.713,
+        "resultSummary": {
+          "kind": "array",
+          "length": 6
+        }
+      },
+      {
+        "operation": "buildRowsFromSections",
+        "size": 800,
+        "runs": 80,
+        "minMs": 0.896,
+        "p50Ms": 0.929,
+        "meanMs": 0.954,
+        "p75Ms": 0.973,
+        "p95Ms": 1.102,
+        "maxMs": 1.173,
+        "resultSummary": {
+          "kind": "array",
+          "length": 412
+        }
+      },
+      {
+        "operation": "rankSearchItems",
+        "size": 1000,
+        "runs": 80,
+        "minMs": 1.276,
+        "p50Ms": 1.331,
+        "meanMs": 1.432,
+        "p75Ms": 1.379,
+        "p95Ms": 1.573,
+        "maxMs": 4.568,
+        "resultSummary": {
+          "kind": "array",
+          "length": 72
+        }
+      },
+      {
+        "operation": "sortItemsRecentlyAdded",
+        "size": 1000,
+        "runs": 80,
+        "minMs": 0.009,
+        "p50Ms": 0.009,
+        "meanMs": 0.013,
+        "p75Ms": 0.011,
+        "p95Ms": 0.027,
+        "maxMs": 0.038,
+        "resultSummary": {
+          "kind": "array",
+          "length": 1000
+        }
+      },
+      {
+        "operation": "buildSections",
+        "size": 1000,
+        "runs": 80,
+        "minMs": 1.107,
+        "p50Ms": 1.148,
+        "meanMs": 1.174,
+        "p75Ms": 1.194,
+        "p95Ms": 1.325,
+        "maxMs": 1.395,
+        "resultSummary": {
+          "kind": "array",
+          "length": 6
+        }
+      },
+      {
+        "operation": "buildRowsFromSections",
+        "size": 1000,
+        "runs": 80,
+        "minMs": 1.124,
+        "p50Ms": 1.161,
+        "meanMs": 1.191,
+        "p75Ms": 1.198,
+        "p95Ms": 1.371,
+        "maxMs": 1.547,
+        "resultSummary": {
+          "kind": "array",
+          "length": 512
+        }
+      }
+    ]
+  },
+  "streaming": {
+    "syntheticAuraStream": [
+      {
+        "scenario": "micro_delta_25ms",
+        "syntheticServerChunkDelayMs": 25,
+        "runs": 12,
+        "firstStatus": {
+          "runs": 12,
+          "minMs": 25.649,
+          "p50Ms": 26.189,
+          "meanMs": 27.331,
+          "p75Ms": 26.793,
+          "p95Ms": 36.43,
+          "maxMs": 36.43
+        },
+        "timeToFirstVisibleDelta": {
+          "runs": 14,
+          "minMs": 51.441,
+          "p50Ms": 163.412,
+          "meanMs": 144.136,
+          "p75Ms": 182.397,
+          "p95Ms": 218.858,
+          "maxMs": 218.858
+        },
+        "deltaCallbackInterval": {
+          "runs": 84,
+          "minMs": 0.069,
+          "p50Ms": 26.176,
+          "meanMs": 22.43,
+          "p75Ms": 26.368,
+          "p95Ms": 35.42,
+          "maxMs": 35.921
+        },
+        "timeToFinalCallback": {
+          "runs": 12,
+          "minMs": 232.316,
+          "p50Ms": 235.81,
+          "meanMs": 236.318,
+          "p75Ms": 236.747,
+          "p95Ms": 245.522,
+          "maxMs": 245.522
+        },
+        "timeToResolvedResponse": {
+          "runs": 12,
+          "minMs": 232.353,
+          "p50Ms": 235.975,
+          "meanMs": 236.392,
+          "p75Ms": 236.8,
+          "p95Ms": 245.657,
+          "maxMs": 245.657
+        },
+        "note": "Synthetic benchmark of src/lib/aura.ts client stream parsing and smoothing; excludes deployed function, OpenAI, Firebase Auth, and network latency."
+      },
+      {
+        "scenario": "single_large_delta_smoothed",
+        "syntheticServerChunkDelayMs": 25,
+        "runs": 12,
+        "firstStatus": {
+          "runs": 12,
+          "minMs": 25.545,
+          "p50Ms": 26.296,
+          "meanMs": 26.338,
+          "p75Ms": 26.528,
+          "p95Ms": 27.391,
+          "maxMs": 27.391
+        },
+        "timeToFirstVisibleDelta": {
+          "runs": 228,
+          "minMs": 50.862,
+          "p50Ms": 368.682,
+          "meanMs": 369.493,
+          "p75Ms": 543.447,
+          "p95Ms": 681.563,
+          "maxMs": 690.171
+        },
+        "deltaCallbackInterval": {
+          "runs": 216,
+          "minMs": 34.103,
+          "p50Ms": 35.174,
+          "meanMs": 35.19,
+          "p75Ms": 35.221,
+          "p95Ms": 36.408,
+          "maxMs": 40.98
+        },
+        "timeToFinalCallback": {
+          "runs": 12,
+          "minMs": 681.676,
+          "p50Ms": 685.967,
+          "meanMs": 686.224,
+          "p75Ms": 687.446,
+          "p95Ms": 690.301,
+          "maxMs": 690.301
+        },
+        "timeToResolvedResponse": {
+          "runs": 12,
+          "minMs": 681.709,
+          "p50Ms": 685.996,
+          "meanMs": 686.266,
+          "p75Ms": 687.468,
+          "p95Ms": 690.323,
+          "maxMs": 690.323
+        },
+        "note": "Synthetic benchmark of src/lib/aura.ts client stream parsing and smoothing; excludes deployed function, OpenAI, Firebase Auth, and network latency."
+      }
+    ]
+  },
+  "staticAudit": {
+    "environment": {
+      "measuredAt": "2026-05-25T04:15:06.670Z",
+      "node": "v24.12.0",
+      "platform": "darwin",
+      "arch": "arm64",
+      "cpuCount": 10,
+      "cpuModel": "Apple M4",
+      "repoRoot": "/Users/athfan/wardrobe-ai/closet",
+      "benchmarkMode": "Node.js microbenchmarks with deterministic synthetic closet datasets; Firebase, React Native, Expo, and network dependencies mocked unless explicitly noted."
+    },
+    "sourceFileCounts": {
+      "totalSourceFiles": 321,
+      "tsFiles": 320,
+      "tsxFiles": 143,
+      "jsFiles": 0,
+      "swiftFiles": 1,
+      "typescriptSharePct": 100,
+      "srcComponentTsxFiles": 83,
+      "hookFiles": 18,
+      "appRouteFiles": 34,
+      "libServiceFiles": 59,
+      "cloudFunctionSourceFiles": 55,
+      "exportedFirebaseFunctions": 15,
+      "exportedFirebaseFunctionNames": [
+        "askAura",
+        "askAuraStream",
+        "deleteAccountData",
+        "extractOutfitItems",
+        "generateAuraSwipeBatch",
+        "generateOutfitsV1",
+        "importProductLink",
+        "ingestItemFromPhotos",
+        "outfitChatV1",
+        "parseOutfitIntent",
+        "polishProductImage",
+        "previewProductLink",
+        "searchLiveProducts",
+        "transcribeAuraAudio",
+        "wrapAffiliateLinks"
+      ]
+    },
+    "package": {
+      "dependencies": 52,
+      "devDependencies": 6,
+      "scripts": [
+        "start",
+        "postinstall",
+        "android",
+        "ios",
+        "web",
+        "lint",
+        "aura:eval",
+        "check:eas-env"
+      ]
+    },
+    "typescript": {
+      "strict": true,
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "staticFeatureCounts": {
+      "accessibilityLabelOccurrences": 49,
+      "accessibilityRoleOccurrences": 46,
+      "interactiveComponentOccurrences": 224,
+      "keyboardAwareOccurrences": 32,
+      "activityIndicatorOccurrences": 36,
+      "skeletonOccurrences": 0,
+      "emptyStateOccurrences": 23,
+      "errorRetryOccurrences": 1415,
+      "fallbackOccurrences": 195,
+      "timeoutAbortOccurrences": 85,
+      "tryCatchBlocks": 335,
+      "catchBlocks": 334,
+      "onSnapshotOccurrences": 12,
+      "writeBatchOccurrences": 15,
+      "useMemoOccurrences": 220,
+      "useCallbackOccurrences": 287,
+      "reactMemoOccurrences": 73,
+      "flatListOccurrences": 21,
+      "reducedMotionOccurrences": 72,
+      "rateLimitedEndpointTypes": 8,
+      "rateLimitedEndpointNames": [
+        "auraChat",
+        "productLink",
+        "imageIngestion",
+        "productPolish",
+        "outfitExtraction",
+        "outfitGeneration",
+        "voiceTranscription",
+        "accountDelete"
+      ]
+    },
+    "largestFiles": [
+      {
+        "file": "app/(tabs)/ai.tsx",
+        "loc": 3560,
+        "asyncCount": 16,
+        "awaitCount": 79,
+        "tryCount": 13,
+        "catchCount": 11,
+        "useMemoCount": 10,
+        "useCallbackCount": 24,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 18,
+        "errorStateCount": 48,
+        "fallbackCount": 6,
+        "timeoutCount": 10
+      },
+      {
+        "file": "src/addItem/hooks/usePhotoStep.ts",
+        "loc": 3380,
+        "asyncCount": 21,
+        "awaitCount": 57,
+        "tryCount": 16,
+        "catchCount": 16,
+        "useMemoCount": 0,
+        "useCallbackCount": 41,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 77,
+        "fallbackCount": 12,
+        "timeoutCount": 3
+      },
+      {
+        "file": "functions/src/ingestItemFromPhotos.ts",
+        "loc": 2905,
+        "asyncCount": 10,
+        "awaitCount": 42,
+        "tryCount": 10,
+        "catchCount": 7,
+        "useMemoCount": 0,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 66,
+        "fallbackCount": 11,
+        "timeoutCount": 0
+      },
+      {
+        "file": "app/(tabs)/closet.tsx",
+        "loc": 2835,
+        "asyncCount": 20,
+        "awaitCount": 35,
+        "tryCount": 12,
+        "catchCount": 17,
+        "useMemoCount": 30,
+        "useCallbackCount": 39,
+        "reactMemoCount": 9,
+        "accessibilityLabelCount": 1,
+        "accessibilityRoleCount": 1,
+        "loadingStateCount": 11,
+        "errorStateCount": 35,
+        "fallbackCount": 0,
+        "timeoutCount": 1
+      },
+      {
+        "file": "functions/src/shared/productLinkExtractor.ts",
+        "loc": 2558,
+        "asyncCount": 6,
+        "awaitCount": 14,
+        "tryCount": 14,
+        "catchCount": 13,
+        "useMemoCount": 0,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 1,
+        "errorStateCount": 45,
+        "fallbackCount": 15,
+        "timeoutCount": 0
+      },
+      {
+        "file": "functions/src/askAuraStream.ts",
+        "loc": 1938,
+        "asyncCount": 3,
+        "awaitCount": 22,
+        "tryCount": 13,
+        "catchCount": 13,
+        "useMemoCount": 0,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 65,
+        "fallbackCount": 1,
+        "timeoutCount": 0
+      },
+      {
+        "file": "app/(tabs)/item/[id].tsx",
+        "loc": 1872,
+        "asyncCount": 8,
+        "awaitCount": 7,
+        "tryCount": 9,
+        "catchCount": 9,
+        "useMemoCount": 12,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 8,
+        "accessibilityRoleCount": 5,
+        "loadingStateCount": 2,
+        "errorStateCount": 25,
+        "fallbackCount": 0,
+        "timeoutCount": 4
+      },
+      {
+        "file": "functions/src/shared/outfitEngine.ts",
+        "loc": 1809,
+        "asyncCount": 2,
+        "awaitCount": 2,
+        "tryCount": 1,
+        "catchCount": 1,
+        "useMemoCount": 0,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 1,
+        "fallbackCount": 9,
+        "timeoutCount": 0
+      },
+      {
+        "file": "src/components/aura/AuraLookCard.tsx",
+        "loc": 1798,
+        "asyncCount": 0,
+        "awaitCount": 0,
+        "tryCount": 0,
+        "catchCount": 0,
+        "useMemoCount": 5,
+        "useCallbackCount": 0,
+        "reactMemoCount": 1,
+        "accessibilityLabelCount": 6,
+        "accessibilityRoleCount": 3,
+        "loadingStateCount": 5,
+        "errorStateCount": 0,
+        "fallbackCount": 0,
+        "timeoutCount": 0
+      },
+      {
+        "file": "src/profile/screens.tsx",
+        "loc": 1789,
+        "asyncCount": 18,
+        "awaitCount": 30,
+        "tryCount": 6,
+        "catchCount": 12,
+        "useMemoCount": 2,
+        "useCallbackCount": 18,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 26,
+        "errorStateCount": 27,
+        "fallbackCount": 0,
+        "timeoutCount": 0
+      },
+      {
+        "file": "src/addItem/hooks/useItemExtraction.ts",
+        "loc": 1780,
+        "asyncCount": 5,
+        "awaitCount": 7,
+        "tryCount": 5,
+        "catchCount": 4,
+        "useMemoCount": 2,
+        "useCallbackCount": 15,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 28,
+        "fallbackCount": 0,
+        "timeoutCount": 4
+      },
+      {
+        "file": "src/lib/auraAttachments.ts",
+        "loc": 1607,
+        "asyncCount": 14,
+        "awaitCount": 26,
+        "tryCount": 12,
+        "catchCount": 14,
+        "useMemoCount": 0,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 78,
+        "fallbackCount": 10,
+        "timeoutCount": 2
+      },
+      {
+        "file": "functions/src/askAura.ts",
+        "loc": 1440,
+        "asyncCount": 3,
+        "awaitCount": 14,
+        "tryCount": 8,
+        "catchCount": 8,
+        "useMemoCount": 0,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 54,
+        "fallbackCount": 1,
+        "timeoutCount": 0
+      },
+      {
+        "file": "shared/auraStylingIntelligence.ts",
+        "loc": 1342,
+        "asyncCount": 0,
+        "awaitCount": 0,
+        "tryCount": 1,
+        "catchCount": 0,
+        "useMemoCount": 0,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 0,
+        "fallbackCount": 0,
+        "timeoutCount": 0
+      },
+      {
+        "file": "modules/expo-vision-bg/ios/ExpoVisionBgModule.swift",
+        "loc": 1314,
+        "asyncCount": 0,
+        "awaitCount": 0,
+        "tryCount": 11,
+        "catchCount": 3,
+        "useMemoCount": 0,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 11,
+        "fallbackCount": 12,
+        "timeoutCount": 1
+      },
+      {
+        "file": "app/aura/swipe.tsx",
+        "loc": 1305,
+        "asyncCount": 2,
+        "awaitCount": 5,
+        "tryCount": 2,
+        "catchCount": 3,
+        "useMemoCount": 3,
+        "useCallbackCount": 6,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 4,
+        "errorStateCount": 8,
+        "fallbackCount": 0,
+        "timeoutCount": 0
+      },
+      {
+        "file": "app/(tabs)/calendar.tsx",
+        "loc": 1296,
+        "asyncCount": 17,
+        "awaitCount": 24,
+        "tryCount": 7,
+        "catchCount": 9,
+        "useMemoCount": 20,
+        "useCallbackCount": 18,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 3,
+        "accessibilityRoleCount": 4,
+        "loadingStateCount": 2,
+        "errorStateCount": 14,
+        "fallbackCount": 0,
+        "timeoutCount": 2
+      },
+      {
+        "file": "src/components/ai/ChatMessage.tsx",
+        "loc": 1288,
+        "asyncCount": 0,
+        "awaitCount": 0,
+        "tryCount": 1,
+        "catchCount": 0,
+        "useMemoCount": 0,
+        "useCallbackCount": 1,
+        "reactMemoCount": 1,
+        "accessibilityLabelCount": 9,
+        "accessibilityRoleCount": 9,
+        "loadingStateCount": 5,
+        "errorStateCount": 7,
+        "fallbackCount": 7,
+        "timeoutCount": 0
+      },
+      {
+        "file": "src/lib/auraLookLayouts.ts",
+        "loc": 1282,
+        "asyncCount": 0,
+        "awaitCount": 0,
+        "tryCount": 0,
+        "catchCount": 0,
+        "useMemoCount": 0,
+        "useCallbackCount": 0,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 0,
+        "errorStateCount": 0,
+        "fallbackCount": 3,
+        "timeoutCount": 0
+      },
+      {
+        "file": "app/(tabs)/index.tsx",
+        "loc": 1191,
+        "asyncCount": 5,
+        "awaitCount": 9,
+        "tryCount": 5,
+        "catchCount": 4,
+        "useMemoCount": 12,
+        "useCallbackCount": 7,
+        "reactMemoCount": 0,
+        "accessibilityLabelCount": 0,
+        "accessibilityRoleCount": 0,
+        "loadingStateCount": 6,
+        "errorStateCount": 8,
+        "fallbackCount": 2,
+        "timeoutCount": 2
+      }
+    ],
+    "asyncHotspots": [
+      {
+        "file": "app/(tabs)/ai.tsx",
+        "asyncSignal": 119,
+        "asyncCount": 16,
+        "awaitCount": 79,
+        "tryCount": 13,
+        "catchCount": 11,
+        "loc": 3560
+      },
+      {
+        "file": "src/addItem/hooks/usePhotoStep.ts",
+        "asyncSignal": 110,
+        "asyncCount": 21,
+        "awaitCount": 57,
+        "tryCount": 16,
+        "catchCount": 16,
+        "loc": 3380
+      },
+      {
+        "file": "app/(tabs)/closet.tsx",
+        "asyncSignal": 84,
+        "asyncCount": 20,
+        "awaitCount": 35,
+        "tryCount": 12,
+        "catchCount": 17,
+        "loc": 2835
+      },
+      {
+        "file": "functions/src/ingestItemFromPhotos.ts",
+        "asyncSignal": 69,
+        "asyncCount": 10,
+        "awaitCount": 42,
+        "tryCount": 10,
+        "catchCount": 7,
+        "loc": 2905
+      },
+      {
+        "file": "src/lib/aura.ts",
+        "asyncSignal": 68,
+        "asyncCount": 13,
+        "awaitCount": 29,
+        "tryCount": 12,
+        "catchCount": 14,
+        "loc": 988
+      },
+      {
+        "file": "src/profile/screens.tsx",
+        "asyncSignal": 66,
+        "asyncCount": 18,
+        "awaitCount": 30,
+        "tryCount": 6,
+        "catchCount": 12,
+        "loc": 1789
+      },
+      {
+        "file": "src/lib/auraAttachments.ts",
+        "asyncSignal": 66,
+        "asyncCount": 14,
+        "awaitCount": 26,
+        "tryCount": 12,
+        "catchCount": 14,
+        "loc": 1607
+      },
+      {
+        "file": "app/(tabs)/calendar.tsx",
+        "asyncSignal": 57,
+        "asyncCount": 17,
+        "awaitCount": 24,
+        "tryCount": 7,
+        "catchCount": 9,
+        "loc": 1296
+      },
+      {
+        "file": "functions/src/askAuraStream.ts",
+        "asyncSignal": 51,
+        "asyncCount": 3,
+        "awaitCount": 22,
+        "tryCount": 13,
+        "catchCount": 13,
+        "loc": 1938
+      },
+      {
+        "file": "functions/src/extractOutfitItems.ts",
+        "asyncSignal": 48,
+        "asyncCount": 10,
+        "awaitCount": 24,
+        "tryCount": 7,
+        "catchCount": 7,
+        "loc": 1173
+      },
+      {
+        "file": "functions/src/shared/productLinkExtractor.ts",
+        "asyncSignal": 47,
+        "asyncCount": 6,
+        "awaitCount": 14,
+        "tryCount": 14,
+        "catchCount": 13,
+        "loc": 2558
+      },
+      {
+        "file": "src/lib/localChatCache.ts",
+        "asyncSignal": 42,
+        "asyncCount": 11,
+        "awaitCount": 17,
+        "tryCount": 7,
+        "catchCount": 7,
+        "loc": 297
+      },
+      {
+        "file": "app/(tabs)/item/[id].tsx",
+        "asyncSignal": 33,
+        "asyncCount": 8,
+        "awaitCount": 7,
+        "tryCount": 9,
+        "catchCount": 9,
+        "loc": 1872
+      },
+      {
+        "file": "functions/src/askAura.ts",
+        "asyncSignal": 33,
+        "asyncCount": 3,
+        "awaitCount": 14,
+        "tryCount": 8,
+        "catchCount": 8,
+        "loc": 1440
+      },
+      {
+        "file": "src/lib/auraMemory.ts",
+        "asyncSignal": 33,
+        "asyncCount": 16,
+        "awaitCount": 17,
+        "tryCount": 0,
+        "catchCount": 0,
+        "loc": 505
+      },
+      {
+        "file": "src/lib/aiChats.ts",
+        "asyncSignal": 32,
+        "asyncCount": 14,
+        "awaitCount": 18,
+        "tryCount": 0,
+        "catchCount": 0,
+        "loc": 762
+      },
+      {
+        "file": "src/hooks/aura/useAuraComposerState.ts",
+        "asyncSignal": 32,
+        "asyncCount": 6,
+        "awaitCount": 13,
+        "tryCount": 5,
+        "catchCount": 8,
+        "loc": 400
+      },
+      {
+        "file": "functions/src/deleteAccountData.ts",
+        "asyncSignal": 30,
+        "asyncCount": 6,
+        "awaitCount": 21,
+        "tryCount": 1,
+        "catchCount": 2,
+        "loc": 184
+      },
+      {
+        "file": "functions/src/polishProductImage.ts",
+        "asyncSignal": 28,
+        "asyncCount": 5,
+        "awaitCount": 11,
+        "tryCount": 6,
+        "catchCount": 6,
+        "loc": 828
+      },
+      {
+        "file": "functions/src/shared/productUrlMetadata.ts",
+        "asyncSignal": 28,
+        "asyncCount": 5,
+        "awaitCount": 12,
+        "tryCount": 6,
+        "catchCount": 5,
+        "loc": 536
+      }
+    ],
+    "uxStateHotspots": [
+      {
+        "file": "src/lib/aura.ts",
+        "uxStateSignal": 98,
+        "loadingStateCount": 0,
+        "errorStateCount": 65,
+        "fallbackCount": 25,
+        "timeoutCount": 8,
+        "loc": 988
+      },
+      {
+        "file": "src/addItem/hooks/usePhotoStep.ts",
+        "uxStateSignal": 92,
+        "loadingStateCount": 0,
+        "errorStateCount": 77,
+        "fallbackCount": 12,
+        "timeoutCount": 3,
+        "loc": 3380
+      },
+      {
+        "file": "src/lib/auraAttachments.ts",
+        "uxStateSignal": 90,
+        "loadingStateCount": 0,
+        "errorStateCount": 78,
+        "fallbackCount": 10,
+        "timeoutCount": 2,
+        "loc": 1607
+      },
+      {
+        "file": "app/(tabs)/ai.tsx",
+        "uxStateSignal": 82,
+        "loadingStateCount": 18,
+        "errorStateCount": 48,
+        "fallbackCount": 6,
+        "timeoutCount": 10,
+        "loc": 3560
+      },
+      {
+        "file": "functions/src/ingestItemFromPhotos.ts",
+        "uxStateSignal": 77,
+        "loadingStateCount": 0,
+        "errorStateCount": 66,
+        "fallbackCount": 11,
+        "timeoutCount": 0,
+        "loc": 2905
+      },
+      {
+        "file": "functions/src/askAuraStream.ts",
+        "uxStateSignal": 66,
+        "loadingStateCount": 0,
+        "errorStateCount": 65,
+        "fallbackCount": 1,
+        "timeoutCount": 0,
+        "loc": 1938
+      },
+      {
+        "file": "functions/src/shared/productLinkExtractor.ts",
+        "uxStateSignal": 61,
+        "loadingStateCount": 1,
+        "errorStateCount": 45,
+        "fallbackCount": 15,
+        "timeoutCount": 0,
+        "loc": 2558
+      },
+      {
+        "file": "functions/src/askAura.ts",
+        "uxStateSignal": 55,
+        "loadingStateCount": 0,
+        "errorStateCount": 54,
+        "fallbackCount": 1,
+        "timeoutCount": 0,
+        "loc": 1440
+      },
+      {
+        "file": "functions/src/polishProductImage.ts",
+        "uxStateSignal": 55,
+        "loadingStateCount": 0,
+        "errorStateCount": 50,
+        "fallbackCount": 5,
+        "timeoutCount": 0,
+        "loc": 828
+      },
+      {
+        "file": "src/profile/screens.tsx",
+        "uxStateSignal": 53,
+        "loadingStateCount": 26,
+        "errorStateCount": 27,
+        "fallbackCount": 0,
+        "timeoutCount": 0,
+        "loc": 1789
+      },
+      {
+        "file": "app/(tabs)/closet.tsx",
+        "uxStateSignal": 47,
+        "loadingStateCount": 11,
+        "errorStateCount": 35,
+        "fallbackCount": 0,
+        "timeoutCount": 1,
+        "loc": 2835
+      },
+      {
+        "file": "functions/src/previewProductLink.ts",
+        "uxStateSignal": 43,
+        "loadingStateCount": 0,
+        "errorStateCount": 38,
+        "fallbackCount": 5,
+        "timeoutCount": 0,
+        "loc": 296
+      },
+      {
+        "file": "functions/src/extractOutfitItems.ts",
+        "uxStateSignal": 37,
+        "loadingStateCount": 0,
+        "errorStateCount": 32,
+        "fallbackCount": 5,
+        "timeoutCount": 0,
+        "loc": 1173
+      },
+      {
+        "file": "src/hooks/aura/useAuraComposerState.ts",
+        "uxStateSignal": 34,
+        "loadingStateCount": 0,
+        "errorStateCount": 32,
+        "fallbackCount": 0,
+        "timeoutCount": 2,
+        "loc": 400
+      },
+      {
+        "file": "functions/src/shared/productUrlMetadata.ts",
+        "uxStateSignal": 33,
+        "loadingStateCount": 0,
+        "errorStateCount": 23,
+        "fallbackCount": 10,
+        "timeoutCount": 0,
+        "loc": 536
+      },
+      {
+        "file": "src/addItem/hooks/useItemExtraction.ts",
+        "uxStateSignal": 32,
+        "loadingStateCount": 0,
+        "errorStateCount": 28,
+        "fallbackCount": 0,
+        "timeoutCount": 4,
+        "loc": 1780
+      },
+      {
+        "file": "src/bg/removeBackground.ts",
+        "uxStateSignal": 32,
+        "loadingStateCount": 0,
+        "errorStateCount": 31,
+        "fallbackCount": 0,
+        "timeoutCount": 1,
+        "loc": 413
+      },
+      {
+        "file": "app/(tabs)/item/[id].tsx",
+        "uxStateSignal": 31,
+        "loadingStateCount": 2,
+        "errorStateCount": 25,
+        "fallbackCount": 0,
+        "timeoutCount": 4,
+        "loc": 1872
+      },
+      {
+        "file": "functions/src/importProductLink.ts",
+        "uxStateSignal": 26,
+        "loadingStateCount": 0,
+        "errorStateCount": 26,
+        "fallbackCount": 0,
+        "timeoutCount": 0,
+        "loc": 124
+      },
+      {
+        "file": "src/lib/firebase.ts",
+        "uxStateSignal": 25,
+        "loadingStateCount": 0,
+        "errorStateCount": 25,
+        "fallbackCount": 0,
+        "timeoutCount": 0,
+        "loc": 141
+      }
+    ]
+  }
+}

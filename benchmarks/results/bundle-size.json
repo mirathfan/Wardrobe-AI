@@ -1,0 +1,146 @@
+{
+  "measuredAt": "2026-05-25T04:16:39.994Z",
+  "exportDir": "benchmarks/results/expo-web-export",
+  "totalFiles": 86,
+  "totalBytes": 10015245,
+  "totalGzipBytes": 3697323,
+  "javascript": [
+    {
+      "file": "_expo/static/js/web/entry-7d4d93aa49014871c5bb8ccbe3225c50.js",
+      "bytes": 4893249,
+      "gzipBytes": 1263916
+    },
+    {
+      "file": "_expo/static/js/web/index-92e2853902a39e63924222377ec0c7a7.js",
+      "bytes": 2366,
+      "gzipBytes": 890
+    }
+  ],
+  "largestFiles": [
+    {
+      "file": "_expo/static/js/web/entry-7d4d93aa49014871c5bb8ccbe3225c50.js",
+      "bytes": 4893249,
+      "gzipBytes": 1263916
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/MaterialCommunityIcons.6e435534bd35da5fef04168860a9b8fa.ttf",
+      "bytes": 1307660,
+      "gzipBytes": 594791
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/FontAwesome6_Solid.adec7d6f310bc577f05e8fe06a5daccf.ttf",
+      "bytes": 423676,
+      "gzipBytes": 172228
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.b4eb097d35f44ed943676fd56f6bdc51.ttf",
+      "bytes": 389724,
+      "gzipBytes": 209885
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/MaterialIcons.4e85bc9ebe07e0340c9c4fc2f6c38908.ttf",
+      "bytes": 356840,
+      "gzipBytes": 174067
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Fontisto.b49ae8ab2dbccb02c4d11caaacf09eab.ttf",
+      "bytes": 313528,
+      "gzipBytes": 169305
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/FontAwesome6_Brands.56c8d80832e37783f12c05db7c8849e2.ttf",
+      "bytes": 209376,
+      "gzipBytes": 122172
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/FontAwesome5_Solid.605ed7926cf39a2ad5ec2d1f9d391d3d.ttf",
+      "bytes": 202744,
+      "gzipBytes": 102759
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/FontAwesome.b06871f281fee6b241d60582ae9369b9.ttf",
+      "bytes": 165548,
+      "gzipBytes": 98949
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/FontAwesome5_Brands.3b89dd103490708d19a95adcae52210e.ttf",
+      "bytes": 134040,
+      "gzipBytes": 90012
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/AntDesign.3f78af31cca60105799838a1a7a59fbd.ttf",
+      "bytes": 130484,
+      "gzipBytes": 73971
+    },
+    {
+      "file": "assets/assets/images/aura-tab-mark.58edbe902f5dc320704d93e80466899b.png",
+      "bytes": 74906,
+      "gzipBytes": 74949
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Octicons.871378c6eab492a3e689a9385dc45a12.ttf",
+      "bytes": 69436,
+      "gzipBytes": 34392
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/FontAwesome6_Regular.370dd5af19f8364907b6e2c41f45dbbf.ttf",
+      "bytes": 67976,
+      "gzipBytes": 26985
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Entypo.31b5ffea3daddc69dd01a1f3d6cf63c5.ttf",
+      "bytes": 66200,
+      "gzipBytes": 41022
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Foundation.e20945d7c929279ef7a6f1db184a4470.ttf",
+      "bytes": 56976,
+      "gzipBytes": 33912
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Feather.ca4b48e04dc1ce10bfbddb262c8b835f.ttf",
+      "bytes": 55596,
+      "gzipBytes": 24493
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/SimpleLineIcons.d2285965fe34b05465047401b8595dd0.ttf",
+      "bytes": 54056,
+      "gzipBytes": 35910
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/FontAwesome5_Regular.1f77739ca9ff2188b539c36f30ffa2be.ttf",
+      "bytes": 33736,
+      "gzipBytes": 16431
+    },
+    {
+      "file": "assets/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Zocial.1681f34aaca71b8dfb70756bca331eb2.ttf",
+      "bytes": 25788,
+      "gzipBytes": 17777
+    },
+    {
+      "file": "(auth)/welcome.html",
+      "bytes": 21268,
+      "gzipBytes": 6767
+    },
+    {
+      "file": "(onboarding)/index.html",
+      "bytes": 21268,
+      "gzipBytes": 6767
+    },
+    {
+      "file": "(tabs)/add.html",
+      "bytes": 21268,
+      "gzipBytes": 6767
+    },
+    {
+      "file": "(tabs)/ai.html",
+      "bytes": 21268,
+      "gzipBytes": 6767
+    },
+    {
+      "file": "(tabs)/calendar.html",
+      "bytes": 21268,
+      "gzipBytes": 6767
+    }
+  ]
+}
