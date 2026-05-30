@@ -87,10 +87,9 @@ export function redactUrlForLogs(rawUrl: string | URL | null | undefined) {
   if (!raw) return null;
   try {
     const url = rawUrl instanceof URL ? new URL(rawUrl.toString()) : new URL(raw);
-    const path = url.pathname.length > 120 ? `${url.pathname.slice(0, 117)}...` : url.pathname;
-    return `${url.protocol}//${url.host}${path}${url.search ? "?[redacted]" : ""}`;
+    return `${url.protocol}//${url.host}/[redacted-path]${url.search ? "?[redacted]" : ""}`;
   } catch {
-    return raw.length > 160 ? `${raw.slice(0, 157)}...` : raw;
+    return raw ? "[redacted-url]" : null;
   }
 }
 

@@ -25,12 +25,19 @@ import BrandedLoadingAnimation from "@/src/components/brand/BrandedLoadingAnimat
 import { configureGoogleSignIn } from "@/src/auth/googleAuth";
 import { logDeviceSecurityContext } from "@/src/lib/security";
 import { auth, hasFirebaseServices } from "@/src/lib/firebase";
-import { firebaseEnvDiagnostics } from "@/src/lib/firebaseConfig";
 import { installGlobalErrorTracking, trackLaunchEvent } from "@/src/lib/analytics";
+import {
+  captureSafeException,
+  initializeSentry,
+  setSentryUserFromUid,
+  wrapWithSentry,
+} from "@/src/lib/sentry";
 
 export const unstable_settings = {
   anchor: "(tabs)",
 };
+
+initializeSentry();
 
 const LOADING_MESSAGES = [
   "Reading your style profile...",
@@ -125,22 +132,10 @@ function ConfigurationErrorScreen() {
   return (
     <View style={loadingStyles.container}>
       <View style={[loadingStyles.errorPanel, loadingStyles.configErrorPanel]}>
-        <Text style={loadingStyles.errorTitle}>Configuration Error</Text>
+        <Text style={loadingStyles.errorTitle}>AURA needs an update</Text>
         <Text style={loadingStyles.errorCopy}>
           AURA is missing required app configuration. Please install the latest build or contact support.
         </Text>
-        <View style={loadingStyles.configDiagnostics}>
-          <Text style={loadingStyles.configDiagnosticTitle}>
-            Build diagnostics: Firebase env validation failed
-          </Text>
-          {firebaseEnvDiagnostics.map((diagnostic) => (
-            <Text key={diagnostic.name} style={loadingStyles.configDiagnosticText}>
-              {diagnostic.name}: required {String(diagnostic.requiredForLaunch)}, present{" "}
-              {String(diagnostic.present)}, length {diagnostic.length}, valid{" "}
-              {String(diagnostic.valid)}, checks {JSON.stringify(diagnostic.checks)}
-            </Text>
-          ))}
-        </View>
       </View>
     </View>
   );
@@ -153,6 +148,10 @@ function AuthGate() {
   const [profileRetryKey, setProfileRetryKey] = useState(0);
   const routedRef = useRef<string | null>(null);
   const appOpenTrackedForUidRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    void setSentryUserFromUid(user?.uid ?? null);
+  }, [user?.uid]);
 
   useEffect(() => {
     let cancelled = false;
@@ -257,8 +256,29 @@ function AuthGate() {
       <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="aura/swipe" options={{ headerShown: false }} />
-      <Stack.Screen name="dev/analytics" options={{ headerShown: false }} />
     </Stack>
+  );
+}
+
+export function ErrorBoundary({ error, retry }: { error: Error; retry?: () => void }) {
+  useEffect(() => {
+    captureSafeException(error, { boundary: "root_layout" });
+  }, [error]);
+
+  return (
+    <View style={loadingStyles.container}>
+      <View style={loadingStyles.errorPanel}>
+        <Text style={loadingStyles.errorTitle}>AURA needs a refresh</Text>
+        <Text style={loadingStyles.errorCopy}>
+          Close and reopen the app. If this keeps happening, send a bug report from TestFlight.
+        </Text>
+        {retry ? (
+          <Pressable accessibilityRole="button" onPress={retry} style={loadingStyles.retryButton}>
+            <Text style={loadingStyles.retryText}>Retry</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
   );
 }
 
@@ -349,26 +369,9 @@ const loadingStyles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
   },
-  configDiagnostics: {
-    width: "100%",
-    gap: 6,
-    marginTop: 10,
-  },
-  configDiagnosticTitle: {
-    color: Colors.dark.textPrimary,
-    fontSize: 12,
-    fontWeight: "800",
-    textAlign: "center",
-  },
-  configDiagnosticText: {
-    color: Colors.dark.textSecondary,
-    fontSize: 10,
-    lineHeight: 14,
-    textAlign: "left",
-  },
 });
 
-export default function RootLayout() {
+function RootLayout() {
   useColorScheme();
   const palette = Colors.dark;
   const firebaseReady = hasFirebaseServices();
@@ -418,3 +421,5 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
+
+export default wrapWithSentry(RootLayout);

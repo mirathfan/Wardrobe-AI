@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import { logger } from "firebase-functions/v2";
+import { logger } from "./logger";
 import { HttpsError } from "firebase-functions/v2/https";
 
-export const RATE_LIMIT_MESSAGE = "Too many requests. Try again in a minute.";
+export const RATE_LIMIT_MESSAGE = "Rate limit exceeded. Please wait a moment and try again.";
 
 export type RateLimitRule = {
   key: "minute" | "day";
@@ -16,11 +16,11 @@ export type RateLimitRule = {
 const MINUTE = 60 * 1000;
 const DAY = 24 * 60 * MINUTE;
 
-function minuteLimit(max: number): RateLimitRule {
+export function minuteLimit(max: number): RateLimitRule {
   return { key: "minute", max, windowMs: MINUTE, ttlMs: DAY };
 }
 
-function dayLimit(max: number): RateLimitRule {
+export function dayLimit(max: number): RateLimitRule {
   return { key: "day", max, windowMs: DAY, ttlMs: 14 * DAY };
 }
 
@@ -28,6 +28,14 @@ export const RATE_LIMITS = {
   auraChat: [minuteLimit(10), dayLimit(80)],
   productLink: [minuteLimit(5), dayLimit(30)],
   imageIngestion: [minuteLimit(3), dayLimit(25)],
+  productPolish: [minuteLimit(3), dayLimit(20)],
+  outfitExtraction: [minuteLimit(2), dayLimit(15)],
+  outfitLayoutReconstruction: [minuteLimit(2), dayLimit(15)],
+  accessoryPolish: [minuteLimit(3), dayLimit(20)],
+  affiliateLinks: [minuteLimit(30), dayLimit(300)],
+  parseOutfitIntent: [minuteLimit(20), dayLimit(200)],
+  productSearch: [minuteLimit(3), dayLimit(20)],
+  outfitChat: [minuteLimit(10), dayLimit(100)],
   outfitGeneration: [minuteLimit(10), dayLimit(100)],
   voiceTranscription: [minuteLimit(6), dayLimit(60)],
   accountDelete: [dayLimit(3)],

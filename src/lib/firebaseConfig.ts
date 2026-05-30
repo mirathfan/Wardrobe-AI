@@ -225,6 +225,7 @@ export function logFirebaseConfigProblem(status: FirebaseConfigStatus) {
   }
 
   console.error("[Firebase] Missing or invalid required app configuration.", {
-    diagnostics: firebaseEnvDiagnostics,
+    missingRequiredCount: status.missingEnvVars.length,
+    invalidRequiredCount: status.invalidEnvVars.length,
   });
 }

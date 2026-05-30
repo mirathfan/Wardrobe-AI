@@ -54,6 +54,10 @@ service cloud.firestore {
       return value == null || value is bool;
     }
 
+    function validOptionalStringList(value, maxSize) {
+      return value == null || (value is list && value.size() <= maxSize);
+    }
+
     function validOptionalMap(value) {
       return value == null || value is map;
     }
@@ -253,6 +257,97 @@ service cloud.firestore {
         && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp);
     }
 
+    function validShoppingRecommendationFeedbackAction(action) {
+      return action in ["viewed", "clicked", "saved", "dismissed", "purchased"];
+    }
+
+    function validShoppingRecommendationFeedbackReason(reason) {
+      return reason in [
+        "too_expensive",
+        "not_my_style",
+        "wrong_size",
+        "already_own_similar",
+        "wrong_colour",
+        "wrong_brand",
+        "not_relevant",
+        "other"
+      ];
+    }
+
+    function validShoppingRecommendationSourceSurface(sourceSurface) {
+      return sourceSurface in ["home", "insights", "aura", "outfit", "item", "profile"];
+    }
+
+    function validShoppingProductSnapshot(data) {
+      return data is map
+        && data.size() <= 20
+        && data.keys().hasOnly([
+          "id",
+          "providerProductId",
+          "retailer",
+          "title",
+          "url",
+          "imageUrl",
+          "price",
+          "currency",
+          "brand",
+          "category",
+          "subcategory",
+          "colours",
+          "sizesAvailable",
+          "material",
+          "styleTags",
+          "seasonTags",
+          "occasionTags",
+          "inStock",
+          "source"
+        ])
+        && (!("id" in data) || validOptionalString(data.id))
+        && (!("providerProductId" in data) || validOptionalString(data.providerProductId))
+        && (!("retailer" in data) || validOptionalString(data.retailer))
+        && (!("title" in data) || validOptionalString(data.title))
+        && (!("url" in data) || validOptionalString(data.url))
+        && (!("imageUrl" in data) || validOptionalString(data.imageUrl))
+        && (!("price" in data) || validOptionalNumber(data.price))
+        && (!("currency" in data) || validOptionalString(data.currency))
+        && (!("brand" in data) || validOptionalString(data.brand))
+        && (!("category" in data) || validOptionalString(data.category))
+        && (!("subcategory" in data) || validOptionalString(data.subcategory))
+        && (!("colours" in data) || validOptionalStringList(data.colours, 20))
+        && (!("sizesAvailable" in data) || validOptionalStringList(data.sizesAvailable, 20))
+        && (!("material" in data) || validOptionalString(data.material))
+        && (!("styleTags" in data) || validOptionalStringList(data.styleTags, 20))
+        && (!("seasonTags" in data) || validOptionalStringList(data.seasonTags, 20))
+        && (!("occasionTags" in data) || validOptionalStringList(data.occasionTags, 20))
+        && (!("inStock" in data) || validOptionalBool(data.inStock))
+        && (!("source" in data) || validOptionalString(data.source));
+    }
+
+    function validShoppingRecommendationFeedbackDoc(data, uid) {
+      return data is map
+        && data.size() <= 9
+        && data.keys().hasAll(["userId", "productId", "action", "createdAt"])
+        && data.keys().hasOnly([
+          "userId",
+          "productId",
+          "recommendationId",
+          "action",
+          "reason",
+          "sourceSurface",
+          "productSnapshot",
+          "createdAt"
+        ])
+        && data.userId == uid
+        && data.productId is string
+        && validShoppingRecommendationFeedbackAction(data.action)
+        && (!("recommendationId" in data) || validOptionalString(data.recommendationId))
+        && (!("reason" in data) || validShoppingRecommendationFeedbackReason(data.reason))
+        && (!("sourceSurface" in data) || validShoppingRecommendationSourceSurface(data.sourceSurface))
+        && (!("productSnapshot" in data) || validShoppingProductSnapshot(data.productSnapshot))
+        && (data.createdAt is number || data.createdAt is timestamp)
+        && noForeignUidField(data, uid);
+    }
+
     function validLaunchEventDoc(data, uid) {
       return data is map
         && data.size() <= 20
@@ -403,6 +498,12 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow create: if isOwner(uid) && validCommerceEventDoc(request.resource.data, uid);
         allow update, delete: if false;
+      }
+
+      match /shoppingRecommendationFeedback/{feedbackId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validShoppingRecommendationFeedbackDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
       }
 
       match /launchEvents/{eventId} {

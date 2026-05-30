@@ -98,7 +98,8 @@
       ],
       "@react-native-google-signin/google-signin",
       "expo-apple-authentication",
-      "expo-asset"
+      "expo-asset",
+      "@sentry/react-native"
     ],
     "experiments": {
       "typedRoutes": true,
