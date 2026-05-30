@@ -18,7 +18,8 @@ import { homeTypography } from "@/src/components/home/homeTypography";
 import { AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { ACTION_GAP, HOME_CTA_HEIGHT, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
+import { getItemImagePresentation } from "@/src/lib/itemImage";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
@@ -262,7 +263,8 @@ export default function HomeHero({
                   }}
                 >
                   {previewEntries.map(({ slot, item }) => {
-                    const imageUri = getItemImageUrl(item, { variant: "thumb" });
+                    const resolvedImage = resolveItemImage(item, { variant: "thumb", surface: "home_today" });
+                    const imageUri = resolvedImage.uri;
                     const imagePresentation = getItemImagePresentation(item, {
                       surface: "home_today",
                     });
@@ -296,6 +298,7 @@ export default function HomeHero({
                               }}
                               style={[previewImageFrame(slot), imagePresentation.imageStyle]}
                               resizeMode="contain"
+                              onError={() => logResolvedItemImageLoadFailure(resolvedImage)}
                             />
                           ) : null}
                         </View>

@@ -77,6 +77,8 @@ import {
   createAuraItemDraftsFromImages,
   uploadAuraAttachments,
 } from "@/src/lib/auraAttachments";
+import { createPhotoPipelineTraceId, logPhotoPipeline, safeUriType } from "@/src/lib/photoPipelineLogger";
+import { getFriendlyErrorMessage, isRateLimitError } from "@/src/lib/errors";
 import {
   type ClosetItem,
   getItemLifecycleStatus,
@@ -789,9 +791,9 @@ export default function ClosetScreen() {
       },
       {
         includeDrafts: true,
-        onError: (message) => {
+        onError: () => {
           setLoading(false);
-          Alert.alert("Closet", message || "Unable to load wardrobe.");
+          Alert.alert("Closet", "Unable to load your wardrobe. Please try again.");
         },
       }
     );
@@ -847,8 +849,8 @@ export default function ClosetScreen() {
   );
 
   const visibleItems = useMemo(
-    () => items.filter((item) => isVisibleWardrobeItem(item)),
-    [items]
+    () => items.filter((item) => !locallyRemovedItemIds.has(item.id) && isVisibleWardrobeItem(item)),
+    [items, locallyRemovedItemIds]
   );
   const minimumClosetProgress = useMemo(
     () => getMinimumClosetProgress(visibleItems),
@@ -1222,8 +1224,8 @@ export default function ClosetScreen() {
       setBulkActionLoading(true);
       try {
         await action();
-      } catch (error: any) {
-        Alert.alert(label, error?.message ?? `Unable to ${label.toLowerCase()}.`);
+      } catch {
+        Alert.alert(label, `Unable to ${label.toLowerCase()}.`);
       } finally {
         setBulkActionLoading(false);
       }
@@ -1276,10 +1278,25 @@ export default function ClosetScreen() {
           style: "destructive",
           onPress: () => {
             void runBulkAction("Delete", async () => {
-              await Promise.all(
-                selectedItems.map((item) => deleteWardrobeItem(uid, item.id, item))
-              );
-              clearSelection();
+              const itemIds = selectedItems.map((item) => item.id);
+              setLocallyRemovedItemIds((prev) => {
+                const next = new Set(prev);
+                itemIds.forEach((itemId) => next.add(itemId));
+                return next;
+              });
+              try {
+                await Promise.all(
+                  selectedItems.map((item) => deleteWardrobeItem(uid, item.id, item))
+                );
+                clearSelection();
+              } catch (error) {
+                setLocallyRemovedItemIds((prev) => {
+                  const next = new Set(prev);
+                  itemIds.forEach((itemId) => next.delete(itemId));
+                  return next;
+                });
+                throw error;
+              }
             });
           },
         },
@@ -1352,11 +1369,11 @@ export default function ClosetScreen() {
       for (const item of selectedItems) {
         try {
           await safeMarkWorn(uid, item.id);
-        } catch (error: any) {
+        } catch {
           failures.push(
             sanitizeDisplayText(item.name) ||
-              error?.message ||
-              item.id
+              sanitizeDisplayText(item.subCategory) ||
+              "this item"
           );
         }
       }
@@ -1382,16 +1399,35 @@ export default function ClosetScreen() {
       if (!uid) return;
       const images: ChatImageAttachment[] = assets
         .filter((asset) => !!asset.uri)
-        .map((asset) => ({
-          id: localAttachmentId(),
-          type: "image",
-          uri: asset.uri,
-          localUri: asset.uri,
-          role: assets.length > 1 ? "separate_items" : "same_item",
-          groupId: `quick-${Date.now()}`,
-          width: asset.width ?? null,
-          height: asset.height ?? null,
-        }));
+        .map((asset, index) => {
+          const traceId = createPhotoPipelineTraceId();
+          logPhotoPipeline({
+            traceId,
+            step: "photo_selected",
+            status: "success",
+            data: {
+              source,
+              mode: "closet_quick_add",
+              imageIndex: index,
+              assetCount: assets.length,
+              uriType: safeUriType(asset.uri),
+              width: asset.width ?? null,
+              height: asset.height ?? null,
+              allowsMultipleSelection: source === "library",
+            },
+          });
+          return {
+            id: localAttachmentId(),
+            type: "image",
+            uri: asset.uri,
+            localUri: asset.uri,
+            traceId,
+            role: assets.length > 1 ? "separate_items" : "same_item",
+            groupId: `quick-${Date.now()}`,
+            width: asset.width ?? null,
+            height: asset.height ?? null,
+          };
+        });
       if (!images.length) return;
       setQuickAdding(true);
       try {
@@ -1409,9 +1445,9 @@ export default function ClosetScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setQuickAddOpen(false);
         Toast.itemAdded();
-      } catch (error: any) {
+      } catch {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Toast.error("Quick add failed", error?.message ?? "Unable to add that item.");
+        Toast.error("Quick add failed", "Unable to add that item.");
       } finally {
         setQuickAdding(false);
       }
@@ -1501,9 +1537,11 @@ export default function ClosetScreen() {
       setProductLinkTouched(false);
       setQuickAddOpen(false);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    } catch (error: any) {
+    } catch (error) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
-      if (error instanceof ClosetProductLinkError && error.blockedStore) {
+      if (isRateLimitError(error)) {
+        setProductLinkError(getFriendlyErrorMessage(error));
+      } else if (error instanceof ClosetProductLinkError && error.blockedStore) {
         setProductLinkRecoverableError({
           code: "blocked_store",
           title: "This store blocked automatic reading.",
@@ -1511,7 +1549,7 @@ export default function ClosetScreen() {
         });
       } else {
         setProductLinkError(
-          error?.message ?? "I could not read that product link. Try another product page or add it manually."
+          "I could not read that product link. Try another product page or add it manually."
         );
       }
     } finally {
@@ -1600,10 +1638,12 @@ export default function ClosetScreen() {
       setLinkModalOpen(false);
       resetProductLinkSheet();
       Toast.itemAdded();
-    } catch (error: any) {
+    } catch (error) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
       setProductLinkError(
-        error?.message ?? "That item could not be added yet. You can edit the details or try another link."
+        isRateLimitError(error)
+          ? getFriendlyErrorMessage(error)
+          : "That item could not be added yet. You can edit the details or try another link."
       );
     } finally {
       setProductLinkSaving(false);

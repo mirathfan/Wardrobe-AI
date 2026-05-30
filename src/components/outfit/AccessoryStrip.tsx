@@ -4,6 +4,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Colors } from "@/constants/theme";
 import type { BoardPiece } from "@/src/lib/auraLookLayouts";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 
 type Props = {
   accessories: BoardPiece[];
@@ -12,7 +13,8 @@ type Props = {
 };
 
 function firstImage(item: BoardPiece) {
-  return item.image ?? item.cleanedImageUrl ?? item.imageUrl ?? null;
+  const resolved = resolveItemImage(item, { variant: "thumb", surface: "aura_look_card" });
+  return resolved.uri ? { uri: resolved.uri, resolved } : null;
 }
 
 function pillStyle(item: BoardPiece) {
@@ -45,10 +47,11 @@ export function AccessoryStrip({ accessories, hiddenAccessories = [], onItemPres
               {image ? (
                 <AppImage
                   source={{
-                    uri: image,
+                    uri: image.uri,
                   }}
                   resizeMode="contain"
                   style={[styles.thumb, item.accessoryType === "belt" ? styles.beltThumb : null]}
+                  onError={() => logResolvedItemImageLoadFailure(image.resolved)}
                 />
               ) : null}
             </Pressable>

@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 import { Colors } from "@/constants/theme";
@@ -21,10 +21,14 @@ import {
   removeProfileLooks,
   subscribeFavouriteLooks,
   subscribeProfileFeedbackLooks,
+  type ProfileLooksPageInfo,
   type ProfileLookRecord,
 } from "@/src/lib/profileLooks";
+import { listenToItems } from "@/src/lib/items";
+import type { ClothingItem } from "@/src/types/ClothingItem";
 
 type TabKey = "liked" | "disliked" | "favourites";
+type FeedbackTabKey = Exclude<TabKey, "favourites">;
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "liked", label: "Liked" },
@@ -42,6 +46,14 @@ function normalizeInitialTab(value: unknown): TabKey {
 
 function selectionKey(record: ProfileLookRecord) {
   return `${record.collection}:${record.id}`;
+}
+
+function mergeProfileLookRecords(current: ProfileLookRecord[], next: ProfileLookRecord[]) {
+  const merged = new Map<string, ProfileLookRecord>();
+  [...current, ...next].forEach((record) => {
+    merged.set(selectionKey(record), record);
+  });
+  return Array.from(merged.values()).sort((a, b) => b.createdAt - a.createdAt);
 }
 
 function buildShareMessage(records: ProfileLookRecord[]) {
@@ -109,11 +121,19 @@ export default function MyLooksScreen() {
   const [liked, setLiked] = useState<ProfileLookRecord[]>([]);
   const [disliked, setDisliked] = useState<ProfileLookRecord[]>([]);
   const [favourites, setFavourites] = useState<ProfileLookRecord[]>([]);
+  const [feedbackPageInfo, setFeedbackPageInfo] = useState<
+    Record<FeedbackTabKey, ProfileLooksPageInfo & { loadingMore: boolean }>
+  >({
+    liked: { hasMore: false, loadingMore: false },
+    disliked: { hasMore: false, loadingMore: false },
+  });
+  const [itemsById, setItemsById] = useState<Map<string, ClothingItem> | undefined>(undefined);
   const [loading, setLoading] = useState({ liked: true, disliked: true, favourites: true });
   const [error, setError] = useState<string | null>(null);
   const [selectedLook, setSelectedLook] = useState<ProfileLookRecord | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
+  const feedbackPageUnsubsRef = useRef<Array<() => void>>([]);
   const { width: screenWidth } = useWindowDimensions();
   const thumbnailWidth = Math.floor((screenWidth - 48) / 2);
   const selectionMode = selectedKeys.size > 0;
@@ -123,15 +143,26 @@ export default function MyLooksScreen() {
   }, [params.tab]);
 
   useEffect(() => {
+    feedbackPageUnsubsRef.current.forEach((unsubscribe) => unsubscribe());
+    feedbackPageUnsubsRef.current = [];
     if (!user?.uid) {
       setLiked([]);
       setDisliked([]);
       setFavourites([]);
+      setFeedbackPageInfo({
+        liked: { hasMore: false, loadingMore: false },
+        disliked: { hasMore: false, loadingMore: false },
+      });
+      setItemsById(undefined);
       setLoading({ liked: false, disliked: false, favourites: false });
       return;
     }
 
     setLoading({ liked: true, disliked: true, favourites: true });
+    setFeedbackPageInfo({
+      liked: { hasMore: false, loadingMore: false },
+      disliked: { hasMore: false, loadingMore: false },
+    });
     setError(null);
     const handleError = (nextError: Error) => {
       setError(nextError.message || "Unable to load your looks.");
@@ -139,12 +170,14 @@ export default function MyLooksScreen() {
     };
 
     const unsubs = [
-      subscribeProfileFeedbackLooks(user.uid, "outfit_liked", (records) => {
+      subscribeProfileFeedbackLooks(user.uid, "outfit_liked", (records, pageInfo) => {
         setLiked(records);
+        setFeedbackPageInfo((prev) => ({ ...prev, liked: { ...pageInfo, loadingMore: false } }));
         setLoading((prev) => ({ ...prev, liked: false }));
       }, handleError),
-      subscribeProfileFeedbackLooks(user.uid, "outfit_disliked", (records) => {
+      subscribeProfileFeedbackLooks(user.uid, "outfit_disliked", (records, pageInfo) => {
         setDisliked(records);
+        setFeedbackPageInfo((prev) => ({ ...prev, disliked: { ...pageInfo, loadingMore: false } }));
         setLoading((prev) => ({ ...prev, disliked: false }));
       }, handleError),
       subscribeFavouriteLooks(user.uid, (records) => {
@@ -155,7 +188,20 @@ export default function MyLooksScreen() {
 
     return () => {
       unsubs.forEach((unsubscribe) => unsubscribe());
+      feedbackPageUnsubsRef.current.forEach((unsubscribe) => unsubscribe());
+      feedbackPageUnsubsRef.current = [];
     };
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setItemsById(undefined);
+      return;
+    }
+    const unsubscribe = listenToItems(user.uid, (items) => {
+      setItemsById(new Map(items.map((item) => [item.id, item])));
+    });
+    return () => unsubscribe();
   }, [user?.uid]);
 
   useEffect(() => {
@@ -209,9 +255,9 @@ export default function MyLooksScreen() {
       await action();
       if (clearAfter) clearSelection();
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (nextError: any) {
+    } catch {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert(label, nextError?.message ?? "Unable to update selected looks.");
+      Alert.alert(label, "Unable to update selected looks.");
     } finally {
       setBulkWorking(false);
     }
@@ -264,6 +310,41 @@ export default function MyLooksScreen() {
       const title = selectedRecords.length === 1 ? selectedRecords[0]?.title || "AURA look" : "AURA looks";
       await Share.share({ title, message: buildShareMessage(selectedRecords) });
     });
+  };
+
+  const loadMoreFeedbackLooks = () => {
+    if (!user?.uid || activeTab === "favourites") return;
+    const pageInfo = feedbackPageInfo[activeTab];
+    if (pageInfo.loadingMore || !pageInfo.hasMore || !pageInfo.lastDoc) return;
+    const feedbackType = activeTab === "liked" ? "outfit_liked" : "outfit_disliked";
+    setFeedbackPageInfo((prev) => ({
+      ...prev,
+      [activeTab]: { ...prev[activeTab], loadingMore: true },
+    }));
+    const unsubscribe = subscribeProfileFeedbackLooks(
+      user.uid,
+      feedbackType,
+      (records, nextPageInfo) => {
+        if (activeTab === "liked") {
+          setLiked((prev) => mergeProfileLookRecords(prev, records));
+        } else {
+          setDisliked((prev) => mergeProfileLookRecords(prev, records));
+        }
+        setFeedbackPageInfo((prev) => ({
+          ...prev,
+          [activeTab]: { ...nextPageInfo, loadingMore: false },
+        }));
+      },
+      (nextError) => {
+        setError(nextError.message || "Unable to load more looks.");
+        setFeedbackPageInfo((prev) => ({
+          ...prev,
+          [activeTab]: { ...prev[activeTab], loadingMore: false },
+        }));
+      },
+      pageInfo.lastDoc,
+    );
+    feedbackPageUnsubsRef.current.push(unsubscribe);
   };
 
   return (
@@ -343,6 +424,7 @@ export default function MyLooksScreen() {
                     <MyLookThumbnail
                       record={record}
                       width={thumbnailWidth}
+                      itemsById={itemsById}
                       onPress={() => handleThumbnailPress(record)}
                       onLongPress={() => startSelection(record)}
                       selected={selectedKeys.has(selectionKey(record))}
@@ -351,12 +433,33 @@ export default function MyLooksScreen() {
                   </AuraAnimatedListItem>
                 ))
               : <EmptyState tab={activeTab} />}
+          {!currentLoading &&
+          activeTab !== "favourites" &&
+          currentRecords.length > 0 &&
+          feedbackPageInfo[activeTab].hasMore ? (
+            <View style={styles.loadMoreRow}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={feedbackPageInfo[activeTab].loadingMore}
+                onPress={loadMoreFeedbackLooks}
+                style={[
+                  styles.loadMoreButton,
+                  feedbackPageInfo[activeTab].loadingMore ? styles.loadMoreButtonDisabled : null,
+                ]}
+              >
+                <Text style={styles.loadMoreText}>
+                  {feedbackPageInfo[activeTab].loadingMore ? "Loading..." : "Load more"}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
         </ScrollView>
       )}
 
       <LookDetailModal
         visible={Boolean(selectedLook)}
         record={selectedLook}
+        itemsById={itemsById}
         onClose={() => setSelectedLook(null)}
       />
     </SafeScreen>
@@ -494,6 +597,26 @@ const styles = StyleSheet.create({
   },
   emptyButtonText: {
     ...auraButtonTextStyle(palette, "primary"),
+    fontSize: 13,
+    lineHeight: 17,
+  },
+  loadMoreRow: {
+    width: "100%",
+    alignItems: "center",
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  loadMoreButton: {
+    ...auraButtonStyle(palette, "secondary"),
+    minHeight: 44,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+  },
+  loadMoreButtonDisabled: {
+    opacity: 0.55,
+  },
+  loadMoreText: {
+    ...auraButtonTextStyle(palette, "secondary"),
     fontSize: 13,
     lineHeight: 17,
   },

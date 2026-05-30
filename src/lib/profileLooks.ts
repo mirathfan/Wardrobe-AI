@@ -7,8 +7,11 @@ import {
   orderBy,
   query,
   setDoc,
+  startAfter,
+  type DocumentSnapshot,
   type Unsubscribe,
 } from "firebase/firestore";
+import { Alert } from "react-native";
 
 import {
   buildStableAuraLookId,
@@ -18,6 +21,7 @@ import {
 import { saveAuraFavoriteOutfit } from "@/src/lib/auraLooks";
 import { saveAuraOutfitFeedback, type OutfitFeedbackType } from "@/src/lib/auraOutfitFeedback";
 import { db } from "@/src/lib/firebase";
+import { getFriendlyErrorMessage } from "@/src/lib/errors";
 import type { AuraLook } from "@/src/types/aura";
 
 export type ProfileLookKind = "liked" | "disliked" | "favourite";
@@ -33,9 +37,20 @@ export type ProfileLookRecord = {
   itemIds: string[];
   isFavourite?: boolean;
 };
+export type ProfileLooksPageInfo = {
+  lastDoc?: DocumentSnapshot;
+  hasMore: boolean;
+};
+
+const PROFILE_FEEDBACK_PAGE_SIZE = 20;
 
 function userCollection(uid: string, collectionName: ProfileLookRecord["collection"]) {
   return collection(db, "users", uid, collectionName);
+}
+
+function alertProfileLookError(error: unknown) {
+  if (__DEV__) console.log("[callable error]", error);
+  Alert.alert("Hold on", getFriendlyErrorMessage(error));
 }
 
 function normalizeTimestamp(value: unknown) {
@@ -129,11 +144,17 @@ function mergeByStableLookId(records: ProfileLookRecord[]) {
 export function subscribeProfileFeedbackLooks(
   uid: string,
   feedbackType: Extract<OutfitFeedbackType, "outfit_liked" | "outfit_disliked">,
-  onNext: (records: ProfileLookRecord[]) => void,
+  onNext: (records: ProfileLookRecord[], pageInfo: ProfileLooksPageInfo) => void,
   onError: (error: Error) => void,
+  startAfterDoc?: DocumentSnapshot,
 ): Unsubscribe {
   const kind: ProfileLookKind = feedbackType === "outfit_liked" ? "liked" : "disliked";
-  const q = query(userCollection(uid, "outfitFeedback"), orderBy("createdAt", "desc"), limit(100));
+  const q = query(
+    userCollection(uid, "outfitFeedback"),
+    orderBy("createdAt", "desc"),
+    ...(startAfterDoc ? [startAfter(startAfterDoc)] : []),
+    limit(PROFILE_FEEDBACK_PAGE_SIZE),
+  );
   return onSnapshot(
     q,
     (snap) => {
@@ -141,8 +162,11 @@ export function subscribeProfileFeedbackLooks(
         snap.docs
           .filter((entry) => entry.data().feedbackType === feedbackType)
           .map((entry) => toProfileLook(entry.id, "outfitFeedback", kind, entry.data() as Record<string, unknown>))
-          .filter((entry): entry is ProfileLookRecord => Boolean(entry))
-          .slice(0, 50),
+          .filter((entry): entry is ProfileLookRecord => Boolean(entry)),
+        {
+          lastDoc: snap.docs[snap.docs.length - 1],
+          hasMore: snap.docs.length === PROFILE_FEEDBACK_PAGE_SIZE,
+        },
       );
     },
     onError,
@@ -190,7 +214,12 @@ export function subscribeFavouriteLooks(
 }
 
 export async function removeProfileLook(uid: string, record: ProfileLookRecord) {
-  await deleteDoc(doc(db, "users", uid, record.collection, record.id));
+  try {
+    await deleteDoc(doc(db, "users", uid, record.collection, record.id));
+  } catch (error) {
+    alertProfileLookError(error);
+    throw error;
+  }
 }
 
 export async function removeProfileLooks(uid: string, records: ProfileLookRecord[]) {
@@ -198,47 +227,67 @@ export async function removeProfileLooks(uid: string, records: ProfileLookRecord
 }
 
 export async function favouriteProfileLooks(uid: string, records: ProfileLookRecord[]) {
-  await Promise.all(
-    records.map((record) =>
-      saveAuraFavoriteOutfit(uid, record.look, {
-        source: record.collection === "outfitFeedback" ? "aura" : "aura_swipe",
-        title: record.title,
-      }),
-    ),
-  );
+  try {
+    await Promise.all(
+      records.map((record) =>
+        saveAuraFavoriteOutfit(uid, record.look, {
+          source: record.collection === "outfitFeedback" ? "aura" : "aura_swipe",
+          title: record.title,
+        }),
+      ),
+    );
+  } catch (error) {
+    alertProfileLookError(error);
+    throw error;
+  }
 }
 
 export async function dislikeProfileLooks(uid: string, records: ProfileLookRecord[]) {
-  await Promise.all(
-    records.map((record) =>
-      saveAuraOutfitFeedback(uid, {
-        feedbackType: "outfit_disliked",
-        look: record.look,
-        source: record.collection === "outfitFeedback" ? "aura" : "aura_swipe",
-      }),
-    ),
-  );
+  try {
+    await Promise.all(
+      records.map((record) =>
+        saveAuraOutfitFeedback(uid, {
+          feedbackType: "outfit_disliked",
+          look: record.look,
+          source: record.collection === "outfitFeedback" ? "aura" : "aura_swipe",
+        }),
+      ),
+    );
+  } catch (error) {
+    alertProfileLookError(error);
+    throw error;
+  }
 }
 
 export async function likeProfileLooks(uid: string, records: ProfileLookRecord[]) {
-  await Promise.all(
-    records.map((record) =>
-      saveAuraOutfitFeedback(uid, {
-        feedbackType: "outfit_liked",
-        look: record.look,
-        source: record.collection === "outfitFeedback" ? "aura" : "aura_swipe",
-      }),
-    ),
-  );
+  try {
+    await Promise.all(
+      records.map((record) =>
+        saveAuraOutfitFeedback(uid, {
+          feedbackType: "outfit_liked",
+          look: record.look,
+          source: record.collection === "outfitFeedback" ? "aura" : "aura_swipe",
+        }),
+      ),
+    );
+  } catch (error) {
+    alertProfileLookError(error);
+    throw error;
+  }
 }
 
 export async function markFeedbackLookLiked(uid: string, record: ProfileLookRecord) {
-  await setDoc(
-    doc(db, "users", uid, "outfitFeedback", record.id),
-    {
-      feedbackType: "outfit_liked",
-      updatedAt: Date.now(),
-    },
-    { merge: true },
-  );
+  try {
+    await setDoc(
+      doc(db, "users", uid, "outfitFeedback", record.id),
+      {
+        feedbackType: "outfit_liked",
+        updatedAt: Date.now(),
+      },
+      { merge: true },
+    );
+  } catch (error) {
+    alertProfileLookError(error);
+    throw error;
+  }
 }

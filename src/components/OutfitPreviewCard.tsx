@@ -3,7 +3,7 @@ import AppImage from "@/src/components/common/AppImage";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Colors } from "@/constants/theme";
-import { getItemImageUrl } from "../../src/lib/itemImage";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "../../src/lib/resolveItemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
 
 const colors = Colors.dark;
@@ -23,7 +23,8 @@ function slotTitle(item: ClothingItem | null, fallback: string) {
 }
 
 function SlotTile({ label, item }: { label: string; item: ClothingItem | null }) {
-  const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+  const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "outfit_card" }) : null;
+  const uri = resolvedImage?.uri ?? null;
   return (
     <View style={styles.tile}>
       {uri ? (
@@ -33,6 +34,7 @@ function SlotTile({ label, item }: { label: string; item: ClothingItem | null })
           }}
           style={styles.image}
           resizeMode="contain"
+          onError={() => (resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined)}
         />
       ) : <View style={styles.placeholder} />}
       <Text style={styles.slotLabel}>{label}</Text>

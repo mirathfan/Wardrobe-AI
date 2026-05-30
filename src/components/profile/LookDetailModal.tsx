@@ -17,11 +17,17 @@ import {
   removeProfileLook,
   type ProfileLookRecord,
 } from "@/src/lib/profileLooks";
+import {
+  filterOutfitItemsToLiveCloset,
+  getMissingClosetItemIds,
+} from "@/src/lib/outfitLiveCloset";
 import { markOutfitWorn, planOutfitForToday } from "@/src/lib/wearOutfit";
+import type { ClothingItem } from "@/src/types/ClothingItem";
 
 type Props = {
   visible: boolean;
   record: ProfileLookRecord | null;
+  itemsById?: Map<string, ClothingItem>;
   onClose: () => void;
 };
 
@@ -30,7 +36,7 @@ function formatDate(value?: number) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
 }
 
-export function LookDetailModal({ visible, record, onClose }: Props) {
+export function LookDetailModal({ visible, record, itemsById, onClose }: Props) {
   const { colors } = useAppTheme();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -50,6 +56,20 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
   }));
 
   const savedDate = useMemo(() => formatDate(record?.createdAt), [record?.createdAt]);
+  const liveItemIds = useMemo(
+    () => (itemsById ? new Set(itemsById.keys()) : null),
+    [itemsById],
+  );
+  const displayLook = useMemo(
+    () => (record ? filterOutfitItemsToLiveCloset(record.look, liveItemIds) : null),
+    [liveItemIds, record],
+  );
+  const missingItemIds = useMemo(
+    () => (record ? getMissingClosetItemIds(record.look, liveItemIds) : []),
+    [liveItemIds, record],
+  );
+  const hasMissingItems = missingItemIds.length > 0;
+  const canUseLook = !!displayLook?.pieces?.some((piece) => piece.source === "closet" && piece.itemId);
 
   const runAction = async (action: "wear" | "plan" | "remove" | "like") => {
     if (!record || !user?.uid) return;
@@ -61,7 +81,7 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
           source: "saved_look",
           outfitId: record.id,
           title: record.title,
-          look: record.look,
+          look: displayLook ?? record.look,
         });
         Alert.alert("Marked worn", "This look was marked as worn today.");
       } else if (action === "plan") {
@@ -70,7 +90,7 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
           source: "saved_look",
           outfitId: record.id,
           title: record.title,
-          look: record.look,
+          look: displayLook ?? record.look,
         });
         Alert.alert("Planned", "This look is planned for today.");
       } else if (action === "like") {
@@ -82,14 +102,14 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
         Alert.alert("Removed", "This look was removed.");
         onClose();
       }
-    } catch (error: any) {
-      Alert.alert("My Looks", error?.message ?? "Unable to update this look.");
+    } catch {
+      Alert.alert("My Looks", "Unable to update this look.");
     } finally {
       setBusy(false);
     }
   };
 
-  if (!record) return null;
+  if (!record || !displayLook) return null;
 
   const isDisliked = record.kind === "disliked";
 
@@ -116,12 +136,23 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
 
         <ScrollView contentContainerStyle={styles.content}>
           <AuraLookCard
-            look={record.look}
+            look={displayLook}
+            itemsById={itemsById}
             boardVariant="studio"
             viewportWidth={340}
             hideActions
             style={styles.lookCard}
           />
+          {hasMissingItems ? (
+            <View style={[styles.removedNotice, { borderColor: colors.border, backgroundColor: colors.surfaceSoft }]}>
+              <Text style={[styles.removedTitle, { color: colors.text }]}>Removed from closet</Text>
+              <Text style={[styles.removedText, { color: colors.textSecondary }]}>
+                {missingItemIds.length === 1
+                  ? "1 piece in this look was removed from your closet."
+                  : `${missingItemIds.length} pieces in this look were removed from your closet.`}
+              </Text>
+            </View>
+          ) : null}
         </ScrollView>
 
         <View
@@ -154,14 +185,14 @@ export function LookDetailModal({ visible, record, onClose }: Props) {
             <>
               <AuraButton
                 label={busy ? "Updating..." : "Wear today"}
-                disabled={busy}
+                disabled={busy || !canUseLook}
                 onPress={() => runAction("wear")}
                 fullWidth
               />
               <View style={styles.secondaryActions}>
                 <AuraButton
                   label="Plan today"
-                  disabled={busy}
+                  disabled={busy || !canUseLook}
                   onPress={() => runAction("plan")}
                   variant="secondary"
                   size="compact"
@@ -225,6 +256,23 @@ const styles = StyleSheet.create({
   lookCard: {
     width: "100%",
     maxWidth: 380,
+  },
+  removedNotice: {
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 5,
+    marginTop: 12,
+    maxWidth: 380,
+    padding: 12,
+    width: "100%",
+  },
+  removedTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  removedText: {
+    fontSize: 12.5,
+    lineHeight: 18,
   },
   actions: {
     paddingHorizontal: 16,

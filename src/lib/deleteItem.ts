@@ -2,6 +2,7 @@ import { deleteDoc, doc } from "firebase/firestore";
 import { deleteObject, ref } from "firebase/storage";
 
 import { db, storage } from "./firebase";
+import { invalidateClosetItemDeletionCaches } from "./localCache";
 
 type DeleteCleanupResult = {
   attempted: number;
@@ -82,10 +83,12 @@ export async function deleteOwnedItemStorage(
 }
 
 export async function deleteWardrobeItem(uid: string, itemId: string, item: unknown) {
-  const cleanup = await deleteOwnedItemStorage(uid, itemId, item).catch(() => ({
+  const cleanupPromise = deleteOwnedItemStorage(uid, itemId, item).catch(() => ({
     attempted: 0,
     failed: 1,
   }));
   await deleteDoc(doc(db, "users", uid, "items", itemId));
+  await invalidateClosetItemDeletionCaches(uid, itemId);
+  const cleanup = await cleanupPromise;
   return cleanup;
 }

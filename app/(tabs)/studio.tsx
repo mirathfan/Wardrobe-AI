@@ -108,7 +108,7 @@ function categoryLabel(category: StudioCategory) {
 }
 
 function imageUrlForItem(item: ClothingItem) {
-  return getItemImageUrl(item, { variant: "thumb" });
+  return getItemImageUrl(item, { variant: "thumb", surface: "outfit_card" });
 }
 
 function isCleanItem(item: ClothingItem) {
@@ -310,9 +310,9 @@ export default function StudioScreen() {
       {
         status: "ALL",
         sort: "NEWEST",
-        onError: (message) => {
+        onError: () => {
           setLoading(false);
-          Alert.alert("Firestore error", message);
+          Alert.alert("Studio", "Unable to load your wardrobe. Please try again.");
         },
       },
     );
@@ -475,8 +475,8 @@ export default function StudioScreen() {
         { text: "Keep building", style: "cancel" },
         { text: "Open Calendar", onPress: () => router.push("/(tabs)/calendar") },
       ]);
-    } catch (error: any) {
-      Toast.error("Plan failed", error?.message ?? "Unable to plan this outfit.");
+    } catch {
+      Toast.error("Plan failed", "Unable to plan this outfit.");
     } finally {
       setSaving(false);
     }

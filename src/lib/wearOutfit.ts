@@ -10,6 +10,7 @@ import { db } from "@/src/lib/firebase";
 import { logItemStyleEvent, logOutfitSnapshotWornStyleEvent } from "@/src/lib/auraMemory";
 import { buildSignalFromItem, updateAssistantMemoryFromAction } from "@/src/lib/assistantMemory";
 import { MAX_WEARS_BEFORE_WASH, normalizeLaundryStatus } from "@/src/lib/items";
+import { filterOutfitItemsToLiveCloset } from "@/src/lib/outfitLiveCloset";
 import {
   buildOutfitSnapshot,
   getOwnedItemIdsFromOutfitSnapshot,
@@ -250,6 +251,7 @@ export async function markOutfitWorn({
   if (!ownedItemIds.length) {
     throw new Error("This look has no closet items to mark as worn.");
   }
+  const liveSnapshot = filterOutfitItemsToLiveCloset(snapshot, new Set(ownedItemIds));
 
   const dailyRef = outfitDocRef(uid, dateKey);
   const dailySnap = await getDoc(dailyRef);
@@ -264,7 +266,7 @@ export async function markOutfitWorn({
       skippedItemIds: ownedItemIds,
       missingItemIds,
       alreadyMarked: true,
-      outfitSnapshot: snapshot,
+      outfitSnapshot: liveSnapshot,
     };
   }
 
@@ -313,12 +315,12 @@ export async function markOutfitWorn({
       itemIds: ownedItemIds,
       planned: false,
       wornOutfit: {
-        itemsByCategory: snapshotToItemsByCategory(snapshot),
+        itemsByCategory: snapshotToItemsByCategory(liveSnapshot),
         wornAt: wornAtMs,
         source,
-        ...(cleanString(title ?? snapshot.title) ? { title: cleanString(title ?? snapshot.title) } : {}),
+        ...(cleanString(title ?? liveSnapshot.title) ? { title: cleanString(title ?? liveSnapshot.title) } : {}),
         ...(cleanString(outfitId) ? { outfitId: cleanString(outfitId) } : {}),
-        outfitSnapshot: snapshot,
+        outfitSnapshot: liveSnapshot,
       },
       wornAtMs,
       updatedAt: serverTimestamp(),
@@ -328,7 +330,7 @@ export async function markOutfitWorn({
   );
 
   await batch.commit();
-  void logOutfitSnapshotWornStyleEvent(uid, snapshot, {
+  void logOutfitSnapshotWornStyleEvent(uid, liveSnapshot, {
     source: toMemorySource(source),
     wornAt: wornAtMs,
   }).catch((error) => {
@@ -344,7 +346,7 @@ export async function markOutfitWorn({
     skippedItemIds,
     missingItemIds,
     alreadyMarked: false,
-    outfitSnapshot: snapshot,
+    outfitSnapshot: liveSnapshot,
   };
 }
 
@@ -419,13 +421,19 @@ export async function planOutfitForToday({
   const planDate = date ?? new Date();
   const dateKey = toDayKey(planDate);
   const snapshot = buildSnapshot({ look, itemIds, title, source });
-  const ownedItemIds = getOwnedItemIdsFromOutfitSnapshot(snapshot);
+  const requestedItemIds = getOwnedItemIdsFromOutfitSnapshot(snapshot);
 
+  if (!requestedItemIds.length) {
+    throw new Error("This look has no closet items to plan.");
+  }
+  const { items } = await loadOwnedItems(uid, requestedItemIds);
+  const ownedItemIds = requestedItemIds.filter((itemId) => items.has(itemId));
   if (!ownedItemIds.length) {
     throw new Error("This look has no closet items to plan.");
   }
+  const liveSnapshot = filterOutfitItemsToLiveCloset(snapshot, new Set(ownedItemIds));
 
-  const plannedOutfit = outfitSnapshotToPlannedOutfit(snapshot, plannedOutfitOptions(look));
+  const plannedOutfit = outfitSnapshotToPlannedOutfit(liveSnapshot, plannedOutfitOptions(look));
   const batch = writeBatch(db);
   batch.set(
     outfitDocRef(uid, dateKey),
@@ -435,9 +443,9 @@ export async function planOutfitForToday({
       planned: true,
       plannedOutfit,
       plannedSource: source,
-      ...(cleanString(title ?? snapshot.title) ? { title: cleanString(title ?? snapshot.title) } : {}),
+      ...(cleanString(title ?? liveSnapshot.title) ? { title: cleanString(title ?? liveSnapshot.title) } : {}),
       ...(cleanString(outfitId) ? { outfitId: cleanString(outfitId) } : {}),
-      outfitSnapshot: snapshot,
+      outfitSnapshot: liveSnapshot,
       updatedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
     },
@@ -449,6 +457,6 @@ export async function planOutfitForToday({
     dateKey,
     itemIds: ownedItemIds,
     plannedOutfit,
-    outfitSnapshot: snapshot,
+    outfitSnapshot: liveSnapshot,
   };
 }

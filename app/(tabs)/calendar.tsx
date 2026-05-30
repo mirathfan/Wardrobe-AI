@@ -414,11 +414,8 @@ export default function CalendarScreen() {
       {
         status: "ALL",
         sort: "NEWEST",
-        onError: (message) => {
-          if (__DEV__) {
-            console.log(message);
-          }
-          Alert.alert("Firestore error", message);
+        onError: () => {
+          Alert.alert("Calendar", "Unable to load your calendar data. Please try again.");
           setLoadingItems(false);
         },
       }
@@ -691,8 +688,8 @@ export default function CalendarScreen() {
       setSelectedLookId(selectedLook.id);
       Toast.success("Planned", "Outfit attached to this day.");
       await hapticLight();
-    } catch (error: any) {
-      Toast.error("Plan failed", error?.message ?? "Unable to plan this outfit.");
+    } catch {
+      Toast.error("Plan failed", "Unable to plan this outfit.");
     }
   }, [day.selectedDate, selectedDayKey, selectedLook, uid]);
 
@@ -701,8 +698,8 @@ export default function CalendarScreen() {
     try {
       const next = await clearPlan(uid, selectedDayKey);
       setRecord(next);
-    } catch (error: any) {
-      Toast.error("Clear plan failed", error?.message ?? "Unable to clear this plan.");
+    } catch {
+      Toast.error("Clear plan failed", "Unable to clear this plan.");
     }
   }, [selectedDayKey, uid]);
 
@@ -818,9 +815,8 @@ export default function CalendarScreen() {
       }
       await loadStreakData();
       await hapticLight();
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      Toast.error("Couldn't mark worn. Try again.", err.message);
+    } catch {
+      Toast.error("Couldn't mark worn. Try again.");
     } finally {
       setSaving(false);
     }

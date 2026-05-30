@@ -3,7 +3,7 @@ import AppImage from "@/src/components/common/AppImage";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Colors } from "@/constants/theme";
-import { getItemImageUrl } from "../../src/lib/itemImage";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "../../src/lib/resolveItemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
 import { formatLastWorn, PlannedLook } from "../utils/outfitPlanning";
 
@@ -30,7 +30,8 @@ function slotTitle(label: string, item: ClothingItem | null) {
 }
 
 function SlotCard({ label, item }: { label: string; item: ClothingItem | null }) {
-  const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+  const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "calendar_outfit_card" }) : null;
+  const uri = resolvedImage?.uri ?? null;
   return (
     <View style={styles.slotCard}>
       {uri ? (
@@ -40,6 +41,7 @@ function SlotCard({ label, item }: { label: string; item: ClothingItem | null })
           }}
           style={styles.slotImage}
           resizeMode="contain"
+          onError={() => (resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined)}
         />
       ) : (
         <View style={styles.slotPlaceholder}>

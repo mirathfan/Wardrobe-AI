@@ -11,12 +11,14 @@ import Animated, {
 import { Colors } from "@/constants/theme";
 import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
 import type { ProfileLookRecord } from "@/src/lib/profileLooks";
+import type { ClothingItem } from "@/src/types/ClothingItem";
 
 const colors = Colors.dark;
 
 type Props = {
   record: ProfileLookRecord;
   width: number;
+  itemsById?: Map<string, ClothingItem>;
   height?: number;
   onPress: () => void;
   onLongPress?: () => void;
@@ -29,6 +31,7 @@ type Props = {
 export function MyLookThumbnail({
   record,
   width,
+  itemsById,
   height = Math.round((width * 4) / 3),
   onPress,
   onLongPress,
@@ -53,6 +56,7 @@ export function MyLookThumbnail({
       <View pointerEvents="none" style={styles.previewClip}>
         <AuraLookCard
           look={record.look}
+          itemsById={itemsById}
           compact
           hideActions
           boardOnly

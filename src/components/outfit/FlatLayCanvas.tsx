@@ -3,7 +3,7 @@ import React from "react";
 import { StyleSheet, View } from "react-native";
 
 import { Colors } from "@/constants/theme";
-import { getItemImageUrl } from "@/src/lib/itemImage";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 type SlotKey = "outerwear" | "top" | "bottom" | "shoes";
@@ -20,7 +20,8 @@ const LAYOUT: Record<SlotKey, { left: `${number}%`; top: `${number}%`; width: `$
 };
 
 function Piece({ item, slot }: { item: ClothingItem | null; slot: SlotKey }) {
-  const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+  const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "outfit_card" }) : null;
+  const uri = resolvedImage?.uri ?? null;
   const frame = LAYOUT[slot];
 
   if (!uri) return null;
@@ -33,6 +34,7 @@ function Piece({ item, slot }: { item: ClothingItem | null; slot: SlotKey }) {
         }}
         resizeMode="contain"
         style={StyleSheet.absoluteFill}
+        onError={() => (resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined)}
       />
     </View>
   );

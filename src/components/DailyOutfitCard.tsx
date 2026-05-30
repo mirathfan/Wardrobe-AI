@@ -9,6 +9,10 @@ import FlatLayCanvas from "@/src/components/outfit/FlatLayCanvas";
 import { homeTypography } from "@/src/components/home/homeTypography";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
+import {
+  filterOutfitItemsToLiveCloset,
+  getMissingClosetItemIds,
+} from "@/src/lib/outfitLiveCloset";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import {
   auraButtonStyle,
@@ -56,15 +60,18 @@ function PrimaryActionButton({
   label,
   colors,
   onPress,
+  disabled = false,
 }: {
   label: string;
   colors: ReturnType<typeof useAppTheme>["colors"];
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
     <AuraPressable
       accessibilityRole="button"
       haptic="light"
+      disabled={disabled}
       pressedScale={0.97}
       pressedOpacity={0.9}
       style={[
@@ -72,6 +79,7 @@ function PrimaryActionButton({
         auraButtonStyle(colors, "primary"),
         {
           shadowColor: colors.ctaCream,
+          opacity: disabled ? 0.5 : 1,
         },
       ]}
       onPress={onPress}
@@ -104,11 +112,21 @@ export default function DailyOutfitCard({
 }: Props) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
-  const hasWorn = !!record?.wornOutfit;
-  const hasPlanned = !!record?.plannedOutfit;
+  const liveItemIds = React.useMemo(() => new Set(itemsById.keys()), [itemsById]);
+  const missingItemIds = React.useMemo(
+    () => getMissingClosetItemIds(record, liveItemIds),
+    [liveItemIds, record],
+  );
+  const displayRecord = React.useMemo(
+    () => filterOutfitItemsToLiveCloset(record, liveItemIds),
+    [liveItemIds, record],
+  );
+  const hasMissingItems = missingItemIds.length > 0;
+  const hasWorn = !!displayRecord?.wornOutfit;
+  const hasPlanned = !!displayRecord?.plannedOutfit;
 
   const activeLook = hasPlanned
-    ? plannedToLook(record?.plannedOutfit as PlannedOutfit)
+    ? plannedToLook(displayRecord?.plannedOutfit as PlannedOutfit)
     : looks.find((look) => look.id === selectedLookId) ?? looks[0] ?? null;
 
   const gridItems = activeLook
@@ -127,7 +145,15 @@ export default function DailyOutfitCard({
         },
       ]}
     >
-      {hasWorn ? <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Worn on {dateLabel}</Text> : hasPlanned ? <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Planned</Text> : <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Plan outfit for this day</Text>}
+      {hasMissingItems ? (
+        <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Outfit needs an update</Text>
+      ) : hasWorn ? (
+        <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Worn on {dateLabel}</Text>
+      ) : hasPlanned ? (
+        <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Planned</Text>
+      ) : (
+        <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Plan outfit for this day</Text>
+      )}
 
       {!hasWorn && !hasPlanned ? (
         <View style={styles.segRow}>
@@ -155,6 +181,17 @@ export default function DailyOutfitCard({
       <View style={{ height: 10 }} />
       <FlatLayCanvas items={gridItems} />
 
+      {hasMissingItems ? (
+        <View style={[styles.removedNotice, { backgroundColor: colors.surfaceSoft, borderColor: colors.border }]}>
+          <Text style={[homeTypography.bodySmall, { color: colors.text }]}>Removed from closet</Text>
+          <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>
+            {missingItemIds.length === 1
+              ? "1 planned piece is no longer in your closet."
+              : `${missingItemIds.length} planned pieces are no longer in your closet.`}
+          </Text>
+        </View>
+      ) : null}
+
       {activeLook ? (
         <View style={styles.scoreWrap}>
           <Text style={[homeTypography.bodySmall, styles.score, { color: colors.textSecondary }]}>Styling note</Text>
@@ -168,11 +205,22 @@ export default function DailyOutfitCard({
         {hasWorn ? (
           <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>Outfit already marked worn.</Text>
         ) : hasPlanned ? (
-          <PrimaryActionButton label="Mark Worn" colors={colors} onPress={onMarkWorn} />
+          <PrimaryActionButton
+            label="Mark Worn"
+            colors={colors}
+            onPress={onMarkWorn}
+            disabled={hasMissingItems}
+          />
         ) : (
           <PrimaryActionButton label="Use this outfit" colors={colors} onPress={onUseOutfit} />
         )}
       </View>
+
+      {hasMissingItems && hasPlanned && !hasWorn ? (
+        <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>
+          Clear this plan or swap the removed piece before marking it worn.
+        </Text>
+      ) : null}
 
       {hasPlanned && !hasWorn ? (
         <View style={styles.textActions}>
@@ -222,6 +270,13 @@ const styles = StyleSheet.create({
   scoreWrap: {
     marginTop: 10,
     gap: 4,
+  },
+  removedNotice: {
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 4,
+    marginTop: 10,
+    padding: 10,
   },
   score: {
     fontWeight: "500",

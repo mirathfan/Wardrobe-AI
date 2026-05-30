@@ -154,8 +154,8 @@ export default function LaundryScreen() {
             ? "Piece moved to laundry."
             : "Piece marked needs wash.",
       );
-    } catch (error: any) {
-      Toast.error("Laundry update failed", error?.message ?? "Could not update that item.");
+    } catch {
+      Toast.error("Laundry update failed", "Could not update that item.");
     } finally {
       setSavingStatus(null);
     }
@@ -180,8 +180,8 @@ export default function LaundryScreen() {
       Toast.laundryUpdated(
         to === "clean" ? "Batch marked clean." : "Batch moved to laundry.",
       );
-    } catch (error: any) {
-      Toast.error("Laundry update failed", error?.message ?? "Could not update laundry.");
+    } catch {
+      Toast.error("Laundry update failed", "Could not update laundry.");
     } finally {
       setSavingStatus(null);
     }
@@ -211,8 +211,8 @@ export default function LaundryScreen() {
       setUndo(null);
       void runHaptic("light");
       Toast.laundryUpdated("Change undone.");
-    } catch (error: any) {
-      Toast.error("Undo failed", error?.message ?? "Could not restore those items.");
+    } catch {
+      Toast.error("Undo failed", "Could not restore those items.");
     } finally {
       setSavingStatus(null);
     }

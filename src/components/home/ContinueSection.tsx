@@ -7,7 +7,7 @@ import AuraPressable from "@/src/components/aura/AuraPressable";
 import { homeTypography } from "@/src/components/home/homeTypography";
 import { auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { getItemImageUrl } from "@/src/lib/itemImage";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 function itemTitle(item: ClothingItem) {
@@ -89,7 +89,8 @@ export default function ContinueSection({
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 8 }}>
         {items.map((item) => {
-          const imageUri = getItemImageUrl(item, { variant: "thumb" });
+          const resolvedImage = resolveItemImage(item, { variant: "thumb", surface: "home_continue" });
+          const imageUri = resolvedImage.uri;
           const momentumImageStyle = getMomentumImageStyle(item);
           return (
             <AuraPressable
@@ -128,6 +129,7 @@ export default function ContinueSection({
                     }}
                     style={momentumImageStyle}
                     resizeMode="contain"
+                    onError={() => logResolvedItemImageLoadFailure(resolvedImage)}
                   />
                 ) : (
                   <Text style={[homeTypography.caption, { color: colors.textOnLightSecondary }]}>No image</Text>

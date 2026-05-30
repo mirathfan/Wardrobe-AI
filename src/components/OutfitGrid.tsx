@@ -3,7 +3,7 @@ import AppImage from "@/src/components/common/AppImage";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Colors } from "@/constants/theme";
-import { getItemImageUrl } from "../../src/lib/itemImage";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "../../src/lib/resolveItemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
 import { formatLastWorn } from "../utils/outfitPlanning";
 
@@ -30,7 +30,8 @@ function Tile({
   editable: boolean;
   onPressSlot?: (slot: SlotKey) => void;
 }) {
-  const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+  const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "outfit_card" }) : null;
+  const uri = resolvedImage?.uri ?? null;
   const name = item?.name || item?.subCategory || item?.category || "+ Add";
 
   return (
@@ -45,6 +46,7 @@ function Tile({
           }}
           style={styles.image}
           resizeMode="contain"
+          onError={() => (resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined)}
         />
       ) : (
         <View style={styles.placeholder}>

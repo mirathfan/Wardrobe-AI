@@ -27,6 +27,7 @@ import type {
 import { sanitizeDisplayText } from "@/src/lib/text";
 import type { WardrobeSuggestion } from "@/src/lib/wardrobeSuggestions";
 import type { ClothingItem } from "@/src/types/ClothingItem";
+import type { WardrobeGap } from "@/src/types/shoppingRecommendations";
 
 export type InsightPeriodKey = "30d" | "90d" | "all";
 
@@ -48,11 +49,14 @@ type AuraInsightsDashboardProps = {
   period: InsightPeriodKey;
   userId?: string | null;
   wardrobeSuggestions?: WardrobeSuggestion[];
+  shoppingWardrobeGaps?: WardrobeGap[];
+  preparingShoppingGapId?: string | null;
   onPeriodChange: (period: InsightPeriodKey) => void;
   onBack: () => void;
   onStyleItem: (item: ClothingItem) => void;
   onAskAuraWhatToBuy: (missingPieces: MissingPieceInsight[]) => void;
   onFindSuggestionOptions?: (suggestion: WardrobeSuggestion) => void;
+  onFindShoppingGapOptions?: (gap: WardrobeGap) => void;
 };
 
 function percentWidth(value: number): DimensionValue {
@@ -843,17 +847,186 @@ function ClosetGapsCard({
   );
 }
 
+function titleCaseGapLabel(value: string) {
+  return value
+    .replace(/[_-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function gapCategoryLabel(gap: WardrobeGap) {
+  const category = gap.suggestedCategories[0] ?? gap.category ?? gap.type;
+  return titleCaseGapLabel(category || "Wardrobe piece");
+}
+
+function ShoppingWardrobeGapsCard({
+  gaps,
+  preparingShoppingGapId,
+  onFindShoppingGapOptions,
+}: {
+  gaps: WardrobeGap[];
+  preparingShoppingGapId?: string | null;
+  onFindShoppingGapOptions?: (gap: WardrobeGap) => void;
+}) {
+  const { colors } = useAppTheme();
+  const topGaps = gaps.slice(0, 3);
+  const preparingAnyGap = Boolean(preparingShoppingGapId);
+
+  return (
+    <Card title="Gaps in your closet" eyebrow="SHOPPING SIGNALS">
+      <View style={{ gap: 12 }}>
+        {topGaps.length ? (
+          <View style={{ gap: 10 }}>
+            {topGaps.map((gap) => {
+              const isPreparing = preparingShoppingGapId === gap.id;
+              return (
+              <View
+                key={gap.id}
+                style={{
+                  borderRadius: 20,
+                  padding: 12,
+                  backgroundColor: INSIGHTS_SOFT_SURFACE,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  gap: 10,
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+                  <View
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 999,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: colors.purpleSurface,
+                      borderWidth: 1,
+                      borderColor: colors.purpleBorder,
+                    }}
+                  >
+                    <Ionicons name="bag-handle-outline" size={15} color={colors.ctaCream} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
+                      <View
+                        style={{
+                          minHeight: 26,
+                          borderRadius: 999,
+                          paddingHorizontal: 9,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          backgroundColor: colors.chipBackground,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: colors.ctaCream,
+                            fontSize: 11,
+                            lineHeight: 14,
+                            fontWeight: "900",
+                            letterSpacing: 0,
+                          }}
+                          numberOfLines={1}
+                        >
+                          {gapCategoryLabel(gap)}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text
+                      style={{
+                        color: colors.textSecondary,
+                        fontSize: 13,
+                        lineHeight: 19,
+                        fontWeight: "600",
+                        letterSpacing: 0,
+                      }}
+                      numberOfLines={2}
+                    >
+                      {gap.explanation}
+                    </Text>
+                  </View>
+                </View>
+
+                {onFindShoppingGapOptions ? (
+                  <AuraPressable
+                    onPress={() => onFindShoppingGapOptions(gap)}
+                    disabled={preparingAnyGap}
+                    haptic="selection"
+                    hapticTrigger="press"
+                    pressedScale={0.97}
+                    style={{
+                      alignSelf: "flex-start",
+                      minHeight: 36,
+                      borderRadius: 999,
+                      paddingHorizontal: 12,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexDirection: "row",
+                      gap: 7,
+                      backgroundColor: isPreparing ? colors.purpleSurface : colors.chipBackground,
+                      borderWidth: 1,
+                      borderColor: isPreparing ? colors.purpleBorder : colors.border,
+                    }}
+                  >
+                    {isPreparing ? (
+                      <ActivityIndicator size="small" color={colors.ctaCream} />
+                    ) : (
+                      <Ionicons name="search-outline" size={14} color={colors.textSecondary} />
+                    )}
+                    <Text
+                      style={{
+                        color: isPreparing ? colors.ctaCream : colors.textSecondary,
+                        fontSize: 12,
+                        lineHeight: 15,
+                        fontWeight: "800",
+                        letterSpacing: 0,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {isPreparing ? "Finding options" : "Find options"}
+                    </Text>
+                  </AuraPressable>
+                ) : null}
+              </View>
+              );
+            })}
+          </View>
+        ) : (
+          <Text
+            style={{
+              color: colors.textSecondary,
+              fontSize: 13.5,
+              lineHeight: 20,
+              fontWeight: "600",
+              letterSpacing: 0,
+            }}
+          >
+            Your closet looks balanced right now. Add more outfit history to sharpen this read.
+          </Text>
+        )}
+      </View>
+    </Card>
+  );
+}
+
 export default function AuraInsightsDashboard({
   insights,
   loading = false,
   period,
   userId,
   wardrobeSuggestions = [],
+  shoppingWardrobeGaps = [],
+  preparingShoppingGapId,
   onPeriodChange,
   onBack,
   onStyleItem,
   onAskAuraWhatToBuy,
   onFindSuggestionOptions,
+  onFindShoppingGapOptions,
 }: AuraInsightsDashboardProps) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
@@ -924,6 +1097,11 @@ export default function AuraInsightsDashboard({
         <ClosetHealthCard insights={insights} />
         <InventoryValueCard insights={insights} />
         <WardrobeMixCard insights={insights} />
+        <ShoppingWardrobeGapsCard
+          gaps={shoppingWardrobeGaps}
+          preparingShoppingGapId={preparingShoppingGapId}
+          onFindShoppingGapOptions={onFindShoppingGapOptions}
+        />
         <ColorIdentityCard insights={insights} />
         <PiecesCard
           title="MVP Pieces"

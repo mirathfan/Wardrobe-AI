@@ -8,7 +8,8 @@ import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
 import { homeTypography } from "@/src/components/home/homeTypography";
 import { auraButtonStyle, auraButtonTextStyle } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { getItemImagePresentation, getItemImageUrl } from "@/src/lib/itemImage";
+import { getItemImagePresentation } from "@/src/lib/itemImage";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
@@ -74,7 +75,8 @@ export default function TodayOutfitCard({
         <View style={{ flexDirection: "row", gap: 10 }}>
           {slots.map((slot) => {
             const item = itemForSlot(record, itemsById, slot);
-            const imageUri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+            const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "home_today" }) : null;
+            const imageUri = resolvedImage?.uri ?? null;
             const imagePresentation = getItemImagePresentation(item, {
               surface: "home_today",
             });
@@ -99,6 +101,9 @@ export default function TodayOutfitCard({
                       }}
                       style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
                       resizeMode="contain"
+                      onError={() =>
+                        resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined
+                      }
                     />
                   ) : null}
                 </View>
