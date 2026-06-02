@@ -13,7 +13,7 @@
       "supportsTablet": true,
       "usesAppleSignIn": true,
       "bundleIdentifier": "com.kasat.aura",
-      "buildNumber": "4",
+      "buildNumber": "5",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
