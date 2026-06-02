@@ -13,6 +13,7 @@
     "test:watch": "jest --watch",
     "precommit": "npm test && cd functions && npm test",
     "aura:eval": "node scripts/aura-intelligence-eval.cjs",
+    "eval:aura:gate": "npm --prefix functions run eval:aura:gate",
     "check:eas-env": "node scripts/check-eas-public-env.cjs"
   },
   "dependencies": {

@@ -19,12 +19,6 @@ import type {
   SearchLiveProductsResponse,
 } from "./types";
 
-if (!process.env.SERPAPI_API_KEY) {
-  throw new Error(
-    "SERPAPI_API_KEY is not set. Deployment is misconfigured.",
-  );
-}
-
 const PRODUCT_CATEGORIES: ProductCategory[] = [
   "tops",
   "bottoms",
@@ -53,6 +47,10 @@ function envNumber(key: string, fallback: number, min: number, max: number) {
 
 function productSearchEnabled() {
   return String(process.env.PRODUCT_SEARCH_ENABLED ?? "").trim().toLowerCase() === "true";
+}
+
+function productSearchConfigured() {
+  return Boolean(String(process.env.SERPAPI_API_KEY ?? "").trim());
 }
 
 function stripControlCharacters(value: string) {
@@ -192,6 +190,10 @@ export const searchLiveProducts = onCall(
         ...emptyResponse(false),
         disabled: true,
       };
+    }
+    if (!productSearchConfigured()) {
+      logger.warn("[PRODUCT_SEARCH] SERPAPI_API_KEY missing while product search is enabled");
+      throw new HttpsError("failed-precondition", "Live product search is not configured.");
     }
 
     const cacheKey = buildProductSearchCacheKey(normalized);

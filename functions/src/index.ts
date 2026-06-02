@@ -24,6 +24,53 @@ export { ingestItemFromPhotos } from "./ingestItemFromPhotos";
 export { deleteAccountData } from "./deleteAccountData";
 export { wrapAffiliateLinks } from "./affiliate/affiliateLinks";
 export { searchLiveProducts } from "./products/searchLiveProducts";
+export {
+  reindexClosetItem,
+  backfillWardrobeIntelligence,
+  backfillWardrobeIntelligenceAll,
+  previewClosetItemIntelligence,
+  auditClosetDraftItems,
+  deleteDraftClosetItem,
+  previewAbandonedDraftCleanup,
+  bulkDeleteAbandonedDrafts,
+} from "./ai/wardrobeIntelligence/callables";
+export {
+  retrieveWardrobeContext,
+} from "./ai/wardrobeIntelligence/retrievalCallables";
+export {
+  previewOutfitGenerationContext,
+  generateOutfitRecommendations,
+} from "./ai/wardrobeIntelligence/outfitCallables";
+export {
+  recordOutfitFeedback,
+  retrieveStyleMemoryContext,
+  getStyleProfile,
+  rebuildStyleProfileFromMemories,
+  listStyleMemories,
+  deleteStyleMemory,
+  softDeleteAllStyleMemories,
+} from "./ai/wardrobeIntelligence/styleMemoryCallables";
+export {
+  runAuraStylingAgent,
+} from "./ai/wardrobeIntelligence/agentCallables";
+export {
+  saveAuraAgentOutfit,
+  logAuraAgentOutfitWear,
+  planAuraAgentOutfit,
+  dislikeAuraAgentOutfit,
+} from "./ai/wardrobeIntelligence/agentActionCallables";
+export {
+  getAuraMetrics,
+  refreshAuraMetricsSnapshot,
+  getAuraResumeMetrics,
+  resetAuraMetrics,
+} from "./ai/wardrobeIntelligence/metricsCallables";
+export {
+  onClosetItemWriteIndexIntelligence,
+} from "./ai/wardrobeIntelligence/triggers";
+export {
+  cleanupAbandonedDraftClosetItems,
+} from "./ai/wardrobeIntelligence/scheduledDraftCleanup";
 // export { generateCleanedProductImages } from "./generateCleanedProductImages";
 
 if (!getApps().length) {
