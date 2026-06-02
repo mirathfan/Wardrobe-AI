@@ -14,6 +14,12 @@ import type { AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
+import {
+  buildHomeTodayLookPreviewLayout,
+  getHomeTodayLookImageFrame,
+  type HomeTodayLookSlot,
+  type HomeTodayLookTileLayout,
+} from "@/src/components/home/homeTodayLookLayout";
 import { homeTypography } from "@/src/components/home/homeTypography";
 import { AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { ACTION_GAP, HOME_CTA_HEIGHT, PILL_RADIUS } from "@/src/constants/auraControls";
@@ -23,7 +29,7 @@ import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/res
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
-type SlotKey = "outerwear" | "top" | "bottom" | "shoes";
+type SlotKey = HomeTodayLookSlot;
 
 const HERO_SECTION_GAP = 16;
 const HERO_CARD_GAP = 12;
@@ -33,13 +39,6 @@ const HERO_TIGHT_GAP = 8;
 function itemForSlot(record: DailyOutfitRecord | null, itemsById: Map<string, ClothingItem>, slot: SlotKey) {
   const itemId = record?.plannedOutfit?.itemsByCategory?.[slot] ?? record?.wornOutfit?.itemsByCategory?.[slot] ?? null;
   return itemId ? itemsById.get(itemId) ?? null : null;
-}
-
-function previewImageFrame(slot: SlotKey) {
-  if (slot === "outerwear") return { width: "94%" as const, height: "92%" as const };
-  if (slot === "shoes") return { width: "84%" as const, height: "76%" as const };
-  if (slot === "bottom") return { width: "92%" as const, height: "94%" as const };
-  return { width: "94%" as const, height: "92%" as const };
 }
 
 function IridecentHeroLine({ colors }: { colors: AppColors }) {
@@ -120,7 +119,6 @@ export default function HomeHero({
   const hasPlan = !!record?.plannedOutfit;
   const hasWorn = !!record?.wornOutfit;
   const slots: SlotKey[] = ["outerwear", "top", "bottom", "shoes"];
-  const previewTileHeight = layout.screenSize === "compact" ? 100 : layout.screenSize === "large" ? 116 : 108;
   const cardPadding = layout.screenSize === "compact" ? 14 : 16;
   const visibleGuidancePhrases = guidancePhrases.slice(0, 1);
   const canWearPlannedLook = hasPlan && !hasWorn && !!onWearToday;
@@ -136,6 +134,63 @@ export default function HomeHero({
     .map((slot) => ({ slot, item: itemForSlot(record, itemsById, slot) }))
     .filter((entry) => !!entry.item);
   const previewEntries = previewSlots.slice(0, 4);
+  const previewItemsBySlot = new Map(previewEntries.map((entry) => [entry.slot, entry.item]));
+  const previewLayout = buildHomeTodayLookPreviewLayout(
+    previewEntries.map((entry) => entry.slot),
+    layout.screenSize,
+  );
+  const renderPreviewTile = (tile: HomeTodayLookTileLayout, useRowFlex = true) => {
+    const item = previewItemsBySlot.get(tile.slot);
+    if (!item) return null;
+    const resolvedImage = resolveItemImage(item, { variant: "thumb", surface: "home_today" });
+    const imageUri = resolvedImage.uri;
+    const imagePresentation = getItemImagePresentation(item, {
+      surface: "home_today",
+    });
+    return (
+      <View
+        key={tile.slot}
+        style={{
+          ...(useRowFlex
+            ? {
+                flexBasis: tile.flexBasis,
+                flexGrow: tile.flexGrow,
+                flexShrink: 1,
+              }
+            : {
+                width: "100%",
+              }),
+          height: tile.height,
+          borderRadius: layout.mediumRadius,
+          backgroundColor: colors.boardLight,
+          borderWidth: 1,
+          borderColor: colors.borderWarm,
+          overflow: "hidden",
+          padding: HERO_TIGHT_GAP,
+        }}
+      >
+        <LinearGradient
+          pointerEvents="none"
+          colors={["rgba(255,255,255,0.10)", "rgba(251,228,216,0.00)", "rgba(17,16,20,0.05)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={{ position: "absolute", inset: 0 }}
+        />
+        <View style={{ flex: 1, paddingHorizontal: 2, alignItems: "center", justifyContent: "center" }}>
+          {imageUri ? (
+            <AppImage
+              source={{
+                uri: imageUri,
+              }}
+              style={[tile.imageFrame ?? getHomeTodayLookImageFrame(tile.slot), imagePresentation.imageStyle]}
+              resizeMode="contain"
+              onError={() => logResolvedItemImageLoadFailure(resolvedImage)}
+            />
+          ) : null}
+        </View>
+      </View>
+    );
+  };
 
   return (
     <View style={{ gap: HERO_SECTION_GAP }}>
@@ -257,54 +312,44 @@ export default function HomeHero({
               previewEntries.length ? (
                 <View
                   style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    gap: HERO_TIGHT_GAP,
+                    alignItems: "stretch",
+                    gap: previewLayout.gap,
                   }}
                 >
-                  {previewEntries.map(({ slot, item }) => {
-                    const resolvedImage = resolveItemImage(item, { variant: "thumb", surface: "home_today" });
-                    const imageUri = resolvedImage.uri;
-                    const imagePresentation = getItemImagePresentation(item, {
-                      surface: "home_today",
-                    });
-                    return (
+                  {previewLayout.kind === "splitColumns" ? (
+                    <View
+                      style={{
+                        alignItems: "stretch",
+                        flexDirection: "row",
+                        gap: previewLayout.gap,
+                      }}
+                    >
+                      {previewLayout.columns.map((column) => (
+                        <View
+                          key={column.key}
+                          style={{
+                            flex: column.flex,
+                            gap: previewLayout.gap,
+                          }}
+                        >
+                          {column.tiles.map((tile) => renderPreviewTile(tile, false))}
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    previewLayout.rows.map((row) => (
                       <View
-                        key={slot}
+                        key={row.key}
                         style={{
-                          flexBasis: "47.5%",
-                          flexGrow: 1,
-                          minHeight: previewTileHeight,
-                          borderRadius: layout.mediumRadius,
-                          backgroundColor: colors.boardLight,
-                          borderWidth: 1,
-                          borderColor: colors.borderWarm,
-                          overflow: "hidden",
-                          padding: HERO_TIGHT_GAP,
+                          alignItems: row.alignItems,
+                          flexDirection: "row",
+                          gap: previewLayout.gap,
                         }}
                       >
-                        <LinearGradient
-                          pointerEvents="none"
-                          colors={["rgba(255,255,255,0.10)", "rgba(251,228,216,0.00)", "rgba(17,16,20,0.05)"]}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 0, y: 1 }}
-                          style={{ position: "absolute", inset: 0 }}
-                        />
-                        <View style={{ flex: 1, paddingHorizontal: 2, alignItems: "center", justifyContent: "center" }}>
-                          {imageUri ? (
-                            <AppImage
-                              source={{
-                                uri: imageUri,
-                              }}
-                              style={[previewImageFrame(slot), imagePresentation.imageStyle]}
-                              resizeMode="contain"
-                              onError={() => logResolvedItemImageLoadFailure(resolvedImage)}
-                            />
-                          ) : null}
-                        </View>
+                        {row.tiles.map((tile) => renderPreviewTile(tile))}
                       </View>
-                    );
-                  })}
+                    ))
+                  )}
                 </View>
               ) : null
             ) : (
