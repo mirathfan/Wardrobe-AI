@@ -49,6 +49,7 @@ const SETTINGS_GROUPS = [
   {
     label: "STYLE PROFILE",
     rows: [
+      { title: "Saved Outfits", route: "/saved-outfits", summary: "savedOutfits" },
       { title: "Body & Fit", route: "/profile/body-fit", summary: "bodyFit" },
       { title: "Default Sizes", route: "/profile/default-sizes", summary: "defaultSizes" },
       { title: "Shopping Preferences", route: "/profile/shopping-preferences", summary: "shopping" },
@@ -272,6 +273,7 @@ export default function ProfileScreen() {
   const summaries = useMemo(
     () => ({
       account: accountSummary,
+      savedOutfits: "View AURA outfits you saved for repeat wear.",
       bodyFit: formatBodyFitSummary(profile),
       defaultSizes: formatDefaultSizesSummary(profile),
       shopping: formatShoppingSummary(profile),
@@ -583,6 +585,22 @@ export default function ProfileScreen() {
                   </View>
                 </View>
               ))}
+              {__DEV__ ? (
+                <View style={{ gap: 10 }}>
+                  {/* TODO: Remove or protect Developer tools before production launch. */}
+                  <SectionLabel>Developer</SectionLabel>
+                  <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>
+                    Internal tools for testing AURA intelligence, indexing, and backend workflows.
+                  </Text>
+                  <View style={{ gap: 10 }}>
+                    <ProfileHubRow
+                      title="AURA Intelligence Debug"
+                      summary="Preview metadata, reindex an item, and run Phase 1 backfill."
+                      onPress={() => router.push("/dev/intelligence-debug" as Href)}
+                    />
+                  </View>
+                </View>
+              ) : null}
             </View>
 
             <Text

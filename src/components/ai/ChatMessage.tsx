@@ -24,18 +24,26 @@ import Reanimated, {
 
 import { Fonts, type AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
+import AuraAgentMessage from "@/src/components/aura/AuraAgentMessage";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import AppImage from "@/src/components/common/AppImage";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
+import { getAgentDisplayMessage } from "@/src/lib/auraAgentDisplay";
 import { formatOutfitAnalysisSentence } from "@/src/lib/auraOutfitAnalysisDisplay";
+import { formatUserBubbleText } from "@/src/lib/chatUserMessageText";
 import { formatUrlForDisplay, isUrlOnlyMessage } from "@/src/lib/formatChatText";
 import { sanitizeDisplayText, sanitizeMultilineDisplayText } from "@/src/lib/text";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLook, AuraLookAction, AuraLookOptionMeta, AuraOutfitPhotoAction } from "@/src/types/aura";
+import type { AuraAgentOutfit, AuraAgentSuggestedAction } from "@/src/types/auraAgent";
 
 import AuraReplyCard from "./AuraReplyCard";
 import OutfitMessage from "./OutfitMessage";
 import type { AIMessage, ChatAttachment, ChatImageAttachment, ChatMessageActionAnchor } from "./chatTypes";
+import {
+  AGENT_MESSAGE_HORIZONTAL_PADDING,
+  shouldUseFullWidthAgentMessage,
+} from "./chatMessageLayout";
 import { auraShadow } from "./aiTheme";
 
 const USER_SINGLE_IMAGE_MIN_WIDTH = 180;
@@ -45,6 +53,8 @@ const USER_MULTI_IMAGE_MAX_GRID_WIDTH = 248;
 const USER_MULTI_IMAGE_MIN_GRID_WIDTH = 196;
 const USER_IMAGE_RADIUS = 20;
 const STREAM_TAIL_REVEAL_MS = 130;
+const USER_BUBBLE_MAX_WIDTH = "84%";
+const USER_URL_BUBBLE_MAX_WIDTH = "68%";
 
 function actionAnchorFromEvent(event: GestureResponderEvent): ChatMessageActionAnchor {
   return {
@@ -134,6 +144,9 @@ function cleanIntroText(value?: string | null) {
 }
 
 function fallbackStructuredIntro(message: AIMessage) {
+  if (message.agentResponse) {
+    return getAgentDisplayMessage(message.agentResponse);
+  }
   const candidateItems = message.aura?.candidateItems ?? message.aura?.candidates ?? [];
   if (candidateItems.length) {
     return "I found this item. Review it before I add it to your wardrobe.";
@@ -154,30 +167,6 @@ function fallbackStructuredIntro(message: AIMessage) {
     return "Got you — I built a few looks from your closet that match that direction.";
   }
   return "Got you — here’s what I’d do.";
-}
-
-function formatUserBubbleText(value?: string | null) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return "";
-
-  if (/^Style this closet item for me:/i.test(raw) && /\bcloset item id:/i.test(raw)) {
-    return "Style this item with AURA.";
-  }
-
-  const cleaned = raw
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter((line) => {
-      if (!line) return false;
-      if (/^closet item id:/i.test(line)) return false;
-      if (/^required anchor item:/i.test(line)) return false;
-      if (/^selected item ids?:/i.test(line)) return false;
-      if (/^do not substitute another closet item/i.test(line)) return false;
-      return true;
-    })
-    .join("\n");
-
-  return sanitizeMultilineDisplayText(cleaned);
 }
 
 function SmoothStreamingText({
@@ -335,8 +324,14 @@ type ChatMessageProps = {
   onAuraCandidateAction?: (action: AuraCandidateAction, message: AIMessage) => void;
   onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
   onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
+  onAuraAgentAction?: (action: AuraAgentSuggestedAction, message: AIMessage, outfit?: AuraAgentOutfit | null) => void;
+  onAuraAgentOutfitSelect?: (outfit: AuraAgentOutfit, message: AIMessage) => void;
   onRetryAuraResponse?: (message: AIMessage) => void;
   onMessageActionPress?: (message: AIMessage, anchor: ChatMessageActionAnchor) => void;
+  selectedAgentOutfitId?: string | null;
+  auraAgentActionsDisabled?: boolean;
+  auraAgentLoadingActionId?: string | null;
+  auraAgentLoadingMessageId?: string | null;
 };
 
 function ChatMessage({
@@ -352,8 +347,14 @@ function ChatMessage({
   onAuraCandidateAction,
   onAuraOutfitPhotoAction,
   onAuraLaundryAction,
+  onAuraAgentAction,
+  onAuraAgentOutfitSelect,
   onRetryAuraResponse,
   onMessageActionPress,
+  selectedAgentOutfitId,
+  auraAgentActionsDisabled = false,
+  auraAgentLoadingActionId = null,
+  auraAgentLoadingMessageId = null,
 }: ChatMessageProps) {
   const layout = useResponsiveLayout();
   const fade = useRef(new Animated.Value(0)).current;
@@ -364,8 +365,14 @@ function ChatMessage({
   const cardRise = useRef(new Animated.Value(14)).current;
   const cardScale = useRef(new Animated.Value(0.98)).current;
   const pulse = useRef(new Animated.Value(0.45)).current;
-  const isStructuredCard = (message.kind === "aura_card" && !!message.aura) || (message.type === "outfit" && !!message.outfits?.length);
-  const structuredIntroText = cleanIntroText(message.assistantIntroText ?? message.text) || fallbackStructuredIntro(message);
+  const isAgentCard = shouldUseFullWidthAgentMessage(message);
+  const isStructuredCard =
+    isAgentCard ||
+    (message.kind === "aura_card" && !!message.aura) ||
+    (message.type === "outfit" && !!message.outfits?.length);
+  const structuredIntroText = isAgentCard
+    ? getAgentDisplayMessage(message.agentResponse)
+    : cleanIntroText(message.assistantIntroText ?? message.text) || fallbackStructuredIntro(message);
   const isUser = message.kind === "user_text" || message.type === "user";
   const isAuraText = message.kind === "aura_text";
   const displayText = isUser ? formatUserBubbleText(message.text) : sanitizeMultilineDisplayText(message.text);
@@ -573,6 +580,52 @@ function ChatMessage({
     );
   }
 
+  if (isAgentCard && message.agentResponse) {
+    return (
+      <>
+        <View
+          testID="aura-agent-message-container"
+          style={chatMessageStyles.agentMessageContainer}
+        >
+          <Animated.View style={{ opacity: introFade, transform: [{ translateY: rise }, { scale }] }}>
+            <StructuredAuraIntro colors={colors} text={structuredIntroText} compact />
+          </Animated.View>
+          <AssistantActionButton colors={colors} message={message} onOpen={onMessageActionPress} />
+          <OutfitCardEntry fullWidth>
+            <Animated.View
+              style={[
+                { opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }] },
+                chatMessageStyles.agentOutfitCard,
+              ]}
+            >
+              <AuraAgentMessage
+                colors={colors}
+                response={message.agentResponse}
+                selectedOutfitId={selectedAgentOutfitId}
+                disabled={message.streaming || auraAgentActionsDisabled}
+                loadingActionId={
+                  auraAgentLoadingMessageId === message.id ? auraAgentLoadingActionId : null
+                }
+                agentActionStates={message.agentActionStates}
+                onSelectOutfit={
+                  onAuraAgentOutfitSelect
+                    ? (outfit) => onAuraAgentOutfitSelect(outfit, message)
+                    : undefined
+                }
+                onAction={
+                  onAuraAgentAction
+                    ? (action, outfit) => onAuraAgentAction(action, message, outfit)
+                    : undefined
+                }
+              />
+            </Animated.View>
+          </OutfitCardEntry>
+        </View>
+        {imagePreviewModal}
+      </>
+    );
+  }
+
   if (message.type === "system/action") {
     const displayText = sanitizeDisplayText(message.text);
     const isSuggestion =
@@ -651,6 +704,8 @@ function ChatMessage({
   }
 
   if (isAuraText) {
+    const isAssistantError = /\b(couldn'?t|could not|failed|unavailable|unable|try again|sign in again)\b/i.test(displayText ?? "");
+    const canRetry = isAssistantError && !!onRetryAuraResponse && !message.streaming;
     return (
       <>
         <Animated.View
@@ -671,6 +726,36 @@ function ChatMessage({
             ) : (
               <FormattedAuraText text={displayText} colors={colors} />
             )
+          ) : null}
+          {canRetry ? (
+            <AuraPressable
+              onPress={() => onRetryAuraResponse?.(message)}
+              haptic="selection"
+              hapticTrigger="press"
+              pressedScale={0.97}
+              pressedOpacity={0.88}
+              accessibilityRole="button"
+              accessibilityLabel="Retry AURA response"
+              style={{
+                alignSelf: "flex-start",
+                minHeight: 32,
+                borderRadius: 999,
+                paddingHorizontal: 11,
+                paddingVertical: 0,
+                backgroundColor: colors.chipBackground,
+                borderWidth: 0.75,
+                borderColor: colors.border,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+                marginTop: 4,
+              }}
+            >
+              <Ionicons name="refresh-outline" size={13} color={colors.text} />
+              <Text style={{ color: colors.text, fontSize: 11.5, fontWeight: "600", fontFamily: Fonts.sans }}>
+                Retry
+              </Text>
+            </AuraPressable>
           ) : null}
           <AssistantActionButton colors={colors} message={message} onOpen={onMessageActionPress} />
         </Animated.View>
@@ -722,14 +807,14 @@ function ChatMessage({
             accessibilityRole="button"
             accessibilityLabel="Open message actions"
             style={({ pressed }) => ({
-              maxWidth: isUserUrlOnly ? "68%" : "74%",
+              maxWidth: isUserUrlOnly ? USER_URL_BUBBLE_MAX_WIDTH : USER_BUBBLE_MAX_WIDTH,
               borderRadius: 22,
               paddingHorizontal: 13,
               paddingVertical: isUserUrlOnly ? 7 : 8,
               backgroundColor: userBubbleSurface,
               borderWidth: 1,
               borderColor: userBubbleBorder,
-              marginLeft: 74,
+              marginLeft: 0,
               marginRight: 6,
               opacity: pressed ? 0.92 : 1,
               ...auraShadow(0.06),
@@ -744,6 +829,8 @@ function ChatMessage({
                 lineHeight: 21,
                 fontWeight: "400",
                 fontFamily: Fonts.sans,
+                flexShrink: 1,
+                flexWrap: "wrap",
               }}
             >
               {formattedUserText}
@@ -756,15 +843,16 @@ function ChatMessage({
   }
 
   const fallbackBubbleStyle = {
-    maxWidth: isUserUrlOnly ? "68%" : isUser ? "74%" : isAuraText ? "76%" : "78%",
+    maxWidth: isUserUrlOnly ? USER_URL_BUBBLE_MAX_WIDTH : isUser ? USER_BUBBLE_MAX_WIDTH : isAuraText ? "76%" : "78%",
     borderRadius: 22,
     paddingHorizontal: isUser ? 13 : 15,
     paddingVertical: isUserUrlOnly ? 7 : isUser ? 8 : 10,
     backgroundColor: isUser ? userBubbleSurface : assistantSurface,
     borderWidth: 1,
     borderColor: isUser ? userBubbleBorder : assistantBorder,
-    marginLeft: isUser ? 74 : layout.screenSize === "compact" ? 4 : 6,
+    marginLeft: isUser ? 0 : layout.screenSize === "compact" ? 4 : 6,
     marginRight: isUser ? 6 : 28,
+    alignSelf: isUser ? "flex-end" : "flex-start",
     ...auraShadow(isUser ? 0.06 : 0.04),
   } as const;
   const fallbackBubbleContent = isStreamingPlaceholder ? (
@@ -792,6 +880,8 @@ function ChatMessage({
             lineHeight: 21,
             fontWeight: "400",
             fontFamily: Fonts.sans,
+            flexShrink: 1,
+            flexWrap: "wrap",
           }}
         >
           {formattedUserText}
@@ -1213,6 +1303,25 @@ const imagePreviewStyles = StyleSheet.create({
   },
 });
 
+const chatMessageStyles = StyleSheet.create({
+  agentMessageContainer: {
+    alignSelf: "stretch",
+    gap: 10,
+    marginLeft: 0,
+    marginRight: 0,
+    paddingHorizontal: AGENT_MESSAGE_HORIZONTAL_PADDING,
+    width: "100%",
+  },
+  agentOutfitCard: {
+    alignSelf: "stretch",
+    width: "100%",
+  },
+  fullWidthOutfitEntry: {
+    alignSelf: "stretch",
+    width: "100%",
+  },
+});
+
 export default React.memo(
   ChatMessage,
   (prev, next) =>
@@ -1228,13 +1337,21 @@ export default React.memo(
     prev.onAuraCandidateAction === next.onAuraCandidateAction &&
     prev.onAuraOutfitPhotoAction === next.onAuraOutfitPhotoAction &&
     prev.onAuraLaundryAction === next.onAuraLaundryAction &&
-    prev.onMessageActionPress === next.onMessageActionPress,
+    prev.onAuraAgentAction === next.onAuraAgentAction &&
+    prev.onAuraAgentOutfitSelect === next.onAuraAgentOutfitSelect &&
+    prev.onMessageActionPress === next.onMessageActionPress &&
+    prev.selectedAgentOutfitId === next.selectedAgentOutfitId &&
+    prev.auraAgentActionsDisabled === next.auraAgentActionsDisabled &&
+    prev.auraAgentLoadingActionId === next.auraAgentLoadingActionId &&
+    prev.auraAgentLoadingMessageId === next.auraAgentLoadingMessageId
 );
 
 function OutfitCardEntry({
   children,
+  fullWidth = false,
 }: {
   children: React.ReactNode;
+  fullWidth?: boolean;
 }) {
   const reduceMotion = useReduceMotion();
   const opacity = useSharedValue(reduceMotion ? 1 : 0);
@@ -1261,7 +1378,16 @@ function OutfitCardEntry({
     transform: [{ translateY: translateY.value }],
   }));
 
-  return <Reanimated.View style={entryStyle}>{children}</Reanimated.View>;
+  return (
+    <Reanimated.View
+      style={[
+        entryStyle,
+        fullWidth ? chatMessageStyles.fullWidthOutfitEntry : null,
+      ]}
+    >
+      {children}
+    </Reanimated.View>
+  );
 }
 
 function StructuredAuraIntro({

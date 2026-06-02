@@ -71,6 +71,7 @@ type Props = {
   colors?: AppColors;
   itemsById?: Map<string, ClothingItem>;
   style?: StyleProp<ViewStyle>;
+  titleAccessory?: React.ReactNode;
   onAction?: (
     action: AuraLookAction,
     look: AuraLook,
@@ -160,7 +161,14 @@ function getAccessoryImageStyle(
 function getImageSourceForBoardItem(item?: AuraLayoutItem | null) {
   if (!item) return null;
   const resolved = resolveItemImage(item, { variant: "thumb", surface: "aura_look_card" });
-  return resolved.uri ? { uri: resolved.uri, resolved } : null;
+  const footwearBoardImage =
+    item.role === "footwear"
+      ? (String(item.cleanedImageUrl ?? "").trim() ||
+        String(item.image ?? "").trim() ||
+        String(item.imageUrl ?? "").trim())
+      : "";
+  const uri = footwearBoardImage || resolved.uri;
+  return uri ? { uri, resolved } : null;
 }
 
 function titleCase(value: string) {
@@ -174,6 +182,15 @@ function cleanShortLabel(value?: string | null) {
     .replace(/\s+/g, " ")
     .trim();
   if (!normalized) return "";
+
+  if (normalized.includes("·")) {
+    return normalized
+      .split("·")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(" · ");
+  }
 
   return titleCase(
     normalized
@@ -708,6 +725,7 @@ export const AuraLookCard = memo(function AuraLookCard({
   colors: providedColors,
   itemsById,
   style,
+  titleAccessory,
   onAction,
   onPressSave,
   onPressPlan,
@@ -968,18 +986,24 @@ export const AuraLookCard = memo(function AuraLookCard({
         )}
 
         {!!displayTitle && (
-          <AuraText
-            variant="heading"
-            numberOfLines={1}
-            style={[
-              styles.title,
-              compact ? styles.titleCompact : null,
-              isHome ? styles.titleHome : null,
-              swipeVariant ? styles.titleSwipe : null,
-            ]}
-          >
-            {displayTitle}
-          </AuraText>
+          <View style={styles.titleRow}>
+            <AuraText
+              variant="heading"
+              numberOfLines={1}
+              style={[
+                styles.title,
+                styles.titleInRow,
+                compact ? styles.titleCompact : null,
+                isHome ? styles.titleHome : null,
+                swipeVariant ? styles.titleSwipe : null,
+              ]}
+            >
+              {displayTitle}
+            </AuraText>
+            {titleAccessory ? (
+              <View style={styles.titleAccessory}>{titleAccessory}</View>
+            ) : null}
+          </View>
         )}
 
         {!!displayReason && (
@@ -1483,6 +1507,19 @@ const styles = StyleSheet.create({
   editorialBlockStudio: {
     gap: 7,
     paddingHorizontal: 2,
+  },
+  titleRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    minWidth: 0,
+  },
+  titleInRow: {
+    flex: 1,
+    minWidth: 0,
+  },
+  titleAccessory: {
+    flexShrink: 0,
   },
   editorialMeta: {
     letterSpacing: 0.95,

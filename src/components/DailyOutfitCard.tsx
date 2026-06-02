@@ -1,11 +1,13 @@
 import React from "react";
 import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { ClothingItem } from "../../src/types/ClothingItem";
 import { DailyOutfitRecord, PlannedOutfit } from "../utils/dailyOutfits";
 import { lookToItems, PlannedLook } from "../utils/outfitPlanning";
 import FlatLayCanvas from "@/src/components/outfit/FlatLayCanvas";
+import CalendarOutfitEventCard from "@/src/components/calendar/CalendarOutfitEventCard";
 import { homeTypography } from "@/src/components/home/homeTypography";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
@@ -21,6 +23,10 @@ import {
   auraChipStyle,
   auraChipTextStyle,
 } from "@/src/components/ui/auraStylePrimitives";
+import {
+  buildOutfitCalendarEvents,
+  type OutfitCalendarEventStatus,
+} from "@/src/lib/outfitCalendar";
 
 type SlotKey = "outerwear" | "top" | "bottom" | "shoes";
 
@@ -39,12 +45,13 @@ type Props = {
   onClearPlan: () => void;
   onCopyPlan: () => void;
   onSwapSlot: (slot: SlotKey) => void;
+  onOpenOutfitEvent?: (status: OutfitCalendarEventStatus) => void;
 };
 
 function plannedToLook(planned: PlannedOutfit): PlannedLook {
   return {
     id: "casual",
-    label: "Planned",
+    label: planned.title || "Planned",
     slotItemIds: {
       outerwear: planned.itemsByCategory.outerwear ?? null,
       top: planned.itemsByCategory.top ?? null,
@@ -109,6 +116,8 @@ export default function DailyOutfitCard({
   onMarkWorn,
   onClearPlan,
   onCopyPlan,
+  onWhy,
+  onOpenOutfitEvent,
 }: Props) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
@@ -124,6 +133,14 @@ export default function DailyOutfitCard({
   const hasMissingItems = missingItemIds.length > 0;
   const hasWorn = !!displayRecord?.wornOutfit;
   const hasPlanned = !!displayRecord?.plannedOutfit;
+  const activeOutfitMeta = displayRecord?.wornOutfit ?? displayRecord?.plannedOutfit ?? null;
+  const weatherWarnings = activeOutfitMeta?.weatherWarnings ?? [];
+  const isAuraSource = activeOutfitMeta?.source === "aura_agent" || activeOutfitMeta?.source === "aura";
+  const title = activeOutfitMeta?.title;
+  const calendarEvents = React.useMemo(
+    () => buildOutfitCalendarEvents(displayRecord),
+    [displayRecord],
+  );
 
   const activeLook = hasPlanned
     ? plannedToLook(displayRecord?.plannedOutfit as PlannedOutfit)
@@ -145,15 +162,32 @@ export default function DailyOutfitCard({
         },
       ]}
     >
-      {hasMissingItems ? (
-        <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Outfit needs an update</Text>
-      ) : hasWorn ? (
-        <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Worn on {dateLabel}</Text>
-      ) : hasPlanned ? (
-        <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Planned</Text>
-      ) : (
-        <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Plan outfit for this day</Text>
-      )}
+      <View style={styles.headerRow}>
+        <View style={{ flex: 1, gap: 3 }}>
+          {hasMissingItems ? (
+            <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Outfit needs an update</Text>
+          ) : hasWorn ? (
+            <Text style={[homeTypography.titleSmall, { color: colors.text }]}>{title || `Worn on ${dateLabel}`}</Text>
+          ) : hasPlanned ? (
+            <Text style={[homeTypography.titleSmall, { color: colors.text }]}>{title || "Planned"}</Text>
+          ) : (
+            <Text style={[homeTypography.titleSmall, { color: colors.text }]}>Plan outfit for this day</Text>
+          )}
+          {hasWorn || hasPlanned ? (
+            <Text style={[homeTypography.caption, { color: colors.textSecondary }]}>
+              {hasWorn ? "Worn" : "Planned"}{isAuraSource ? " · AURA" : ""}
+            </Text>
+          ) : null}
+        </View>
+        {weatherWarnings.length ? (
+          <View
+            accessibilityLabel="Weather warning"
+            style={[styles.warningIcon, { backgroundColor: colors.surfaceSoft, borderColor: colors.border }]}
+          >
+            <Ionicons name="warning-outline" size={16} color={colors.textSecondary} />
+          </View>
+        ) : null}
+      </View>
 
       {!hasWorn && !hasPlanned ? (
         <View style={styles.segRow}>
@@ -179,7 +213,21 @@ export default function DailyOutfitCard({
 
       {thinking ? <Text style={[homeTypography.caption, styles.thinking, { color: colors.textSecondary }]}>Planning...</Text> : null}
       <View style={{ height: 10 }} />
-      <FlatLayCanvas items={gridItems} />
+      {calendarEvents.length ? (
+        <View style={styles.eventList}>
+          {calendarEvents.map((event) => (
+            <CalendarOutfitEventCard
+              key={event.id}
+              event={event}
+              itemsById={itemsById}
+              compact
+              onPress={() => (onOpenOutfitEvent ? onOpenOutfitEvent(event.status) : onWhy())}
+            />
+          ))}
+        </View>
+      ) : (
+        <FlatLayCanvas items={gridItems} />
+      )}
 
       {hasMissingItems ? (
         <View style={[styles.removedNotice, { backgroundColor: colors.surfaceSoft, borderColor: colors.border }]}>
@@ -197,6 +245,16 @@ export default function DailyOutfitCard({
           <Text style={[homeTypography.bodySmall, styles.score, { color: colors.textSecondary }]}>Styling note</Text>
           {(activeLook.reasons ?? []).slice(0, 2).map((reason) => (
             <Text key={reason} style={[homeTypography.caption, styles.reason, { color: colors.textSecondary }]}>{reason}</Text>
+          ))}
+        </View>
+      ) : null}
+
+      {weatherWarnings.length ? (
+        <View style={[styles.weatherWarningBox, { backgroundColor: colors.surfaceSoft, borderColor: colors.border }]}>
+          {weatherWarnings.slice(0, 2).map((warning) => (
+            <Text key={warning.message} style={[homeTypography.caption, { color: colors.textSecondary }]}>
+              {warning.message}
+            </Text>
           ))}
         </View>
       ) : null}
@@ -255,6 +313,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
+  headerRow: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 10,
+  },
+  warningIcon: {
+    alignItems: "center",
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
+  },
   segChip: {
     paddingHorizontal: 12,
   },
@@ -271,10 +342,20 @@ const styles = StyleSheet.create({
     marginTop: 10,
     gap: 4,
   },
+  eventList: {
+    gap: 10,
+  },
   removedNotice: {
     borderRadius: 14,
     borderWidth: 1,
     gap: 4,
+    marginTop: 10,
+    padding: 10,
+  },
+  weatherWarningBox: {
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 5,
     marginTop: 10,
     padding: 10,
   },

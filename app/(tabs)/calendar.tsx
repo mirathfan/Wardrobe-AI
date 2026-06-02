@@ -14,6 +14,7 @@ import AgendaCard from "@/src/components/AgendaCard";
 import DailyOutfitCard from "@/src/components/DailyOutfitCard";
 import WhyModal from "@/src/components/WhyModal";
 import CalendarHeader from "@/src/components/calendar/CalendarHeader";
+import CalendarOutfitEventDetailModal from "@/src/components/calendar/CalendarOutfitEventDetailModal";
 import DateRail from "@/src/components/calendar/DateRail";
 import DayContextCard from "@/src/components/calendar/DayContextCard";
 import SwapSheet from "@/src/components/calendar/SwapSheet";
@@ -54,8 +55,15 @@ import { listenToItems, normalizeLaundryStatus, toCanonicalCategory } from "@/sr
 import { impactLight } from "@/src/lib/haptics";
 import { Toast } from "@/src/lib/toast";
 import { markOutfitWorn, planOutfitForToday } from "@/src/lib/wearOutfit";
+import { getAuraPlanningWeatherContext } from "@/src/lib/auraPlanningWeather";
+import {
+  buildOutfitCalendarEvents,
+  cancelOutfitEvent,
+  type OutfitCalendarEventStatus,
+} from "@/src/lib/outfitCalendar";
 import { FLOATING_TAB_BAR_HEIGHT } from "@/src/constants/dock";
 import type { ClothingItem } from "@/src/types/ClothingItem";
+import { buildOutfitWeatherWarnings } from "@/shared/auraOutfitCalendar";
 
 type SectionIconName = "calendar" | "sparkles" | "chart.bar.xaxis";
 type SlotKey = Exclude<keyof OutfitItemsByCategory, "accessories">;
@@ -369,9 +377,16 @@ export default function CalendarScreen() {
   const [jumpPickerOpen, setJumpPickerOpen] = useState(false);
   const [copyPickerOpen, setCopyPickerOpen] = useState(false);
   const [pickerDate, setPickerDate] = useState(day.selectedDate);
+  const [selectedOutfitEventStatus, setSelectedOutfitEventStatus] = useState<OutfitCalendarEventStatus | null>(null);
+  const [outfitEventBusy, setOutfitEventBusy] = useState(false);
 
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const selectedDateLabel = useMemo(() => formatHeaderDate(day.selectedDate), [day.selectedDate]);
+  const outfitEvents = useMemo(() => buildOutfitCalendarEvents(record), [record]);
+  const selectedOutfitEvent = useMemo(
+    () => outfitEvents.find((event) => event.status === selectedOutfitEventStatus) ?? null,
+    [outfitEvents, selectedOutfitEventStatus],
+  );
   const selectedLook = useMemo(
     () => looks.find((look) => look.id === selectedLookId) ?? looks[0] ?? null,
     [looks, selectedLookId]
@@ -789,10 +804,11 @@ export default function CalendarScreen() {
     if (!uid) return;
     try {
       setSaving(true);
+      const wearSource = planned.source === "aura_agent" ? "aura" : "calendar";
       const result = await markOutfitWorn({
         uid,
-        source: "calendar",
-        title: selectedLook?.label ?? "Calendar outfit",
+        source: wearSource,
+        title: planned.title ?? selectedLook?.label ?? "Calendar outfit",
         look: planned,
         wornAt: day.selectedDate,
         updateItemWearCounts: toDayKey(day.selectedDate) === toDayKey(new Date()),
@@ -803,9 +819,13 @@ export default function CalendarScreen() {
         wornOutfit: {
           itemsByCategory: planned.itemsByCategory,
           wornAt: day.selectedDate.getTime(),
-          source: "calendar",
-          title: selectedLook?.label ?? "Calendar outfit",
+          source: planned.source ?? wearSource,
+          title: planned.title ?? selectedLook?.label ?? "Calendar outfit",
+          outfitId: planned.outfitId,
+          outfitFingerprint: planned.outfitFingerprint,
           outfitSnapshot: result.outfitSnapshot,
+          weatherContext: planned.weatherContext,
+          weatherWarnings: planned.weatherWarnings,
         },
       }));
       if (result.alreadyMarked) {
@@ -821,6 +841,105 @@ export default function CalendarScreen() {
       setSaving(false);
     }
   }, [day.selectedDate, loadStreakData, record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
+
+  const onCancelSelectedOutfitEvent = useCallback(() => {
+    if (!uid || !selectedOutfitEvent) return;
+    const label = selectedOutfitEvent.status === "worn" ? "worn log" : "plan";
+    Alert.alert(
+      `Remove ${label}?`,
+      selectedOutfitEvent.status === "worn"
+        ? "This removes the Calendar wear log for this date."
+        : "This removes the planned outfit from this date.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => {
+            setOutfitEventBusy(true);
+            cancelOutfitEvent(uid, selectedOutfitEvent.dateKey, selectedOutfitEvent.status)
+              .then(async (next) => {
+                if (selectedOutfitEvent.dateKey === selectedDayKey) setRecord(next);
+                setSelectedOutfitEventStatus(null);
+                Toast.success(
+                  selectedOutfitEvent.status === "worn" ? "Wear log removed" : "Plan removed",
+                  "Calendar updated.",
+                );
+                await hapticLight();
+              })
+              .catch(() => {
+                Toast.error("Could not update Calendar", "Try again in a moment.");
+              })
+              .finally(() => setOutfitEventBusy(false));
+          },
+        },
+      ],
+    );
+  }, [selectedDayKey, selectedOutfitEvent, uid]);
+
+  const onMarkSelectedEventWorn = useCallback(async () => {
+    if (!selectedOutfitEvent || selectedOutfitEvent.status !== "planned") return;
+    await onMarkWorn();
+    setSelectedOutfitEventStatus(null);
+  }, [onMarkWorn, selectedOutfitEvent]);
+
+  const onPlanSelectedEventAgain = useCallback(async () => {
+    if (!uid || !selectedOutfitEvent) return;
+    const targetDate = addDays(day.selectedDate, 1);
+    const targetDateKey = toDayKey(targetDate);
+    setOutfitEventBusy(true);
+    try {
+      const weatherContext = await getAuraPlanningWeatherContext(targetDateKey);
+      const weatherItems = selectedOutfitEvent.itemIds
+        .map((itemId) => itemsById.get(itemId))
+        .filter((item): item is ClothingItem => Boolean(item))
+        .map((item) => ({
+          itemId: item.id,
+          role: toCanonicalCategory(item.category),
+          name: item.name,
+          category: item.category,
+          subcategory: item.subCategory,
+          brand: item.brand,
+          colors: item.colors ?? [],
+        }));
+      const nextPlanned: PlannedOutfit = {
+        itemsByCategory: selectedOutfitEvent.itemsByCategory,
+        score: "score" in selectedOutfitEvent.raw ? selectedOutfitEvent.raw.score : 90,
+        reasons: selectedOutfitEvent.reasons.length
+          ? selectedOutfitEvent.reasons
+          : [`Repeat ${selectedOutfitEvent.title} as a planned outfit.`],
+        createdAt: Date.now(),
+        source: selectedOutfitEvent.source ?? "calendar",
+        title: selectedOutfitEvent.title,
+        outfitId: selectedOutfitEvent.outfitId,
+        outfitFingerprint: selectedOutfitEvent.outfitFingerprint,
+        weatherContext,
+        weatherWarnings: buildOutfitWeatherWarnings({ items: weatherItems }, weatherContext),
+      };
+      const next = await setPlanned(uid, targetDateKey, nextPlanned);
+      if (targetDateKey === selectedDayKey) setRecord(next);
+      setSelectedOutfitEventStatus(null);
+      Toast.success("Planned again", `Added to ${targetDateKey}.`);
+      await hapticLight();
+    } catch {
+      Toast.error("Could not plan outfit", "Try again in a moment.");
+    } finally {
+      setOutfitEventBusy(false);
+    }
+  }, [day.selectedDate, itemsById, selectedDayKey, selectedOutfitEvent, uid]);
+
+  const onRemixSelectedEvent = useCallback(() => {
+    if (!selectedOutfitEvent) return;
+    router.push({
+      pathname: "/(tabs)/ai",
+      params: {
+        prompt: `Remix ${selectedOutfitEvent.title}`,
+        promptKey: `calendar-remix-${selectedOutfitEvent.id}-${Date.now()}`,
+        requiredItemIds: selectedOutfitEvent.itemIds.join(","),
+      },
+    });
+    setSelectedOutfitEventStatus(null);
+  }, [selectedOutfitEvent]);
 
   const swapOptions = useMemo(() => {
     if (!swapSlot) return [];
@@ -928,7 +1047,7 @@ export default function CalendarScreen() {
         <View style={themedStyles.sectionGap} />
         <AuraAnimatedSection index={3} withLayout>
           <SectionHeader icon="sparkles" title="Outfit for this date" />
-          {isPast && !record?.wornOutfit ? (
+          {isPast && !record?.wornOutfit && !record?.plannedOutfit ? (
             <View style={[themedStyles.card, themedStyles.emptyDayCard]}>
               <Text style={themedStyles.emptyDayTitle}>No outfit logged</Text>
               <Text style={themedStyles.muted}>
@@ -954,6 +1073,7 @@ export default function CalendarScreen() {
               onClearPlan={onClearPlan}
               onCopyPlan={onOpenCopyPicker}
               onSwapSlot={onSwapSlot}
+              onOpenOutfitEvent={setSelectedOutfitEventStatus}
             />
           )}
         </AuraAnimatedSection>
@@ -1019,6 +1139,19 @@ export default function CalendarScreen() {
         onChange={setPickerDate}
         onCancel={() => setCopyPickerOpen(false)}
         onConfirm={onConfirmCopy}
+      />
+
+      <CalendarOutfitEventDetailModal
+        visible={Boolean(selectedOutfitEvent)}
+        event={selectedOutfitEvent}
+        dateLabel={selectedDateLabel}
+        itemsById={itemsById}
+        busy={outfitEventBusy || saving}
+        onClose={() => setSelectedOutfitEventStatus(null)}
+        onMarkWorn={selectedOutfitEvent?.status === "planned" ? onMarkSelectedEventWorn : undefined}
+        onCancel={onCancelSelectedOutfitEvent}
+        onPlanAgain={selectedOutfitEvent?.status === "worn" ? onPlanSelectedEventAgain : undefined}
+        onRemix={onRemixSelectedEvent}
       />
     </View>
   );

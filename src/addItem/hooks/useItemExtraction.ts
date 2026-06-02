@@ -63,6 +63,155 @@ function cleanDetectedBrand(value: unknown) {
     .trim();
 }
 
+function cleanupString(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function cleanupLower(value: unknown) {
+  return cleanupString(value).toLowerCase();
+}
+
+function cleanupRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function cleanupHasText(value: unknown) {
+  return cleanupString(value).length > 0;
+}
+
+function cleanupRecordsHaveImage(value: unknown) {
+  if (!Array.isArray(value)) return false;
+  return value.some((entry) => {
+    if (cleanupHasText(entry)) return true;
+    const record = cleanupRecord(entry);
+    return Object.keys(record).some((key) => {
+      const lowerKey = key.toLowerCase();
+      return (lowerKey.includes("url") || lowerKey.includes("uri")) && cleanupHasText(record[key]);
+    });
+  });
+}
+
+const CLEANUP_IMAGE_URL_KEY_PATTERN =
+  /(?:image|photo|thumb|thumbnail|crop|refined|cleaned|original|primary|preview|normalized|layout).*?(?:url|uri)|(?:url|uri).*?(?:image|photo|thumb|thumbnail|crop|refined|cleaned|original|primary|preview|normalized|layout)/i;
+
+function cleanupHasImageUrlLikeValue(value: unknown, keyHint = ""): boolean {
+  const imageKey = CLEANUP_IMAGE_URL_KEY_PATTERN.test(keyHint);
+  if (imageKey && cleanupHasText(value)) return true;
+
+  if (Array.isArray(value)) {
+    if (imageKey && value.some(cleanupHasText)) return true;
+    return value.some((entry) => cleanupHasImageUrlLikeValue(entry));
+  }
+
+  const record = cleanupRecord(value);
+  return Object.entries(record).some(([key, entry]) => cleanupHasImageUrlLikeValue(entry, key));
+}
+
+function cleanupHasProductOrSourceUrl(data: any) {
+  const product = cleanupRecord(data?.product);
+  const metadata = cleanupRecord(data?.metadata);
+  const linkMetadata = cleanupRecord(data?.linkMetadata);
+  const ingestionSource = cleanupRecord(data?.ingestionSource);
+  const source = cleanupRecord(data?.source);
+  return [
+    data?.sourceUrl,
+    data?.productUrl,
+    data?.productPageUrl,
+    data?.purchaseUrl,
+    data?.affiliateUrl,
+    data?.canonicalUrl,
+    data?.url,
+    product.url,
+    product.sourceUrl,
+    product.productUrl,
+    source.url,
+    source.sourceUrl,
+    source.productUrl,
+    metadata.sourceUrl,
+    metadata.productUrl,
+    metadata.canonicalUrl,
+    metadata.url,
+    linkMetadata.sourceUrl,
+    linkMetadata.productUrl,
+    linkMetadata.canonicalUrl,
+    linkMetadata.url,
+    ingestionSource.sourceUrl,
+    ingestionSource.productUrl,
+  ].some(cleanupHasText);
+}
+
+function isImmediateCleanupSafeEmptyDraft(data: any) {
+  if (data?.isDraft !== true) return false;
+  const draftState = cleanupLower(data?.draftState);
+  const lifecycle = cleanupLower(data?.itemLifecycleStatus);
+  const ingestion = cleanupRecord(data?.ingestion);
+  const nestedIngestionStatus = cleanupString(ingestion.status);
+  const photos = cleanupRecord(data?.photos);
+  const productPolish = cleanupRecord(data?.productPolish);
+  const photosProductPolish = cleanupRecord(photos.productPolish);
+  const outfitExtraction = cleanupRecord(data?.outfitExtraction);
+  const blocks = [
+    draftState && draftState !== "draft",
+    lifecycle && lifecycle !== "draft",
+    cleanupHasText(data?.ingestionStatus),
+    cleanupHasText(nestedIngestionStatus),
+    Object.keys(ingestion).some((key) => cleanupHasText(ingestion[key])),
+    cleanupHasText(data?.imageUrl),
+    cleanupHasText(data?.imageUri),
+    cleanupHasText(data?.photoUrl),
+    cleanupHasText(data?.photoUri),
+    cleanupHasText(data?.cleanedImageUrl),
+    cleanupHasText(data?.originalImageUrl),
+    cleanupHasText(data?.normalizedImageUrl),
+    cleanupHasText(data?.refinedImageUrl),
+    cleanupHasText(data?.layoutCropUrl),
+    cleanupHasText(data?.originalCropUrl),
+    cleanupHasText(data?.cropImageUrl),
+    cleanupHasText(data?.primaryImageUrl),
+    cleanupHasText(data?.thumbnailUrl),
+    cleanupHasText(data?.thumbUrl),
+    cleanupHasText(data?.sourceOriginalUrl),
+    cleanupHasText(productPolish.refinedImageUrl),
+    cleanupHasText(photos.primaryUrl),
+    cleanupHasText(photos.cleanedUrl),
+    cleanupHasText(photos.cleanedPhotoUrl),
+    cleanupHasText(photos.cleanedThumbUrl),
+    cleanupHasText(photos.originalUrl),
+    cleanupHasText(photos.normalizedUrl),
+    cleanupHasText(photos.normalizedImageUrl),
+    cleanupHasText(photos.refinedUrl),
+    cleanupHasText(photos.layoutCropUrl),
+    cleanupHasText(photos.originalCropUrl),
+    cleanupHasText(photos.previewUrl),
+    cleanupHasText(photos.croppedUrl),
+    cleanupHasText(photos.thumbnailUrl),
+    cleanupHasText(photos.aiUrl),
+    cleanupHasText(photos.thumbUrl),
+    cleanupHasText(photosProductPolish.refinedImageUrl),
+    cleanupHasText(outfitExtraction.imageUrl),
+    cleanupHasText(outfitExtraction.cleanedImageUrl),
+    cleanupHasText(outfitExtraction.normalizedImageUrl),
+    cleanupHasText(outfitExtraction.layoutCropUrl),
+    cleanupHasText(outfitExtraction.originalCropUrl),
+    cleanupHasText(outfitExtraction.cropImageUrl),
+    cleanupHasProductOrSourceUrl(data),
+    cleanupHasText(data?.embeddingHash),
+    data?.embeddingVector != null,
+    Array.isArray(data?.imageUrls) && data.imageUrls.some(cleanupHasText),
+    Array.isArray(data?.cleanedImageUrls) && data.cleanedImageUrls.some(cleanupHasText),
+    Array.isArray(data?.secondaryImageUrls) && data.secondaryImageUrls.some(cleanupHasText),
+    cleanupRecordsHaveImage(data?.images),
+    cleanupRecordsHaveImage(photos.images),
+    Array.isArray(photos.urls) && photos.urls.some(cleanupHasText),
+    Array.isArray(photos.imageUrls) && photos.imageUrls.some(cleanupHasText),
+    Array.isArray(photos.cleanedImageUrls) && photos.cleanedImageUrls.some(cleanupHasText),
+    cleanupHasImageUrlLikeValue(data),
+  ];
+  return !blocks.some(Boolean);
+}
+
 function brandConfidenceFor(data: any) {
   const confidence = Number(
     data?.brandConfidence ??
@@ -254,8 +403,25 @@ export function useItemExtraction({
     async (itemId: string | null) => {
       if (!uid || !itemId || isEdit) return;
       try {
-        await deleteDoc(doc(db, "users", uid, "items", itemId));
-      } catch {}
+        const draftRef = doc(db, "users", uid, "items", itemId);
+        const snap = await getDoc(draftRef);
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (!isImmediateCleanupSafeEmptyDraft(data)) {
+          if (__DEV__) {
+            console.log("[AddItemLifecycle] cleanupDraftDoc:skip-unsafe", {
+              itemId,
+              draftState: data?.draftState ?? null,
+              itemLifecycleStatus: data?.itemLifecycleStatus ?? null,
+              ingestionStatus: data?.ingestion?.status ?? data?.ingestionStatus ?? null,
+              hasPhoto: Boolean(data?.photoUrl ?? data?.photos?.primaryUrl ?? data?.cleanedImageUrl ?? data?.originalImageUrl),
+            });
+          }
+          return;
+        }
+        await deleteDoc(draftRef);
+      } catch {
+      }
     },
     [isEdit, uid]
   );
@@ -278,6 +444,7 @@ export function useItemExtraction({
     if (draftCreatePromiseRef.current) {
       return draftCreatePromiseRef.current;
     }
+    // TODO: Consider using separate users/{uid}/itemDrafts collection instead of users/{uid}/items for transient drafts.
     const draftRef = doc(collection(db, "users", uid, "items"));
     const now = Date.now();
     const payload = {

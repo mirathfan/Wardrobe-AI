@@ -21,6 +21,10 @@ import { logAnalyzedOutfitStyleEvent, logWornOutfitStyleEvent } from "../lib/aur
 import type { OutfitSnapshot } from "../lib/outfitSnapshot";
 import type { AuraDetectedOutfitPiece } from "../types/aura";
 import { toDayKey } from "./date";
+import type {
+  AuraOutfitWeatherContext,
+  AuraOutfitWeatherWarning,
+} from "@/shared/auraOutfitCalendar";
 
 export type OutfitItemsByCategory = {
   outerwear?: string;
@@ -44,6 +48,13 @@ export type PlannedOutfit = {
   score: number;
   reasons: string[];
   createdAt: number;
+  source?: string;
+  title?: string;
+  outfitId?: string;
+  outfitFingerprint?: string;
+  outfitSnapshot?: OutfitSnapshot;
+  weatherContext?: AuraOutfitWeatherContext;
+  weatherWarnings?: AuraOutfitWeatherWarning[];
 };
 
 export type WornOutfit = {
@@ -52,7 +63,10 @@ export type WornOutfit = {
   source?: string;
   title?: string;
   outfitId?: string;
+  outfitFingerprint?: string;
   outfitSnapshot?: OutfitSnapshot;
+  weatherContext?: AuraOutfitWeatherContext;
+  weatherWarnings?: AuraOutfitWeatherWarning[];
 };
 
 export type AnalyzedWornOutfit = {
@@ -338,6 +352,27 @@ export async function clearPlannedOutfit(uid: string, dateKey: string | Date) {
   return getOutfitByDate(uid, key);
 }
 
+export async function clearWornOutfit(uid: string, dateKey: string | Date) {
+  const key = normalizeDateKey(dateKey);
+  const ref = outfitDocRef(uid, key);
+  const current = await getOutfitByDate(uid, key);
+  const plannedItemIds = current?.plannedOutfit
+    ? cleanItemIds(current.plannedOutfit.itemsByCategory)
+    : [];
+  await setDoc(
+    ref,
+    {
+      itemIds: plannedItemIds,
+      planned: Boolean(current?.plannedOutfit),
+      wornOutfit: deleteField(),
+      wornAtMs: deleteField(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return getOutfitByDate(uid, key);
+}
+
 export async function copyPlannedOutfit(
   uid: string,
   fromDateKey: string | Date,
@@ -393,6 +428,10 @@ export async function setWorn(uid: string, dateKey: string | Date, wornOutfit: W
 
 export async function clearPlan(uid: string, dateKey: string | Date) {
   return clearPlannedOutfit(uid, dateKey);
+}
+
+export async function clearWorn(uid: string, dateKey: string | Date) {
+  return clearWornOutfit(uid, dateKey);
 }
 
 export async function copyPlan(uid: string, fromDateKey: string | Date, toDateKey: string | Date) {

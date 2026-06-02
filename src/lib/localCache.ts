@@ -1,5 +1,6 @@
 import { Storage } from "@/src/lib/storage";
 import type { AIMessage } from "@/src/components/ai/chatTypes";
+import { AURA_CLIENT_PRIVATE_PAYLOAD_KEYS } from "@/src/lib/auraHardening";
 import { orderChatMessages, toMessageMillis } from "@/src/lib/chatMessageOrder";
 import type { AIChatThread } from "@/src/lib/aiChats";
 import type { MinimumClosetProgress } from "@/src/lib/minimumCloset";
@@ -12,6 +13,13 @@ export const LOCAL_CACHE_VERSION = 1;
 
 const CACHE_PREFIX = "local-cache";
 const MAX_CACHED_CHAT_MESSAGES = 50;
+const CHAT_CACHE_SKIP_KEYS = new Set([
+  ...AURA_CLIENT_PRIVATE_PAYLOAD_KEYS,
+  "diagnostics",
+  "scoreBreakdown",
+  "aiMetadata",
+  "localUri",
+]);
 
 export const LOCAL_CACHE_MAX_AGE_MS = {
   closetItems: 24 * 60 * 60 * 1000,
@@ -248,7 +256,7 @@ function sanitizeDeep(value: unknown): unknown {
   if (isObject(value)) {
     return Object.fromEntries(
       Object.entries(value)
-        .filter(([key]) => key !== "localUri")
+        .filter(([key]) => !CHAT_CACHE_SKIP_KEYS.has(key))
         .map(([key, entry]) => [key, sanitizeDeep(entry)])
         .filter(([, entry]) => entry !== undefined)
     );
@@ -261,7 +269,7 @@ function sanitizeDeep(value: unknown): unknown {
   return value;
 }
 
-function sanitizeChatMessageForCache(message: AIMessage): AIMessage | null {
+export function sanitizeChatMessageForCache(message: AIMessage): AIMessage | null {
   if (message.streaming) return null;
   const attachments = Array.isArray(message.attachments)
     ? message.attachments.map(sanitizeMessageAttachment).filter(Boolean)
@@ -278,6 +286,8 @@ function sanitizeChatMessageForCache(message: AIMessage): AIMessage | null {
     attachments: attachments?.length ? attachments : undefined,
     outfits: message.outfits,
     aura: message.aura ? sanitizeDeep(message.aura) : undefined,
+    agentResponse: message.agentResponse ? sanitizeDeep(message.agentResponse) : undefined,
+    agentActionStates: message.agentActionStates ? sanitizeDeep(message.agentActionStates) : undefined,
     createdAt:
       toMessageMillis(message.createdAt) ??
       toMessageMillis(message.clientCreatedAt) ??

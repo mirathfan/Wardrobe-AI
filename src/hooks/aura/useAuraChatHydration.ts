@@ -51,6 +51,7 @@ function recoverStaleStreamingMessages(messages: AIMessage[]) {
       text: INTERRUPTED_STREAM_MESSAGE,
       assistantIntroText: undefined,
       aura: undefined,
+      agentResponse: undefined,
       outfits: undefined,
       streaming: false,
     };
@@ -69,6 +70,8 @@ function messageSignature(messages: AIMessage[]) {
         message.streaming ? "streaming" : "done",
         message.aura?.lookOptions?.length ?? 0,
         message.aura?.look ? 1 : 0,
+        message.agentResponse?.outfits?.length ?? 0,
+        message.agentResponse?.mode ?? "",
       ].join("|"),
     )
     .join("::");

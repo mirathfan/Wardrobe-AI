@@ -30,6 +30,30 @@ import { useAuraStreamingState } from "@/src/hooks/aura/useAuraStreamingState";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { askAuraStream, isAuraStreamAbortError } from "@/src/lib/aura";
+import { parseOutfitDateInstruction } from "@/shared/auraOutfitCalendar";
+import {
+  auraAgentActionStateKey,
+  auraAgentActionSuccessPatch,
+  auraAgentFeedbackTypeFromAction,
+  buildAuraAgentActionRequest,
+  buildAuraAgentInitialRequest,
+  firstAuraAgentOutfit,
+  resolveReferencedOutfit,
+  shouldRouteToAuraStylingAgent,
+} from "@/src/lib/auraAgentActions";
+import { getAgentDisplayMessage } from "@/src/lib/auraAgentDisplay";
+import { AURA_HARDENING_LOG_PREFIX } from "@/src/lib/auraHardening";
+import { getAuraPlanningWeatherContext } from "@/src/lib/auraPlanningWeather";
+import {
+  buildAuraAgentFallbackMessage,
+  dislikeAuraAgentOutfitClient,
+  isAuraAgentEnabled,
+  logAuraAgentOutfitWearClient,
+  normalizeAuraAgentError,
+  planAuraAgentOutfitClient,
+  runAuraStylingAgentClient,
+  saveAuraAgentOutfitClient,
+} from "@/src/lib/auraStylingAgent";
 import {
   analyticsErrorProperties,
   type AnalyticsProperties,
@@ -37,6 +61,11 @@ import {
 } from "@/src/lib/analytics";
 import { handleSharedAuraLookAction } from "@/src/lib/auraActions";
 import { buildAuraOutfitMutationResponse } from "@/src/lib/auraOutfitMutation";
+import {
+  formatUserBubbleText,
+  prepareUserMessageText,
+  prepareVisibleUserMessageText,
+} from "@/src/lib/chatUserMessageText";
 import {
   appendUniqueSystemMessage,
   type AuraChatIntent,
@@ -119,9 +148,17 @@ import {
   getCachedRecentMessages,
 } from "@/src/lib/localCache";
 import type { AuraCandidateAction, AuraCandidateItem, AuraLaundryConfirmationAction, AuraLook, AuraLookAction, AuraLookOptionMeta, AuraResponse } from "@/src/types/aura";
+import type {
+  AuraAgentFeedbackType,
+  AuraAgentOutfit,
+  AuraAgentOutfitActionState,
+  AuraAgentResponse,
+  AuraAgentSuggestedAction,
+} from "@/src/types/auraAgent";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
 import { markAnalyzedOutfitWorn } from "@/src/utils/dailyOutfits";
+import { toDayKey } from "@/src/utils/date";
 
 const TRAIN_AURA_CHIP_LABEL = "Train AURA faster";
 const AURA_TOP_CHIPS = [
@@ -520,9 +557,17 @@ function formatAuraCandidatesForClipboard(candidates: AuraCandidateItem[]) {
     .join("\n");
 }
 
+function formatAuraAgentOutfitForClipboard(outfit: AuraAgentOutfit) {
+  const pieces = (outfit.items ?? [])
+    .map((item) => [item.role, item.name].filter(Boolean).join(": "))
+    .filter(Boolean)
+    .join("\n");
+  return [outfit.title, outfit.vibe, outfit.explanation, pieces].filter(Boolean).join("\n");
+}
+
 function messageTextForClipboard(message: AIMessage) {
   if (message.type === "user") {
-    return sanitizeMultilineDisplayText(stripInternalItemIdsFromUserPrompt(message.text ?? "")) || "";
+    return formatUserBubbleText(message.text ?? "") || "";
   }
   const parts: string[] = [];
   const pushPart = (value?: string | null) => {
@@ -557,7 +602,209 @@ function messageTextForClipboard(message: AIMessage) {
       );
     }
   }
+  if (message.agentResponse) {
+    pushPart(message.agentResponse.message);
+    if (message.agentResponse.outfits?.length) {
+      pushPart(message.agentResponse.outfits.map(formatAuraAgentOutfitForClipboard).filter(Boolean).join("\n\n"));
+    }
+    if (message.agentResponse.explanation?.itemRationales?.length) {
+      pushPart(
+        message.agentResponse.explanation.itemRationales
+          .map((entry) => [entry.role, entry.name, entry.reason].filter(Boolean).join(" - "))
+          .join("\n"),
+      );
+    }
+    if (message.agentResponse.feedback?.message) pushPart(message.agentResponse.feedback.message);
+  }
   return sanitizeMultilineDisplayText(parts.join("\n\n")) || "";
+}
+
+function createAgentAssistantMessage(
+  response: AuraAgentResponse,
+  overrides?: Partial<AIMessage>,
+): AIMessage {
+  const createdAt = overrides?.createdAt ?? Date.now();
+  const displayMessage = getAgentDisplayMessage(response);
+  return {
+    id: overrides?.id ?? createMessageId(),
+    type: "assistant",
+    kind: "aura_agent",
+    text: displayMessage,
+    assistantIntroText: displayMessage,
+    agentResponse: response,
+    streaming: overrides?.streaming,
+    createdAt,
+    clientCreatedAt: overrides?.clientCreatedAt ?? createdAt,
+    localSequence: overrides?.localSequence,
+    replyToMessageId: overrides?.replyToMessageId ?? null,
+  };
+}
+
+function createAgentFailureAssistantMessage(
+  text: string,
+  overrides?: Partial<AIMessage>,
+): AIMessage {
+  const createdAt = overrides?.createdAt ?? Date.now();
+  return {
+    id: overrides?.id ?? createMessageId(),
+    type: "assistant",
+    kind: "aura_text",
+    text,
+    streaming: false,
+    createdAt,
+    clientCreatedAt: overrides?.clientCreatedAt ?? createdAt,
+    localSequence: overrides?.localSequence,
+    replyToMessageId: overrides?.replyToMessageId ?? null,
+  };
+}
+
+function latestAuraAgentResponse(messages: AIMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const response = messages[index]?.agentResponse;
+    if (response) return response;
+  }
+  return null;
+}
+
+function latestAuraAgentOutfit(messages: AIMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const outfit = firstAuraAgentOutfit(messages[index]?.agentResponse);
+    if (outfit) return outfit;
+  }
+  return null;
+}
+
+function isUserChatMessage(message?: AIMessage | null) {
+  return message?.type === "user" || message?.kind === "user_text";
+}
+
+function findAuraAgentSourceQuery(sourceMessage: AIMessage, messages: AIMessage[]) {
+  const repliedTo = sourceMessage.replyToMessageId
+    ? messages.find((entry) => entry.id === sourceMessage.replyToMessageId)
+    : null;
+  if (isUserChatMessage(repliedTo) && repliedTo?.text?.trim()) {
+    return repliedTo.text.trim();
+  }
+
+  const sourceIndex = messages.findIndex((entry) => entry.id === sourceMessage.id);
+  for (let index = sourceIndex >= 0 ? sourceIndex - 1 : messages.length - 1; index >= 0; index -= 1) {
+    const entry = messages[index];
+    if (isUserChatMessage(entry) && entry.text?.trim()) return entry.text.trim();
+  }
+
+  return (
+    sourceMessage.agentResponse?.intent?.query?.trim() ||
+    sourceMessage.agentResponse?.message?.trim() ||
+    sourceMessage.text?.trim() ||
+    "AURA styling"
+  );
+}
+
+function auraAgentResponseRunId(response?: AuraAgentResponse | null) {
+  const diagnostics = response?.diagnostics;
+  const candidate =
+    diagnostics?.agentRunId ??
+    diagnostics?.runId ??
+    diagnostics?.traceId ??
+    diagnostics?.requestId;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+}
+
+function withAgentActionState(
+  message: AIMessage,
+  outfitId: string,
+  patch: Partial<AuraAgentOutfitActionState>,
+): AIMessage {
+  return {
+    ...message,
+    agentActionStates: {
+      ...(message.agentActionStates ?? {}),
+      [outfitId]: {
+        ...(message.agentActionStates?.[outfitId] ?? {}),
+        ...patch,
+      },
+    },
+  };
+}
+
+function isToastOnlyAuraAgentFeedback(feedbackType?: AuraAgentFeedbackType) {
+  return (
+    feedbackType === "more_like_this" ||
+    feedbackType === "not_my_vibe" ||
+    feedbackType === "dislike" ||
+    feedbackType === "like"
+  );
+}
+
+function auraAgentFeedbackToast(feedbackType?: AuraAgentFeedbackType) {
+  if (feedbackType === "more_like_this") {
+    return {
+      title: "Preference saved",
+      message: "I’ll show more outfits like this.",
+    };
+  }
+  if (feedbackType === "not_my_vibe" || feedbackType === "dislike") {
+    return {
+      title: "Noted",
+      message: "I’ll avoid this vibe.",
+    };
+  }
+  return {
+    title: "Feedback saved",
+    message: "AURA will remember that.",
+  };
+}
+
+function createAuraTextAssistantMessage(
+  text: string,
+  overrides?: Partial<AIMessage>,
+): AIMessage {
+  const createdAt = overrides?.createdAt ?? Date.now();
+  return {
+    id: overrides?.id ?? createMessageId(),
+    type: "assistant",
+    kind: "aura_text",
+    text,
+    streaming: false,
+    createdAt,
+    clientCreatedAt: overrides?.clientCreatedAt ?? createdAt,
+    localSequence: overrides?.localSequence,
+    replyToMessageId: overrides?.replyToMessageId ?? null,
+  };
+}
+
+function localTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Chicago";
+}
+
+function formatDateKeyForAura(dateKey: string) {
+  const date = new Date(`${dateKey}T12:00:00.000Z`);
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(date);
+}
+
+function isDislikeOutfitPrompt(text: string) {
+  return /\b(not\s+my\s+vibe|don'?t\s+like\s+this|do\s+not\s+like\s+this|hate\s+this|dislike\s+this|avoid\s+this\s+vibe)\b/i.test(text);
+}
+
+function isSaveOutfitPrompt(text: string) {
+  return /\b(save\s+this\s+outfit|save\s+this\s+look|save\s+outfit\s+\d+|save\s+the\s+(?:first|second|third)\s+one)\b/i.test(text);
+}
+
+function isPlanAction(action: AuraAgentSuggestedAction) {
+  return action.payload?.action === "plan_outfit";
+}
+
+function findAgentMessageForOutfit(messages: AIMessage[], outfitId?: string | null) {
+  if (!outfitId) return null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.agentResponse?.outfits?.some((outfit) => outfit.outfitId === outfitId)) return message;
+  }
+  return null;
 }
 
 function createAssistantMessage(
@@ -1081,18 +1328,7 @@ function requiredItemIdsFromRouteParam(value: unknown) {
 }
 
 function stripInternalItemIdsFromUserPrompt(prompt: string) {
-  const rawPrompt = String(prompt ?? "");
-  const text = rawPrompt
-    .split("\n")
-    .filter((line) => !/^\s*(closet item id|required anchor item|selected item ids?)\s*:/i.test(line))
-    .join("\n")
-    .replace(/\s*\((?:closet item id|item id):\s*[^)]+\)/gi, "")
-    .replace(/\bcloset item id:\s*[^\n.;]+[.;]?/gi, "")
-    .replace(/\brequired anchor item:\s*[^\n]+/gi, "")
-    .replace(/\bselected item ids?:\s*[^\n]+/gi, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return text || (rawPrompt.trim() ? "Style this item with AURA." : "");
+  return prepareVisibleUserMessageText(prompt);
 }
 
 function lookIncludesRequiredItemIds(
@@ -1564,7 +1800,29 @@ function summarizeAuraLookForHistory(look: NonNullable<AuraResponse["look"]>, in
 }
 
 function buildAssistantHistoryText(message: AIMessage) {
-  const parts = [cleanStructuredText(message.aura?.reply ?? message.text)].filter(Boolean);
+  const parts = [cleanStructuredText(message.agentResponse?.message ?? message.aura?.reply ?? message.text)].filter(Boolean);
+  const agentOutfits = message.agentResponse?.outfits?.slice(0, 3) ?? [];
+  if (agentOutfits.length) {
+    parts.push(
+      [
+        "Rendered outfit context for follow-ups:",
+        ...agentOutfits.map((outfit, index) => {
+          const title = cleanIntroText(outfit.title || `Look ${index + 1}`);
+          const pieces = (outfit.items ?? [])
+            .slice(0, 6)
+            .map((item) =>
+              [item.role, item.name, "owned", item.itemId ? `id ${item.itemId}` : ""]
+                .filter(Boolean)
+                .join(": "),
+            )
+            .filter(Boolean);
+          return [`Look ${index + 1}: ${title}`, pieces.length ? `Pieces: ${pieces.join(" | ")}` : ""]
+            .filter(Boolean)
+            .join("\n");
+        }),
+      ].join("\n"),
+    );
+  }
   const looks = message.aura?.lookOptions?.length
     ? message.aura.lookOptions.slice(0, 3)
     : message.aura?.look
@@ -1660,8 +1918,16 @@ export default function AIScreen() {
     stopVoiceInput,
   } = useAuraComposerState({ uid });
   const [loading, setLoading] = useState(false);
+  const [pendingAuraAgentAction, setPendingAuraAgentAction] = useState<{
+    actionId: string;
+    messageId: string;
+    outfitId?: string;
+  } | null>(null);
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
+  const [lastAgentResponse, setLastAgentResponse] = useState<AuraAgentResponse | null>(null);
+  const [selectedAgentOutfit, setSelectedAgentOutfit] = useState<AuraAgentOutfit | null>(null);
+  const [lastAgentOutfit, setLastAgentOutfit] = useState<AuraAgentOutfit | null>(null);
   const [activeShopSuggestion, setActiveShopSuggestion] = useState<WardrobeSuggestion | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -1673,6 +1939,7 @@ export default function AIScreen() {
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
   const [chatRefreshing, setChatRefreshing] = useState(false);
   const consumedPromptTokens = useRef(new Set<string>());
+  const auraAgentEnabled = useMemo(() => isAuraAgentEnabled(), []);
   const {
     handleStopGenerating,
     stopStreamingRequestedRef,
@@ -1731,6 +1998,12 @@ export default function AIScreen() {
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const liveClosetItemIds = useMemo(() => buildLiveClosetItemIdSet(items), [items]);
   const minimumClosetSummary = useMemo(() => buildMinimumClosetSummary(items), [items]);
+  const rememberAgentResponse = React.useCallback((response: AuraAgentResponse | null) => {
+    setLastAgentResponse(response);
+    const outfit = firstAuraAgentOutfit(response);
+    setLastAgentOutfit(outfit);
+    setSelectedAgentOutfit(outfit);
+  }, []);
 
   useEffect(() => {
     if (!uid) {
@@ -1820,12 +2093,13 @@ export default function AIScreen() {
         await clearCachedRecentMessages(uid, thread.chatId);
         setActiveChatId(null);
         setMessages([]);
+        rememberAgentResponse(null);
         await clearLatestChatCache(uid);
         await saveAuraChatSessionMeta(uid, null);
       }
       await refreshRecentThreads();
     },
-    [activeChatId, refreshRecentThreads, setActiveChatId, setMessages, setRecentThreads, uid],
+    [activeChatId, refreshRecentThreads, rememberAgentResponse, setActiveChatId, setMessages, setRecentThreads, uid],
   );
 
   const handleDeleteThread = React.useCallback(
@@ -1837,12 +2111,13 @@ export default function AIScreen() {
         await clearCachedRecentMessages(uid, thread.chatId);
         setActiveChatId(null);
         setMessages([]);
+        rememberAgentResponse(null);
         await clearLatestChatCache(uid);
         await saveAuraChatSessionMeta(uid, null);
       }
       await refreshRecentThreads();
     },
-    [activeChatId, refreshRecentThreads, setActiveChatId, setMessages, setRecentThreads, uid],
+    [activeChatId, refreshRecentThreads, rememberAgentResponse, setActiveChatId, setMessages, setRecentThreads, uid],
   );
 
   useEffect(() => {
@@ -1891,7 +2166,7 @@ export default function AIScreen() {
       const retryUserMessage = options?.retryUserMessage;
       const isRetry = !!retryUserMessage;
       setMessageActionMenu(null);
-      const prompt = String(retryUserMessage?.text ?? override ?? message).trim();
+      const prompt = prepareUserMessageText(retryUserMessage?.text ?? override ?? message);
       const requiredItemIds = uniquePromptItemIds([
         ...(retryUserMessage?.requiredItemIds ?? []),
         ...(options?.requiredItemIds ?? []),
@@ -2013,6 +2288,8 @@ export default function AIScreen() {
         : nextLocalMessages;
       const historyMessagesBeforeRequest = isRetry ? retryBaselineMessages : latestMessagesRef.current;
       const intentContextMessages = options?.diversityMessages ?? historyMessagesBeforeRequest;
+      const lastAgentOutfitForIntent =
+        latestAuraAgentOutfit(intentContextMessages) ?? lastAgentOutfit;
       const rawLastLookForIntent = latestAuraLook(intentContextMessages);
       const lastLookForIntent =
         rawLastLookForIntent && !hasDeletedClosetReferences(rawLastLookForIntent, liveClosetItemIds)
@@ -2044,7 +2321,7 @@ export default function AIScreen() {
       ], 8);
       const chatIntent = classifyAuraChatIntent(prompt, {
         attachmentCount: uploadedAttachments.length,
-        hasPreviousLook: !!lastLookForIntent,
+        hasPreviousLook: !!lastLookForIntent || !!lastAgentOutfitForIntent,
         hasRecentItemAnchor: lockedOutfitAnchorItemIds.length > 0,
       });
       const isManualSelectedOutfit = effectiveRequiredItemIds.length > 0 || promptHasManualSelectedOutfit(prompt);
@@ -2162,6 +2439,138 @@ export default function AIScreen() {
         }
         if (!isRetry) {
           await appendMessageToChat(uid, chatId, userMessage, { titleFromUserText: chatSeedText });
+        }
+
+        const actionChatId = chatId;
+        const latestAgentResponseForAction =
+          latestAuraAgentResponse(historyMessagesBeforeRequest) ?? lastAgentResponse;
+        const referencedOutfit = resolveReferencedOutfit(
+          prompt,
+          latestAgentResponseForAction,
+          selectedAgentOutfit ?? lastAgentOutfitForIntent,
+        );
+        const referencedAgentMessage = findAgentMessageForOutfit(
+          historyMessagesBeforeRequest,
+          referencedOutfit?.outfitId,
+        );
+        const patchReferencedAgentState = async (patch: Partial<AuraAgentOutfitActionState>) => {
+          if (!referencedOutfit || !referencedAgentMessage) return;
+          const updatedSource = withAgentActionState(referencedAgentMessage, referencedOutfit.outfitId, patch);
+          setMessages((prev) =>
+            orderChatMessages(
+              prev.map((entry) =>
+                entry.id === referencedAgentMessage.id
+                  ? withAgentActionState(entry, referencedOutfit.outfitId, patch)
+                  : entry,
+              ),
+            ),
+          );
+          await appendMessageToChat(uid, actionChatId, updatedSource);
+        };
+        const appendActionConfirmation = async (text: string) => {
+          const assistantMessage = createAuraTextAssistantMessage(text, {
+            id: streamingMessageId,
+            createdAt: streamingMessageCreatedAt,
+            clientCreatedAt: streamingMessageCreatedAt,
+            localSequence: streamingMessageLocalSequence,
+            replyToMessageId: userMessage.id,
+          });
+          setMessages((prev) => orderChatMessages([...prev, assistantMessage]));
+          setQuickChips(DEFAULT_CHIPS);
+          await appendMessageToChat(uid, actionChatId, assistantMessage);
+          await updateChatThread(uid, actionChatId, {
+            title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
+          });
+          await refreshRecentThreads();
+        };
+        const dateInstruction = parseOutfitDateInstruction(prompt, new Date(), localTimezone());
+        const actionOutfit = uploadedAttachments.length === 0 ? referencedOutfit : null;
+        if (actionOutfit && dateInstruction.intent !== "unknown") {
+          if (!dateInstruction.dateKey || dateInstruction.confidence < 0.7) {
+            await appendActionConfirmation("Which date should I use for that outfit?");
+            return;
+          }
+          const agentRunId = auraAgentResponseRunId(latestAgentResponseForAction);
+          if (dateInstruction.intent === "wore") {
+            const result = await logAuraAgentOutfitWearClient({
+              outfit: actionOutfit,
+              query: prompt,
+              agentRunId,
+              sourceMessageId: referencedAgentMessage?.id ?? userMessage.id,
+              dateKey: dateInstruction.dateKey,
+            });
+            await patchReferencedAgentState({
+              worn: true,
+              wearEventId: result.wearEventId,
+              updatedAt: Date.now(),
+            });
+            const label =
+              dateInstruction.dateKey === toDayKey(new Date())
+                ? "today"
+                : formatDateKeyForAura(dateInstruction.dateKey);
+            await appendActionConfirmation(`Marked ${actionOutfit.title} as worn for ${label}.`);
+            Toast.success("Outfit logged", result.message);
+            void runHaptic("success");
+            return;
+          }
+
+          const result = await planAuraAgentOutfitClient({
+            outfit: actionOutfit,
+            query: prompt,
+            agentRunId,
+            sourceMessageId: referencedAgentMessage?.id ?? userMessage.id,
+            dateKey: dateInstruction.dateKey,
+            weatherContext: await getAuraPlanningWeatherContext(dateInstruction.dateKey),
+          });
+          await patchReferencedAgentState({
+            planned: true,
+            plannedEventId: result.eventId,
+            plannedDateKey: result.dateKey,
+            updatedAt: Date.now(),
+          });
+          const warningText = result.weatherWarnings?.length
+            ? ` ${result.weatherWarnings[0]?.message}`
+            : "";
+          await appendActionConfirmation(`Planned ${actionOutfit.title} for ${formatDateKeyForAura(result.dateKey)}.${warningText}`);
+          Toast.success("Outfit planned", result.message);
+          void runHaptic("success");
+          return;
+        }
+
+        if (actionOutfit && isDislikeOutfitPrompt(prompt)) {
+          const result = await dislikeAuraAgentOutfitClient({
+            outfit: actionOutfit,
+            query: prompt,
+            agentRunId: auraAgentResponseRunId(latestAgentResponseForAction),
+            sourceMessageId: referencedAgentMessage?.id ?? userMessage.id,
+            reasonText: prompt,
+          });
+          await patchReferencedAgentState({
+            notMyVibe: true,
+            updatedAt: Date.now(),
+          });
+          await appendActionConfirmation(result.message || "Got it - I'll avoid this vibe.");
+          Toast.success("Noted", "Got it - I'll avoid this vibe.");
+          void runHaptic("success");
+          return;
+        }
+
+        if (actionOutfit && isSaveOutfitPrompt(prompt)) {
+          const result = await saveAuraAgentOutfitClient({
+            outfit: actionOutfit,
+            query: prompt,
+            agentRunId: auraAgentResponseRunId(latestAgentResponseForAction),
+            sourceMessageId: referencedAgentMessage?.id ?? userMessage.id,
+          });
+          await patchReferencedAgentState({
+            saved: true,
+            savedOutfitId: result.savedOutfitId,
+            updatedAt: Date.now(),
+          });
+          await appendActionConfirmation(result.alreadySaved ? "That outfit was already saved." : "Saved that outfit.");
+          Toast.success(result.alreadySaved ? "Already saved" : "Saved", result.message);
+          void runHaptic("success");
+          return;
         }
 
         const imageIntent = classifyAuraImageIntent(prompt, uploadedAttachments);
@@ -2288,6 +2697,112 @@ export default function AIScreen() {
           });
           await refreshRecentThreads();
           return;
+        }
+
+        const shouldUseAuraAgent = shouldRouteToAuraStylingAgent({
+          enabled: auraAgentEnabled,
+          prompt,
+          attachmentCount: uploadedAttachments.length,
+          chatIntent,
+          hasPreviousOutfit: !!lastAgentOutfitForIntent || !!lastLookForIntent,
+        });
+
+        if (shouldUseAuraAgent) {
+          try {
+            if (__DEV__) {
+              console.log(AURA_HARDENING_LOG_PREFIX, "user query raw:", prompt);
+            }
+            const agentRequest = buildAuraAgentInitialRequest({
+              prompt,
+              chatIntent,
+              previousAgentOutfit: lastAgentOutfitForIntent,
+              previousAuraLook: lastLookForIntent,
+              selectedItemIds: lockedOutfitAnchorItemIds,
+            });
+            if (__DEV__) {
+              console.log(AURA_HARDENING_LOG_PREFIX, "request query:", agentRequest.query);
+            }
+            const agentResponse = await runAuraStylingAgentClient(
+              agentRequest,
+            );
+            const assistantMessage = createAgentAssistantMessage(agentResponse, {
+              id: streamingMessageId,
+              createdAt: streamingMessageCreatedAt,
+              clientCreatedAt: streamingMessageCreatedAt,
+              localSequence: streamingMessageLocalSequence,
+              replyToMessageId: userMessage.id,
+              streaming: false,
+            });
+            logAuraChatState("message_created", {
+              messageId: assistantMessage.id,
+              type: assistantMessage.type,
+              kind: assistantMessage.kind,
+              source: "aura_agent",
+              mode: agentResponse.mode,
+              outfitCount: agentResponse.outfits?.length ?? 0,
+            });
+            void trackLaunchEvent({
+              userId: uid,
+              eventName: "ai_response_succeeded",
+              properties: {
+                source: "aura_agent",
+                mode: agentResponse.mode,
+                route: routeChosen,
+                chatIntent,
+                outfitCount: agentResponse.outfits?.length ?? 0,
+                elapsedMs: Date.now() - startedAt,
+              },
+            });
+            rememberAgentResponse(agentResponse);
+            setMessages(orderChatMessages([...nextLocalMessages, assistantMessage]));
+            setQuickChips(
+              agentResponse.suggestedActions?.length
+                ? agentResponse.suggestedActions
+                  .filter((action) => action.type !== "debug")
+                  .map((action) => action.label)
+                  .slice(0, 4)
+                : DEFAULT_CHIPS,
+            );
+            void runHaptic(AURA_REPLY_FINISH_HAPTIC);
+            await appendMessageToChat(uid, chatId, assistantMessage);
+            await updateChatThread(uid, chatId, {
+              title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
+            });
+            await refreshRecentThreads();
+            return;
+          } catch (agentError) {
+            const normalized = normalizeAuraAgentError(agentError);
+            const fallbackText = buildAuraAgentFallbackMessage(normalized);
+            if (__DEV__) {
+              console.log(AURA_HARDENING_LOG_PREFIX, "chat fallback message", {
+                code: normalized.code ?? null,
+                message: normalized.message,
+                originalMessage: normalized.originalMessage,
+                details: normalized.details,
+                callableName: normalized.callableName ?? "runAuraStylingAgent",
+                featureFlagValue: process.env.EXPO_PUBLIC_AURA_AGENT_ENABLED ?? null,
+                uid,
+                fallbackText,
+              });
+            }
+            const failureMessage = createAgentFailureAssistantMessage(fallbackText, {
+              id: streamingMessageId,
+              createdAt: streamingMessageCreatedAt,
+              clientCreatedAt: streamingMessageCreatedAt,
+              localSequence: streamingMessageLocalSequence,
+              replyToMessageId: userMessage.id,
+            });
+            rememberAgentResponse(null);
+            setMessages(orderChatMessages([...nextLocalMessages, failureMessage]));
+            setQuickChips(DEFAULT_CHIPS);
+            await appendMessageToChat(uid, chatId, failureMessage);
+            await updateChatThread(uid, chatId, {
+              title: deriveAssistantChatTitle(chatSeedText, failureMessage),
+            });
+            await refreshRecentThreads();
+            Toast.error("AURA couldn't style that", fallbackText);
+            return;
+          }
         }
 
         if (shouldRouteToExistingLook) {
@@ -2858,8 +3373,11 @@ export default function AIScreen() {
     },
     [
       activeChatId,
+      auraAgentEnabled,
       clearComposer,
       items,
+      lastAgentOutfit,
+      lastAgentResponse,
       latestMessagesRef,
       liveClosetItemIds,
       loading,
@@ -2867,7 +3385,9 @@ export default function AIScreen() {
       minimumClosetSummary,
       pendingAttachments,
       profilePreferences,
+      rememberAgentResponse,
       refreshRecentThreads,
+      selectedAgentOutfit,
       setActiveChatId,
       setMessages,
       setQuickChips,
@@ -2940,7 +3460,7 @@ export default function AIScreen() {
 
   const handleEditUserMessage = React.useCallback(
     (sourceMessage: AIMessage) => {
-      const nextMessage = sanitizeMultilineDisplayText(stripInternalItemIdsFromUserPrompt(sourceMessage.text ?? "")) || "";
+      const nextMessage = formatUserBubbleText(sourceMessage.text ?? "") || "";
       setMessage(nextMessage);
       setPendingAttachments([]);
       setComposerFocusSignal((value) => value + 1);
@@ -3004,6 +3524,343 @@ export default function AIScreen() {
       },
     ];
   }, [handleCopyMessage, handleEditUserMessage, handleRetryAuraResponse, loading, messageActionMenu]);
+
+  const handleAuraAgentOutfitSelect = React.useCallback(
+    (outfit: AuraAgentOutfit, sourceMessage: AIMessage) => {
+      setSelectedAgentOutfit(outfit);
+      setLastAgentOutfit(outfit);
+      if (sourceMessage.agentResponse) setLastAgentResponse(sourceMessage.agentResponse);
+      void runHaptic("selection");
+    },
+    [],
+  );
+
+  const handleAuraAgentAction = React.useCallback(
+    async (
+      action: AuraAgentSuggestedAction,
+      sourceMessage: AIMessage,
+      outfit?: AuraAgentOutfit | null,
+    ) => {
+      if (!uid) {
+        Alert.alert("AURA", "Please sign in to use AURA styling.");
+        return;
+      }
+      if (loading || pendingAuraAgentAction) return;
+
+      const sourceResponse = sourceMessage.agentResponse ?? lastAgentResponse;
+      const chosenOutfit =
+        outfit ??
+        selectedAgentOutfit ??
+        firstAuraAgentOutfit(sourceResponse) ??
+        lastAgentOutfit;
+      if (__DEV__) {
+        const selectedIndex = sourceResponse?.outfits?.findIndex(
+          (entry) => entry.outfitId === chosenOutfit?.outfitId,
+        ) ?? -1;
+        console.log(AURA_HARDENING_LOG_PREFIX, "selected outfit action", {
+          outfitId: chosenOutfit?.outfitId ?? null,
+          title: chosenOutfit?.title ?? null,
+          index: selectedIndex,
+        });
+      }
+      const sourceQuery = findAuraAgentSourceQuery(sourceMessage, latestMessagesRef.current);
+      const request = buildAuraAgentActionRequest({
+        action,
+        outfit: chosenOutfit,
+        fallbackQuery: sourceQuery,
+      });
+      if (!request) {
+        Toast.error("AURA needs an outfit", "Generate or select an outfit before using that action.");
+        return;
+      }
+
+      const feedbackType = auraAgentFeedbackTypeFromAction(action);
+      const actionStateKey = auraAgentActionStateKey(action);
+      const outfitId = chosenOutfit?.outfitId;
+      const canPatchActionState = !!outfitId && !!actionStateKey;
+      const updateSourceActionState = async (
+        chatId: string | null,
+        patch: Partial<AuraAgentOutfitActionState>,
+      ) => {
+        if (!outfitId) return;
+        const latestSource =
+          latestMessagesRef.current.find((entry) => entry.id === sourceMessage.id) ??
+          sourceMessage;
+        const updatedMessage = withAgentActionState(latestSource, outfitId, patch);
+        setMessages((prev) =>
+          orderChatMessages(
+            prev.map((entry) =>
+              entry.id === sourceMessage.id
+                ? withAgentActionState(entry, outfitId, patch)
+                : entry,
+            ),
+          ),
+        );
+        if (chatId) await appendMessageToChat(uid, chatId, updatedMessage);
+      };
+
+      setPendingAuraAgentAction({ actionId: action.id, messageId: sourceMessage.id, outfitId });
+      const startedAt = Date.now();
+      let chatIdForAction = activeChatId;
+      try {
+        if (!chatIdForAction) {
+          const chat = await createChatThread(uid, "AURA styling action");
+          chatIdForAction = chat.chatId;
+          setActiveChatId(chat.chatId);
+          await saveAuraChatSessionMeta(uid, chat.chatId);
+        }
+        const agentRunId = auraAgentResponseRunId(sourceResponse);
+        if (feedbackType === "save" && chosenOutfit) {
+          const result = await saveAuraAgentOutfitClient({
+            outfit: chosenOutfit,
+            query: sourceQuery,
+            agentRunId,
+            sourceMessageId: sourceMessage.id,
+          });
+          if (canPatchActionState) {
+            await updateSourceActionState(
+              chatIdForAction,
+              auraAgentActionSuccessPatch(action, { savedOutfitId: result.savedOutfitId }),
+            );
+          }
+          Toast.success(result.alreadySaved ? "Already saved" : "Saved", result.message);
+          void runHaptic("success");
+          void trackLaunchEvent({
+            userId: uid,
+            eventName: "aura_agent_action_succeeded",
+            properties: {
+              source: "aura_agent_action",
+              actionType: action.type,
+              actionId: action.id,
+              feedbackType,
+              outfitId: chosenOutfit.outfitId,
+              savedOutfitId: result.savedOutfitId,
+              alreadySaved: result.alreadySaved,
+              elapsedMs: Date.now() - startedAt,
+            },
+          });
+          await refreshRecentThreads();
+          return;
+        }
+
+        if (feedbackType === "wear" && chosenOutfit) {
+          const todayKey = toDayKey(new Date());
+          const result = await logAuraAgentOutfitWearClient({
+            outfit: chosenOutfit,
+            query: sourceQuery,
+            agentRunId,
+            sourceMessageId: sourceMessage.id,
+            dateKey: todayKey,
+          });
+          if (canPatchActionState) {
+            await updateSourceActionState(
+              chatIdForAction,
+              auraAgentActionSuccessPatch(action, { wearEventId: result.wearEventId }),
+            );
+          }
+          Toast.success(result.alreadyLogged ? "Already worn" : "Outfit logged", result.message);
+          void runHaptic("success");
+          void trackLaunchEvent({
+            userId: uid,
+            eventName: "aura_agent_action_succeeded",
+            properties: {
+              source: "aura_agent_action",
+              actionType: action.type,
+              actionId: action.id,
+              feedbackType,
+              outfitId: chosenOutfit.outfitId,
+              wearEventId: result.wearEventId,
+              alreadyLogged: result.alreadyLogged ?? false,
+              elapsedMs: Date.now() - startedAt,
+            },
+          });
+          await refreshRecentThreads();
+          return;
+        }
+
+        if (isPlanAction(action) && chosenOutfit) {
+          const createdAt = Math.max(Date.now(), messageOrderMillis(sourceMessage) + 1);
+          const planPromptMessage = createAuraTextAssistantMessage(
+            "Tell me the date to plan it for, like \"plan this for Friday\" or \"save outfit 2 for tomorrow.\"",
+            {
+              createdAt,
+              clientCreatedAt: createdAt,
+              localSequence: nextLocalMessageSequence(),
+              replyToMessageId: sourceMessage.id,
+            },
+          );
+          setMessages((prev) => orderChatMessages([...prev, planPromptMessage]));
+          await appendMessageToChat(uid, chatIdForAction, planPromptMessage);
+          await refreshRecentThreads();
+          return;
+        }
+
+        if ((feedbackType === "not_my_vibe" || feedbackType === "dislike") && chosenOutfit) {
+          const result = await dislikeAuraAgentOutfitClient({
+            outfit: chosenOutfit,
+            query: sourceQuery,
+            agentRunId,
+            sourceMessageId: sourceMessage.id,
+            reasonText: action.label,
+          });
+          if (canPatchActionState) {
+            await updateSourceActionState(chatIdForAction, auraAgentActionSuccessPatch(action));
+          }
+          Toast.success("Noted", result.message || "Got it - I'll avoid this vibe.");
+          void trackLaunchEvent({
+            userId: uid,
+            eventName: "aura_agent_action_succeeded",
+            properties: {
+              source: "aura_agent_action",
+              actionType: action.type,
+              actionId: action.id,
+              feedbackType,
+              outfitId: chosenOutfit.outfitId,
+              dislikedOutfitId: result.dislikedOutfitId,
+              alreadyDisliked: result.alreadyDisliked,
+              elapsedMs: Date.now() - startedAt,
+            },
+          });
+          void runHaptic("success");
+          await refreshRecentThreads();
+          return;
+        }
+
+        const agentResponse = await runAuraStylingAgentClient(request);
+        if (isToastOnlyAuraAgentFeedback(feedbackType)) {
+          if (canPatchActionState) {
+            await updateSourceActionState(chatIdForAction, auraAgentActionSuccessPatch(action));
+          }
+          const toast = auraAgentFeedbackToast(feedbackType);
+          Toast.success(toast.title, agentResponse.feedback?.message ?? toast.message);
+          void trackLaunchEvent({
+            userId: uid,
+            eventName: "aura_agent_action_succeeded",
+            properties: {
+              source: "aura_agent_action",
+              actionType: action.type,
+              actionId: action.id,
+              feedbackType: feedbackType ?? null,
+              outfitId: chosenOutfit?.outfitId ?? null,
+              mode: agentResponse.mode,
+              elapsedMs: Date.now() - startedAt,
+            },
+          });
+          void runHaptic("success");
+          await refreshRecentThreads();
+          return;
+        }
+
+        const createdAt = Math.max(Date.now(), messageOrderMillis(sourceMessage) + 1);
+        const assistantMessage = createAgentAssistantMessage(agentResponse, {
+          createdAt,
+          clientCreatedAt: createdAt,
+          localSequence: nextLocalMessageSequence(),
+          replyToMessageId: sourceMessage.id,
+        });
+        rememberAgentResponse(agentResponse);
+        setMessages((prev) => orderChatMessages([...prev, assistantMessage]));
+        setQuickChips(
+          agentResponse.suggestedActions?.length
+            ? agentResponse.suggestedActions
+              .filter((entry) => entry.type !== "debug")
+              .map((entry) => entry.label)
+              .slice(0, 4)
+            : DEFAULT_CHIPS,
+        );
+        void trackLaunchEvent({
+          userId: uid,
+          eventName: "ai_response_succeeded",
+          properties: {
+            source: "aura_agent_action",
+            actionType: action.type,
+            actionId: action.id,
+            mode: agentResponse.mode,
+            elapsedMs: Date.now() - startedAt,
+          },
+        });
+        void runHaptic(AURA_REPLY_FINISH_HAPTIC);
+        await appendMessageToChat(uid, chatIdForAction, assistantMessage);
+        await updateChatThread(uid, chatIdForAction, {
+          title: deriveAssistantChatTitle(sourceMessage.text ?? sourceResponse?.message ?? "AURA styling", assistantMessage),
+        });
+        await refreshRecentThreads();
+      } catch (error) {
+        const normalized = normalizeAuraAgentError(error);
+        const fallbackText = buildAuraAgentFallbackMessage(normalized);
+        const actionErrorMessage =
+          feedbackType === "save"
+            ? "I couldn’t save that right now. Try again."
+            : feedbackType === "wear" || action.type === "feedback"
+              ? "I couldn’t record that feedback. Try again."
+              : fallbackText;
+        if (__DEV__) {
+          console.log(AURA_HARDENING_LOG_PREFIX, "action failed", {
+            action,
+            code: normalized.code ?? null,
+            message: normalized.message,
+            originalMessage: normalized.originalMessage,
+            details: normalized.details,
+            callableName: normalized.callableName ?? "runAuraStylingAgent",
+            featureFlagValue: process.env.EXPO_PUBLIC_AURA_AGENT_ENABLED ?? null,
+            uid,
+            fallbackText,
+          });
+        }
+        void trackLaunchEvent({
+          userId: uid,
+          eventName: "ai_response_failed",
+          properties: {
+            source: "aura_agent_action",
+            actionType: action.type,
+            actionId: action.id,
+            elapsedMs: Date.now() - startedAt,
+            ...analyticsErrorProperties(error),
+          },
+        });
+        void runHaptic("error");
+        if (feedbackType === "save" || feedbackType === "wear" || action.type === "feedback") {
+          Toast.error("Action failed", actionErrorMessage);
+          return;
+        }
+        const createdAt = Math.max(Date.now(), messageOrderMillis(sourceMessage) + 1);
+        const failureMessage = createAgentFailureAssistantMessage(fallbackText, {
+          createdAt,
+          clientCreatedAt: createdAt,
+          localSequence: nextLocalMessageSequence(),
+          replyToMessageId: sourceMessage.id,
+        });
+        setMessages((prev) => {
+          if (prev.some((entry) => entry.type === "assistant" && entry.text === fallbackText && entry.replyToMessageId === sourceMessage.id)) {
+            return orderChatMessages(prev);
+          }
+          return orderChatMessages([...prev, failureMessage]);
+        });
+        if (chatIdForAction) {
+          await appendMessageToChat(uid, chatIdForAction, failureMessage);
+          await refreshRecentThreads();
+        }
+        Toast.error("AURA couldn't finish", fallbackText);
+      } finally {
+        setPendingAuraAgentAction(null);
+      }
+    },
+    [
+      activeChatId,
+      lastAgentOutfit,
+      lastAgentResponse,
+      latestMessagesRef,
+      loading,
+      pendingAuraAgentAction,
+      refreshRecentThreads,
+      rememberAgentResponse,
+      selectedAgentOutfit,
+      setActiveChatId,
+      setMessages,
+      setQuickChips,
+      uid,
+    ],
+  );
 
   const handleAuraLookAction = React.useCallback(
     async (
@@ -3308,6 +4165,7 @@ export default function AIScreen() {
         setFocusMessageId(null);
         setActiveChatId(null);
         setQuickChips(DEFAULT_CHIPS);
+        rememberAgentResponse(null);
         await saveAuraChatSessionMeta(uid, null);
         return;
       }
@@ -3320,6 +4178,7 @@ export default function AIScreen() {
   }, [
     activeChatId,
     orderedMessages.length,
+    rememberAgentResponse,
     setActiveChatId,
     setMessage,
     setMessages,
@@ -3380,8 +4239,13 @@ export default function AIScreen() {
       await refreshRecentThreads();
       if (activeChatId) {
         const threadMessages = await loadChatMessages(uid, activeChatId);
-        setMessages(orderChatMessages(threadMessages));
-        await saveLatestChatCache(uid, activeChatId, null, threadMessages);
+        const orderedThreadMessages = orderChatMessages(threadMessages);
+        setMessages(orderedThreadMessages);
+        const agentResponse = latestAuraAgentResponse(orderedThreadMessages);
+        setLastAgentResponse(agentResponse);
+        setLastAgentOutfit(latestAuraAgentOutfit(orderedThreadMessages));
+        setSelectedAgentOutfit(latestAuraAgentOutfit(orderedThreadMessages));
+        await saveLatestChatCache(uid, activeChatId, null, orderedThreadMessages);
         await saveAuraChatSessionMeta(uid, activeChatId);
       }
       setFocusScrollSignal((value) => value + 1);
@@ -3465,6 +4329,7 @@ export default function AIScreen() {
           setMessages([]);
           setActiveChatId(null);
           setQuickChips(DEFAULT_CHIPS);
+          rememberAgentResponse(null);
           if (uid) {
             void saveAuraChatSessionMeta(uid, null);
           }
@@ -3507,8 +4372,13 @@ export default function AIScreen() {
           onAuraCandidateAction={handleAuraCandidateAction}
           onAuraOutfitPhotoAction={handleAuraOutfitPhotoAction}
           onAuraLaundryAction={handleAuraLaundryAction}
+          onAuraAgentAction={handleAuraAgentAction}
+          onAuraAgentOutfitSelect={handleAuraAgentOutfitSelect}
           onRetryAuraResponse={handleRetryAuraResponse}
           onMessageLongPress={handleMessageLongPress}
+          selectedAgentOutfitId={selectedAgentOutfit?.outfitId ?? null}
+          auraAgentLoadingActionId={pendingAuraAgentAction?.actionId ?? null}
+          auraAgentLoadingMessageId={pendingAuraAgentAction?.messageId ?? null}
           />
           {showKeyboardWatermark ? (
             <View
@@ -3588,13 +4458,22 @@ export default function AIScreen() {
           if (!uid) return;
           const cachedMessages = await getCachedRecentMessages(uid, thread.chatId);
           if (cachedMessages?.data?.length) {
-            setMessages(orderChatMessages(cachedMessages.data));
+            const orderedCachedMessages = orderChatMessages(cachedMessages.data);
+            setMessages(orderedCachedMessages);
+            const cachedAgentResponse = latestAuraAgentResponse(orderedCachedMessages);
+            setLastAgentResponse(cachedAgentResponse);
+            setLastAgentOutfit(latestAuraAgentOutfit(orderedCachedMessages));
+            setSelectedAgentOutfit(latestAuraAgentOutfit(orderedCachedMessages));
             setActiveChatId(thread.chatId);
           }
           await saveAuraChatSessionMeta(uid, thread.chatId);
           const threadMessages = await loadChatMessages(uid, thread.chatId);
           const orderedThreadMessages = orderChatMessages(threadMessages);
           setMessages(orderedThreadMessages);
+          const threadAgentResponse = latestAuraAgentResponse(orderedThreadMessages);
+          setLastAgentResponse(threadAgentResponse);
+          setLastAgentOutfit(latestAuraAgentOutfit(orderedThreadMessages));
+          setSelectedAgentOutfit(latestAuraAgentOutfit(orderedThreadMessages));
           setActiveChatId(thread.chatId);
           await saveLatestChatCache(uid, thread.chatId, thread.threadId, orderedThreadMessages);
           await saveAuraChatSessionMeta(uid, thread.chatId);

@@ -13,9 +13,11 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
+import { sanitizeAuraClientPayload } from "@/src/lib/auraHardening";
 import { messageOrderMillis, orderChatMessages, toMessageMillis } from "@/src/lib/chatMessageOrder";
 import { setCachedChatList, setCachedRecentMessages } from "@/src/lib/localCache";
 import type { AIMessage, ChatAttachment } from "@/src/components/ai/chatTypes";
+import type { AuraAgentResponse } from "@/src/types/auraAgent";
 import type {
   AuraLook,
   AuraLookAction,
@@ -227,6 +229,14 @@ export function summarizeThreadDisplayTitle(
 
 function sanitizeMessagePreview(message: AIMessage) {
   if (message.type === "outfit") return "Outfit suggestions";
+  if (message.agentResponse?.outfits?.length) {
+    return message.agentResponse.outfits.length === 1
+      ? cleanPreviewText(message.agentResponse.message || message.agentResponse.outfits[0]?.title || "Outfit suggestion")
+      : `${message.agentResponse.outfits.length} outfit directions`;
+  }
+  if (message.agentResponse?.message) {
+    return cleanPreviewText(message.agentResponse.message);
+  }
   if (message.aura?.lookOptions?.length) {
     return `${message.aura.lookOptions.length} outfit directions`;
   }
@@ -287,6 +297,9 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
   const clientCreatedAt = toMessageMillis(data.clientCreatedAt);
   const stableCreatedAt = createdAt ?? clientCreatedAt ?? messageOrderMillis({ id: snapshot.id });
   const aura = isAuraResponse(data.aura) ? normalizeAuraCandidatePayload(data.aura) : undefined;
+  const agentResponse = isAuraAgentResponse(data.agentResponse)
+    ? normalizeAgentResponseForStorage(data.agentResponse)
+    : undefined;
   if (DEBUG_AURA_CLIENT && aura?.lookOptions?.length) {
     console.log("[AURA_MULTI]", "loaded multi-look chat message", {
       messageId: snapshot.id,
@@ -302,6 +315,7 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
       data.kind === "user_text" ||
       data.kind === "aura_text" ||
       data.kind === "aura_card" ||
+      data.kind === "aura_agent" ||
       data.kind === "system"
         ? data.kind
         : undefined,
@@ -312,6 +326,11 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
     streaming: typeof data.streaming === "boolean" ? data.streaming : undefined,
     outfits: Array.isArray(data.outfits) ? (data.outfits as AIMessage["outfits"]) : undefined,
     aura,
+    agentResponse,
+    agentActionStates:
+      data.agentActionStates && typeof data.agentActionStates === "object" && !Array.isArray(data.agentActionStates)
+        ? (data.agentActionStates as AIMessage["agentActionStates"])
+        : undefined,
     createdAt: stableCreatedAt,
     clientCreatedAt: clientCreatedAt ?? createdAt ?? stableCreatedAt,
     localSequence:
@@ -346,6 +365,34 @@ function stripUndefinedDeep<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+export function sanitizeAgentResponseForStorage<T>(value: T): T {
+  return stripUndefinedDeep(sanitizeAuraClientPayload(value, {
+    includeDiagnostics: false,
+    includeScoreBreakdown: false,
+    dropAiMetadata: true,
+  }));
+}
+
+function normalizeAgentResponseForStorage(value: AuraAgentResponse): AuraAgentResponse {
+  return sanitizeAgentResponseForStorage({
+    ...value,
+    suggestedActions: Array.isArray(value.suggestedActions) ? value.suggestedActions : [],
+  });
+}
+
+function isAuraAgentResponse(value: unknown): value is AuraAgentResponse {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.mode === "string" &&
+    typeof candidate.message === "string" &&
+    candidate.intent !== null &&
+    typeof candidate.intent === "object" &&
+    (candidate.suggestedActions === undefined || Array.isArray(candidate.suggestedActions)) &&
+    (candidate.outfits === undefined || Array.isArray(candidate.outfits))
+  );
 }
 
 function parseChatAttachments(value: unknown): ChatAttachment[] | undefined {
@@ -603,6 +650,9 @@ export async function appendMessageToChat(
   const messageRef = doc(messageCollectionRef(uid, chatId), message.id);
   const now = Date.now();
   const sanitizedAura = message.aura ? stripUndefinedDeep(message.aura) : undefined;
+  const sanitizedAgentResponse = message.agentResponse
+    ? normalizeAgentResponseForStorage(message.agentResponse)
+    : undefined;
   const persistedAttachments = message.attachments?.filter((attachment) => attachment.type === "image") ?? [];
   const shouldUpdateGeneratedTitle = message.type === "user" && !!options?.titleFromUserText;
   const [threadSnap, existingMessageSnap] = await Promise.all([
@@ -621,6 +671,8 @@ export async function appendMessageToChat(
     ...(typeof message.streaming === "boolean" ? { streaming: message.streaming } : {}),
     ...(message.outfits ? { outfits: message.outfits } : {}),
     ...(sanitizedAura ? { aura: sanitizedAura } : {}),
+    ...(sanitizedAgentResponse ? { agentResponse: sanitizedAgentResponse } : {}),
+    ...(message.agentActionStates ? { agentActionStates: stripUndefinedDeep(message.agentActionStates) } : {}),
     createdAt:
       toMessageMillis(message.createdAt) ??
       toMessageMillis(message.clientCreatedAt) ??

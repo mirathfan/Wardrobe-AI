@@ -18,6 +18,7 @@ export type LaunchAnalyticsEventName =
   | "ai_request_started"
   | "ai_response_succeeded"
   | "ai_response_failed"
+  | "aura_agent_action_succeeded"
   | "outfit_generated"
   | "wardrobe_recommendations_generated";
 

@@ -6,9 +6,11 @@ import { AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import { captureSafeException } from "@/src/lib/sentry";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { AuraCandidateAction, AuraLaundryConfirmationAction, AuraLookAction, AuraLookOptionMeta, AuraOutfitPhotoAction } from "@/src/types/aura";
+import type { AuraAgentOutfit, AuraAgentSuggestedAction } from "@/src/types/auraAgent";
 
 import ChatMessage from "./ChatMessage";
 import type { AIMessage, ChatMessageActionAnchor } from "./chatTypes";
+import { getAuraChatBottomPadding, shouldShowAuraTypingBubble } from "./chatListLayout";
 
 const FOLLOW_DISTANCE_THRESHOLD = 96;
 const FOCUS_MESSAGE_VIEW_POSITION = 0;
@@ -136,8 +138,13 @@ export default function ChatList({
   onAuraCandidateAction,
   onAuraOutfitPhotoAction,
   onAuraLaundryAction,
+  onAuraAgentAction,
+  onAuraAgentOutfitSelect,
   onRetryAuraResponse,
   onMessageLongPress,
+  selectedAgentOutfitId,
+  auraAgentLoadingActionId,
+  auraAgentLoadingMessageId,
 }: {
   colors: AppColors;
   messages: AIMessage[];
@@ -163,8 +170,13 @@ export default function ChatList({
   onAuraCandidateAction?: (action: AuraCandidateAction, message: AIMessage) => void;
   onAuraOutfitPhotoAction?: (action: AuraOutfitPhotoAction, message: AIMessage) => void;
   onAuraLaundryAction?: (action: AuraLaundryConfirmationAction, message: AIMessage) => void;
+  onAuraAgentAction?: (action: AuraAgentSuggestedAction, message: AIMessage, outfit?: AuraAgentOutfit | null) => void;
+  onAuraAgentOutfitSelect?: (outfit: AuraAgentOutfit, message: AIMessage) => void;
   onRetryAuraResponse?: (message: AIMessage) => void;
   onMessageLongPress?: (message: AIMessage, anchor: ChatMessageActionAnchor) => void;
+  selectedAgentOutfitId?: string | null;
+  auraAgentLoadingActionId?: string | null;
+  auraAgentLoadingMessageId?: string | null;
 }) {
   const listRef = useRef<FlatList<AIMessage>>(null);
   const previousCountRef = useRef(messages.length);
@@ -186,7 +198,15 @@ export default function ChatList({
   const messageCount = messages.length;
   const lastMessage = messages[messages.length - 1];
   const lastMessageId = lastMessage?.id ?? null;
-  const showTypingBubble = loading && !hasStreamingMessage && !!lastMessage && lastMessage.type === "user";
+  const effectiveContentBottomPadding = useMemo(
+    () => getAuraChatBottomPadding(contentBottomPadding),
+    [contentBottomPadding],
+  );
+  const showTypingBubble = shouldShowAuraTypingBubble({
+    loading,
+    hasStreamingMessage,
+    lastMessage,
+  });
   const focusedMessageIndex = useMemo(
     () => (focusMessageId ? messages.findIndex((message) => message.id === focusMessageId) : -1),
     [focusMessageId, messages],
@@ -197,7 +217,7 @@ export default function ChatList({
     loading &&
     dismissedFocusMessageIdRef.current !== focusMessageId;
   const focusAnchorSpacer = isFocusAnchoring
-    ? Math.max(contentBottomPadding, listViewportHeight * FOCUS_ANCHOR_SPACER_RATIO, FOCUS_ANCHOR_MIN_SPACER)
+    ? Math.max(effectiveContentBottomPadding, listViewportHeight * FOCUS_ANCHOR_SPACER_RATIO, FOCUS_ANCHOR_MIN_SPACER)
     : 0;
 
   const scrollToBottom = useCallback((animated: boolean) => {
@@ -364,7 +384,7 @@ export default function ChatList({
       autoScrollSignal,
       lastMessageId,
       messageCount,
-      Math.round(contentBottomPadding),
+      Math.round(effectiveContentBottomPadding),
       Math.round(listViewportHeight),
     ].join(":");
     if (lastAutoScrollKeyRef.current === autoScrollKey) return;
@@ -390,7 +410,7 @@ export default function ChatList({
     };
   }, [
     autoScrollSignal,
-    contentBottomPadding,
+    effectiveContentBottomPadding,
     isFocusAnchoring,
     lastMessageId,
     listViewportHeight,
@@ -404,7 +424,7 @@ export default function ChatList({
     const insetScrollKey = [
       lastMessageId,
       messageCount,
-      Math.round(contentBottomPadding),
+      Math.round(effectiveContentBottomPadding),
       Math.round(listViewportHeight),
     ].join(":");
     if (lastInsetScrollKeyRef.current === insetScrollKey) return;
@@ -415,7 +435,7 @@ export default function ChatList({
     }, 90);
     return () => clearTimeout(timer);
   }, [
-    contentBottomPadding,
+    effectiveContentBottomPadding,
     isFocusAnchoring,
     lastMessageId,
     listViewportHeight,
@@ -429,14 +449,14 @@ export default function ChatList({
       justifyContent: messageCount ? ("flex-start" as const) : ("flex-end" as const),
       paddingTop: messageCount ? 14 : 0,
       paddingHorizontal: 6,
-      paddingBottom: Math.max(18, contentBottomPadding),
+      paddingBottom: effectiveContentBottomPadding,
     }),
-    [contentBottomPadding, messageCount],
+    [effectiveContentBottomPadding, messageCount],
   );
 
   const scrollIndicatorInsets = useMemo(
-    () => ({ bottom: Math.max(8, contentBottomPadding - 8) }),
-    [contentBottomPadding],
+    () => ({ bottom: Math.max(8, effectiveContentBottomPadding - 8) }),
+    [effectiveContentBottomPadding],
   );
 
   const handleContentSizeChange = useCallback(() => {
@@ -503,8 +523,14 @@ export default function ChatList({
             onAuraCandidateAction={onAuraCandidateAction}
             onAuraOutfitPhotoAction={onAuraOutfitPhotoAction}
             onAuraLaundryAction={onAuraLaundryAction}
+            onAuraAgentAction={onAuraAgentAction}
+            onAuraAgentOutfitSelect={onAuraAgentOutfitSelect}
             onRetryAuraResponse={onRetryAuraResponse}
             onMessageActionPress={onMessageLongPress}
+            selectedAgentOutfitId={selectedAgentOutfitId}
+            auraAgentActionsDisabled={loading}
+            auraAgentLoadingActionId={auraAgentLoadingActionId}
+            auraAgentLoadingMessageId={auraAgentLoadingMessageId}
           />
         </ChatErrorBoundary>
       );
@@ -514,6 +540,8 @@ export default function ChatList({
       itemsById,
       memoryHint,
       onAuraAction,
+      onAuraAgentAction,
+      onAuraAgentOutfitSelect,
       onAuraCandidateAction,
       onAuraLaundryAction,
       onAuraOutfitPhotoAction,
@@ -523,6 +551,10 @@ export default function ChatList({
       onSaveOutfit,
       onSwapOutfit,
       savingId,
+      loading,
+      selectedAgentOutfitId,
+      auraAgentLoadingActionId,
+      auraAgentLoadingMessageId,
     ],
   );
 

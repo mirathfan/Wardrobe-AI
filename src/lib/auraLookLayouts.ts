@@ -6,7 +6,6 @@ export type AuraLayoutVariant = "chat" | "swipe" | "home" | "studio";
 
 export type OutfitLayoutType =
   | "classic_full"
-  | "three_item_no_outerwear"
   | "no_jacket"
   | "shorts_outfit"
   | "layered_tops"
@@ -115,24 +114,8 @@ type ZoneSpec = {
   centerY: number;
   width: number;
   height: number;
-  maxWidth?: number;
-  maxHeight?: number;
-  safePadding?: number;
   zIndex: number;
   slotName: string;
-  shadowIntensity?: number;
-  rotation?: number;
-};
-
-type TunableZoneSpec = {
-  x: number;
-  y: number;
-  scale: number;
-  baseWidth: number;
-  baseHeight: number;
-  maxWidth?: number;
-  maxHeight?: number;
-  zIndex: number;
   shadowIntensity?: number;
   rotation?: number;
 };
@@ -140,6 +123,7 @@ type TunableZoneSpec = {
 const DEBUG_AURA_LAYOUT =
   __DEV__ && process.env.EXPO_PUBLIC_AURA_BOARD_DEBUG === "1";
 
+// This preserves the original AURA card canvas composition. Avoid changing item placement unless explicitly tuning the canvas layout.
 const LEFT_TOP: ZoneSpec = {
   centerX: 24,
   centerY: 32,
@@ -270,119 +254,15 @@ const TOP_RIGHT_HAT: ZoneSpec = {
 };
 
 const BOTTOM_LEFT_SHOES: ZoneSpec = {
-  centerX: 15,
-  centerY: 90,
-  width: 28,
-  height: 16,
+  centerX: 17,
+  centerY: 88,
+  width: 34,
+  height: 20,
   zIndex: 40,
   slotName: "bottom-left-shoes",
   shadowIntensity: 1.05,
   rotation: 0,
 };
-
-const THREE_ITEM_SAFE_PADDING = 3;
-
-// Manual three-piece tuning:
-// x/y are percent-based center points inside the cream board; scale multiplies baseWidth/baseHeight.
-// To tune shoe placement later, adjust THREE_ITEM_LAYOUT.shoes.x for left/right,
-// THREE_ITEM_LAYOUT.shoes.y for up/down, and THREE_ITEM_LAYOUT.shoes.scale for visual weight.
-// zoneToPlacedItem clamps the final box to THREE_ITEM_SAFE_PADDING so shoes stay inside the board.
-const THREE_ITEM_LAYOUT = {
-  top: {
-    x: 30,
-    y: 32,
-    scale: 1,
-    baseWidth: 44,
-    baseHeight: 52,
-    zIndex: 22,
-    shadowIntensity: 0.9,
-    rotation: 0,
-  },
-  bottom: {
-    x: 70,
-    y: 48,
-    scale: 1.5,
-    baseWidth: 40,
-    baseHeight: 75,
-    zIndex: 20,
-    shadowIntensity: 0.88,
-    rotation: 0,
-  },
-  shoes: {
-    x: 30,
-    y: 75,
-    scale: 1,
-    baseWidth: 32,
-    baseHeight: 20,
-    maxWidth: 38,
-    maxHeight: 24,
-    zIndex: 36,
-    shadowIntensity: 1.04,
-    rotation: 0,
-  },
-} satisfies Record<"top" | "bottom" | "shoes", TunableZoneSpec>;
-
-const THREE_ITEM_ACCESSORY_LAYOUT = {
-  necklace: {
-    x: 13,
-    y: 13,
-    scale: 0.82,
-    baseWidth: 18,
-    baseHeight: 10,
-    zIndex: 44,
-    shadowIntensity: 0.24,
-  },
-  glasses: {
-    x: 50,
-    y: 12,
-    scale: 0.82,
-    baseWidth: 22,
-    baseHeight: 10,
-    zIndex: 44,
-    shadowIntensity: 0.24,
-  },
-  hat: {
-    x: 88,
-    y: 14,
-    scale: 0.82,
-    baseWidth: 20,
-    baseHeight: 16,
-    zIndex: 44,
-    shadowIntensity: 0.24,
-  },
-  belt: {
-    x: 88,
-    y: 58,
-    scale: 0.78,
-    baseWidth: 24,
-    baseHeight: 8,
-    zIndex: 34,
-    shadowIntensity: 0.16,
-    rotation: 90,
-  },
-  bag: {
-    x: 86,
-    y: 74,
-    scale: 0.82,
-    baseWidth: 22,
-    baseHeight: 24,
-    zIndex: 34,
-    shadowIntensity: 0.45,
-    rotation: 1,
-  },
-  perfume: {
-    x: 88,
-    y: 88,
-    scale: 0.82,
-    baseWidth: 14,
-    baseHeight: 16,
-    zIndex: 34,
-    shadowIntensity: 0.28,
-  },
-} satisfies Record<
-  "necklace" | "glasses" | "hat" | "belt" | "bag" | "perfume",
-  TunableZoneSpec
->;
 
 const BELT_ZONE: ZoneSpec = {
   centerX: 20,
@@ -479,6 +359,14 @@ function normalizeText(value?: string | null) {
   return String(value ?? "")
     .trim()
     .toLowerCase();
+}
+
+function normalizeMatchText(value?: string | null) {
+  return normalizeText(value)
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -716,11 +604,11 @@ function isNecklaceAccessory(item: AuraLayoutItem) {
 }
 
 function roleFromTokens(tokens: string): AuraLayoutRole | null {
+  if (containsAny(tokens, ROLE_KEYWORDS.footwear)) return "footwear";
   if (containsAny(tokens, ROLE_KEYWORDS.onePiece)) return "one_piece";
   if (containsAny(tokens, ROLE_KEYWORDS.outerwear)) return "outerwear";
   if (containsAny(tokens, ROLE_KEYWORDS.top)) return "top";
   if (containsAny(tokens, ROLE_KEYWORDS.bottom)) return "bottom";
-  if (containsAny(tokens, ROLE_KEYWORDS.footwear)) return "footwear";
   if (containsAny(tokens, ROLE_KEYWORDS.accessory)) return "accessory";
   return null;
 }
@@ -788,12 +676,108 @@ function classifyAccessoryType(tokens: string): AuraAccessoryType | null {
   return "other_accessory";
 }
 
+function firstImageUrl(...values: (string | null | undefined)[]) {
+  for (const value of values) {
+    const url = String(value ?? "").trim();
+    if (url) return url;
+  }
+  return null;
+}
+
+function primaryImageForItem(item?: ClothingItem | null) {
+  return (
+    item?.images?.find((image) => image?.isPrimary) ??
+    item?.images?.[0] ??
+    item?.photos?.images?.find((image) => image?.isPrimary) ??
+    item?.photos?.images?.[0] ??
+    null
+  );
+}
+
+function itemMatchesPieceRole(piece: AuraLookPiece, item: ClothingItem) {
+  const pieceRole = normalizeText(piece.role);
+  if (!pieceRole || pieceRole === "unknown") return true;
+  const itemTokens = buildTokens([
+    item.category,
+    item.subCategory,
+    item.type,
+    item.name,
+  ]);
+
+  if (pieceRole === "shoes") {
+    return roleFromTokens(itemTokens) === "footwear";
+  }
+  if (pieceRole === "accessory") {
+    return roleFromTokens(itemTokens) === "accessory";
+  }
+  if (pieceRole === "one_piece") {
+    return roleFromTokens(itemTokens) === "one_piece";
+  }
+  return roleFromTokens(itemTokens) === pieceRole;
+}
+
+function resolveClosetItemForPiece(
+  piece: AuraLookPiece,
+  itemsById?: Map<string, ClothingItem>,
+) {
+  if (!itemsById) return undefined;
+  const directId = String(piece.itemId ?? "").trim();
+  if (directId) {
+    const direct = itemsById.get(directId);
+    if (direct) return direct;
+  }
+
+  const pieceKeys = [
+    normalizeMatchText(piece.itemName),
+    normalizeMatchText(piece.itemId),
+  ].filter(Boolean);
+  if (!pieceKeys.length) return undefined;
+
+  for (const item of itemsById.values()) {
+    const itemName = normalizeMatchText(item.name);
+    const itemId = normalizeMatchText(item.id);
+    if (!itemMatchesPieceRole(piece, item)) continue;
+    for (const pieceKey of pieceKeys) {
+      if (pieceKey === itemName || pieceKey === itemId) return item;
+      if (
+        pieceKey.length >= 8 &&
+        itemName.length >= 8 &&
+        (pieceKey.includes(itemName) || itemName.includes(pieceKey))
+      ) {
+        return item;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function getBackgroundRemovedImageUrl(item?: ClothingItem | null) {
+  if (!item) return null;
+  const primaryImage = primaryImageForItem(item);
+  const legacyItem = item as ClothingItem & {
+    cleanedPhotoUrl?: string | null;
+    cleanedUrl?: string | null;
+    normalizedUrl?: string | null;
+  };
+
+  return firstImageUrl(
+    item.cleanedImageUrl,
+    primaryImage?.cleanedUrl,
+    item.photos?.cleanedUrl,
+    item.photos?.cleanedPhotoUrl,
+    legacyItem.cleanedUrl,
+    legacyItem.cleanedPhotoUrl,
+    item.photos?.cleanedThumbUrl,
+  );
+}
+
 function toLayoutItem(
   piece: AuraLookPiece,
   index: number,
   itemsById?: Map<string, ClothingItem>,
 ): AuraLayoutItem {
-  const item = piece.itemId ? itemsById?.get(piece.itemId) : undefined;
+  const item = resolveClosetItemForPiece(piece, itemsById);
   const structuredTokens = buildTokens([
     piece.role,
     item?.category,
@@ -817,8 +801,16 @@ function toLayoutItem(
   const role = inferLayoutRole(piece, structuredTokens, tokens);
   const accessoryType =
     role === "accessory" ? classifyAccessoryType(tokens) : null;
-  const normalizedImage = item
-    ? (getItemImageUrl(item, { variant: "thumb", surface: "aura_look_card" }) ??
+  const backgroundRemovedImage = getBackgroundRemovedImageUrl(item);
+  const pickedItemImage = item
+    ? getItemImageUrl(item, {
+        variant: role === "footwear" ? "hero" : "thumb",
+        surface: "aura_look_card",
+      })
+    : null;
+  const boardImage = item
+    ? (backgroundRemovedImage ??
+      pickedItemImage ??
       piece.imageUrl ??
       null)
     : (piece.imageUrl ?? null);
@@ -830,13 +822,9 @@ function toLayoutItem(
     accessoryType,
     itemName: piece.itemName || item?.name || "Wardrobe item",
     source: piece.source,
-    imageUrl: piece.imageUrl ?? normalizedImage ?? null,
-    cleanedImageUrl:
-      item?.cleanedImageUrl ??
-      item?.photos?.cleanedUrl ??
-      item?.photos?.cleanedPhotoUrl ??
-      null,
-    image: normalizedImage,
+    imageUrl: piece.imageUrl ?? boardImage ?? null,
+    cleanedImageUrl: backgroundRemovedImage,
+    image: boardImage,
     brand: item?.brand ?? null,
     category: item?.category ?? null,
     subCategory: item?.subCategory ?? null,
@@ -901,7 +889,6 @@ export function detectOutfitLayoutType(pieces: BoardPiece[]): OutfitLayoutType {
   );
   const top = classified.top[0] ?? null;
   const bottom = classified.bottom[0] ?? null;
-  const footwear = classified.footwear[0] ?? null;
   const onePiece = classified.onePiece[0] ?? null;
 
   if (pieces.length === 1) return "single_item";
@@ -915,8 +902,6 @@ export function detectOutfitLayoutType(pieces: BoardPiece[]): OutfitLayoutType {
       return "abaya_saree";
     return "dress_centered";
   }
-  if (!classified.outerwear.length && top && bottom && footwear)
-    return "three_item_no_outerwear";
   if (bottom && isShortBottom(bottom)) return "shorts_outfit";
   if (
     classified.outerwear.length > 0 &&
@@ -958,7 +943,7 @@ function maxSizeForItem(item: AuraLayoutItem) {
   if (item.role === "top") return { width: 44, height: 52 };
   if (item.role === "outerwear") return { width: 40, height: 50 };
   if (item.role === "bottom") return { width: 34, height: 62 };
-  if (item.role === "footwear") return { width: 30, height: 18 };
+  if (item.role === "footwear") return { width: 36, height: 22 };
   if (item.role === "one_piece") return { width: 40, height: 82 };
   if (item.role === "accessory") {
     if (isBeltAccessory(item)) return { width: 32, height: 8 };
@@ -973,46 +958,15 @@ function maxSizeForItem(item: AuraLayoutItem) {
   return { width: 92, height: 92 };
 }
 
-function tunableZone(
-  slotName: string,
-  config: TunableZoneSpec,
-  safePadding = 2,
-): ZoneSpec {
-  return {
-    centerX: config.x,
-    centerY: config.y,
-    width: config.baseWidth * config.scale,
-    height: config.baseHeight * config.scale,
-    maxWidth: config.maxWidth,
-    maxHeight: config.maxHeight,
-    safePadding,
-    zIndex: config.zIndex,
-    slotName,
-    shadowIntensity: config.shadowIntensity,
-    rotation: config.rotation,
-  };
-}
-
 function zoneToPlacedItem(
   item: AuraLayoutItem,
   zone: ZoneSpec,
 ): AuraPlacedItem {
   const maxSize = maxSizeForItem(item);
-  const safePadding = zone.safePadding ?? 2;
-  const maxWidth = zone.maxWidth ?? maxSize.width;
-  const maxHeight = zone.maxHeight ?? maxSize.height;
-  const widthPct = Math.min(clamp(zone.width, 4, 92), maxWidth);
-  const heightPct = Math.min(clamp(zone.height, 4, 92), maxHeight);
-  const leftPct = clamp(
-    zone.centerX - widthPct / 2,
-    safePadding,
-    100 - safePadding - widthPct,
-  );
-  const topPct = clamp(
-    zone.centerY - heightPct / 2,
-    safePadding,
-    100 - safePadding - heightPct,
-  );
+  const widthPct = Math.min(clamp(zone.width, 4, 92), maxSize.width);
+  const heightPct = Math.min(clamp(zone.height, 4, 92), maxSize.height);
+  const leftPct = clamp(zone.centerX - widthPct / 2, 2, 98 - widthPct);
+  const topPct = clamp(zone.centerY - heightPct / 2, 2, 98 - heightPct);
 
   return {
     key: item.key,
@@ -1158,44 +1112,6 @@ function addAccessoryZones(
   addUnique(perfume, PERFUME_ZONE);
 }
 
-function addThreeItemAccessoryZones(
-  placedItems: AuraPlacedItem[],
-  items: ClassifiedItems,
-  variant: string,
-) {
-  const placedAccessoryKeys = new Set<string>();
-  const addUnique = (
-    item: AuraLayoutItem | null,
-    slot: keyof typeof THREE_ITEM_ACCESSORY_LAYOUT,
-  ) => {
-    if (!item || placedAccessoryKeys.has(item.key)) return;
-    placedAccessoryKeys.add(item.key);
-    addPlaced(
-      placedItems,
-      item,
-      tunableZone(
-        `three-item-${slot}`,
-        THREE_ITEM_ACCESSORY_LAYOUT[slot],
-        THREE_ITEM_SAFE_PADDING,
-      ),
-      variant,
-    );
-  };
-  const chain = items.accessories.find(isNecklaceAccessory) ?? null;
-  const glasses = items.accessories.find(isGlassesAccessory) ?? null;
-  const hat = items.accessories.find(isHatAccessory) ?? null;
-  const belt = items.accessories.find(isBeltAccessory) ?? null;
-  const bag = items.accessories.find(isBagAccessory) ?? null;
-  const perfume = items.accessories.find(isPerfumeAccessory) ?? null;
-
-  addUnique(chain, "necklace");
-  addUnique(glasses, "glasses");
-  addUnique(hat, "hat");
-  addUnique(belt, "belt");
-  addUnique(bag, "bag");
-  addUnique(perfume, "perfume");
-}
-
 function orderedCoreItems(items: AuraLayoutItem[]) {
   const priority: Record<AuraLayoutRole, number> = {
     outerwear: 0,
@@ -1238,38 +1154,6 @@ export function resolveOutfitLayout(
     addPlaced(placedItems, bottom, bottomZone, variant);
     addPlaced(placedItems, footwear, BOTTOM_LEFT_SHOES, variant);
     addAccessoryZones(placedItems, items, variant);
-  } else if (layoutType === "three_item_no_outerwear") {
-    addPlaced(
-      placedItems,
-      top,
-      tunableZone(
-        "three-item-top",
-        THREE_ITEM_LAYOUT.top,
-        THREE_ITEM_SAFE_PADDING,
-      ),
-      variant,
-    );
-    addPlaced(
-      placedItems,
-      bottom,
-      tunableZone(
-        "three-item-bottom",
-        THREE_ITEM_LAYOUT.bottom,
-        THREE_ITEM_SAFE_PADDING,
-      ),
-      variant,
-    );
-    addPlaced(
-      placedItems,
-      footwear,
-      tunableZone(
-        "three-item-shoes",
-        THREE_ITEM_LAYOUT.shoes,
-        THREE_ITEM_SAFE_PADDING,
-      ),
-      variant,
-    );
-    addThreeItemAccessoryZones(placedItems, items, variant);
   } else if (layoutType === "no_jacket") {
     addPlaced(
       placedItems,
@@ -1418,66 +1302,32 @@ export function resolveOutfitLayout(
   }
 
   const placedKeys = new Set(placedItems.map((entry) => entry.item.key));
-  const fallbackZones =
-    layoutType === "three_item_no_outerwear"
-      ? ([
-          {
-            centerX: 12,
-            centerY: 74,
-            width: 18,
-            height: 20,
-            safePadding: THREE_ITEM_SAFE_PADDING,
-            zIndex: 32,
-            slotName: "three-item-extra-left",
-            shadowIntensity: 0.24,
-          },
-          {
-            centerX: 88,
-            centerY: 42,
-            width: 18,
-            height: 20,
-            safePadding: THREE_ITEM_SAFE_PADDING,
-            zIndex: 32,
-            slotName: "three-item-extra-right",
-            shadowIntensity: 0.24,
-          },
-          {
-            centerX: 14,
-            centerY: 88,
-            width: 16,
-            height: 18,
-            safePadding: THREE_ITEM_SAFE_PADDING,
-            zIndex: 32,
-            slotName: "three-item-extra-bottom",
-            shadowIntensity: 0.2,
-          },
-        ] satisfies ZoneSpec[])
-      : ([
-          {
-            centerX: 50,
-            centerY: 46,
-            width: 36,
-            height: 48,
-            zIndex: 25,
-            slotName: "fallback-center",
-          },
-          {
-            centerX: 28,
-            centerY: 70,
-            width: 30,
-            height: 34,
-            zIndex: 26,
-            slotName: "fallback-left",
-          },
-          {
-            centerX: 74,
-            centerY: 70,
-            width: 30,
-            height: 34,
-            zIndex: 27,
-            slotName: "fallback-right",
-          },
-        ] satisfies ZoneSpec[]);
+  const fallbackZones = [
+    {
+      centerX: 50,
+      centerY: 46,
+      width: 36,
+      height: 48,
+      zIndex: 25,
+      slotName: "fallback-center",
+    },
+    {
+      centerX: 28,
+      centerY: 70,
+      width: 30,
+      height: 34,
+      zIndex: 26,
+      slotName: "fallback-left",
+    },
+    {
+      centerX: 74,
+      centerY: 70,
+      width: 30,
+      height: 34,
+      zIndex: 27,
+      slotName: "fallback-right",
+    },
+  ] satisfies ZoneSpec[];
   pieces
     .filter(
       (piece) =>

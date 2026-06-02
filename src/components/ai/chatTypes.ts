@@ -1,4 +1,5 @@
 import type { AuraResponse } from "@/src/types/aura";
+import type { AuraAgentOutfitActionState, AuraAgentResponse } from "@/src/types/auraAgent";
 
 export type ChatAttachmentGroupRole = "same_item" | "separate_items" | "reference";
 
@@ -46,7 +47,7 @@ export type ChatOutfit = {
 export type AIMessage = {
   id: string;
   type: "user" | "assistant" | "outfit" | "system/action";
-  kind?: "user_text" | "aura_text" | "aura_card" | "system";
+  kind?: "user_text" | "aura_text" | "aura_card" | "aura_agent" | "system";
   text?: string;
   requiredItemIds?: string[];
   assistantIntroText?: string;
@@ -54,6 +55,8 @@ export type AIMessage = {
   streaming?: boolean;
   outfits?: ChatOutfit[];
   aura?: AuraResponse;
+  agentResponse?: AuraAgentResponse;
+  agentActionStates?: Record<string, AuraAgentOutfitActionState>;
   createdAt: number;
   clientCreatedAt?: number;
   localSequence?: number;

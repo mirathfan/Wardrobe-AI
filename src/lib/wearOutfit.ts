@@ -225,6 +225,26 @@ function plannedOutfitOptions(input: OutfitInput) {
   return undefined;
 }
 
+function plannedOutfitMetadata(input: OutfitInput) {
+  if (
+    input &&
+    typeof input === "object" &&
+    (input as PlannedOutfit).itemsByCategory &&
+    typeof (input as PlannedOutfit).itemsByCategory === "object"
+  ) {
+    const planned = input as PlannedOutfit;
+    return {
+      source: planned.source,
+      title: planned.title,
+      outfitId: planned.outfitId,
+      outfitFingerprint: planned.outfitFingerprint,
+      weatherContext: planned.weatherContext,
+      weatherWarnings: planned.weatherWarnings,
+    };
+  }
+  return {};
+}
+
 export async function markOutfitWorn({
   uid,
   source,
@@ -239,6 +259,7 @@ export async function markOutfitWorn({
   const dateKey = toDayKey(wornDate);
   const wornAtMs = wornDate.getTime();
   const snapshot = buildSnapshot({ look, itemIds, title, source });
+  const plannedMeta = plannedOutfitMetadata(look);
   const requestedItemIds = getOwnedItemIdsFromOutfitSnapshot(snapshot);
 
   if (!requestedItemIds.length) {
@@ -317,9 +338,16 @@ export async function markOutfitWorn({
       wornOutfit: {
         itemsByCategory: snapshotToItemsByCategory(liveSnapshot),
         wornAt: wornAtMs,
-        source,
-        ...(cleanString(title ?? liveSnapshot.title) ? { title: cleanString(title ?? liveSnapshot.title) } : {}),
-        ...(cleanString(outfitId) ? { outfitId: cleanString(outfitId) } : {}),
+        source: plannedMeta.source ?? source,
+        ...(cleanString(title ?? plannedMeta.title ?? liveSnapshot.title)
+          ? { title: cleanString(title ?? plannedMeta.title ?? liveSnapshot.title) }
+          : {}),
+        ...(cleanString(outfitId ?? plannedMeta.outfitId) ? { outfitId: cleanString(outfitId ?? plannedMeta.outfitId) } : {}),
+        ...(cleanString(plannedMeta.outfitFingerprint)
+          ? { outfitFingerprint: cleanString(plannedMeta.outfitFingerprint) }
+          : {}),
+        ...(plannedMeta.weatherContext ? { weatherContext: plannedMeta.weatherContext } : {}),
+        ...(plannedMeta.weatherWarnings?.length ? { weatherWarnings: plannedMeta.weatherWarnings } : {}),
         outfitSnapshot: liveSnapshot,
       },
       wornAtMs,

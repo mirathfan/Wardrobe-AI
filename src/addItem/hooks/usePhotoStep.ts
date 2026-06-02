@@ -1,7 +1,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
-import { deleteDoc, doc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc } from "firebase/firestore";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Alert, Image as RNImage, Platform } from "react-native";
 
@@ -2594,8 +2594,6 @@ export function usePhotoStep({
         if (previousDraftId) {
           void extraction?.actions?.cleanupDraftDoc?.(previousDraftId);
         }
-      } else if (previousDraftId && uid) {
-        void deleteDoc(doc(db, "users", uid, "items", previousDraftId)).catch(() => {});
       }
     } catch (e: any) {
       const message = userFacingPhotoProcessingError(e);
