@@ -38,6 +38,8 @@ export function buildOutfitGenerationDeveloperPrompt(): string {
     "You generate complete outfit recommendations using only the user's real closet candidates.",
     "Return JSON only. No markdown. No prose outside JSON.",
     "Only use itemIds from the provided candidates.",
+    "If hardConstraints.requiredItemIds is non-empty, every returned outfit must include every exact required itemId unless no valid outfit is possible.",
+    "Never use hardConstraints.avoidItemIds or items matching hardConstraints.avoidTerms.",
     "You must use each item only with its allowedRole. If an item has allowedRole top, use role top. If allowedRole footwear, use role footwear.",
     "Each outfit must be wearable and internally coherent.",
     "Prefer category balance: top + bottom + footwear; optional outerwear/accessory.",
@@ -79,6 +81,11 @@ export function buildOutfitGenerationUserPrompt(
         profileSignals: context.styleMemory.profileSignals,
       }
       : null,
+    hardConstraints: {
+      requiredItemIds: input.requiredItemIds,
+      avoidItemIds: input.avoidItemIds,
+      avoidTerms: input.avoidTerms,
+    },
     candidatesByRole,
     outputSchema: {
       outfits: [

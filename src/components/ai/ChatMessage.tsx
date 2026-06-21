@@ -42,7 +42,9 @@ import OutfitMessage from "./OutfitMessage";
 import type { AIMessage, ChatAttachment, ChatImageAttachment, ChatMessageActionAnchor } from "./chatTypes";
 import {
   AGENT_MESSAGE_HORIZONTAL_PADDING,
+  getAuraAgentRenderSource,
   shouldUseFullWidthAgentMessage,
+  shouldShowAuraAgentSourceBadge,
 } from "./chatMessageLayout";
 import { auraShadow } from "./aiTheme";
 
@@ -167,6 +169,42 @@ function fallbackStructuredIntro(message: AIMessage) {
     return "Got you — I built a few looks from your closet that match that direction.";
   }
   return "Got you — here’s what I’d do.";
+}
+
+function DevAuraAgentSourceBadge({
+  colors,
+  source,
+}: {
+  colors: AppColors;
+  source: string;
+}) {
+  if (!__DEV__) return null;
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        alignSelf: "flex-start",
+        borderColor: colors.borderSoft,
+        borderRadius: 999,
+        borderWidth: StyleSheet.hairlineWidth,
+        marginBottom: 6,
+        opacity: 0.72,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+      }}
+    >
+      <Text
+        style={{
+          color: colors.textMuted,
+          fontFamily: Fonts.sans,
+          fontSize: 10,
+          letterSpacing: 0,
+        }}
+      >
+        source: {source}
+      </Text>
+    </View>
+  );
 }
 
 function SmoothStreamingText({
@@ -366,6 +404,8 @@ function ChatMessage({
   const cardScale = useRef(new Animated.Value(0.98)).current;
   const pulse = useRef(new Animated.Value(0.45)).current;
   const isAgentCard = shouldUseFullWidthAgentMessage(message);
+  const auraAgentRenderSource = getAuraAgentRenderSource(message);
+  const showAuraAgentSourceBadge = shouldShowAuraAgentSourceBadge(message);
   const isStructuredCard =
     isAgentCard ||
     (message.kind === "aura_card" && !!message.aura) ||
@@ -409,6 +449,37 @@ function ChatMessage({
       onClose={() => setPreviewImage(null)}
     />
   ) : null;
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    if (message.type !== "assistant" && message.type !== "outfit") return;
+    const event =
+      auraAgentRenderSource === "agent"
+        ? "rendering agentResponse"
+        : auraAgentRenderSource === "legacy"
+          ? "rendering legacy look payload"
+          : auraAgentRenderSource === "cached"
+            ? "rendering cached outfit payload"
+            : "rendering text-only message";
+    console.log("[AURA_AGENT_RENDER]", event, {
+      messageId: message.id,
+      kind: message.kind ?? null,
+      debugSource: message.debugSource ?? null,
+      hasAgentResponse: !!message.agentResponse,
+      hasLegacyAuraPayload: !!message.aura?.look || !!message.aura?.lookOptions?.length,
+      outfitCount: message.agentResponse?.outfits?.length ?? message.outfits?.length ?? 0,
+    });
+  }, [
+    auraAgentRenderSource,
+    message.agentResponse,
+    message.aura?.look,
+    message.aura?.lookOptions?.length,
+    message.debugSource,
+    message.id,
+    message.kind,
+    message.outfits?.length,
+    message.type,
+  ]);
 
   useEffect(() => {
     if (isStructuredCard) {
@@ -516,6 +587,9 @@ function ChatMessage({
           <AssistantActionButton colors={colors} message={message} onOpen={onMessageActionPress} />
           <OutfitCardEntry>
             <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }], gap: 12 }}>
+              {showAuraAgentSourceBadge ? (
+                <DevAuraAgentSourceBadge colors={colors} source={auraAgentRenderSource} />
+              ) : null}
               {message.outfits.map((outfit, index) => (
                 <OutfitMessage
                   key={`${message.id}-${outfit.id}`}
@@ -557,6 +631,9 @@ function ChatMessage({
           <OutfitCardEntry>
             <Animated.View style={{ opacity: cardFade, transform: [{ translateY: cardRise }, { scale: cardScale }] }}>
               <View style={{ maxWidth: "100%", marginLeft: 0, marginTop: 2 }}>
+                {showAuraAgentSourceBadge ? (
+                  <DevAuraAgentSourceBadge colors={colors} source={auraAgentRenderSource} />
+                ) : null}
                 <AuraReplyCard
                   data={message.aura}
                   itemsById={itemsById}
@@ -598,6 +675,9 @@ function ChatMessage({
                 chatMessageStyles.agentOutfitCard,
               ]}
             >
+              {showAuraAgentSourceBadge ? (
+                <DevAuraAgentSourceBadge colors={colors} source={auraAgentRenderSource} />
+              ) : null}
               <AuraAgentMessage
                 colors={colors}
                 response={message.agentResponse}

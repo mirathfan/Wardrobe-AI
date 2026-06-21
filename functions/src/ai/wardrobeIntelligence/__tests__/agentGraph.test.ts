@@ -330,6 +330,96 @@ describe("runAuraStylingAgentGraph", () => {
     ]);
   });
 
+  it("passes selected item IDs as required hard anchors into generation", async () => {
+    const seenRequiredIds: string[][] = [];
+    const harness = deps({
+      generateOutfits: async ({ input }) => {
+        seenRequiredIds.push(input.requiredItemIds);
+        return {
+          outfits: [outfit()],
+          validationErrors: [],
+          validationWarnings: [],
+          repaired: false,
+        };
+      },
+    });
+
+    await runAuraStylingAgentGraph("uid", {
+      mode: "generate_outfit",
+      query: "use my black cargos",
+      selectedItemIds: ["pants"],
+    }, harness.deps);
+
+    expect(seenRequiredIds[0]).toEqual(["pants"]);
+  });
+
+  it("returns a graceful no-outfit response when selected item anchors are unavailable", async () => {
+    const harness = deps({
+      retrieveOutfitContext: async () => {
+        throw new HttpsError(
+          "failed-precondition",
+          "I can't use one of those selected closet items.",
+          {
+            requiredItemIds: ["Black-Cargos_01"],
+            missingRequiredItemIds: ["Black-Cargos_01"],
+            failedRequiredItemIds: ["Black-Cargos_01"],
+          },
+        );
+      },
+    });
+
+    const response = await runAuraStylingAgentGraph("uid", {
+      mode: "generate_outfit",
+      query: "style these pants",
+      selectedItemIds: ["Black-Cargos_01"],
+      includeDiagnostics: true,
+    }, harness.deps);
+
+    expect(response.outfits).toBeUndefined();
+    expect(response.message).toContain("can't use one of those selected closet items");
+    expect(response.intent.constraints.selectedItemIds).toEqual(["Black-Cargos_01"]);
+    expect(response.diagnostics?.errors.join(" ")).toContain("selected closet items");
+  });
+
+  it("includes selected outfit/card context in follow-up generation queries", async () => {
+    const generatedQueries: string[] = [];
+    const harness = deps({
+      generateOutfits: async ({ input }) => {
+        generatedQueries.push(input.query);
+        return {
+          outfits: [outfit()],
+          validationErrors: [],
+          validationWarnings: [],
+          repaired: false,
+        };
+      },
+    });
+
+    await runAuraStylingAgentGraph("uid", {
+      mode: "refine_outfit",
+      query: "make outfit 2 more casual",
+      previousOutfit: outfit() as unknown as Record<string, unknown>,
+      conversationContext: {
+        selectedOutfitId: "outfit-2",
+        selectedItemIds: [],
+        feedbackSignals: ["negative feedback: too formal"],
+        recentTurns: [
+          { role: "user", text: "Give me 3 outfits for a date" },
+          { role: "assistant", text: "Rendered outfit-card context for follow-ups." },
+        ],
+        priorOutfitRefs: [
+          { outfitId: "outfit-1", index: 1, title: "First", itemIds: ["shirt"] },
+          { outfitId: "outfit-2", index: 2, title: "Second", occasion: "dinner", formality: "smart_casual", itemIds: ["pants", "loafers"] },
+        ],
+      },
+    }, harness.deps);
+
+    expect(generatedQueries[0]).toContain("make outfit 2 more casual");
+    expect(generatedQueries[0]).toContain("Selected outfit");
+    expect(generatedQueries[0]).toContain("outfit 2");
+    expect(generatedQueries[0]).toContain("negative feedback: too formal");
+  });
+
   it("records feedback through the style memory path", async () => {
     const harness = deps();
     const response = await runAuraStylingAgentGraph("uid", {

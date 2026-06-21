@@ -552,6 +552,17 @@ function isRainBadCandidate(candidate: OutfitCandidate | undefined): boolean {
   return /\b(sandal|sandals|slide|slides|suede)\b/.test(candidateText(candidate));
 }
 
+function avoidTermMatches(candidate: OutfitCandidate | undefined, avoidTerms: string[]): string[] {
+  const text = candidateText(candidate);
+  if (!text || !avoidTerms.length) return [];
+  return avoidTerms.filter((term) => {
+    const normalized = normalizedText(term);
+    if (!normalized) return false;
+    const singular = normalized.replace(/s$/, "");
+    return text.includes(normalized) || (singular.length > 2 && text.includes(singular));
+  });
+}
+
 export function validateGeneratedOutfits(
   outfits: GeneratedOutfit[],
   context: OutfitGenerationContext,
@@ -582,6 +593,8 @@ export function validateGeneratedOutfits(
     validationWarnings.push(...normalized.warnings);
     const prefix = `outfit ${outfitIndex + 1}`;
     const seen = new Set<string>();
+    const requiredIds = new Set(input.requiredItemIds);
+    const avoidIds = new Set(input.avoidItemIds);
     const roles = roleSet(outfit);
     const hasTopBottomFootwear = roles.has("top") && roles.has("bottom") && roles.has("footwear");
     const hasOnePieceFootwear = roles.has("one_piece") && roles.has("footwear");
@@ -600,6 +613,13 @@ export function validateGeneratedOutfits(
       }
       seen.add(item.itemId);
       const candidate = byId.get(item.itemId);
+      if (avoidIds.has(item.itemId)) {
+        errors.push(`${prefix}: used explicitly avoided itemId ${item.itemId}.`);
+      }
+      const matchedAvoidTerms = avoidTermMatches(candidate, input.avoidTerms);
+      if (matchedAvoidTerms.length) {
+        errors.push(`${prefix}: itemId ${item.itemId} matched avoided term ${matchedAvoidTerms[0]}.`);
+      }
       const allowedRole = candidateAllowedRole(candidate);
       const generatedRole = normalizeOutfitRoleAlias(item.role);
       if (candidate && allowedRole && generatedRole !== allowedRole) {
@@ -619,6 +639,12 @@ export function validateGeneratedOutfits(
         const issue = `${prefix}: rain context may conflict with ${item.itemId}.`;
         warnings.push(issue);
         validationWarnings.push({ outfitIndex, issue, action: "warning" });
+      }
+    }
+
+    for (const requiredItemId of requiredIds) {
+      if (!seen.has(requiredItemId)) {
+        errors.push(`${prefix}: missing required selected itemId ${requiredItemId}.`);
       }
     }
 

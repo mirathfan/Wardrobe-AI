@@ -26,6 +26,8 @@ import type {
 
 import AuraAgentActionRail from "./AuraAgentActionRail";
 
+const SHOW_AURA_AGENT_DEV_UI = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
+
 function actionKey(action: AuraAgentSuggestedAction) {
   const payload = action.payload ?? {};
   return [
@@ -40,7 +42,7 @@ function withDefaultActions(
   actions: AuraAgentSuggestedAction[],
   hasOutfit: boolean,
 ) {
-  const visible = actions.filter((action) => action.type !== "debug" || __DEV__);
+  const visible = actions.filter((action) => action.type !== "debug" || SHOW_AURA_AGENT_DEV_UI);
   if (!hasOutfit) return visible;
   const defaults: AuraAgentSuggestedAction[] = [
     {
@@ -175,7 +177,7 @@ function DevDiagnosticsBlock({
   selectedOutfit?: AuraAgentOutfit | null;
 }) {
   const [open, setOpen] = React.useState(false);
-  if (!__DEV__) return null;
+  if (!SHOW_AURA_AGENT_DEV_UI) return null;
 
   const keys = Object.keys(diagnostics ?? {}).slice(0, 4);
 

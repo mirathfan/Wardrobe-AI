@@ -28,6 +28,10 @@ export type OutfitGenerationInput = {
   preferredColors?: string[];
   requiredColors?: string[];
   requiredCategories?: string[];
+  selectedItemIds?: string[];
+  requiredItemIds?: string[];
+  avoidItemIds?: string[];
+  avoidTerms?: string[];
   includeDiagnostics?: boolean;
   useStyleMemory?: boolean;
 };
@@ -41,6 +45,9 @@ export type NormalizedOutfitGenerationInput = {
   preferredColors: string[];
   requiredColors: string[];
   requiredCategories: OutfitRole[];
+  requiredItemIds: string[];
+  avoidItemIds: string[];
+  avoidTerms: string[];
   includeDiagnostics: boolean;
   useStyleMemory: boolean;
 };
@@ -99,6 +106,9 @@ export type OutfitGenerationContext = {
     candidateLimitPerCategory: number;
     rawLimitPerCategory: number;
     missingRequiredRoles: OutfitRole[];
+    missingRequiredItemIds?: string[];
+    unavailableRequiredItemIds?: string[];
+    incompatibleRequiredItemIds?: string[];
     candidateCounts: Record<OutfitRole, number>;
     categoryQueries: OutfitRetrievalPlan["categoryQueries"];
   };

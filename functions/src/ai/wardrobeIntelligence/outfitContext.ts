@@ -4,6 +4,7 @@ import { EMBEDDING_VECTOR_FIELD, outfitGenerationConfig } from "./config";
 import { createTextEmbedding } from "./embeddings";
 import {
   VECTOR_DISTANCE_FIELD,
+  buildWardrobeRetrievalResult,
   buildWardrobeRetrievalResults,
   rawVectorLimit,
   type WardrobeVectorCandidate,
@@ -55,10 +56,25 @@ function uniqueNormalized(value: unknown, limit = 12): string[] {
   return [...new Set(asStringArray(value).map(normalizedText).filter(Boolean))].slice(0, limit);
 }
 
+function uniqueCleanStrings(value: unknown, limit = 24): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of asStringArray(value)) {
+    const text = cleanText(entry);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 function normalizeFormality(value: unknown): WardrobeRetrievalFormality {
   const text = normalizedText(value || "any");
   if (!text || text === "any") return "any";
   if (text === "smart casual" || text === "smart_casual") return "smart_casual";
+  if (text === "business casual" || text === "business_casual") return "smart_casual";
+  if (text === "athletic" || text === "lounge") return "casual";
   if (text === "casual" || text === "formal") return text;
   throw new HttpsError("invalid-argument", "formality must be casual, smart_casual, formal, or any.");
 }
@@ -90,6 +106,9 @@ export function normalizeOutfitGenerationInput(value: unknown): NormalizedOutfit
     preferredColors: uniqueNormalized(data.preferredColors),
     requiredColors: uniqueNormalized(data.requiredColors),
     requiredCategories: normalizeRoles(data.requiredCategories),
+    requiredItemIds: uniqueCleanStrings(data.requiredItemIds ?? data.selectedItemIds, 24),
+    avoidItemIds: uniqueCleanStrings(data.avoidItemIds, 24),
+    avoidTerms: uniqueNormalized(data.avoidTerms, 16),
     includeDiagnostics: data.includeDiagnostics === true,
     useStyleMemory: data.useStyleMemory !== false,
   };
@@ -291,6 +310,19 @@ export type RetrieveOutfitContextDeps = {
     query: string;
     limit: number;
   }) => Promise<OutfitCandidate[]>;
+  retrieveRequiredItemCandidates?: (args: {
+    uid: string;
+    input: NormalizedOutfitGenerationInput;
+    plan: OutfitRetrievalPlan;
+    itemIds: string[];
+  }) => Promise<RequiredItemCandidateResult>;
+};
+
+export type RequiredItemCandidateResult = {
+  candidates: OutfitCandidate[];
+  missingItemIds?: string[];
+  unavailableItemIds?: string[];
+  incompatibleItemIds?: string[];
 };
 
 function emptyCandidateBuckets(): OutfitCandidateBuckets {
@@ -324,6 +356,34 @@ function annotateCandidate(candidate: OutfitCandidate, sourceRole: OutfitRole): 
     role: canonicalRole,
     canonicalRole,
     allowedRole: canonicalRole,
+  };
+}
+
+function retrievalResultToOutfitCandidate(result: ReturnType<typeof buildWardrobeRetrievalResults>[number], sourceRole?: OutfitRole): OutfitCandidate | null {
+  if (result.category === "unknown") return null;
+  const role = result.category as OutfitRole;
+  const effectiveRole = sourceRole ?? role;
+  return {
+    itemId: result.itemId,
+    name: result.name,
+    category: result.category,
+    role,
+    canonicalRole: role,
+    allowedRole: role,
+    sourceRole: effectiveRole,
+    sourceCategory: result.category,
+    sourceAiMetadataCategory: typeof result.aiMetadata.category === "string" ? result.aiMetadata.category : null,
+    ...(result.subcategory ? { subcategory: result.subcategory } : {}),
+    ...(result.brand ? { brand: result.brand } : {}),
+    colors: result.colors,
+    score: result.score,
+    vectorScore: result.vectorScore,
+    finalScore: result.finalScore,
+    reason: result.reason,
+    imageUrl: result.imageUrl,
+    aiMetadata: result.aiMetadata,
+    embeddingTextPreview: result.embeddingTextPreview,
+    status: result.status,
   };
 }
 
@@ -379,28 +439,63 @@ async function defaultRetrieveRoleCandidates(args: {
     includeDiagnostics: false,
   }, candidates);
 
-  return results.map((result) => ({
-    itemId: result.itemId,
-    name: result.name,
-    category: result.category,
-    role: args.role,
-    canonicalRole: args.role,
-    allowedRole: args.role,
-    sourceRole: args.role,
-    sourceCategory: result.category,
-    sourceAiMetadataCategory: typeof result.aiMetadata.category === "string" ? result.aiMetadata.category : null,
-    ...(result.subcategory ? { subcategory: result.subcategory } : {}),
-    ...(result.brand ? { brand: result.brand } : {}),
-    colors: result.colors,
-    score: result.score,
-    vectorScore: result.vectorScore,
-    finalScore: result.finalScore,
-    reason: result.reason,
-    imageUrl: result.imageUrl,
-    aiMetadata: result.aiMetadata,
-    embeddingTextPreview: result.embeddingTextPreview,
-    status: result.status,
-  }));
+  return results.flatMap((result) => retrievalResultToOutfitCandidate(result, args.role) ?? []);
+}
+
+async function defaultRetrieveRequiredItemCandidates(args: {
+  uid: string;
+  input: NormalizedOutfitGenerationInput;
+  plan: OutfitRetrievalPlan;
+  itemIds: string[];
+}): Promise<RequiredItemCandidateResult> {
+  if (!args.itemIds.length) return { candidates: [] };
+  const firestore = getFirestore();
+  const refs = args.itemIds.map((itemId) =>
+    firestore.collection("users").doc(args.uid).collection("items").doc(itemId)
+  );
+  const snapshots = await firestore.getAll(...refs);
+  const missingItemIds: string[] = [];
+  const unavailableItemIds: string[] = [];
+  const incompatibleItemIds: string[] = [];
+  const candidates: OutfitCandidate[] = [];
+  snapshots.forEach((snapshot, index) => {
+    const itemId = args.itemIds[index];
+    if (!snapshot.exists) {
+      missingItemIds.push(itemId);
+      return;
+    }
+    const result = buildWardrobeRetrievalResult({
+      query: args.input.query,
+      limit: 1,
+      ...(args.input.occasion ? { occasion: args.input.occasion } : {}),
+      categories: [],
+      styleTags: [],
+      colors: [],
+      ...(args.input.weather ? { weather: args.input.weather } : {}),
+      formality: args.input.formality,
+      includeDiagnostics: false,
+    }, {
+      itemId,
+      item: { id: itemId, ...(snapshot.data() ?? {}) },
+      distance: 0,
+    }, {
+      requireEmbedding: false,
+      applyFilters: false,
+      forceScore: 1,
+      reasonPrefix: "required selected closet item",
+    });
+    if (!result) {
+      unavailableItemIds.push(itemId);
+      return;
+    }
+    const candidate = retrievalResultToOutfitCandidate(result);
+    if (!candidate) {
+      incompatibleItemIds.push(itemId);
+      return;
+    }
+    candidates.push(candidate);
+  });
+  return { candidates, missingItemIds, unavailableItemIds, incompatibleItemIds };
 }
 
 function missingRequiredRoles(candidates: OutfitCandidateBuckets): OutfitRole[] {
@@ -410,6 +505,52 @@ function missingRequiredRoles(candidates: OutfitCandidateBuckets): OutfitRole[] 
   if (!hasOnePiece && !candidates.bottom.length) missing.push("bottom");
   if (!candidates.footwear.length) missing.push("footwear");
   return missing;
+}
+
+function mergeRequiredCandidates(
+  candidates: OutfitCandidateBuckets,
+  requiredCandidates: OutfitCandidate[],
+): OutfitCandidateBuckets {
+  const merged = emptyCandidateBuckets();
+  for (const role of OUTFIT_ROLES) {
+    merged[role] = [...candidates[role]];
+  }
+  for (const candidate of requiredCandidates) {
+    const role = candidate.allowedRole ?? candidate.canonicalRole ?? candidate.role;
+    if (!role) continue;
+    const bucket = merged[role];
+    const existingIndex = bucket.findIndex((entry) => entry.itemId === candidate.itemId);
+    if (existingIndex >= 0) {
+      bucket[existingIndex] = {
+        ...bucket[existingIndex],
+        score: Math.max(Number(bucket[existingIndex].score ?? 0), Number(candidate.score ?? 1)),
+        finalScore: Math.max(Number(bucket[existingIndex].finalScore ?? 0), Number(candidate.finalScore ?? 1)),
+        reason: [candidate.reason, bucket[existingIndex].reason].filter(Boolean).join("; "),
+      };
+    } else {
+      bucket.unshift(candidate);
+    }
+  }
+  return merged;
+}
+
+function assertRequiredItemCandidates(input: NormalizedOutfitGenerationInput, result: RequiredItemCandidateResult) {
+  const missingItemIds = result.missingItemIds ?? [];
+  const unavailableItemIds = result.unavailableItemIds ?? [];
+  const incompatibleItemIds = result.incompatibleItemIds ?? [];
+  if (!missingItemIds.length && !unavailableItemIds.length && !incompatibleItemIds.length) return;
+  const itemIds = [...missingItemIds, ...unavailableItemIds, ...incompatibleItemIds];
+  throw new HttpsError(
+    "failed-precondition",
+    "I can't use one of those selected closet items because it is missing, deleted, still processing, or missing category data.",
+    {
+      requiredItemIds: input.requiredItemIds,
+      failedRequiredItemIds: itemIds,
+      missingRequiredItemIds: missingItemIds,
+      unavailableRequiredItemIds: unavailableItemIds,
+      incompatibleRequiredItemIds: incompatibleItemIds,
+    },
+  );
 }
 
 export async function retrieveOutfitGenerationContext(
@@ -424,6 +565,7 @@ export async function retrieveOutfitGenerationContext(
   const plan = buildOutfitRetrievalPlan(normalized);
   const limit = config.maxCandidatesPerCategory;
   const retrieveRoleCandidates = deps.retrieveRoleCandidates ?? defaultRetrieveRoleCandidates;
+  const retrieveRequiredItemCandidates = deps.retrieveRequiredItemCandidates ?? defaultRetrieveRequiredItemCandidates;
   const candidates = emptyCandidateBuckets();
 
   for (const role of OUTFIT_ROLES) {
@@ -438,7 +580,17 @@ export async function retrieveOutfitGenerationContext(
       limit,
     });
   }
-  const canonicalCandidates = canonicalizeOutfitCandidateBuckets(candidates);
+  const requiredResult = normalized.requiredItemIds.length
+    ? await retrieveRequiredItemCandidates({
+      uid,
+      input: normalized,
+      plan,
+      itemIds: normalized.requiredItemIds,
+    })
+    : { candidates: [] };
+  assertRequiredItemCandidates(normalized, requiredResult);
+  const withRequiredCandidates = mergeRequiredCandidates(candidates, requiredResult.candidates);
+  const canonicalCandidates = canonicalizeOutfitCandidateBuckets(withRequiredCandidates);
 
   return {
     retrievalPlan: plan,
@@ -447,6 +599,9 @@ export async function retrieveOutfitGenerationContext(
       candidateLimitPerCategory: limit,
       rawLimitPerCategory: rawVectorLimit(limit),
       missingRequiredRoles: missingRequiredRoles(canonicalCandidates),
+      ...(requiredResult.missingItemIds?.length ? { missingRequiredItemIds: requiredResult.missingItemIds } : {}),
+      ...(requiredResult.unavailableItemIds?.length ? { unavailableRequiredItemIds: requiredResult.unavailableItemIds } : {}),
+      ...(requiredResult.incompatibleItemIds?.length ? { incompatibleRequiredItemIds: requiredResult.incompatibleItemIds } : {}),
       candidateCounts: {
         top: canonicalCandidates.top.length,
         bottom: canonicalCandidates.bottom.length,

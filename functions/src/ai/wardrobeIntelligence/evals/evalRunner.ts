@@ -106,6 +106,29 @@ const CASE_OUTFIT_PLANS: Record<string, string[][]> = {
   "disliked-exact-outfit": [
     ["eval-linen-shirt", "eval-black-jeans", "eval-black-white-sneakers", "eval-cap", "eval-racer-jacket"],
   ],
+  "multi-turn-date-more": [
+    ["eval-linen-shirt", "eval-black-trousers", "eval-black-loafers", "eval-watch"],
+    ["eval-blue-polo", "eval-black-trousers", "eval-black-loafers", "eval-belt"],
+    ["eval-linen-shirt", "eval-black-jeans", "eval-black-white-sneakers", "eval-racer-jacket"],
+  ],
+  "make-outfit-2-more-casual": [
+    ["eval-graphic-tee", "eval-black-cargos", "eval-black-white-sneakers", "eval-cap"],
+  ],
+  "selected-black-cargos": [
+    ["eval-graphic-tee", "eval-black-cargos", "eval-black-white-sneakers", "eval-racer-jacket"],
+  ],
+  "style-just-added-pants": [
+    ["eval-blue-polo", "eval-black-cargos", "eval-black-white-sneakers", "eval-belt"],
+  ],
+  "no-sandals-negative": [
+    ["eval-resort-shirt", "eval-white-linen-trousers", "eval-black-white-sneakers", "eval-cap"],
+  ],
+  "more-like-outfit-2": [
+    ["eval-blue-polo", "eval-black-trousers", "eval-black-loafers", "eval-watch"],
+  ],
+  "why-this-works-followup": [
+    ["eval-blue-polo", "eval-black-trousers", "eval-black-loafers"],
+  ],
   "no-ready-items": [
     [],
   ],
@@ -171,6 +194,29 @@ function generatedOutfitForPlan(evalCase: AuraEvalCase, plan: string[], index: n
     stylingTips: ["Check role coverage, relevance, and closet-only constraints."],
     missingItems: [],
     confidence: 0.9,
+  };
+}
+
+function previousOutfitForCase(evalCase: AuraEvalCase): Record<string, unknown> | undefined {
+  const ids = evalCase.previousOutfitItemIds ?? [];
+  if (!ids.length) return undefined;
+  const fixture = getEvalClosetFixture(evalCase.closetFixtureId);
+  const itemsById = new Map(fixture.items.map((item) => [item.id, item]));
+  return {
+    outfitId: "previous-outfit",
+    title: "Previous eval outfit",
+    occasion: evalCase.occasion,
+    formality: evalCase.formality,
+    items: ids.flatMap((itemId) => {
+      const item = itemsById.get(itemId);
+      if (!item) return [];
+      return [{
+        itemId,
+        name: item.name,
+        role: roleFromCategory(item.category),
+        category: item.category,
+      }];
+    }),
   };
 }
 
@@ -243,6 +289,23 @@ function productionAgentResponse(args: {
     occasion: args.evalCase.occasion,
     formality: args.evalCase.formality as "casual" | "smart_casual" | "formal" | "any" | undefined,
     weather: args.evalCase.weather,
+    previousOutfit: previousOutfitForCase(args.evalCase),
+    selectedItemIds: args.evalCase.selectedItemIds,
+    conversationContext: args.evalCase.previousOutfitItemIds?.length
+      ? {
+        recentTurns: [],
+        selectedItemIds: args.evalCase.selectedItemIds ?? [],
+        feedbackSignals: [],
+        priorOutfitRefs: [{
+          outfitId: "previous-outfit",
+          index: 2,
+          itemIds: args.evalCase.previousOutfitItemIds,
+          occasion: args.evalCase.occasion,
+          formality: args.evalCase.formality,
+        }],
+        selectedOutfitId: "previous-outfit",
+      }
+      : undefined,
   });
   const countText = args.outfits.length === 1 ? "one closet-based option" : `${args.outfits.length} closet-based options`;
   return {

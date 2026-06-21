@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const REQUIRED_FIREBASE_ENV_VARS = [
   "EXPO_PUBLIC_FIREBASE_API_KEY",
   "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN",
@@ -14,6 +17,36 @@ const DIAGNOSTIC_PUBLIC_ENV_VARS = [
   "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID",
   "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID",
 ];
+
+function unquoteEnvValue(value) {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function loadEnvFile(fileName) {
+  const filePath = path.resolve(process.cwd(), fileName);
+  if (!fs.existsSync(filePath)) return;
+  const contents = fs.readFileSync(filePath, "utf8");
+  for (const line of contents.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const equalsIndex = trimmed.indexOf("=");
+    if (equalsIndex <= 0) continue;
+    const key = trimmed.slice(0, equalsIndex).trim();
+    const value = unquoteEnvValue(trimmed.slice(equalsIndex + 1));
+    if (!key || process.env[key]) continue;
+    process.env[key] = value;
+  }
+}
+
+loadEnvFile(".env");
+loadEnvFile(".env.local");
 
 function envValue(name) {
   return String(process.env[name] ?? "").trim();

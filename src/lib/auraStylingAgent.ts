@@ -10,6 +10,7 @@ import {
   sanitizeAuraClientPayload,
   withTimeout,
 } from "@/src/lib/auraHardening";
+import { getAuraAgentEnabledFlagValue, isAuraAgentEnabledFlag } from "@/src/lib/auraAgentRouteDiagnostics";
 import type {
   AuraOutfitWeatherContext,
   AuraOutfitWeatherWarning,
@@ -155,7 +156,7 @@ function devAgentLog(label: string, details?: Record<string, unknown>) {
 }
 
 function featureFlagValue() {
-  return String(process.env.EXPO_PUBLIC_AURA_AGENT_ENABLED ?? "");
+  return getAuraAgentEnabledFlagValue();
 }
 
 function debugContext(user?: { uid?: string | null } | null) {
@@ -193,6 +194,55 @@ function cleanStringList(value: unknown, max = 16) {
     if (out.length >= max) break;
   }
   return out.length ? out : undefined;
+}
+
+function cleanConversationContext(value: unknown): AuraAgentRequest["conversationContext"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const recentTurns = Array.isArray(record.recentTurns)
+    ? record.recentTurns.flatMap((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const turn = entry as Record<string, unknown>;
+      const role = cleanText(turn.role, 20).toLowerCase();
+      const text = cleanText(turn.text, 1200);
+      if ((role !== "user" && role !== "assistant") || !text) return [];
+      return [{ role: role as "user" | "assistant", text }];
+    }).slice(-8)
+    : [];
+  const priorOutfitRefs = Array.isArray(record.priorOutfitRefs)
+    ? record.priorOutfitRefs.flatMap((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const outfit = entry as Record<string, unknown>;
+      const itemIds = cleanStringList(outfit.itemIds, 8) ?? [];
+      const outfitId = cleanText(outfit.outfitId, 180);
+      const title = cleanText(outfit.title, 120);
+      if (!outfitId && !title && !itemIds.length) return [];
+      return [{
+        ...(outfitId ? { outfitId } : {}),
+        ...(cleanText(outfit.sourceMessageId, 180) ? { sourceMessageId: cleanText(outfit.sourceMessageId, 180) } : {}),
+        ...(Number.isFinite(Number(outfit.index)) ? { index: Number(outfit.index) } : {}),
+        ...(title ? { title } : {}),
+        ...(cleanText(outfit.occasion, 80) ? { occasion: cleanText(outfit.occasion, 80) } : {}),
+        ...(cleanText(outfit.formality, 80) ? { formality: cleanText(outfit.formality, 80) } : {}),
+        ...(cleanText(outfit.vibe, 160) ? { vibe: cleanText(outfit.vibe, 160) } : {}),
+        itemIds,
+        ...(cleanText(outfit.summary, 700) ? { summary: cleanText(outfit.summary, 700) } : {}),
+      }];
+    }).slice(-8)
+    : [];
+  const selectedOutfitId = cleanText(record.selectedOutfitId, 180);
+  const selectedItemIds = cleanStringList(record.selectedItemIds, 12) ?? [];
+  const feedbackSignals = cleanStringList(record.feedbackSignals, 12)?.map((entry) => cleanText(entry, 300)) ?? [];
+  if (!recentTurns.length && !priorOutfitRefs.length && !selectedOutfitId && !selectedItemIds.length && !feedbackSignals.length) {
+    return undefined;
+  }
+  return {
+    recentTurns,
+    priorOutfitRefs,
+    ...(selectedOutfitId ? { selectedOutfitId } : {}),
+    selectedItemIds,
+    feedbackSignals,
+  };
 }
 
 function cleanMode(value: unknown): AuraAgentRequestMode | undefined {
@@ -236,8 +286,7 @@ function sanitizeAuraAgentActionPayload<T>(value: T): T {
 }
 
 export function isAuraAgentEnabled() {
-  const value = String(process.env.EXPO_PUBLIC_AURA_AGENT_ENABLED ?? "").trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes";
+  return isAuraAgentEnabledFlag();
 }
 
 export function buildAuraAgentCallablePayload(input: AuraAgentRequest): AuraAgentRequest {
@@ -261,6 +310,7 @@ export function buildAuraAgentCallablePayload(input: AuraAgentRequest): AuraAgen
     outfitId: input.outfitId ? cleanText(input.outfitId, 180) : undefined,
     feedbackType: cleanFeedbackType(input.feedbackType),
     selectedItemIds: cleanStringList(input.selectedItemIds, 24),
+    conversationContext: cleanConversationContext(input.conversationContext),
     note: input.note ? cleanText(input.note, 500) : undefined,
   });
 }

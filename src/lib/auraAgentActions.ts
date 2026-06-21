@@ -1,6 +1,7 @@
 import type { AuraChatIntent } from "@/src/lib/auraChatHelpers";
 import type {
   AuraAgentFeedbackType,
+  AuraAgentConversationContext,
   AuraAgentOutfit,
   AuraAgentOutfitActionState,
   AuraAgentRequest,
@@ -273,8 +274,8 @@ export function buildAuraAgentActionRequest({
             : "auto";
   const query = cleanText(payload.query, cleanText(fallbackQuery, action.label));
   const previousOutfit = outfit ? buildAgentPreviousOutfit(outfit) : undefined;
-  const selectedItemIds = auraAgentOutfitItemIds(outfit);
   const feedbackType = mode === "feedback" ? feedbackTypeFromAction(action) : undefined;
+  const feedbackSelectedItemIds = mode === "feedback" ? auraAgentOutfitItemIds(outfit) : [];
 
   if (mode === "feedback" && (!previousOutfit || !feedbackType)) return null;
   if ((mode === "refine_outfit" || mode === "explain_outfit") && !previousOutfit) return null;
@@ -285,7 +286,7 @@ export function buildAuraAgentActionRequest({
     previousOutfit,
     outfitId: outfit?.outfitId,
     feedbackType,
-    selectedItemIds,
+    ...(feedbackSelectedItemIds.length ? { selectedItemIds: feedbackSelectedItemIds } : {}),
     useStyleMemory: true,
   };
 }
@@ -296,12 +297,14 @@ export function buildAuraAgentInitialRequest({
   previousAgentOutfit,
   previousAuraLook,
   selectedItemIds,
+  conversationContext,
 }: {
   prompt: string;
   chatIntent: AuraChatIntent;
   previousAgentOutfit?: AuraAgentOutfit | null;
   previousAuraLook?: AuraLook | null;
   selectedItemIds?: string[];
+  conversationContext?: AuraAgentConversationContext;
 }): AuraAgentRequest {
   const previousOutfit = previousAgentOutfit
     ? buildAgentPreviousOutfit(previousAgentOutfit)
@@ -333,6 +336,7 @@ export function buildAuraAgentInitialRequest({
       type: "feedback",
     }) ?? "like" : undefined,
     selectedItemIds,
+    conversationContext,
     useStyleMemory: true,
   };
 }

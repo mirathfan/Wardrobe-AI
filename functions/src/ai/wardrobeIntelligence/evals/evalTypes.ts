@@ -14,6 +14,7 @@ export type AuraEvalExpected = {
   avoidedSubcategories?: string[];
   avoidedStyleTags?: string[];
   mustIncludeItemNames?: string[];
+  mustIncludeItemIds?: string[];
   mustNotIncludeItemNames?: string[];
   expectedMode?: AuraStylingAgentMode;
   expectedCount?: number;
@@ -37,6 +38,8 @@ export type AuraEvalCase = {
   weather?: string;
   closetFixtureId: string;
   previousOutfitItemIds?: string[];
+  selectedItemIds?: string[];
+  avoidTerms?: string[];
   styleMemory?: {
     dislikedOutfitItemIds?: string[];
     dislikedStyleTags?: string[];
@@ -225,6 +228,8 @@ export function validateEvalCase(value: unknown): AuraEvalCase {
     ...(text(data.weather) ? { weather: text(data.weather) } : {}),
     closetFixtureId,
     previousOutfitItemIds: stringArray(data.previousOutfitItemIds),
+    selectedItemIds: stringArray(data.selectedItemIds),
+    avoidTerms: stringArray(data.avoidTerms),
     styleMemory: data.styleMemory && typeof data.styleMemory === "object" && !Array.isArray(data.styleMemory)
       ? {
         dislikedOutfitItemIds: stringArray((data.styleMemory as Record<string, unknown>).dislikedOutfitItemIds),
@@ -240,6 +245,7 @@ export function validateEvalCase(value: unknown): AuraEvalCase {
       avoidedSubcategories: stringArray(expected.avoidedSubcategories),
       avoidedStyleTags: stringArray(expected.avoidedStyleTags),
       mustIncludeItemNames: stringArray(expected.mustIncludeItemNames),
+      mustIncludeItemIds: stringArray(expected.mustIncludeItemIds),
       mustNotIncludeItemNames: stringArray(expected.mustNotIncludeItemNames),
       ...(text(expected.expectedMode) ? { expectedMode: text(expected.expectedMode) as AuraStylingAgentMode } : {}),
       ...(Number.isFinite(Number(expected.expectedCount)) ? { expectedCount: Number(expected.expectedCount) } : {}),

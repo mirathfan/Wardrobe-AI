@@ -78,6 +78,68 @@ function cleanText(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function previousOutfitField(state: AuraStylingAgentState, field: string): string {
+  const previous = state.request.previousOutfit;
+  if (!previous || typeof previous !== "object" || Array.isArray(previous)) return "";
+  return cleanText((previous as Record<string, unknown>)[field]);
+}
+
+function selectedOutfitContext(state: AuraStylingAgentState): string {
+  const context = state.request.conversationContext;
+  if (!context) return "";
+  const selectedId = cleanText(context.selectedOutfitId);
+  const selectedRef = selectedId
+    ? context.priorOutfitRefs.find((entry) => entry.outfitId === selectedId)
+    : undefined;
+  const refs = [
+    selectedRef ? `Selected outfit: ${[
+      selectedRef.index ? `outfit ${selectedRef.index}` : "",
+      selectedRef.title,
+      selectedRef.occasion ? `occasion ${selectedRef.occasion}` : "",
+      selectedRef.formality ? `formality ${selectedRef.formality}` : "",
+      selectedRef.vibe ? `vibe ${selectedRef.vibe}` : "",
+      selectedRef.itemIds.length ? `itemIds ${selectedRef.itemIds.join(", ")}` : "",
+      selectedRef.summary,
+    ].filter(Boolean).join("; ")}` : "",
+    context.priorOutfitRefs.length
+      ? `Recent outfit cards: ${context.priorOutfitRefs
+        .slice(-4)
+        .map((entry) => [
+          entry.index ? `outfit ${entry.index}` : entry.outfitId,
+          entry.title,
+          entry.itemIds.length ? `items ${entry.itemIds.join(", ")}` : "",
+        ].filter(Boolean).join(" - "))
+        .filter(Boolean)
+        .join(" | ")}`
+      : "",
+    context.feedbackSignals.length ? `Recent feedback: ${context.feedbackSignals.slice(-6).join(" | ")}` : "",
+  ].filter(Boolean);
+  return refs.join(" ");
+}
+
+function selectedOutfitField(state: AuraStylingAgentState, field: "occasion" | "formality" | "vibe"): string {
+  const context = state.request.conversationContext;
+  const selectedId = cleanText(context?.selectedOutfitId);
+  const selectedRef = selectedId
+    ? context?.priorOutfitRefs.find((entry) => entry.outfitId === selectedId)
+    : undefined;
+  return cleanText(selectedRef?.[field]);
+}
+
+function recentTurnContext(state: AuraStylingAgentState): string {
+  const turns = state.request.conversationContext?.recentTurns ?? [];
+  if (!turns.length) return "";
+  return turns
+    .slice(-6)
+    .map((turn) => `${turn.role}: ${cleanText(turn.text).slice(0, 600)}`)
+    .join(" | ");
+}
+
+function nonAnyFormality(value: unknown): string {
+  const text = cleanText(value);
+  return text && text !== "any" ? text : "";
+}
+
 function errorMessage(error: unknown): string {
   const candidate = error as AuraAgentErrorLike;
   return typeof candidate?.message === "string" ? candidate.message : String(error);
@@ -118,11 +180,16 @@ function agentOutfitQuery(state: AuraStylingAgentState): string {
   const intent = state.intent;
   const requestQuery = cleanText(state.request.query);
   const base = requestQuery || intent?.query || "closet outfit";
-  if (intent?.mode !== "refine_outfit") return base;
+  const context = [
+    selectedOutfitContext(state),
+    recentTurnContext(state),
+  ].filter(Boolean).join(" ");
+  const contextSuffix = context ? ` Recent chat/card context: ${context}` : "";
+  if (intent?.mode !== "refine_outfit") return `${base}.${contextSuffix}`.trim();
   const avoid = intent.constraints.avoidItemIds.length
     ? ` Avoid these previous item IDs when possible: ${intent.constraints.avoidItemIds.join(", ")}.`
     : "";
-  return `${base}. Refinement request: ${intent.constraints.refinementInstruction ?? base}.${avoid}`;
+  return `${base}. Refinement request: ${intent.constraints.refinementInstruction ?? base}.${avoid}${contextSuffix}`;
 }
 
 function outfitInputFromState(state: AuraStylingAgentState): NormalizedOutfitGenerationInput {
@@ -130,12 +197,22 @@ function outfitInputFromState(state: AuraStylingAgentState): NormalizedOutfitGen
   return normalizeOutfitGenerationInput({
     query: agentOutfitQuery(state),
     count: resolveRequestedOutfitCount(state.request),
-    occasion: state.request.occasion || state.intent.constraints.occasion,
+    occasion: state.request.occasion ||
+      state.intent.constraints.occasion ||
+      previousOutfitField(state, "occasion") ||
+      selectedOutfitField(state, "occasion"),
     weather: state.request.weather || state.intent.constraints.weather,
-    formality: state.request.formality || state.intent.constraints.formality,
+    formality: nonAnyFormality(state.request.formality) ||
+      nonAnyFormality(state.intent.constraints.formality) ||
+      nonAnyFormality(previousOutfitField(state, "formality")) ||
+      nonAnyFormality(selectedOutfitField(state, "formality")) ||
+      state.intent.constraints.formality,
     preferredColors: state.intent.constraints.preferredColors,
     requiredColors: state.intent.constraints.requiredColors,
     requiredCategories: state.intent.constraints.requiredCategories,
+    requiredItemIds: state.intent.constraints.selectedItemIds,
+    avoidItemIds: state.intent.constraints.avoidItemIds,
+    avoidTerms: state.intent.constraints.avoidTerms,
     includeDiagnostics: state.request.includeDiagnostics === true,
     useStyleMemory: state.request.useStyleMemory !== false,
   });

@@ -11,7 +11,7 @@ import {
 
 import { Fonts, type AppColors } from "@/constants/theme";
 import AuraAgentActionRail from "@/src/components/aura/AuraAgentActionRail";
-import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
+import AuraOutfitVisualCard from "@/src/components/aura/AuraOutfitVisualCard";
 import AuraPressable from "@/src/components/aura/AuraPressable";
 import AppImage from "@/src/components/common/AppImage";
 import {
@@ -32,6 +32,7 @@ import type {
 
 const MAX_EXPLANATION_LENGTH = 160;
 const AGENT_OUTFIT_CARD_SIDE_MARGIN = 12;
+const SHOW_AURA_AGENT_DEV_UI = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 
 export function getAgentOutfitCardWidth(
   screenWidth: number,
@@ -364,7 +365,7 @@ function DevDetails({
   outfit: AuraAgentOutfit;
 }) {
   const [open, setOpen] = useState(false);
-  if (!__DEV__) return null;
+  if (!SHOW_AURA_AGENT_DEV_UI) return null;
   if (outfit.confidence == null && !outfit.scoreBreakdown) return null;
 
   return (
@@ -476,12 +477,10 @@ export default function AuraAgentOldStyleOutfitCard({
       >
         <View style={styles.visualWrap}>
           <View testID="aura-agent-old-style-visual-card">
-            <AuraLookCard
+            <AuraOutfitVisualCard
               look={model.look}
               colors={colors}
-              hideActions
-              compact={compact}
-              boardVariant="chat"
+              mode={compact ? "medium" : "full"}
               viewportWidth={cardWidth}
               titleAccessory={showSelectedPill ? <SelectedPill colors={colors} /> : null}
               style={[

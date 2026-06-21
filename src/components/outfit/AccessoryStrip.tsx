@@ -93,8 +93,8 @@ const styles = StyleSheet.create({
   wrapper: {
     alignItems: "flex-end",
     position: "absolute",
-    right: "6%",
-    top: "5%",
+    right: "1.5%",
+    top: "2%",
     zIndex: 90,
   },
   strip: {
@@ -115,8 +115,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 4,
     justifyContent: "center",
-    minHeight: 44,
-    minWidth: 44,
+    minHeight: 36,
+    minWidth: 36,
     paddingHorizontal: 2,
   },
   defaultPill: {
@@ -126,8 +126,8 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   thumb: {
-    height: 36,
-    width: 36,
+    height: 30,
+    width: 30,
   },
   beltPill: {
     minHeight: 54,

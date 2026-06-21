@@ -79,6 +79,19 @@ export const AURA_EVAL_CLOSET_FIXTURES: AuraEvalClosetFixture[] = [
         embeddingText: "black straight jeans casual streetwear clean bottom",
       },
       {
+        id: "eval-black-cargos",
+        name: "Black Cargo Pants",
+        category: "bottom",
+        subcategory: "cargos",
+        colors: ["black"],
+        styleTags: ["streetwear", "casual", "utility"],
+        occasionTags: ["casual", "streetwear", "date"],
+        formality: 2,
+        material: "cotton twill",
+        fit: "relaxed",
+        embeddingText: "black cargo pants relaxed utility streetwear casual bottom",
+      },
+      {
         id: "eval-black-loafers",
         name: "Black Penny Loafers",
         category: "shoes",
@@ -527,6 +540,8 @@ export function buildEvalOutfitInput(evalCase: AuraEvalCase): NormalizedOutfitGe
     occasion: evalCase.occasion,
     weather: evalCase.weather,
     formality: evalCase.formality,
+    selectedItemIds: evalCase.selectedItemIds,
+    avoidTerms: evalCase.avoidTerms,
     includeDiagnostics: true,
     useStyleMemory: Boolean(evalCase.styleMemory),
   });

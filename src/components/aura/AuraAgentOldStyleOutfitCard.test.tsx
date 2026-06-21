@@ -67,15 +67,18 @@ jest.mock("@/src/components/aura/AuraLookCard", () => {
   return {
     AuraLookCard: ({
       look,
+      boardVariant,
       titleAccessory,
     }: {
       look: { lookTitle: string; pieces: { itemName: string }[] };
+      boardVariant?: string;
       titleAccessory?: React.ReactNode;
     }) =>
       React.createElement(
         View,
         { testID: "mock-old-aura-look-card" },
         React.createElement(Text, null, look.lookTitle),
+        boardVariant ? React.createElement(Text, null, `board:${boardVariant}`) : null,
         titleAccessory,
         look.pieces.map((piece) => React.createElement(Text, { key: piece.itemName }, piece.itemName)),
       ),
@@ -167,6 +170,7 @@ const agentResponse: AuraAgentResponse = {
       styleHints: [],
       avoidItemIds: [],
       avoidCategories: [],
+      avoidTerms: [],
       selectedItemIds: [],
     },
   },
@@ -204,6 +208,7 @@ describe("AuraAgentOldStyleOutfitCard", () => {
     expect(getByTestId("aura-agent-old-style-visual-card")).toBeTruthy();
     expect(getByTestId("mock-old-aura-look-card")).toBeTruthy();
     expect(getByText("Polished Office Black Loafers")).toBeTruthy();
+    expect(getByText("board:chat")).toBeTruthy();
   });
 
   it("maps agent outfit items to old Aura look pieces without raw ids", () => {
@@ -312,6 +317,34 @@ describe("AuraAgentOldStyleOutfitCard", () => {
 
     expect(serialized).not.toContain("scoreBreakdown");
     expect(serialized).not.toContain("debug-only");
+  });
+
+  it("does not show dev details by default", () => {
+    const { queryByText } = render(
+      <AuraAgentOldStyleOutfitCard
+        colors={Colors.dark}
+        outfit={outfit}
+      />,
+    );
+
+    expect(queryByText("Dev details")).toBeNull();
+  });
+
+  it("does not show agent diagnostics by default", () => {
+    const { queryByText } = render(
+      <AuraAgentMessage
+        colors={Colors.dark}
+        response={{
+          ...agentResponse,
+          diagnostics: {
+            graphRunId: "debug-run",
+            runner: "langgraph",
+          },
+        }}
+      />,
+    );
+
+    expect(queryByText("Dev details")).toBeNull();
   });
 
   it("targets a near full-width agent card with safe side margins", () => {

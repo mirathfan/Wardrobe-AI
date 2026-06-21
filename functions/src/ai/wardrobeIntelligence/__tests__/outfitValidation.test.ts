@@ -164,6 +164,58 @@ describe("validateGeneratedOutfits", () => {
     expect(result.errors.join(" ")).toContain("duplicate itemId");
   });
 
+  it("requires selected item IDs in every generated outfit", () => {
+    const result = validateGeneratedOutfits([
+      outfit([
+        { itemId: "shirt", role: "top", reason: "" },
+        { itemId: "trousers", role: "bottom", reason: "" },
+        { itemId: "loafers", role: "footwear", reason: "" },
+      ]),
+    ], context(), normalizeOutfitGenerationInput({
+      query: "style these pants",
+      requiredItemIds: ["trousers"],
+    }));
+
+    expect(result.valid).toBe(true);
+
+    const missing = validateGeneratedOutfits([
+      outfit([
+        { itemId: "shirt", role: "top", reason: "" },
+        { itemId: "loafers", role: "footwear", reason: "" },
+      ]),
+    ], context(), normalizeOutfitGenerationInput({
+      query: "style these pants",
+      requiredItemIds: ["trousers"],
+    }));
+
+    expect(missing.valid).toBe(false);
+    expect(missing.errors.join(" ")).toContain("missing required selected itemId trousers");
+  });
+
+  it("rejects explicit avoided item IDs and avoided terms", () => {
+    const sandalContext = context({
+      footwear: [
+        candidate("sandals", "footwear", "Black leather sandals", 1, 0.9),
+        candidate("loafers", "footwear", "DRESS PENNY LOAFERS", 4, 0.95),
+      ],
+    });
+    const result = validateGeneratedOutfits([
+      outfit([
+        { itemId: "shirt", role: "top", reason: "" },
+        { itemId: "trousers", role: "bottom", reason: "" },
+        { itemId: "sandals", role: "footwear", reason: "" },
+      ]),
+    ], sandalContext, normalizeOutfitGenerationInput({
+      query: "date outfit don't use sandals",
+      avoidItemIds: ["shirt"],
+      avoidTerms: ["sandals"],
+    }));
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(" ")).toContain("used explicitly avoided itemId shirt");
+    expect(result.errors.join(" ")).toContain("matched avoided term sandals");
+  });
+
   it("rejects office tank top without a layer", () => {
     const ctx = context({ top: [candidate("tank", "top", "Black tank top", 1, 0.92)] });
     const result = validateGeneratedOutfits([

@@ -6,6 +6,7 @@ Use this checklist before shipping AURA agent changes. It focuses on reliability
 
 - User sends a styling prompt from the AURA chat screen.
 - `EXPO_PUBLIC_AURA_AGENT_ENABLED` is checked before the agent route is used.
+- EAS `preview` and `production` build profiles set `EXPO_PUBLIC_AURA_AGENT_ENABLED=1` at build time.
 - `runAuraStylingAgentClient` calls `runAuraStylingAgent` in `us-central1`.
 - Agent responses are sanitized before rendering, Firestore persistence, and local cache persistence.
 - Outfit cards render with one outfit and multiple outfits.
@@ -25,6 +26,7 @@ Use this checklist before shipping AURA agent changes. It focuses on reliability
 - Duplicate action taps are blocked while an action is pending.
 - User-facing failures avoid internal terms and use friendly copy.
 - Dev logs for the hardened agent route use `[AURA_HARDENING]`.
+- Route decision logs use `[AURA_AGENT_ROUTE]` and render-source logs use `[AURA_AGENT_RENDER]`.
 
 ## Feature Flags And Fallback
 
@@ -35,6 +37,8 @@ EXPO_PUBLIC_AURA_AGENT_ENABLED=0
 ```
 
 Then restart Expo or rebuild the app environment. With the flag off, AURA should use the older fallback styling flow and must not call `runAuraStylingAgent`.
+
+For TestFlight, rebuild after changing this flag because `EXPO_PUBLIC_*` values are embedded in the native bundle at build time.
 
 Backend internal fallback:
 

@@ -19,6 +19,7 @@ import {
   saveAuraChatSessionMeta,
   saveLatestChatCache,
 } from "@/src/lib/localChatCache";
+import { markAuraMessagesDebugSource } from "@/src/lib/auraMessageDebugSource";
 
 type UseAuraChatHydrationOptions = {
   uid: string | null;
@@ -137,7 +138,7 @@ export function useAuraChatHydration({
           consumedChatTokens.current.add(`${routeChatKey}:${routeChatId}`);
           const cachedMessages = await getCachedRecentMessages(uid, routeChatId);
           if (!cancelled && cachedMessages?.data?.length) {
-            setMessages(recoverStaleStreamingMessages(cachedMessages.data));
+            setMessages(recoverStaleStreamingMessages(markAuraMessagesDebugSource(cachedMessages.data, "cached")));
             setActiveChatId(routeChatId);
             setIsBooting(false);
           }
@@ -164,7 +165,7 @@ export function useAuraChatHydration({
           let renderedCachedMessages = false;
           const cachedMessages = await getCachedRecentMessages(uid, session.chatId);
           if (!cancelled && cachedMessages?.data?.length) {
-            setMessages(recoverStaleStreamingMessages(cachedMessages.data));
+            setMessages(recoverStaleStreamingMessages(markAuraMessagesDebugSource(cachedMessages.data, "cached")));
             setActiveChatId(session.chatId);
             setIsBooting(false);
             renderedCachedMessages = true;
@@ -173,7 +174,7 @@ export function useAuraChatHydration({
           if (!renderedCachedMessages) {
             const cachedLatest = await loadLatestChatCache<AIMessage>(uid);
             if (!cancelled && cachedLatest?.chatId === session.chatId && cachedLatest.messages.length) {
-              setMessages(recoverStaleStreamingMessages(cachedLatest.messages));
+              setMessages(recoverStaleStreamingMessages(markAuraMessagesDebugSource(cachedLatest.messages, "cached")));
               setActiveChatId(session.chatId);
               setIsBooting(false);
               renderedCachedMessages = true;
@@ -211,7 +212,9 @@ export function useAuraChatHydration({
             openedAt: cachedLatest.updatedAt ?? 0,
           })
         ) {
-          const orderedCachedMessages = recoverStaleStreamingMessages(cachedLatest.messages);
+          const orderedCachedMessages = recoverStaleStreamingMessages(
+            markAuraMessagesDebugSource(cachedLatest.messages, "cached"),
+          );
           if (!cancelled) {
             setMessages(orderedCachedMessages);
             setActiveChatId(cachedLatest.chatId);

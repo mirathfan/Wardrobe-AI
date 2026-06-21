@@ -57,6 +57,7 @@ export type AIMessage = {
   aura?: AuraResponse;
   agentResponse?: AuraAgentResponse;
   agentActionStates?: Record<string, AuraAgentOutfitActionState>;
+  debugSource?: "cached";
   createdAt: number;
   clientCreatedAt?: number;
   localSequence?: number;

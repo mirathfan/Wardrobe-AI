@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { buildPhotoHash } from "@/src/addItem/controllerShared";
 import {
   extractOutfitItems,
   outfitExtractionErrorMessage,
@@ -28,6 +29,15 @@ import {
   toOutfitLayoutDraft,
   uploadOutfitPhotoForExtraction,
 } from "@/src/lib/outfitExtraction";
+import {
+  EARLY_ACCESS_BACKEND_ERRORS,
+  EARLY_ACCESS_LIMITED_PREVIEW,
+  earlyAccessErrorCode,
+  earlyAccessErrorMessage,
+  earlyAccessFeatureLabel,
+  isEarlyAccessError,
+  useEarlyAccessFeature,
+} from "@/src/lib/earlyAccess";
 import { getFriendlyErrorMessage } from "@/src/lib/errors";
 import { runHaptic } from "@/src/lib/haptics";
 import { Toast } from "@/src/lib/toast";
@@ -54,6 +64,7 @@ type OutfitExtractionStatus =
 
 type PendingOutfitPhoto = {
   uri: string;
+  photoHash: string;
   width?: number;
   height?: number;
   fileName?: string;
@@ -164,6 +175,25 @@ function defaultSubcategoryFor(category: OutfitExtractionCategory) {
   return "shirt";
 }
 
+function showComingSoonPreview() {
+  Alert.alert(
+    EARLY_ACCESS_LIMITED_PREVIEW.title,
+    EARLY_ACCESS_LIMITED_PREVIEW.body,
+    [{ text: EARLY_ACCESS_LIMITED_PREVIEW.cta }],
+  );
+}
+
+function showEarlyAccessBackendError(error: unknown) {
+  const message = earlyAccessErrorMessage(error);
+  const title =
+    earlyAccessErrorCode(error) === EARLY_ACCESS_BACKEND_ERRORS.featureNotAvailable.code
+      ? EARLY_ACCESS_LIMITED_PREVIEW.title
+      : "Beta runs used";
+  Alert.alert(title, message || EARLY_ACCESS_BACKEND_ERRORS.limitReached.message, [
+    { text: EARLY_ACCESS_LIMITED_PREVIEW.cta },
+  ]);
+}
+
 export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
   uid,
 }: {
@@ -171,6 +201,7 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
 }) {
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
+  const outfitExtractionAccess = useEarlyAccessFeature(uid, "outfitExtraction");
   const extractionStartedRef = React.useRef(false);
   const [visible, setVisible] = React.useState(false);
   const [status, setStatus] = React.useState<OutfitExtractionStatus>("idle");
@@ -189,6 +220,7 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
     status === "separating" ||
     status === "cleaning" ||
     status === "saving";
+  const extractionAvailable = outfitExtractionAccess.allowed;
 
   React.useEffect(() => {
     if (status !== "understanding") return;
@@ -232,6 +264,16 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
       Alert.alert("Sign in required", "Please sign in before adding outfit pieces.");
       return;
     }
+    if (!outfitExtractionAccess.allowed) {
+      showComingSoonPreview();
+      return;
+    }
+    if (outfitExtractionAccess.remaining <= 0) {
+      showEarlyAccessBackendError({
+        details: EARLY_ACCESS_BACKEND_ERRORS.limitReached,
+      });
+      return;
+    }
     const permission =
       source === "camera"
         ? await ImagePicker.requestCameraPermissionsAsync()
@@ -263,6 +305,7 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
     setStatus("confirming");
     setPendingOutfitPhoto({
       uri: asset.uri,
+      photoHash: buildPhotoHash(asset),
       width: asset.width,
       height: asset.height,
       fileName: asset.fileName ?? undefined,
@@ -279,11 +322,21 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
       height: asset.height ?? null,
       hasFileName: !!asset.fileName,
     });
-  }, [uid]);
+  }, [outfitExtractionAccess.allowed, outfitExtractionAccess.remaining, uid]);
 
   const openOutfitPhotoSourceMenu = React.useCallback((replacing = false) => {
     if (!uid) {
       Alert.alert("Sign in required", "Please sign in before adding outfit pieces.");
+      return;
+    }
+    if (!outfitExtractionAccess.allowed) {
+      showComingSoonPreview();
+      return;
+    }
+    if (outfitExtractionAccess.remaining <= 0) {
+      showEarlyAccessBackendError({
+        details: EARLY_ACCESS_BACKEND_ERRORS.limitReached,
+      });
       return;
     }
     Alert.alert("Add from outfit photo", "Choose a full-body outfit photo.", [
@@ -297,11 +350,21 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
       },
       { text: "Cancel", style: "cancel" },
     ]);
-  }, [selectOutfitPhoto, uid]);
+  }, [outfitExtractionAccess.allowed, outfitExtractionAccess.remaining, selectOutfitPhoto, uid]);
 
   const confirmOutfitPhoto = React.useCallback(async () => {
     if (!uid || !pendingOutfitPhoto) return;
     if (extractionStartedRef.current) return;
+    if (!outfitExtractionAccess.allowed) {
+      showComingSoonPreview();
+      return;
+    }
+    if (outfitExtractionAccess.remaining <= 0) {
+      showEarlyAccessBackendError({
+        details: EARLY_ACCESS_BACKEND_ERRORS.limitReached,
+      });
+      return;
+    }
     extractionStartedRef.current = true;
 
     setStatus("uploading");
@@ -328,10 +391,11 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
       let nextDraft: OutfitExtractionDraft | null = null;
       try {
         const layoutResponse = await reconstructOutfitLayout({
-          imageUrl: uploaded.imageUrl,
-          storagePath: uploaded.storagePath,
-          traceId,
-        });
+        imageUrl: uploaded.imageUrl,
+        storagePath: uploaded.storagePath,
+        imageHash: pendingOutfitPhoto.photoHash,
+        traceId,
+      });
         if (layoutResponse.layoutItems.length) {
           nextDraft = toOutfitLayoutDraft({
             sourceImageUrl: uploaded.imageUrl,
@@ -353,6 +417,7 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
         const response = await extractOutfitItems({
           imageUrl: uploaded.imageUrl,
           storagePath: uploaded.storagePath,
+          imageHash: pendingOutfitPhoto.photoHash,
           traceId,
           qualityPreferences: {
             maxItems: 6,
@@ -376,13 +441,20 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
       setStatus("review");
       void runHaptic("success");
     } catch (error) {
+      if (isEarlyAccessError(error)) {
+        setVisible(false);
+        reset();
+        showEarlyAccessBackendError(error);
+        void runHaptic("warning");
+        return;
+      }
       setStatus("error");
       setErrorMessage(outfitExtractionErrorMessage(error));
       void runHaptic("error");
     } finally {
       extractionStartedRef.current = false;
     }
-  }, [pendingOutfitPhoto, uid]);
+  }, [outfitExtractionAccess.allowed, outfitExtractionAccess.remaining, pendingOutfitPhoto, reset, uid]);
 
   const saveSelected = React.useCallback(async () => {
     if (!uid || !draft) return;
@@ -499,6 +571,16 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
         );
         void runHaptic("success");
       } catch (error) {
+        if (isEarlyAccessError(error)) {
+          Toast.error(
+            earlyAccessErrorCode(error) === EARLY_ACCESS_BACKEND_ERRORS.featureNotAvailable.code
+              ? EARLY_ACCESS_LIMITED_PREVIEW.title
+              : "Beta runs used",
+            earlyAccessErrorMessage(error),
+          );
+          void runHaptic("warning");
+          return;
+        }
         setItems((current) =>
           current.map((currentItem) =>
             currentItem.tempId === item.tempId
@@ -562,10 +644,12 @@ export const OutfitExtractionEntry = React.memo(function OutfitExtractionEntry({
         </View>
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
           <Text style={{ color: colors.text, fontSize: 14.5, lineHeight: 19, fontWeight: "900" }}>
-            Add from outfit photo
+            {extractionAvailable ? "Outfit Photo Extraction" : EARLY_ACCESS_LIMITED_PREVIEW.title}
           </Text>
           <Text style={{ color: colors.textSecondary, fontSize: 12.5, lineHeight: 17 }} numberOfLines={2}>
-            Extract separate closet items from a mirror selfie or fit pic.
+            {extractionAvailable
+              ? earlyAccessFeatureLabel("outfitExtraction", outfitExtractionAccess.remaining)
+              : EARLY_ACCESS_LIMITED_PREVIEW.body}
           </Text>
         </View>
         <Ionicons name="chevron-forward" size={17} color={colors.textSecondary} />

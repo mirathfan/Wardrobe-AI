@@ -11,6 +11,9 @@
     "preview": {
       "credentialsSource": "local",
       "distribution": "store",
+      "env": {
+        "EXPO_PUBLIC_AURA_AGENT_ENABLED": "1"
+      },
       "environment": "production",
       "ios": {
         "resourceClass": "m-medium"
@@ -19,6 +22,9 @@
     "production": {
       "autoIncrement": true,
       "credentialsSource": "local",
+      "env": {
+        "EXPO_PUBLIC_AURA_AGENT_ENABLED": "1"
+      },
       "environment": "production",
       "ios": {
         "resourceClass": "m-medium"

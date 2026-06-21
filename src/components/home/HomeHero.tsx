@@ -1,5 +1,4 @@
 import { LinearGradient } from "expo-linear-gradient";
-import AppImage from "@/src/components/common/AppImage";
 import React, { useEffect } from "react";
 import { View } from "react-native";
 import Animated, {
@@ -14,32 +13,19 @@ import type { AppColors } from "@/constants/theme";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
 import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
-import {
-  buildHomeTodayLookPreviewLayout,
-  getHomeTodayLookImageFrame,
-  type HomeTodayLookSlot,
-  type HomeTodayLookTileLayout,
-} from "@/src/components/home/homeTodayLookLayout";
+import AuraOutfitVisualCard, { buildAuraLookFromDailyOutfit } from "@/src/components/aura/AuraOutfitVisualCard";
 import { homeTypography } from "@/src/components/home/homeTypography";
 import { AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { ACTION_GAP, HOME_CTA_HEIGHT, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { getItemImagePresentation } from "@/src/lib/itemImage";
-import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { DailyOutfitRecord } from "@/src/utils/dailyOutfits";
-
-type SlotKey = HomeTodayLookSlot;
 
 const HERO_SECTION_GAP = 16;
 const HERO_CARD_GAP = 12;
 const HERO_STACK_GAP = 10;
 const HERO_TIGHT_GAP = 8;
-
-function itemForSlot(record: DailyOutfitRecord | null, itemsById: Map<string, ClothingItem>, slot: SlotKey) {
-  const itemId = record?.plannedOutfit?.itemsByCategory?.[slot] ?? record?.wornOutfit?.itemsByCategory?.[slot] ?? null;
-  return itemId ? itemsById.get(itemId) ?? null : null;
-}
+const HOME_PREFERENCE_CHIP_COPY = "You lean toward light neutrals and casual-minimal fits.";
 
 function IridecentHeroLine({ colors }: { colors: AppColors }) {
   const reduceMotion = useReduceMotion();
@@ -118,79 +104,20 @@ export default function HomeHero({
   const layout = useResponsiveLayout();
   const hasPlan = !!record?.plannedOutfit;
   const hasWorn = !!record?.wornOutfit;
-  const slots: SlotKey[] = ["outerwear", "top", "bottom", "shoes"];
   const cardPadding = layout.screenSize === "compact" ? 14 : 16;
   const visibleGuidancePhrases = guidancePhrases.slice(0, 1);
   const canWearPlannedLook = hasPlan && !hasWorn && !!onWearToday;
   const primaryLabel = canWearPlannedLook ? "Wear this today" : "Style me today";
   const statusEyebrow = hasWorn ? "ON YOU TODAY" : hasPlan ? "PLANNED FOR TODAY" : "AURA READY";
   const title = hasWorn || hasPlan ? "Your outfit is ready." : "Ready when you are.";
+  const dailyLook = React.useMemo(
+    () => buildAuraLookFromDailyOutfit(record, itemsById),
+    [itemsById, record],
+  );
   const subtitle =
     hasWorn || hasPlan
       ? "Wear it, or ask AURA for a new direction when the mood changes."
       : "Start with one strong outfit built from what is wearable now.";
-
-  const previewSlots = slots
-    .map((slot) => ({ slot, item: itemForSlot(record, itemsById, slot) }))
-    .filter((entry) => !!entry.item);
-  const previewEntries = previewSlots.slice(0, 4);
-  const previewItemsBySlot = new Map(previewEntries.map((entry) => [entry.slot, entry.item]));
-  const previewLayout = buildHomeTodayLookPreviewLayout(
-    previewEntries.map((entry) => entry.slot),
-    layout.screenSize,
-  );
-  const renderPreviewTile = (tile: HomeTodayLookTileLayout, useRowFlex = true) => {
-    const item = previewItemsBySlot.get(tile.slot);
-    if (!item) return null;
-    const resolvedImage = resolveItemImage(item, { variant: "thumb", surface: "home_today" });
-    const imageUri = resolvedImage.uri;
-    const imagePresentation = getItemImagePresentation(item, {
-      surface: "home_today",
-    });
-    return (
-      <View
-        key={tile.slot}
-        style={{
-          ...(useRowFlex
-            ? {
-                flexBasis: tile.flexBasis,
-                flexGrow: tile.flexGrow,
-                flexShrink: 1,
-              }
-            : {
-                width: "100%",
-              }),
-          height: tile.height,
-          borderRadius: layout.mediumRadius,
-          backgroundColor: colors.boardLight,
-          borderWidth: 1,
-          borderColor: colors.borderWarm,
-          overflow: "hidden",
-          padding: HERO_TIGHT_GAP,
-        }}
-      >
-        <LinearGradient
-          pointerEvents="none"
-          colors={["rgba(255,255,255,0.10)", "rgba(251,228,216,0.00)", "rgba(17,16,20,0.05)"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={{ position: "absolute", inset: 0 }}
-        />
-        <View style={{ flex: 1, paddingHorizontal: 2, alignItems: "center", justifyContent: "center" }}>
-          {imageUri ? (
-            <AppImage
-              source={{
-                uri: imageUri,
-              }}
-              style={[tile.imageFrame ?? getHomeTodayLookImageFrame(tile.slot), imagePresentation.imageStyle]}
-              resizeMode="contain"
-              onError={() => logResolvedItemImageLoadFailure(resolvedImage)}
-            />
-          ) : null}
-        </View>
-      </View>
-    );
-  };
 
   return (
     <View style={{ gap: HERO_SECTION_GAP }}>
@@ -308,50 +235,13 @@ export default function HomeHero({
               ) : null}
             </View>
 
-            {hasPlan || hasWorn ? (
-              previewEntries.length ? (
-                <View
-                  style={{
-                    alignItems: "stretch",
-                    gap: previewLayout.gap,
-                  }}
-                >
-                  {previewLayout.kind === "splitColumns" ? (
-                    <View
-                      style={{
-                        alignItems: "stretch",
-                        flexDirection: "row",
-                        gap: previewLayout.gap,
-                      }}
-                    >
-                      {previewLayout.columns.map((column) => (
-                        <View
-                          key={column.key}
-                          style={{
-                            flex: column.flex,
-                            gap: previewLayout.gap,
-                          }}
-                        >
-                          {column.tiles.map((tile) => renderPreviewTile(tile, false))}
-                        </View>
-                      ))}
-                    </View>
-                  ) : (
-                    previewLayout.rows.map((row) => (
-                      <View
-                        key={row.key}
-                        style={{
-                          alignItems: row.alignItems,
-                          flexDirection: "row",
-                          gap: previewLayout.gap,
-                        }}
-                      >
-                        {row.tiles.map((tile) => renderPreviewTile(tile))}
-                      </View>
-                    ))
-                  )}
-                </View>
-              ) : null
+            {dailyLook ? (
+              <AuraOutfitVisualCard
+                colors={colors}
+                look={dailyLook}
+                mode="thumbnail"
+                viewportWidth={layout.width - layout.horizontalPadding * 2 - cardPadding * 2}
+              />
             ) : (
               <View style={{ gap: HERO_TIGHT_GAP }}>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: HERO_TIGHT_GAP }}>
@@ -392,7 +282,7 @@ export default function HomeHero({
                 }}
               >
                 <AuraText variant="caption" tone="secondary" style={homeTypography.caption} numberOfLines={1} ellipsizeMode="tail">
-                  {personalHint}
+                  {HOME_PREFERENCE_CHIP_COPY}
                 </AuraText>
               </View>
             ) : null}

@@ -3,6 +3,7 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
 import { app, db, storage } from "@/src/lib/firebase";
+import { earlyAccessErrorMessage, isEarlyAccessError } from "@/src/lib/earlyAccess";
 import { getFriendlyErrorMessage, isRateLimitError } from "@/src/lib/errors";
 import { optimizeImageForUpload } from "@/src/lib/imageOptimization";
 import { blobFromFileUri } from "@/src/lib/uploadImage";
@@ -25,6 +26,7 @@ type UploadOutfitPhotoParams = {
 type ExtractOutfitItemsParams = {
   imageUrl: string;
   storagePath: string;
+  imageHash?: string | null;
   traceId?: string | null;
   qualityPreferences?: {
     maxItems?: number;
@@ -47,6 +49,7 @@ type PolishExtractedAccessoryParams = {
 type ReconstructOutfitLayoutParams = {
   imageUrl: string;
   storagePath: string;
+  imageHash?: string | null;
   traceId?: string | null;
   detectedItems?: DetectedGarment[];
 };
@@ -243,6 +246,9 @@ export async function polishExtractedAccessory(params: PolishExtractedAccessoryP
 }
 
 export function outfitExtractionErrorMessage(error: unknown) {
+  if (isEarlyAccessError(error)) {
+    return earlyAccessErrorMessage(error);
+  }
   if (isRateLimitError(error)) {
     return getFriendlyErrorMessage(error);
   }

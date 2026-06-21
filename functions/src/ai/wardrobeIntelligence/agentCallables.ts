@@ -26,6 +26,68 @@ function stringArray(value: unknown): string[] | undefined {
   return result.length ? result : undefined;
 }
 
+function stringArrayCapped(value: unknown, limit: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of Array.isArray(value) ? value : []) {
+    const text = cleanText(entry).slice(0, 300);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function normalizeConversationContext(value: unknown): AuraStylingAgentRequest["conversationContext"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const recentTurns = Array.isArray(record.recentTurns)
+    ? record.recentTurns.flatMap((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const turn = entry as Record<string, unknown>;
+      const role = cleanText(turn.role).toLowerCase();
+      const text = cleanText(turn.text).slice(0, 1200);
+      if ((role !== "user" && role !== "assistant") || !text) return [];
+      return [{ role: role as "user" | "assistant", text }];
+    }).slice(-8)
+    : [];
+  const priorOutfitRefs = Array.isArray(record.priorOutfitRefs)
+    ? record.priorOutfitRefs.flatMap((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const outfit = entry as Record<string, unknown>;
+      const itemIds = stringArrayCapped(outfit.itemIds, 8);
+      const outfitId = cleanText(outfit.outfitId).slice(0, 180);
+      const title = cleanText(outfit.title).slice(0, 120);
+      if (!outfitId && !title && !itemIds.length) return [];
+      return [{
+        ...(outfitId ? { outfitId } : {}),
+        ...(cleanText(outfit.sourceMessageId) ? { sourceMessageId: cleanText(outfit.sourceMessageId).slice(0, 180) } : {}),
+        ...(Number.isFinite(Number(outfit.index)) ? { index: Number(outfit.index) } : {}),
+        ...(title ? { title } : {}),
+        ...(cleanText(outfit.occasion) ? { occasion: cleanText(outfit.occasion).slice(0, 80) } : {}),
+        ...(cleanText(outfit.formality) ? { formality: cleanText(outfit.formality).slice(0, 80) } : {}),
+        ...(cleanText(outfit.vibe) ? { vibe: cleanText(outfit.vibe).slice(0, 160) } : {}),
+        itemIds,
+        ...(cleanText(outfit.summary) ? { summary: cleanText(outfit.summary).slice(0, 700) } : {}),
+      }];
+    }).slice(-8)
+    : [];
+  const selectedOutfitId = cleanText(record.selectedOutfitId).slice(0, 180);
+  const selectedItemIds = stringArrayCapped(record.selectedItemIds, 12);
+  const feedbackSignals = stringArrayCapped(record.feedbackSignals, 12);
+  if (!recentTurns.length && !priorOutfitRefs.length && !selectedOutfitId && !selectedItemIds.length && !feedbackSignals.length) {
+    return undefined;
+  }
+  return {
+    recentTurns,
+    priorOutfitRefs,
+    ...(selectedOutfitId ? { selectedOutfitId } : {}),
+    selectedItemIds,
+    feedbackSignals,
+  };
+}
+
 function normalizeRequest(data: unknown): AuraStylingAgentRequest {
   const record = data && typeof data === "object" && !Array.isArray(data)
     ? data as Record<string, unknown>
@@ -49,6 +111,7 @@ function normalizeRequest(data: unknown): AuraStylingAgentRequest {
     outfitId: cleanText(record.outfitId) || undefined,
     feedbackType: cleanText(record.feedbackType) as AuraStylingAgentRequest["feedbackType"],
     selectedItemIds: stringArray(record.selectedItemIds),
+    conversationContext: normalizeConversationContext(record.conversationContext),
     note: cleanText(record.note) || undefined,
   };
 }

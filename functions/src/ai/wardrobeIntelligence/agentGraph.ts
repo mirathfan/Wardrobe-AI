@@ -1,5 +1,6 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { HttpsError } from "firebase-functions/v2/https";
+import { classifyAuraStylingAgentIntent } from "./agentIntent";
 import {
   buildAgentResponseNode,
   buildExplanationResponseNode,
@@ -13,6 +14,7 @@ import {
   retrieveStyleMemoryNode,
   type AuraAgentDeps,
 } from "./agentNodes";
+import { sanitizeAgentResponse } from "./agentResponse";
 import type {
   AuraAgentNodeName,
   AuraStylingAgentDiagnostics,
@@ -103,6 +105,69 @@ function diagnostics(runner: AuraStylingAgentDiagnostics["runner"]): AuraStyling
 function errorMessage(error: unknown): string {
   const candidate = error as { message?: unknown };
   return typeof candidate?.message === "string" ? candidate.message : String(error);
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((entry) => String(entry ?? "").trim()).filter(Boolean)
+    : [];
+}
+
+function errorDetails(error: unknown): Record<string, unknown> {
+  const details = error && typeof error === "object" ? (error as { details?: unknown }).details : undefined;
+  return details && typeof details === "object" && !Array.isArray(details)
+    ? details as Record<string, unknown>
+    : {};
+}
+
+function selectedItemConstraintMessage(error: unknown): string | null {
+  if (!(error instanceof HttpsError) || error.code !== "failed-precondition") return null;
+  const details = errorDetails(error);
+  const missing = stringList(details.missingRequiredItemIds);
+  const unavailable = stringList(details.unavailableRequiredItemIds);
+  const incompatible = stringList(details.incompatibleRequiredItemIds);
+  const failed = stringList(details.failedRequiredItemIds);
+  const validationErrors = stringList(details.validationErrors);
+  const combined = `${error.message} ${validationErrors.join(" ")}`;
+  if (!missing.length && !unavailable.length && !incompatible.length && !failed.length && !/required selected item|selected closet item/i.test(combined)) {
+    return null;
+  }
+  if (missing.length || unavailable.length || incompatible.length || failed.length) {
+    return "I can't use one of those selected closet items because it is missing, deleted, still processing, or missing category data. Pick another ready closet item and I can style it.";
+  }
+  return "I couldn't build a valid outfit that included the selected closet item, so I did not return a look that ignores it. Try another item or loosen the request.";
+}
+
+function selectedItemConstraintResponse(
+  request: AuraStylingAgentRequest,
+  error: unknown,
+): AuraStylingAgentResponse | null {
+  const message = selectedItemConstraintMessage(error);
+  if (!message) return null;
+  const intent = classifyAuraStylingAgentIntent(request);
+  const baseDiagnostics = diagnostics(shouldUseLangGraph() ? "langgraph" : "controlled-internal-graph");
+  return sanitizeAgentResponse({
+    mode: intent.mode,
+    intent,
+    message,
+    suggestedActions: [
+      {
+        id: "try-another-item",
+        label: "Try another item",
+        type: "generate" as const,
+        payload: { mode: "generate_outfit" },
+      },
+    ],
+    ...(request.includeDiagnostics ? {
+      diagnostics: {
+        ...baseDiagnostics,
+        mode: intent.mode,
+        steps: ["classify_intent"],
+        nodesExecuted: ["classify_intent"],
+        errors: [errorMessage(error)],
+      },
+    } : {}),
+  });
 }
 
 function appendNodeDiagnostics(
@@ -332,11 +397,19 @@ export async function runAuraStylingAgentGraph(
   deps: AuraAgentDeps = {},
 ): Promise<AuraStylingAgentResponse> {
   if (!shouldUseLangGraph()) {
-    return runAuraStylingAgentInternalGraph(uid, request, deps);
+    try {
+      return await runAuraStylingAgentInternalGraph(uid, request, deps);
+    } catch (error) {
+      const selectedItemResponse = selectedItemConstraintResponse(request, error);
+      if (selectedItemResponse) return selectedItemResponse;
+      throw error;
+    }
   }
   try {
     return await runAuraStylingAgentLangGraph(uid, request, deps);
   } catch (error) {
+    const selectedItemResponse = selectedItemConstraintResponse(request, error);
+    if (selectedItemResponse) return selectedItemResponse;
     if (error instanceof HttpsError) throw error;
     throw new HttpsError("internal", `AURA LangGraph styling agent failed: ${errorMessage(error)}`);
   }

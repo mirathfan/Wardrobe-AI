@@ -87,6 +87,7 @@ function isPreferred(evalCase: AuraEvalCase, item: WardrobeRetrievalResult | Val
   const role = roleFromCategory("role" in item ? item.role : item.category);
   return (
     evalCase.expected.requiredRoles.includes(role as OutfitRole) ||
+    (evalCase.expected.mustIncludeItemIds ?? []).includes("itemId" in item ? item.itemId : "") ||
     matchesAny(text, evalCase.expected.preferredCategories) ||
     matchesAny(text, evalCase.expected.preferredSubcategories) ||
     matchesAny(text, evalCase.expected.preferredColors) ||
@@ -258,6 +259,9 @@ export function evaluateGeneratedOutfits(args: {
     ? average(args.outfits.map((outfit) => completeOutfitRoles(outfit.items) ? 1 : 0))
     : 0;
   const forbiddenItemViolations = countForbiddenViolations(args.evalCase, allItems);
+  const includedItemIds = new Set(allItems.map((item) => item.itemId));
+  const missingRequiredItemIds = (args.evalCase.expected.mustIncludeItemIds ?? [])
+    .filter((itemId) => !includedItemIds.has(itemId));
   const occasionFitHeuristic = args.outfits.length
     ? average(args.outfits.map((outfit) => heuristicOccasionFit(args.evalCase, outfit)))
     : 0;
@@ -290,6 +294,7 @@ export function evaluateGeneratedOutfits(args: {
     ...(hiddenDraftItemCount > 0 ? [`${hiddenDraftItemCount} hidden/draft item id(s) selected`] : []),
     ...(!gracefulFailure && requiredRoleCoverage < 1 ? [`Required role coverage ${requiredRoleCoverage} is incomplete`] : []),
     ...(!gracefulFailure && categoryCompleteness < 1 ? ["Missing top+bottom+footwear or one_piece+footwear"] : []),
+    ...(missingRequiredItemIds.length ? [`Missing required selected item id(s): ${missingRequiredItemIds.join(", ")}`] : []),
     ...(forbiddenItemViolations > 0 ? [`${forbiddenItemViolations} forbidden outfit item violation(s)`] : []),
     ...(!gracefulFailure && occasionFitHeuristic < 0.55 ? [`Occasion fit ${occasionFitHeuristic} is below threshold`] : []),
     ...(args.evalCase.expected.expectedNoExactDuplicateOutfits && duplicateExactOutfitCount > 0 ? [`${duplicateExactOutfitCount} exact duplicate outfit(s)`] : []),

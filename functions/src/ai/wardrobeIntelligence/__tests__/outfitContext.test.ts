@@ -2,6 +2,7 @@ import {
   buildOutfitRetrievalPlan,
   canonicalizeOutfitCandidateBuckets,
   normalizeOutfitGenerationInput,
+  retrieveOutfitGenerationContext,
 } from "../outfitContext";
 import { canonicalizeOutfitRole } from "../outfitRole";
 import type {
@@ -165,6 +166,35 @@ describe("buildOutfitRetrievalPlan", () => {
     expect(plan.categoryQueries.top).toContain("hoodie");
     expect(plan.categoryQueries.bottom).toContain("cargos");
     expect(plan.categoryQueries.footwear).toContain("statement sneakers");
+  });
+
+  it("normalizes selected item IDs as required hard anchors", () => {
+    const input = normalizeOutfitGenerationInput({
+      query: "style these pants",
+      selectedItemIds: ["pants-1", "pants-1", "shoe-1"],
+      avoidTerms: ["sandals"],
+    });
+
+    expect(input.requiredItemIds).toEqual(["pants-1", "shoe-1"]);
+    expect(input.avoidTerms).toEqual(["sandals"]);
+  });
+
+  it("injects required selected candidates into retrieval buckets", async () => {
+    const requiredBottom = candidate("black-cargos", "bottom", "Black cargos", 1);
+    const context = await retrieveOutfitGenerationContext("uid", {
+      query: "style the pants I just added",
+      selectedItemIds: ["black-cargos"],
+    }, {
+      retrieveRoleCandidates: async ({ role }) => {
+        if (role === "top") return [candidate("shirt", "top", "White shirt")];
+        if (role === "footwear") return [candidate("loafers", "footwear", "Black loafers")];
+        return [];
+      },
+      retrieveRequiredItemCandidates: async () => ({ candidates: [requiredBottom] }),
+    });
+
+    expect(context.candidates.bottom.map((item) => item.itemId)).toContain("black-cargos");
+    expect(context.diagnostics.candidateCounts.bottom).toBe(1);
   });
 });
 

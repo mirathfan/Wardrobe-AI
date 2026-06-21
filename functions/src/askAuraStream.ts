@@ -1200,7 +1200,7 @@ export const askAuraStream = onRequest(
           uriHost: safeUrlHost(attachment.uri),
         })),
       });
-      const history = Array.isArray(req.body?.history)
+      const history: { role: "user" | "assistant"; text: string }[] = Array.isArray(req.body?.history)
         ? req.body.history
             .map((entry: unknown) => {
               if (!entry || typeof entry !== "object") return null;
@@ -1219,8 +1219,13 @@ export const askAuraStream = onRequest(
               (entry: { role: "user" | "assistant"; text: string } | null): entry is { role: "user" | "assistant"; text: string } =>
                 !!entry
             )
-            .slice(-8)
+            .slice(-12)
         : [];
+      logger.info("[AURA_CONTEXT] stream conversation context parsed", {
+        uidHash,
+        historyCount: history.length,
+        historyRoles: history.map((entry) => entry.role),
+      });
 
       if (!userMessage && attachments.length === 0) {
         res.status(400).json({ error: "Message or attachment is required." });

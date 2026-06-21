@@ -6,6 +6,7 @@ import { SectionCard } from "../ui/SectionCard";
 import { AddItemPhotoCarousel } from "./AddItemPhotoCarousel";
 import { OutfitExtractionEntry } from "./OutfitExtractionEntry";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { earlyAccessFeatureLabel } from "@/src/lib/earlyAccess";
 
 export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
   controller,
@@ -125,6 +126,22 @@ export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
               "original"
             }
             productPolishWarning={state.studioSourceWarning}
+            productPolishError={state.productPolishError}
+            productPolishActionState={
+              state.isEdit || !state.aiPolishEarlyAccess || state.aiPolishEarlyAccess.loading
+                ? "hidden"
+                : state.aiPolishEarlyAccess.allowed
+                  ? "available"
+                  : "unavailable"
+            }
+            productPolishActionHelper={
+              state.aiPolishEarlyAccess
+                ? earlyAccessFeatureLabel("aiPolish", state.aiPolishEarlyAccess.remaining)
+                : null
+            }
+            productPolishActionDisabled={
+              state.productPolishStatus !== "idle" || state.refiningCutout
+            }
             showPendingNote={
               !!state.pendingPhotoUri &&
               !state.uploadingPhoto &&
@@ -146,6 +163,7 @@ export const AddItemPhotoPanel = React.memo(function AddItemPhotoPanel({
             onUseOriginal={actions.useOriginalPhoto}
             onUseOriginalProduct={actions.useOriginalProductPhoto}
             onUsePolishedProduct={actions.usePolishedProductPhoto}
+            onPolishProduct={() => void actions.polishProductPhoto()}
             onRerunCutout={() => void actions.retryBackgroundRemoval()}
             onReplace={() => void actions.pickPhoto("library")}
             onRefineOpen={() => {}}

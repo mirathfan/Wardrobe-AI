@@ -35,6 +35,10 @@ type PhotoEditorSectionProps = {
   productPolishPolishedUri?: string | null;
   productPolishActiveVariant?: "original" | "polished";
   productPolishWarning?: string | null;
+  productPolishError?: string | null;
+  productPolishActionState?: "hidden" | "available" | "unavailable";
+  productPolishActionHelper?: string | null;
+  productPolishActionDisabled?: boolean;
   showPendingNote: boolean;
   onPickLibrary: () => void;
   onUseCamera: () => void;
@@ -42,6 +46,7 @@ type PhotoEditorSectionProps = {
   onUseOriginal?: () => void;
   onUseOriginalProduct?: () => void;
   onUsePolishedProduct?: () => void;
+  onPolishProduct?: () => void;
   onRerunCutout?: () => void;
   onReplace?: () => void;
   onRotate?: () => void;
@@ -251,6 +256,10 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     productPolishPolishedUri = null,
     productPolishActiveVariant = "original",
     productPolishWarning = null,
+    productPolishError = null,
+    productPolishActionState = "hidden",
+    productPolishActionHelper = null,
+    productPolishActionDisabled = false,
     showPendingNote,
     onPickLibrary,
     onUseCamera,
@@ -258,6 +267,7 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
     onUseOriginal,
     onUseOriginalProduct,
     onUsePolishedProduct,
+    onPolishProduct,
     onRerunCutout,
     onReplace,
     onRotate,
@@ -557,6 +567,64 @@ export function PhotoEditorSection(props: PhotoEditorSectionProps) {
             </Pressable>
           </View>
         )}
+
+        {displayedPreviewUri &&
+        !canShowProductPolishChoice &&
+        productPolishActionState !== "hidden" ? (
+          <View
+            style={{
+              gap: 8,
+              padding: 12,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: "rgba(251,228,216,0.12)",
+              backgroundColor: "rgba(43,18,76,0.22)",
+            }}
+          >
+            {productPolishActionState === "available" ? (
+              <>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                    <Text style={{ color: colors.text, fontSize: 13, fontWeight: "900" }}>
+                      Image polish
+                    </Text>
+                    {productPolishActionHelper ? (
+                      <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16 }}>
+                        {productPolishActionHelper}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Pressable
+                    onPress={onPolishProduct}
+                    disabled={productPolishActionDisabled || !onPolishProduct}
+                    style={[
+                      themedPrimaryEditorButton,
+                      {
+                        minHeight: 38,
+                        paddingHorizontal: 14,
+                        opacity: productPolishActionDisabled || !onPolishProduct ? 0.55 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={themedPrimaryEditorButtonText}>Polish image</Text>
+                  </Pressable>
+                </View>
+                {productPolishError ? (
+                  <Text style={{ color: colors.warning, fontSize: 11.5, lineHeight: 16, fontWeight: "700" }}>
+                    {productPolishError}
+                  </Text>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Text style={{ color: colors.text, fontSize: 13, fontWeight: "900" }}>Coming soon</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16 }}>
+                  We’re fine-tuning image polish for Early Access.
+                </Text>
+              </>
+            )}
+          </View>
+        ) : null}
 
         {canShowProductPolishChoice ? (
           <View

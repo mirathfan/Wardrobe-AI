@@ -44,6 +44,8 @@ describe("aura agent action helpers", () => {
   it("extracts requested outfit counts from natural language prompts", () => {
     expect(extractRequestedOutfitCount("give me 3 outfits for office")).toBe(3);
     expect(extractRequestedOutfitCount("Give me 3 outfits for a date")).toBe(3);
+    expect(extractRequestedOutfitCount("give me 3 more")).toBe(3);
+    expect(extractRequestedOutfitCount("give me a few more")).toBe(3);
     expect(extractRequestedOutfitCount("show me three looks")).toBe(3);
     expect(extractRequestedOutfitCount("give me two options")).toBe(2);
     expect(extractRequestedOutfitCount("a couple outfits for dinner")).toBe(2);
@@ -81,6 +83,25 @@ describe("aura agent action helpers", () => {
     ).toBe(false);
   });
 
+  it("routes common styling prompts to the agent when the feature flag is enabled", () => {
+    for (const prompt of [
+      "Style me today",
+      "give me outfit",
+      "office outfit",
+      "date outfit",
+      "Give me 3 outfits for a date",
+    ]) {
+      expect(
+        shouldRouteToAuraStylingAgent({
+          enabled: true,
+          prompt,
+          attachmentCount: 0,
+          chatIntent: "GENERATE_OUTFIT",
+        }),
+      ).toBe(true);
+    }
+  });
+
   it("builds a refine request with previous outfit context", () => {
     const action: AuraAgentSuggestedAction = {
       id: "refine-less-formal",
@@ -93,8 +114,8 @@ describe("aura agent action helpers", () => {
       mode: "refine_outfit",
       query: "make it less formal",
       outfitId: "outfit-1",
-      selectedItemIds: ["shirt-1", "shoe-1"],
     });
+    expect(request?.selectedItemIds).toBeUndefined();
     expect(request?.previousOutfit).toMatchObject({
       outfitId: "outfit-1",
       title: "Office neutrals",
@@ -196,8 +217,8 @@ describe("aura agent action helpers", () => {
       mode: "refine_outfit",
       query: "Different shoes",
       outfitId: "outfit-1",
-      selectedItemIds: ["shirt-1", "shoe-1"],
     });
+    expect(differentShoes?.selectedItemIds).toBeUndefined();
     expect(differentShoes?.previousOutfit).toMatchObject({ outfitId: "outfit-1" });
   });
 

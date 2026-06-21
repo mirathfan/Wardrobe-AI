@@ -88,12 +88,15 @@ type Props = {
   swipeVariant?: boolean;
   boardVariant?: AuraLayoutVariant;
   boardOnly?: boolean;
+  densePreview?: boolean;
 };
 
 const BOARD_MAX_WIDTH = 760;
 const HOME_BOARD_MAX_WIDTH = 520;
 const BOARD_ASPECT_RATIO = 1;
 const HOME_BOARD_ASPECT_RATIO = 0.72;
+const DEBUG_AURA_BOARD_IMAGE =
+  __DEV__ && process.env.EXPO_PUBLIC_AURA_BOARD_DEBUG === "1";
 
 type AccessoryImageSlot =
   | "top-left-chain"
@@ -156,6 +159,80 @@ function getAccessoryImageStyle(
     ACCESSORY_IMAGE_STYLE_BY_VARIANT.default?.[slot] ??
     null
   );
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function hasMeasuredVisualBounds(item?: AuraLayoutItem | null) {
+  return Boolean(
+    item?.visualNormalization?.contentBounds ||
+      item?.visualNormalization?.contentWidthPct ||
+      item?.visualNormalization?.contentHeightPct,
+  );
+}
+
+function getBoardImageSizingStyle(
+  variant: AuraLayoutVariant,
+  slotName: string,
+  item?: AuraLayoutItem | null,
+): AccessoryImageStyle {
+  const accessoryStyle = getAccessoryImageStyle(variant, slotName, item);
+  if (accessoryStyle) return accessoryStyle;
+  if (item?.role === "footwear") return { width: "96%", height: "96%" };
+  if (item?.role === "bottom") return { width: "96%", height: "98%" };
+  if (item?.role === "accessory") return { width: "92%", height: "92%" };
+  return { width: "98%", height: "98%" };
+}
+
+function getBoardImageTransform(
+  item: AuraLayoutItem | null | undefined,
+  rotation: number,
+) {
+  const normalization = item?.visualNormalization;
+  const measured = hasMeasuredVisualBounds(item);
+  const rawScale =
+    typeof normalization?.recommendedScale === "number"
+      ? normalization.recommendedScale
+      : 1;
+  const rawTranslateY =
+    typeof normalization?.recommendedTranslateY === "number"
+      ? normalization.recommendedTranslateY
+      : 0;
+  const maxScale = measured ? 1.08 : 1;
+  return [
+    { translateY: clampNumber(rawTranslateY, -8, 8) },
+    { scale: clampNumber(rawScale, 0.82, maxScale) },
+    { rotate: `${rotation}deg` },
+  ];
+}
+
+function logBoardImageDebug(params: {
+  item?: AuraLayoutItem | null;
+  slotName: string;
+  assignedBox: {
+    leftPct: number;
+    topPct: number;
+    widthPct: number;
+    heightPct: number;
+  };
+  sourceWidth?: number | null;
+  sourceHeight?: number | null;
+  imageStyle: AccessoryImageStyle;
+}) {
+  if (!DEBUG_AURA_BOARD_IMAGE || !params.item) return;
+  console.log("[AURA_BOARD_IMAGE]", {
+    role: params.item.role,
+    itemName: params.item.itemName,
+    itemId: params.item.itemId ?? null,
+    sourceWidth: params.sourceWidth ?? null,
+    sourceHeight: params.sourceHeight ?? null,
+    visualNormalization: params.item.visualNormalization ?? null,
+    slotName: params.slotName,
+    assignedBox: params.assignedBox,
+    finalImageStyle: params.imageStyle,
+  });
 }
 
 function getImageSourceForBoardItem(item?: AuraLayoutItem | null) {
@@ -582,6 +659,7 @@ function BoardImage({
   reduceMotion,
   onPress,
   homeScale = false,
+  thumbnailScale = false,
 }: {
   item?: AuraLayoutItem | null;
   leftPct: number;
@@ -598,15 +676,17 @@ function BoardImage({
   reduceMotion: boolean;
   onPress: (item: AuraLayoutItem) => void;
   homeScale?: boolean;
+  thumbnailScale?: boolean;
 }) {
   const source = getImageSourceForBoardItem(item);
   const opacity = useSharedValue(reduceMotion ? 1 : 0);
   const translateY = useSharedValue(reduceMotion ? 0 : 20);
-  const accessoryImageStyle = getAccessoryImageStyle(
+  const imageSizingStyle = getBoardImageSizingStyle(
     layoutVariant,
     slotName,
     item,
   );
+  const imageTransform = getBoardImageTransform(item, rotation);
 
   useEffect(() => {
     if (reduceMotion) {
@@ -664,20 +744,29 @@ function BoardImage({
           styles.absolutePiece,
           Platform.OS === "android" ? styles.absolutePieceAndroid : null,
           {
-            padding: homeScale
+            padding: thumbnailScale
               ? Math.max(
-                  3,
+                  1,
                   getCategoryPadding(
                     item.role,
                     item.subCategory,
                     item.accessoryType,
-                  ) - 3,
+                  ) - 8,
                 )
-              : getCategoryPadding(
-                  item.role,
-                  item.subCategory,
-                  item.accessoryType,
-                ),
+              : homeScale
+                ? Math.max(
+                    3,
+                    getCategoryPadding(
+                      item.role,
+                      item.subCategory,
+                      item.accessoryType,
+                    ) - 3,
+                  )
+                : getCategoryPadding(
+                    item.role,
+                    item.subCategory,
+                    item.accessoryType,
+                  ),
           },
         ]}
         onPress={() => onPress(item)}
@@ -700,21 +789,36 @@ function BoardImage({
             },
           ]}
         />
-        <AppImage
-          source={{
-            uri: source.uri,
-          }}
-          // Accessories still use contain; per-variant width/height only controls visual fill inside the zone.
-          resizeMode="contain"
-          style={[
-            styles.image,
-            accessoryImageStyle,
-            {
-              transform: [{ rotate: `${rotation}deg` }],
-            },
-          ]}
-          onError={() => logResolvedItemImageLoadFailure(source.resolved)}
-        />
+        <View pointerEvents="none" style={styles.imageFrame}>
+          <AppImage
+            source={{
+              uri: source.uri,
+            }}
+            resizeMode="contain"
+            style={[
+              styles.image,
+              imageSizingStyle,
+              {
+                transform: imageTransform,
+              },
+            ]}
+            onLoad={(event) => {
+              const nativeEvent = event.nativeEvent as {
+                width?: number;
+                height?: number;
+              };
+              logBoardImageDebug({
+                item,
+                slotName,
+                assignedBox: { leftPct, topPct, widthPct, heightPct },
+                sourceWidth: nativeEvent.width ?? null,
+                sourceHeight: nativeEvent.height ?? null,
+                imageStyle: imageSizingStyle,
+              });
+            }}
+            onError={() => logResolvedItemImageLoadFailure(source.resolved)}
+          />
+        </View>
       </TouchableOpacity>
     </Animated.View>
   );
@@ -738,6 +842,7 @@ export const AuraLookCard = memo(function AuraLookCard({
   swipeVariant = false,
   boardVariant,
   boardOnly = false,
+  densePreview = false,
 }: Props) {
   const router = useRouter();
   const { colors: appColors } = useAppTheme();
@@ -750,6 +855,7 @@ export const AuraLookCard = memo(function AuraLookCard({
   const effectiveVariant = boardVariant ?? (swipeVariant ? "swipe" : "chat");
   const isStudio = effectiveVariant === "studio";
   const isHome = effectiveVariant === "home";
+  const isThumbnailBoard = densePreview && boardOnly && compact && isStudio;
   const isCondensed = compact || isHome;
   const cardHorizontalPadding =
     isCondensed || swipeVariant || isStudio ? 12 : 14;
@@ -929,6 +1035,7 @@ export const AuraLookCard = memo(function AuraLookCard({
           reduceMotion={reduceMotion}
           onPress={setSelectedItem}
           homeScale={isHome}
+          thumbnailScale={isThumbnailBoard}
         />
       ))}
       {isBoardEmpty ? (
@@ -1489,6 +1596,13 @@ const styles = StyleSheet.create({
     right: "24%",
     bottom: "8%",
     height: "10%",
+  },
+  imageFrame: {
+    alignItems: "center",
+    height: "100%",
+    justifyContent: "center",
+    overflow: "visible",
+    width: "100%",
   },
   image: {
     width: "100%",

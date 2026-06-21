@@ -9,7 +9,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { Colors } from "@/constants/theme";
-import { AuraLookCard } from "@/src/components/aura/AuraLookCard";
+import AuraOutfitVisualCard from "@/src/components/aura/AuraOutfitVisualCard";
 import type { ProfileLookRecord } from "@/src/lib/profileLooks";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
@@ -54,13 +54,11 @@ export function MyLookThumbnail({
       accessibilityLabel={`${record.title} look`}
     >
       <View pointerEvents="none" style={styles.previewClip}>
-        <AuraLookCard
+        <AuraOutfitVisualCard
+          accessibilityLabel={`${record.title} outfit preview`}
           look={record.look}
           itemsById={itemsById}
-          compact
-          hideActions
-          boardOnly
-          boardVariant="studio"
+          mode="thumbnail"
           viewportWidth={boardSize + 26}
           style={[
             styles.scaledCard,

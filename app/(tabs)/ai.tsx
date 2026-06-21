@@ -30,6 +30,10 @@ import { useAuraStreamingState } from "@/src/hooks/aura/useAuraStreamingState";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 import { askAuraStream, isAuraStreamAbortError } from "@/src/lib/aura";
+import {
+  buildAuraAgentConversationContext,
+  buildAuraConversationContext,
+} from "@/src/lib/auraConversationContext";
 import { parseOutfitDateInstruction } from "@/shared/auraOutfitCalendar";
 import {
   auraAgentActionStateKey,
@@ -43,6 +47,13 @@ import {
 } from "@/src/lib/auraAgentActions";
 import { getAgentDisplayMessage } from "@/src/lib/auraAgentDisplay";
 import { AURA_HARDENING_LOG_PREFIX } from "@/src/lib/auraHardening";
+import {
+  describeAuraAgentRouteDecision,
+  getAuraAgentEnabledFlagValue,
+  logAuraAgentRoute,
+  type AuraAgentRouteName,
+} from "@/src/lib/auraAgentRouteDiagnostics";
+import { markAuraMessagesDebugSource } from "@/src/lib/auraMessageDebugSource";
 import { getAuraPlanningWeatherContext } from "@/src/lib/auraPlanningWeather";
 import {
   buildAuraAgentFallbackMessage,
@@ -170,7 +181,7 @@ const AURA_LOGO_SOURCE = require("../../assets/images/aura-tab-mark.png");
 
 const DEFAULT_COMPOSER_HEIGHT = 50;
 const CHAT_COMPOSER_TAB_GAP = 6;
-const CHAT_BOTTOM_BREATHING_ROOM = 128;
+const CHAT_BOTTOM_BREATHING_ROOM = 160;
 const STREAM_FLUSH_INTERVAL_MS = 32;
 const AURA_REPLY_START_HAPTIC = "light" as const;
 const AURA_REPLY_FINISH_HAPTIC = "selection" as const;
@@ -203,6 +214,13 @@ type AskAuraOptions = {
 type MessageActionMenuState = {
   message: AIMessage;
   anchor: ChatMessageActionAnchor;
+};
+
+type AuraAgentRouteDebugState = {
+  route: AuraAgentRouteName | "none";
+  reason?: string;
+  code?: string | null;
+  at: number;
 };
 
 function logAuraChatState(event: string, payload?: Record<string, unknown>) {
@@ -459,6 +477,69 @@ function buildAssistantCardIntro(data: AuraResponse, userRequest?: string) {
   }
 
   return "Got you — here’s what I’d do.";
+}
+
+function normalizeIntroForComparison(value?: string | null) {
+  return cleanStructuredText(value).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function withAssistantIntroReply(data: AuraResponse, introText?: string | null): AuraResponse {
+  const intro = cleanStructuredText(introText);
+  if (!intro) return data;
+  const current = cleanStructuredText(data.reply);
+  if (normalizeIntroForComparison(current) === normalizeIntroForComparison(intro)) {
+    return { ...data, reply: current || intro };
+  }
+  return { ...data, reply: intro };
+}
+
+function formatAuraOccasionForIntro(occasion?: string | null) {
+  return cleanIntroText(occasion)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function buildImmediateStructuredIntro(params: {
+  prompt: string;
+  lookCount: number;
+  previousLook?: AuraResponse["look"] | null;
+  isMutation?: boolean;
+}) {
+  const prompt = cleanIntroText(params.prompt).toLowerCase();
+  const count = Math.max(1, params.lookCount);
+  const previousOccasion =
+    formatAuraOccasionForIntro(params.previousLook?.occasion) ||
+    (/\bdate|dinner|hotel\b/.test(`${prompt} ${params.previousLook?.vibe ?? ""}`)
+      ? "Date"
+      : "");
+  const previousVibe = cleanIntroText(params.previousLook?.vibe);
+  const contextLabel = previousOccasion || previousVibe;
+
+  if (params.isMutation) {
+    if (/\bless formal|more casual|dress down\b/.test(prompt)) {
+      return contextLabel
+        ? `Got you - keeping the ${contextLabel} direction, but making it less formal.`
+        : "Got you - making the last look less formal.";
+    }
+    if (/\bdifferent shoes|switch the shoes|swap the shoes|shoes\b/.test(prompt)) {
+      return contextLabel
+        ? `Got you - keeping the ${contextLabel} direction and changing the shoes.`
+        : "Got you - changing the shoes while keeping the look together.";
+    }
+    return contextLabel
+      ? `Got you - keeping the ${contextLabel} direction and adjusting the look.`
+      : "Got you - adjusting the last look.";
+  }
+
+  if (count > 1) {
+    return contextLabel
+      ? `Got you - keeping the ${contextLabel} vibe. Building ${count} closet looks.`
+      : `Got you - building ${count} closet looks.`;
+  }
+
+  return contextLabel
+    ? `Got you - keeping the ${contextLabel} vibe while I build the look.`
+    : "Got you - building a closet look.";
 }
 
 function resolveLocalPhotosForAuraCandidates(
@@ -1782,81 +1863,6 @@ function buildAuraResponseFromSwipeBatch(
   };
 }
 
-function summarizeAuraLookForHistory(look: NonNullable<AuraResponse["look"]>, index?: number) {
-  const title = cleanIntroText(look.lookTitle || (index ? `Look ${index}` : "Current look"));
-  const pieces = (look.pieces ?? [])
-    .slice(0, 6)
-    .map((piece) => {
-      const role = cleanIntroText(piece.role);
-      const name = cleanIntroText(piece.itemName);
-      const source = piece.source === "closet" ? "owned" : "suggested";
-      const itemId = cleanIntroText(piece.itemId);
-      return [role, name, source, itemId ? `id ${itemId}` : ""].filter(Boolean).join(": ");
-    })
-    .filter(Boolean);
-  return [`${index ? `Look ${index}` : "Current look"}: ${title}`, pieces.length ? `Pieces: ${pieces.join(" | ")}` : ""]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function buildAssistantHistoryText(message: AIMessage) {
-  const parts = [cleanStructuredText(message.agentResponse?.message ?? message.aura?.reply ?? message.text)].filter(Boolean);
-  const agentOutfits = message.agentResponse?.outfits?.slice(0, 3) ?? [];
-  if (agentOutfits.length) {
-    parts.push(
-      [
-        "Rendered outfit context for follow-ups:",
-        ...agentOutfits.map((outfit, index) => {
-          const title = cleanIntroText(outfit.title || `Look ${index + 1}`);
-          const pieces = (outfit.items ?? [])
-            .slice(0, 6)
-            .map((item) =>
-              [item.role, item.name, "owned", item.itemId ? `id ${item.itemId}` : ""]
-                .filter(Boolean)
-                .join(": "),
-            )
-            .filter(Boolean);
-          return [`Look ${index + 1}: ${title}`, pieces.length ? `Pieces: ${pieces.join(" | ")}` : ""]
-            .filter(Boolean)
-            .join("\n");
-        }),
-      ].join("\n"),
-    );
-  }
-  const looks = message.aura?.lookOptions?.length
-    ? message.aura.lookOptions.slice(0, 3)
-    : message.aura?.look
-      ? [message.aura.look]
-      : [];
-  if (looks.length) {
-    parts.push(
-      [
-        "Rendered outfit context for follow-ups:",
-        ...looks.map((look, index) => summarizeAuraLookForHistory(look, looks.length > 1 ? index + 1 : undefined)),
-      ].join("\n"),
-    );
-  }
-  return parts.join("\n\n").trim();
-}
-
-function buildAuraHistory(messages: AIMessage[]) {
-  return messages
-    .filter((message) => message.type === "user" || message.type === "assistant")
-    .map((message) => {
-      const text =
-        message.type === "assistant"
-          ? buildAssistantHistoryText(message)
-          : String(message.text ?? "").trim();
-      if (!text) return null;
-      return {
-        role: message.type === "assistant" ? "assistant" : "user",
-        text,
-      } as const;
-    })
-    .filter((entry): entry is { role: "user" | "assistant"; text: string } => !!entry)
-    .slice(-8);
-}
-
 function userFacingAuraError(error: unknown) {
   if (isRateLimitError(error)) {
     return getFriendlyErrorMessage(error);
@@ -1940,11 +1946,43 @@ export default function AIScreen() {
   const [chatRefreshing, setChatRefreshing] = useState(false);
   const consumedPromptTokens = useRef(new Set<string>());
   const auraAgentEnabled = useMemo(() => isAuraAgentEnabled(), []);
+  const [lastAuraAgentRoute, setLastAuraAgentRoute] = useState<AuraAgentRouteDebugState>({
+    route: "none",
+    reason: "No route decision yet",
+    code: null,
+    at: Date.now(),
+  });
   const {
     handleStopGenerating,
     stopStreamingRequestedRef,
     streamAbortControllerRef,
   } = useAuraStreamingState();
+
+  useEffect(() => {
+    logAuraAgentRoute("enabled flag value", {
+      value: getAuraAgentEnabledFlagValue() || null,
+      enabled: auraAgentEnabled,
+    });
+  }, [auraAgentEnabled]);
+
+  const recordAuraAgentRoute = React.useCallback(
+    (
+      event: string,
+      state: Omit<AuraAgentRouteDebugState, "at">,
+      payload?: Record<string, unknown>,
+    ) => {
+      setLastAuraAgentRoute({ ...state, at: Date.now() });
+      logAuraAgentRoute(event, {
+        route: state.route,
+        reason: state.reason ?? null,
+        code: state.code ?? null,
+        flagValue: getAuraAgentEnabledFlagValue() || null,
+        enabled: auraAgentEnabled,
+        ...payload,
+      });
+    },
+    [auraAgentEnabled],
+  );
 
   const routePrompt = useMemo(() => {
     const raw = Array.isArray(params.prompt) ? params.prompt[0] : params.prompt;
@@ -2287,6 +2325,9 @@ export default function AIScreen() {
           )
         : nextLocalMessages;
       const historyMessagesBeforeRequest = isRetry ? retryBaselineMessages : latestMessagesRef.current;
+      const auraConversationContext = buildAuraConversationContext(
+        historyMessagesBeforeRequest.filter((entry) => entry.id !== userMessage.id),
+      );
       const intentContextMessages = options?.diversityMessages ?? historyMessagesBeforeRequest;
       const lastAgentOutfitForIntent =
         latestAuraAgentOutfit(intentContextMessages) ?? lastAgentOutfit;
@@ -2384,6 +2425,13 @@ export default function AIScreen() {
           effectiveRequiredItemCount: effectiveRequiredItemIds.length,
         });
       }
+      if (DEBUG_AURA_CLIENT) {
+        console.log("[AURA_CONTEXT]", "conversation context prepared", {
+          messageCount: auraConversationContext.length,
+          roles: auraConversationContext.map((entry) => entry.role),
+          lastPreview: auraConversationContext[auraConversationContext.length - 1]?.text.slice(0, 220) ?? null,
+        });
+      }
       if (DEBUG_AURA_CLIENT && outfitDiversity.shouldAvoidRepeats) {
         console.log("[AURA_DIVERSITY]", "frontend outfit diversity context", {
           previousItemIds: outfitDiversity.previousLookItemIds,
@@ -2440,6 +2488,35 @@ export default function AIScreen() {
         if (!isRetry) {
           await appendMessageToChat(uid, chatId, userMessage, { titleFromUserText: chatSeedText });
         }
+
+        let immediateStructuredIntroText = "";
+        let immediateStructuredIntroShown = false;
+        const showImmediateStructuredIntro = async (introText: string) => {
+          const cleanIntro = cleanStructuredText(introText);
+          if (!cleanIntro || immediateStructuredIntroShown) return;
+          const targetChatId = chatId;
+          if (!targetChatId) return;
+          immediateStructuredIntroShown = true;
+          immediateStructuredIntroText = cleanIntro;
+          streamedTextSoFar = cleanIntro;
+          const streamingIntroMessage: AIMessage = {
+            ...createStreamingAssistantMessage(
+              streamingMessageId,
+              streamingMessageCreatedAt,
+              userMessage.id,
+              streamingMessageLocalSequence,
+            ),
+            text: cleanIntro,
+          };
+          logAuraChatState("local_structured_intro_shown", {
+            messageId: streamingIntroMessage.id,
+            chatId: targetChatId,
+            introLength: cleanIntro.length,
+          });
+          void runHaptic(AURA_REPLY_START_HAPTIC);
+          setMessages(orderChatMessages([...nextLocalMessages, streamingIntroMessage]));
+          await appendMessageToChat(uid, targetChatId, streamingIntroMessage);
+        };
 
         const actionChatId = chatId;
         const latestAgentResponseForAction =
@@ -2706,6 +2783,27 @@ export default function AIScreen() {
           chatIntent,
           hasPreviousOutfit: !!lastAgentOutfitForIntent || !!lastLookForIntent,
         });
+        const auraAgentRouteDecision = describeAuraAgentRouteDecision({
+          enabled: auraAgentEnabled,
+          flagValue: getAuraAgentEnabledFlagValue(),
+          shouldUseAgent: shouldUseAuraAgent,
+          chatIntent,
+          attachmentCount: uploadedAttachments.length,
+          hasPreviousOutfit: !!lastAgentOutfitForIntent || !!lastLookForIntent,
+        });
+        recordAuraAgentRoute(
+          shouldUseAuraAgent ? "using agent route" : "using fallback route",
+          {
+            route: auraAgentRouteDecision.route,
+            reason: auraAgentRouteDecision.reason,
+            code: null,
+          },
+          {
+            chatIntent: auraAgentRouteDecision.chatIntent,
+            attachmentCount: auraAgentRouteDecision.attachmentCount,
+            hasPreviousOutfit: auraAgentRouteDecision.hasPreviousOutfit,
+          },
+        );
 
         if (shouldUseAuraAgent) {
           try {
@@ -2715,9 +2813,16 @@ export default function AIScreen() {
             const agentRequest = buildAuraAgentInitialRequest({
               prompt,
               chatIntent,
-              previousAgentOutfit: lastAgentOutfitForIntent,
+              previousAgentOutfit: referencedOutfit ?? lastAgentOutfitForIntent,
               previousAuraLook: lastLookForIntent,
               selectedItemIds: lockedOutfitAnchorItemIds,
+              conversationContext: buildAuraAgentConversationContext(
+                historyMessagesBeforeRequest.filter((entry) => entry.id !== userMessage.id),
+                {
+                  selectedOutfit: referencedOutfit ?? selectedAgentOutfit ?? lastAgentOutfitForIntent,
+                  selectedItemIds: lockedOutfitAnchorItemIds,
+                },
+              ),
             });
             if (__DEV__) {
               console.log(AURA_HARDENING_LOG_PREFIX, "request query:", agentRequest.query);
@@ -2773,6 +2878,18 @@ export default function AIScreen() {
           } catch (agentError) {
             const normalized = normalizeAuraAgentError(agentError);
             const fallbackText = buildAuraAgentFallbackMessage(normalized);
+            recordAuraAgentRoute(
+              "agent failed, fallback used",
+              {
+                route: "agent_failed_fallback",
+                reason: "agent callable failed; friendly fallback message rendered",
+                code: normalized.code ?? null,
+              },
+              {
+                chatIntent,
+                attachmentCount: uploadedAttachments.length,
+              },
+            );
             if (__DEV__) {
               console.log(AURA_HARDENING_LOG_PREFIX, "chat fallback message", {
                 code: normalized.code ?? null,
@@ -2862,6 +2979,21 @@ export default function AIScreen() {
               structuredBatch: shouldForceStructuredBatch,
             });
           }
+          const desiredLookCount = shouldForceStructuredBatch
+            ? resolveStructuredBatchLookCount(
+                prompt,
+                structuredBatchPrompt,
+                latestMessagesRef.current,
+              )
+            : 1;
+          await showImmediateStructuredIntro(
+            buildImmediateStructuredIntro({
+              prompt,
+              lookCount: desiredLookCount,
+              previousLook: lastLookForIntent,
+              isMutation: !!lastLookForIntent && !isManualSelectedOutfit,
+            }),
+          );
           const mutationResponse =
             lastLookForIntent && !isManualSelectedOutfit
               ? buildAuraOutfitMutationResponse({
@@ -2895,7 +3027,11 @@ export default function AIScreen() {
                   nextLookId: liveMutationResponse.look?.id ?? null,
                 });
               }
-              const assistantMessage = createAssistantMessage(liveMutationResponse, {
+              const liveMutationResponseWithIntro = withAssistantIntroReply(
+                liveMutationResponse,
+                immediateStructuredIntroText,
+              );
+              const assistantMessage = createAssistantMessage(liveMutationResponseWithIntro, {
                 id: streamingMessageId,
                 createdAt: streamingMessageCreatedAt,
                 clientCreatedAt: streamingMessageCreatedAt,
@@ -2915,7 +3051,7 @@ export default function AIScreen() {
               trackAuraResponseSucceeded({
                 userId: uid,
                 source: "outfit_mutation",
-                response: liveMutationResponse,
+                response: liveMutationResponseWithIntro,
                 startedAt,
                 properties: {
                   route: routeChosen,
@@ -2926,7 +3062,7 @@ export default function AIScreen() {
                 },
               });
               setMessages(orderChatMessages([...nextLocalMessages, assistantMessage]));
-              setQuickChips(liveMutationResponse.chips?.length ? liveMutationResponse.chips : DEFAULT_CHIPS);
+              setQuickChips(liveMutationResponseWithIntro.chips?.length ? liveMutationResponseWithIntro.chips : DEFAULT_CHIPS);
               await appendMessageToChat(uid, chatId, assistantMessage);
               await updateChatThread(uid, chatId, {
                 title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
@@ -2935,13 +3071,6 @@ export default function AIScreen() {
               return;
             }
           }
-          const desiredLookCount = shouldForceStructuredBatch
-            ? resolveStructuredBatchLookCount(
-                prompt,
-                structuredBatchPrompt,
-                latestMessagesRef.current,
-              )
-            : 1;
           if (DEBUG_AURA_CLIENT) {
             console.log("[AURA_MULTI]", "frontend structured batch request", {
               prompt,
@@ -3001,15 +3130,19 @@ export default function AIScreen() {
             ),
             liveClosetItemIds,
           );
+          const batchResponseWithIntro = withAssistantIntroReply(
+            batchResponse,
+            immediateStructuredIntroText,
+          );
           if (DEBUG_AURA_CLIENT) {
             console.log("[AURA_MULTI]", "frontend batch fallback response", {
               prompt,
               structuredBatchPrompt: structuredOutfitPrompt,
-              lookOptionsCount: batchResponse.lookOptions?.length ?? 0,
-              lookTitles: batchResponse.lookOptions?.map((look) => look.lookTitle) ?? [],
+              lookOptionsCount: batchResponseWithIntro.lookOptions?.length ?? 0,
+              lookTitles: batchResponseWithIntro.lookOptions?.map((look) => look.lookTitle) ?? [],
             });
           }
-          const assistantMessage = createAssistantMessage(batchResponse, {
+          const assistantMessage = createAssistantMessage(batchResponseWithIntro, {
             id: streamingMessageId,
             createdAt: streamingMessageCreatedAt,
             clientCreatedAt: streamingMessageCreatedAt,
@@ -3024,12 +3157,12 @@ export default function AIScreen() {
             type: assistantMessage.type,
             kind: assistantMessage.kind,
             source: "structured_batch",
-            lookOptionsCount: batchResponse.lookOptions?.length ?? 0,
+            lookOptionsCount: batchResponseWithIntro.lookOptions?.length ?? 0,
           });
           trackAuraResponseSucceeded({
             userId: uid,
             source: "structured_batch",
-            response: batchResponse,
+            response: batchResponseWithIntro,
             startedAt,
             properties: {
               route: routeChosen,
@@ -3039,7 +3172,7 @@ export default function AIScreen() {
             },
           });
           setMessages(orderChatMessages([...nextLocalMessages, assistantMessage]));
-          setQuickChips(batchResponse.chips?.length ? batchResponse.chips : DEFAULT_CHIPS);
+          setQuickChips(batchResponseWithIntro.chips?.length ? batchResponseWithIntro.chips : DEFAULT_CHIPS);
           await appendMessageToChat(uid, chatId, assistantMessage);
           await updateChatThread(uid, chatId, {
             title: deriveAssistantChatTitle(chatSeedText, assistantMessage),
@@ -3122,7 +3255,7 @@ export default function AIScreen() {
             message: prompt,
             chatId,
             attachments: uploadedAttachments,
-            history: buildAuraHistory(requestHistoryMessages),
+            history: auraConversationContext,
             clientIntent: imageIntent,
             clientContext: {
               minimumCloset: minimumClosetSummary,
@@ -3203,6 +3336,7 @@ export default function AIScreen() {
         if (effectiveRequiredItemIds.length && !finalResult.look && !(finalResult.lookOptions?.length)) {
           finalResult = buildRequiredItemNoOutfitResponse();
         }
+        finalResult = withAssistantIntroReply(finalResult, streamedTextSoFar);
         const elapsed = Date.now() - startedAt;
         if (elapsed < 300) {
           await new Promise((resolve) => setTimeout(resolve, 300 - elapsed));
@@ -3385,6 +3519,7 @@ export default function AIScreen() {
       minimumClosetSummary,
       pendingAttachments,
       profilePreferences,
+      recordAuraAgentRoute,
       rememberAgentResponse,
       refreshRecentThreads,
       selectedAgentOutfit,
@@ -3726,7 +3861,13 @@ export default function AIScreen() {
           return;
         }
 
-        const agentResponse = await runAuraStylingAgentClient(request);
+        const agentResponse = await runAuraStylingAgentClient({
+          ...request,
+          conversationContext: buildAuraAgentConversationContext(latestMessagesRef.current, {
+            selectedOutfit: chosenOutfit ?? selectedAgentOutfit ?? lastAgentOutfit,
+            selectedItemIds: request.selectedItemIds,
+          }),
+        });
         if (isToastOnlyAuraAgentFeedback(feedbackType)) {
           if (canPatchActionState) {
             await updateSourceActionState(chatIdForAction, auraAgentActionSuccessPatch(action));
@@ -4352,6 +4493,34 @@ export default function AIScreen() {
           </View>
         ) : null}
 
+        {DEBUG_AURA_CLIENT ? (
+          <View
+            pointerEvents="none"
+            style={{
+              alignSelf: "center",
+              borderColor: colors.borderSoft,
+              borderRadius: 999,
+              borderWidth: 1,
+              marginBottom: 4,
+              marginTop: 2,
+              opacity: 0.72,
+              paddingHorizontal: 10,
+              paddingVertical: 4,
+            }}
+          >
+            <AuraText
+              style={{
+                color: colors.textMuted,
+                fontSize: 10,
+                letterSpacing: 0,
+              }}
+            >
+              Agent enabled: {String(auraAgentEnabled)} · Last route: {lastAuraAgentRoute.route}
+              {lastAuraAgentRoute.code ? ` · ${lastAuraAgentRoute.code}` : ""}
+            </AuraText>
+          </View>
+        ) : null}
+
         <View style={{ flex: 1, marginTop: 2, minHeight: 0 }}>
           <ChatList
           colors={colors}
@@ -4458,7 +4627,9 @@ export default function AIScreen() {
           if (!uid) return;
           const cachedMessages = await getCachedRecentMessages(uid, thread.chatId);
           if (cachedMessages?.data?.length) {
-            const orderedCachedMessages = orderChatMessages(cachedMessages.data);
+            const orderedCachedMessages = orderChatMessages(
+              markAuraMessagesDebugSource(cachedMessages.data, "cached"),
+            );
             setMessages(orderedCachedMessages);
             const cachedAgentResponse = latestAuraAgentResponse(orderedCachedMessages);
             setLastAgentResponse(cachedAgentResponse);

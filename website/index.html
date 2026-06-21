@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AURA — AI Personal Stylist</title>
+    <meta
+      name="description"
+      content="Build a digital closet, ask AURA what to wear, and plan outfits from clothes you already own."
+    />
+    <meta property="og:title" content="AURA — AI Personal Stylist" />
+    <meta
+      property="og:description"
+      content="Build a digital closet, ask AURA what to wear, and plan outfits from clothes you already own."
+    />
+    <meta property="og:image" content="public/assets/hero-product-visual.webp" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#080709" />
+    <link rel="icon" href="public/assets/favicon.png" />
+    <link rel="preload" href="public/assets/aura-chat-screen-public.webp" as="image" />
+    <link rel="preload" href="public/assets/outfit-flatlay-rounded.webp" as="image" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <nav class="site-nav" aria-label="Primary navigation" data-nav>
+        <a class="wordmark" href="#top" aria-label="AURA home">AURA®</a>
+        <button
+          class="menu-button"
+          type="button"
+          aria-label="Open menu"
+          aria-expanded="false"
+          aria-controls="nav-links"
+          data-menu-button
+        >
+          <span></span>
+          <span></span>
+        </button>
+        <div class="nav-links" id="nav-links" data-nav-links>
+          <a href="#features">Features</a>
+          <a href="#how-it-works">How it works</a>
+          <a href="#privacy">Privacy</a>
+          <a href="#faq">FAQ</a>
+        </div>
+        <a class="nav-cta" href="#beta">Join Beta</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero section-shell" id="top" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <h1 id="hero-title">Your AI Personal Stylist.</h1>
+          <p>
+            Build a digital closet, ask AURA what to wear, and plan outfits
+            from clothes you already own.
+          </p>
+          <div class="hero-actions" aria-label="Early access actions">
+            <a class="button button-primary" href="#beta">Request Early Access</a>
+            <a class="button button-secondary" href="#how-it-works">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              See How It Works
+            </a>
+          </div>
+          <p class="beta-note">Early Access Beta · iOS first · Limited tester spots</p>
+        </div>
+
+        <div class="hero-visual" aria-label="AURA app preview">
+          <figure class="hero-phone" aria-hidden="true">
+            <img
+              src="public/assets/aura-chat-screen-public.webp"
+              alt=""
+              width="759"
+              height="1650"
+            />
+          </figure>
+          <figure class="hero-look-card" aria-hidden="true">
+            <img
+              src="public/assets/outfit-flatlay-rounded.webp"
+              alt=""
+              width="906"
+              height="900"
+            />
+            <figcaption>Real closet looks</figcaption>
+          </figure>
+          <div class="hero-context-card" aria-hidden="true">
+            <span>Early Access Beta</span>
+            <p>Private closet context, outfit cards, calendar planning.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="intro-band" aria-label="AURA positioning">
+        <p>AURA styles you using your real wardrobe.</p>
+        <p>Closet, chat, calendar, and insights working together in a private styling system.</p>
+      </section>
+
+      <section class="section-shell section-block" id="how-it-works" aria-labelledby="how-title">
+        <div class="section-heading">
+          <h2 id="how-title">See How It Works</h2>
+        </div>
+
+        <div class="steps-grid">
+          <article class="step-card">
+            <img
+              src="public/assets/smart-closet-tile.webp"
+              alt="AURA closet grid showing clean clothing items"
+              width="980"
+              height="680"
+            />
+            <div>
+              <span class="step-number">01</span>
+              <h3>Add your clothes</h3>
+              <p>
+                Upload photos, paste product links, or save pieces from outfit
+                photos. AURA turns your wardrobe into clean, usable digital items.
+              </p>
+            </div>
+          </article>
+
+          <article class="step-card">
+            <img
+              src="public/assets/ai-stylist-chat-tile.webp"
+              alt="AURA chat screen with an outfit recommendation card"
+              width="980"
+              height="680"
+            />
+            <div>
+              <span class="step-number">02</span>
+              <h3>Ask AURA</h3>
+              <p>
+                Ask for outfits, fit checks, event looks, or styling ideas. AURA
+                responds with visual outfit cards and practical suggestions.
+              </p>
+            </div>
+          </article>
+
+          <article class="step-card">
+            <img
+              src="public/assets/outfit-card-tile.webp"
+              alt="AURA outfit card with a flat-lay look"
+              width="980"
+              height="680"
+            />
+            <div>
+              <span class="step-number">03</span>
+              <h3>Wear, save, and plan</h3>
+              <p>
+                Save looks, plan outfits by date, and build a smarter wardrobe
+                over time.
+              </p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section-shell section-block features-section" id="features" aria-labelledby="features-title">
+        <div class="section-heading section-heading-wide">
+          <h2 id="features-title">Everything your closet needs.</h2>
+          <p>
+            AURA is not just a chatbot. It brings closet management, AI styling,
+            planning, and wardrobe intelligence into one beta experience.
+          </p>
+        </div>
+
+        <div class="feature-primary-grid" aria-label="Primary AURA features">
+          <article class="feature-card feature-card-large">
+            <span>01</span>
+            <h3>Smart Closet</h3>
+            <p>Keep your wardrobe organized with clean item photos, categories, colors, materials, fits, and wear status.</p>
+          </article>
+          <article class="feature-card feature-card-large">
+            <span>02</span>
+            <h3>AURA AI Stylist Chat</h3>
+            <p>Ask what to wear for a date, office day, festival, dinner, travel, or anything else.</p>
+          </article>
+          <article class="feature-card feature-card-large">
+            <span>03</span>
+            <h3>Outfit Cards</h3>
+            <p>Get visual looks built from your real closet, with styling notes and missing-piece suggestions.</p>
+          </article>
+          <article class="feature-card feature-card-large">
+            <span>04</span>
+            <h3>Photo Cleanup</h3>
+            <p>Remove messy backgrounds and turn clothing photos into clean closet-ready items.</p>
+          </article>
+          <article class="feature-card feature-card-large">
+            <span>05</span>
+            <h3>Product Link Import</h3>
+            <p>Paste a clothing link and AURA can help extract the item details for review.</p>
+          </article>
+          <article class="feature-card feature-card-large">
+            <span>06</span>
+            <h3>Calendar Planning</h3>
+            <p>Plan what to wear today or on future dates.</p>
+          </article>
+        </div>
+
+        <div class="feature-secondary-list" aria-label="Additional AURA features">
+          <article>
+            <span>07</span>
+            <h3>Outfit Photo Analysis</h3>
+            <p>Turn inspiration photos into closet items during Early Access testing.</p>
+          </article>
+          <article>
+            <span>08</span>
+            <h3>Saved Looks</h3>
+            <p>Keep your favorite outfits and come back to them anytime.</p>
+          </article>
+          <article>
+            <span>09</span>
+            <h3>Wardrobe Insights</h3>
+            <p>Understand color identity, underused items, and wardrobe gaps.</p>
+          </article>
+          <article>
+            <span>10</span>
+            <h3>Minimum Closet Guidance</h3>
+            <p>See what essentials you need to unlock more outfit combinations.</p>
+          </article>
+          <article>
+            <span>11</span>
+            <h3>Personalized Shopping Recommendations</h3>
+            <p>Get suggestions based on your wardrobe, sizes, colors, and goals.</p>
+          </article>
+          <article>
+            <span>12</span>
+            <h3>Voice Input</h3>
+            <p>Talk to AURA when typing is too slow.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="showcase" aria-labelledby="showcase-title">
+        <div class="section-shell showcase-inner">
+          <div class="section-heading">
+            <h2 id="showcase-title">AURA connects your closet, your style preferences, and your daily plans into one personal styling system.</h2>
+          </div>
+          <div class="screen-rail" aria-label="AURA product screens">
+            <figure>
+              <img src="public/assets/today-look-screen-public.webp" alt="Home screen showing Today's Look in AURA" width="759" height="1650" />
+              <figcaption>Home / Today’s Look</figcaption>
+            </figure>
+            <figure>
+              <img src="public/assets/closet-grid-screen-public.webp" alt="Closet grid screen in AURA" width="759" height="1650" />
+              <figcaption>Closet grid</figcaption>
+            </figure>
+            <figure>
+              <img src="public/assets/aura-chat-screen-public.webp" alt="AURA chat screen with an outfit card" width="759" height="1650" />
+              <figcaption>AURA chat</figcaption>
+            </figure>
+            <figure>
+              <img src="public/assets/product-import-screen-public.webp" alt="Add item review screen in AURA" width="759" height="1650" />
+              <figcaption>Add item review</figcaption>
+            </figure>
+            <figure>
+              <img src="public/assets/calendar-screen-public.webp" alt="Style calendar screen in AURA" width="759" height="1650" />
+              <figcaption>Calendar</figcaption>
+            </figure>
+            <figure>
+              <img src="public/assets/insights-screen-public.webp" alt="Wardrobe insights screen in AURA" width="759" height="1650" />
+              <figcaption>Insights</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-shell section-block privacy-section" id="privacy" aria-labelledby="privacy-title">
+        <div class="privacy-copy">
+          <div class="section-heading">
+            <h2 id="privacy-title">Built for your wardrobe, not your data.</h2>
+          </div>
+          <p>
+            Your clothes, outfits, and styling chats are personal. AURA is
+            designed around private wardrobe intelligence, not public profiles or
+            social feeds.
+          </p>
+          <p class="small-note">
+            During beta, AURA may process photos, product links, and chat
+            messages to provide styling features. Full details should be
+            available in the Privacy Policy.
+          </p>
+        </div>
+
+        <div class="privacy-panel" aria-label="AURA privacy principles">
+          <div class="privacy-visual" aria-hidden="true">
+            <span class="privacy-dot"></span>
+            <div class="privacy-line"></div>
+            <div class="privacy-capsule">Wardrobe context</div>
+            <div class="privacy-capsule">Private styling chat</div>
+            <div class="privacy-capsule">Saved looks</div>
+          </div>
+          <div class="privacy-points">
+            <article>
+              <span>01</span>
+              <h3>Private wardrobe</h3>
+              <p>Your closet is yours. AURA is not a public social closet.</p>
+            </article>
+            <article>
+              <span>02</span>
+              <h3>Personal styling context</h3>
+              <p>AURA uses your wardrobe and preferences to make styling more useful.</p>
+            </article>
+            <article>
+              <span>03</span>
+              <h3>No public closet</h3>
+              <p>Your wardrobe is not shared publicly. You stay in control.</p>
+            </article>
+            <article>
+              <span>04</span>
+              <h3>Account deletion</h3>
+              <p>Early Access users should be able to delete their account and data.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="beta-section section-shell" id="beta" aria-labelledby="beta-title">
+        <div class="beta-panel">
+          <div>
+            <h2 id="beta-title">Join the AURA Early Access Beta.</h2>
+            <p>
+              We’re opening AURA slowly to improve quality, control AI costs,
+              and learn from real wardrobes. Request access and we’ll invite
+              testers in small batches.
+            </p>
+            <p class="small-note">
+              Limited spots. iOS beta invites first. AI suggestions can make
+              mistakes and are improving during beta.
+            </p>
+          </div>
+
+          <form class="waitlist-form" data-waitlist-form>
+            <div class="field-row">
+              <label for="name">Name</label>
+              <input id="name" name="name" type="text" autocomplete="name" required />
+            </div>
+            <div class="field-row">
+              <label for="email">Email</label>
+              <input id="email" name="email" type="email" autocomplete="email" required />
+            </div>
+            <button class="button button-primary" type="submit">Request Early Access</button>
+            <p class="form-status" role="status" aria-live="polite" data-form-status></p>
+          </form>
+        </div>
+      </section>
+
+      <section class="section-shell section-block faq-section" id="faq" aria-labelledby="faq-title">
+        <div class="section-heading">
+          <h2 id="faq-title">FAQ</h2>
+        </div>
+
+        <div class="faq-list">
+          <details>
+            <summary>What is AURA?</summary>
+            <p>AURA is an AI personal stylist that helps you build a digital closet, generate outfits, plan looks, and get styling advice from clothes you already own.</p>
+          </details>
+          <details>
+            <summary>Is AURA free?</summary>
+            <p>AURA is currently in Early Access Beta. Some AI features may be limited during beta while we test quality and cost.</p>
+          </details>
+          <details>
+            <summary>Does AURA use my real clothes?</summary>
+            <p>Yes. AURA is designed to style you from your actual closet, not random generic items.</p>
+          </details>
+          <details>
+            <summary>Can AURA make mistakes?</summary>
+            <p>Yes. AURA uses AI and can make mistakes with styling, item details, colors, or recommendations. Beta feedback helps improve it.</p>
+          </details>
+          <details>
+            <summary>Can I import clothes from links?</summary>
+            <p>AURA supports product link import for some retailers during beta. Coverage may vary.</p>
+          </details>
+          <details>
+            <summary>Can AURA analyze outfit photos?</summary>
+            <p>Outfit photo analysis is being tested during Early Access and may not be available to every beta user immediately.</p>
+          </details>
+          <details>
+            <summary>Is my closet public?</summary>
+            <p>No. AURA is not a public social closet. Your wardrobe is designed to stay private.</p>
+          </details>
+          <details>
+            <summary>How do I join?</summary>
+            <p>Request Early Access through the website. We’ll invite testers gradually.</p>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <a class="wordmark" href="#top" aria-label="AURA home">AURA®</a>
+        <p>AI personal stylist for your real wardrobe.</p>
+      </div>
+      <nav aria-label="Footer links">
+        <a href="#privacy">Privacy Policy</a>
+        <a href="#faq">Terms</a>
+        <a href="#beta">Support</a>
+        <a href="#beta">Contact</a>
+        <a href="#privacy">Delete Account</a>
+      </nav>
+      <p>© 2026 AURA. All rights reserved.</p>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>

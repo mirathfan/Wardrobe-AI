@@ -16,6 +16,8 @@ const previousOutfit = {
 describe("classifyAuraStylingAgentIntent", () => {
   it("extracts requested outfit counts from query text", () => {
     expect(extractRequestedOutfitCount("give me 3 outfits for office")).toBe(3);
+    expect(extractRequestedOutfitCount("give me 3 more")).toBe(3);
+    expect(extractRequestedOutfitCount("give me a few more")).toBe(3);
     expect(extractRequestedOutfitCount("show me three looks")).toBe(3);
     expect(extractRequestedOutfitCount("give me two options")).toBe(2);
     expect(extractRequestedOutfitCount("style me today")).toBeUndefined();
@@ -105,6 +107,50 @@ describe("classifyAuraStylingAgentIntent", () => {
 
     expect(intent.mode).toBe("refine_outfit");
     expect(intent.constraints.avoidItemIds).toEqual(["shoe-1"]);
+  });
+
+  it("avoids prior referenced footwear when the user says not to use those shoes", () => {
+    const intent = classifyAuraStylingAgentIntent({
+      query: "don't use those shoes",
+      previousOutfit,
+    });
+
+    expect(intent.mode).toBe("refine_outfit");
+    expect(intent.constraints.avoidItemIds).toEqual(["shoe-1"]);
+  });
+
+  it("extracts hard negative terms from no/don't-use requests", () => {
+    const intent = classifyAuraStylingAgentIntent({
+      query: "give me a date outfit but don't use sandals or hoodies",
+    });
+
+    expect(intent.constraints.avoidTerms).toEqual(expect.arrayContaining(["sandals", "hoodies"]));
+  });
+
+  it("preserves selected closet item IDs exactly", () => {
+    const intent = classifyAuraStylingAgentIntent({
+      query: "style these pants",
+      selectedItemIds: ["Black-Cargos_01", "Black-Cargos_01"],
+    });
+
+    expect(intent.constraints.selectedItemIds).toEqual(["Black-Cargos_01"]);
+  });
+
+  it("treats more-like numbered outfit references as refinement follow-ups", () => {
+    const intent = classifyAuraStylingAgentIntent({
+      query: "more like outfit 2",
+      conversationContext: {
+        recentTurns: [],
+        selectedItemIds: [],
+        feedbackSignals: [],
+        priorOutfitRefs: [
+          { outfitId: "outfit-1", index: 1, itemIds: ["shirt-1"] },
+          { outfitId: "outfit-2", index: 2, itemIds: ["shoe-1"] },
+        ],
+      },
+    });
+
+    expect(intent.mode).toBe("refine_outfit");
   });
 
   it("classifies explanation requests", () => {

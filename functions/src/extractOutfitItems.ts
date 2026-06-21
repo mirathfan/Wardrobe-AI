@@ -20,6 +20,15 @@ import {
   assertFunctionRateLimit,
   redactUid,
 } from "./shared/rateLimit";
+import {
+  EARLY_ACCESS_ERRORS,
+  checkAndConsumeEarlyAccessUse,
+  getCachedEarlyAccessResult,
+  getEarlyAccessFeatureState,
+  makeEarlyAccessImageHash,
+  normalizeEarlyAccessImageHash,
+  setCachedEarlyAccessResult,
+} from "./shared/earlyAccess";
 import { safeFetch } from "./shared/safeFetch";
 
 if (!getApps().length) {
@@ -227,6 +236,8 @@ type ImageInput = {
 const DETECTION_MODEL = "gpt-5.4-mini";
 const QUALITY_MODEL = "gpt-5.4-mini";
 const IMAGE_MODEL = "gpt-image-1";
+const ACCESSORY_POLISH_MODEL_VERSION = `accessory-polish:${QUALITY_MODEL}:${IMAGE_MODEL}:v1`;
+const OUTFIT_LAYOUT_MODEL_VERSION = `outfit-layout:${DETECTION_MODEL}:${IMAGE_MODEL}:v1`;
 const MAX_SOURCE_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_DETECTED_ITEMS = 6;
 const FAST_EXTRACTION_MAX_ITEMS = 4;
@@ -244,6 +255,21 @@ const LAYOUT_CROP_CONFIDENCE_THRESHOLD = 0.5;
 
 const BASE_REFINEMENT_PROMPT =
   "Create a clean premium ecommerce product image of only the detected item. Preserve the exact item color, material, design, logos, text, stitching, silhouette, and proportions. Remove the person, skin, hand, face, phone, mirror, room, floor, and background. Do not include body parts. Do not invent new branding. Do not change the item identity. Output a realistic isolated product-style image suitable for a digital wardrobe.";
+
+function outfitExtractionModelVersion(prefs: ReturnType<typeof qualityPreferences>) {
+  return [
+    "outfit-extraction",
+    DETECTION_MODEL,
+    QUALITY_MODEL,
+    IMAGE_MODEL,
+    `max:${prefs.maxItems}`,
+    `speed:${prefs.preferSpeed ? "1" : "0"}`,
+    `skipPolish:${prefs.skipPolish ? "1" : "0"}`,
+    `skipBg:${prefs.skipBackgroundRemoval ? "1" : "0"}`,
+    `skipQuality:${prefs.skipQualityScoring ? "1" : "0"}`,
+    "v1",
+  ].join(":");
+}
 
 function cleanTraceId(value: unknown) {
   return (
@@ -3298,17 +3324,12 @@ export const extractOutfitItems = onCall(
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
     setLogContext({ uidHash: redactUid(uid) });
-
-    try {
-      await assertFunctionRateLimit(uid, "outfitExtraction", RATE_LIMITS.outfitExtraction);
-    } catch (error) {
-      logOutfitExtraction({
-        traceId,
-        step: "rate_limit_checked",
-        status: "failure",
-        data: safeError(error),
+    const featureState = await getEarlyAccessFeatureState(uid, "outfitExtraction");
+    if (!featureState.allowed) {
+      throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.featureNotAvailable.message, {
+        code: EARLY_ACCESS_ERRORS.featureNotAvailable.code,
+        message: EARLY_ACCESS_ERRORS.featureNotAvailable.message,
       });
-      throw error;
     }
 
     const prefs = qualityPreferences(data);
@@ -3328,7 +3349,6 @@ export const extractOutfitItems = onCall(
         extractionBudgetMs,
       },
     });
-    const client = new OpenAI({ apiKey: requireOpenAiApiKey() });
     const sourceImageUrl = String(data.imageUrl ?? "").trim() || null;
     const input = await readImageInput(uid, data, traceId);
     const metadata = await sharp(input.bytes).metadata();
@@ -3337,6 +3357,58 @@ export const extractOutfitItems = onCall(
     if (!imageWidth || !imageHeight) {
       throw new HttpsError("invalid-argument", "Could not read image dimensions.");
     }
+    const imageHash =
+      normalizeEarlyAccessImageHash(data.imageHash) ||
+      makeEarlyAccessImageHash(input.bytes);
+    const modelVersion = outfitExtractionModelVersion(prefs);
+    const cached = await getCachedEarlyAccessResult(uid, "outfitExtraction", imageHash, modelVersion);
+    if (cached) {
+      logOutfitExtraction({
+        traceId,
+        step: "early_access_cache_checked",
+        status: "success",
+        durationMs: durationMs(requestStartedAt),
+        data: {
+          featureKey: "outfitExtraction",
+          cacheHit: true,
+          modelVersion,
+        },
+      });
+      return cached.result;
+    }
+    if (featureState.remaining <= 0) {
+      throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.limitReached.message, {
+        code: EARLY_ACCESS_ERRORS.limitReached.code,
+        message: EARLY_ACCESS_ERRORS.limitReached.message,
+      });
+    }
+
+    try {
+      await assertFunctionRateLimit(uid, "outfitExtraction", RATE_LIMITS.outfitExtraction);
+    } catch (error) {
+      logOutfitExtraction({
+        traceId,
+        step: "rate_limit_checked",
+        status: "failure",
+        data: safeError(error),
+      });
+      throw error;
+    }
+
+    await checkAndConsumeEarlyAccessUse(uid, "outfitExtraction", {
+      runKey: traceId || imageHash,
+    });
+    logOutfitExtraction({
+      traceId,
+      step: "early_access_usage_consumed",
+      status: "success",
+      data: {
+        featureKey: "outfitExtraction",
+        modelVersion,
+      },
+    });
+
+    const client = new OpenAI({ apiKey: requireOpenAiApiKey() });
 
     let detected: NormalizedDetectedGarment[] = [];
     try {
@@ -3426,7 +3498,7 @@ export const extractOutfitItems = onCall(
       },
     });
 
-    return {
+    const response = {
       traceId,
       detectedItems: extracted,
       summary: {
@@ -3435,6 +3507,14 @@ export const extractOutfitItems = onCall(
         failedCount,
       },
     };
+    await setCachedEarlyAccessResult(
+      uid,
+      "outfitExtraction",
+      imageHash,
+      modelVersion,
+      response,
+    );
+    return response;
   }),
 );
 
@@ -3461,6 +3541,53 @@ export const reconstructOutfitLayout = onCall(
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
     setLogContext({ uidHash: redactUid(uid) });
+    const featureState = await getEarlyAccessFeatureState(uid, "outfitExtraction");
+    if (!featureState.allowed) {
+      throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.featureNotAvailable.message, {
+        code: EARLY_ACCESS_ERRORS.featureNotAvailable.code,
+        message: EARLY_ACCESS_ERRORS.featureNotAvailable.message,
+      });
+    }
+
+    const sourceImageUrl = String(data.imageUrl ?? "").trim() || null;
+    const input = await readImageInput(uid, data, traceId);
+    const sourceMetadata = await sharp(input.bytes).metadata();
+    const sourceImageWidth = Number(sourceMetadata.width ?? 0);
+    const sourceImageHeight = Number(sourceMetadata.height ?? 0);
+    if (!sourceImageWidth || !sourceImageHeight) {
+      throw new HttpsError("invalid-argument", "Could not read image dimensions.");
+    }
+    const imageHash =
+      normalizeEarlyAccessImageHash(data.imageHash) ||
+      makeEarlyAccessImageHash(input.bytes);
+    const cached = await getCachedEarlyAccessResult(
+      uid,
+      "outfitExtraction",
+      imageHash,
+      OUTFIT_LAYOUT_MODEL_VERSION,
+    );
+    if (cached) {
+      logOutfitLayout({
+        traceId,
+        step: "early_access_cache_checked",
+        status: "success",
+        durationMs: durationMs(requestStartedAt),
+        data: {
+          featureKey: "outfitExtraction",
+          cacheHit: true,
+          modelVersion: OUTFIT_LAYOUT_MODEL_VERSION,
+        },
+      });
+      return cached.result;
+    }
+
+    let detected = normalizeRequestDetectedItems(data, traceId);
+    if (featureState.remaining <= 0) {
+      throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.limitReached.message, {
+        code: EARLY_ACCESS_ERRORS.limitReached.code,
+        message: EARLY_ACCESS_ERRORS.limitReached.message,
+      });
+    }
 
     try {
       await assertFunctionRateLimit(
@@ -3478,17 +3605,20 @@ export const reconstructOutfitLayout = onCall(
       throw error;
     }
 
-    const client = new OpenAI({ apiKey: requireOpenAiApiKey() });
-    const sourceImageUrl = String(data.imageUrl ?? "").trim() || null;
-    const input = await readImageInput(uid, data, traceId);
-    const sourceMetadata = await sharp(input.bytes).metadata();
-    const sourceImageWidth = Number(sourceMetadata.width ?? 0);
-    const sourceImageHeight = Number(sourceMetadata.height ?? 0);
-    if (!sourceImageWidth || !sourceImageHeight) {
-      throw new HttpsError("invalid-argument", "Could not read image dimensions.");
-    }
+    await checkAndConsumeEarlyAccessUse(uid, "outfitExtraction", {
+      runKey: traceId || imageHash,
+    });
+    logOutfitLayout({
+      traceId,
+      step: "early_access_usage_consumed",
+      status: "success",
+      data: {
+        featureKey: "outfitExtraction",
+        modelVersion: OUTFIT_LAYOUT_MODEL_VERSION,
+      },
+    });
 
-    let detected = normalizeRequestDetectedItems(data, traceId);
+    const client = new OpenAI({ apiKey: requireOpenAiApiKey() });
     if (!detected.length) {
       try {
         detected = (await detectGarments(client, input, traceId)).slice(0, MAX_DETECTED_ITEMS);
@@ -3623,7 +3753,7 @@ export const reconstructOutfitLayout = onCall(
       },
     });
 
-    return {
+    const response = {
       traceId,
       reconstructedLayoutUrl: layout.url,
       layoutItems,
@@ -3633,6 +3763,14 @@ export const reconstructOutfitLayout = onCall(
         failedCount,
       },
     };
+    await setCachedEarlyAccessResult(
+      uid,
+      "outfitExtraction",
+      imageHash,
+      OUTFIT_LAYOUT_MODEL_VERSION,
+      response,
+    );
+    return response;
   }),
 );
 
@@ -3660,17 +3798,12 @@ export const polishExtractedAccessory = onCall(
       throw new HttpsError("unauthenticated", "Please sign in first.");
     }
     setLogContext({ uidHash: redactUid(uid) });
-
-    try {
-      await assertFunctionRateLimit(uid, "accessoryPolish", RATE_LIMITS.accessoryPolish);
-    } catch (error) {
-      logOutfitExtraction({
-        traceId,
-        step: "rate_limit_checked",
-        status: "failure",
-        data: safeError(error),
+    const featureState = await getEarlyAccessFeatureState(uid, "aiPolish");
+    if (!featureState.allowed) {
+      throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.featureNotAvailable.message, {
+        code: EARLY_ACCESS_ERRORS.featureNotAvailable.code,
+        message: EARLY_ACCESS_ERRORS.featureNotAvailable.message,
       });
-      throw error;
     }
 
     const category = normalizeCategory(data.category);
@@ -3701,10 +3834,67 @@ export const polishExtractedAccessory = onCall(
       pattern: null,
       extractionWarnings: [],
     };
+    const cropInput = await readImageInput(uid, { imageUrl: cropImageUrl }, traceId);
+    const imageHash =
+      normalizeEarlyAccessImageHash(data.imageHash) ||
+      makeEarlyAccessImageHash(cropInput.bytes);
+    const cached = await getCachedEarlyAccessResult(
+      uid,
+      "aiPolish",
+      imageHash,
+      ACCESSORY_POLISH_MODEL_VERSION,
+    );
+    if (cached) {
+      logOutfitExtraction({
+        traceId,
+        step: "early_access_cache_checked",
+        status: "success",
+        durationMs: durationMs(requestStartedAt),
+        data: {
+          featureKey: "aiPolish",
+          cacheHit: true,
+          itemTempId,
+          modelVersion: ACCESSORY_POLISH_MODEL_VERSION,
+        },
+      });
+      return cached.result;
+    }
+    if (featureState.remaining <= 0) {
+      throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.limitReached.message, {
+        code: EARLY_ACCESS_ERRORS.limitReached.code,
+        message: EARLY_ACCESS_ERRORS.limitReached.message,
+      });
+    }
+
+    try {
+      await assertFunctionRateLimit(uid, "accessoryPolish", RATE_LIMITS.accessoryPolish);
+    } catch (error) {
+      logOutfitExtraction({
+        traceId,
+        step: "rate_limit_checked",
+        status: "failure",
+        data: safeError(error),
+      });
+      throw error;
+    }
+
+    await checkAndConsumeEarlyAccessUse(uid, "aiPolish", {
+      runKey: imageHash,
+    });
+    logOutfitExtraction({
+      traceId,
+      step: "early_access_usage_consumed",
+      status: "success",
+      data: {
+        featureKey: "aiPolish",
+        itemTempId,
+        modelVersion: ACCESSORY_POLISH_MODEL_VERSION,
+      },
+    });
+
     const client = new OpenAI({ apiKey: requireOpenAiApiKey() });
 
     try {
-      const cropInput = await readImageInput(uid, { imageUrl: cropImageUrl }, traceId);
       const refinedBytes = await refineCropImage({
         client,
         uid,
@@ -3759,7 +3949,7 @@ export const polishExtractedAccessory = onCall(
         },
       });
 
-      return {
+      const response = {
         refinedImageUrl,
         cleanedImageUrl,
         refinedStoragePath,
@@ -3768,6 +3958,14 @@ export const polishExtractedAccessory = onCall(
         userPolished: true,
         warnings,
       };
+      await setCachedEarlyAccessResult(
+        uid,
+        "aiPolish",
+        imageHash,
+        ACCESSORY_POLISH_MODEL_VERSION,
+        response,
+      );
+      return response;
     } catch (error) {
       logOutfitExtraction({
         traceId,

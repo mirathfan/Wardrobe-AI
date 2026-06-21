@@ -1,6 +1,6 @@
 import type { AIMessage } from "./chatTypes";
 
-export const AURA_CHAT_CARD_BOTTOM_PADDING = 320;
+export const AURA_CHAT_CARD_BOTTOM_PADDING = 380;
 
 export function getAuraChatBottomPadding(contentBottomPadding: number) {
   const measured = Number.isFinite(contentBottomPadding) ? contentBottomPadding : 0;

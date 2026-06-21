@@ -307,6 +307,15 @@ export async function generateValidatedOutfitsFromContext(
         ...invalidOutfits.flatMap((entry) => entry.errors),
         "Use only provided candidate itemIds.",
         "Use each item with its exact allowedRole.",
+        ...(input.requiredItemIds.length
+          ? [`Every repaired outfit must include requiredItemIds: ${input.requiredItemIds.join(", ")}.`]
+          : []),
+        ...(input.avoidItemIds.length
+          ? [`Do not use avoidItemIds: ${input.avoidItemIds.join(", ")}.`]
+          : []),
+        ...(input.avoidTerms.length
+          ? [`Do not use items matching avoidTerms: ${input.avoidTerms.join(", ")}.`]
+          : []),
         `Return up to ${invalidOutfits.length} replacement outfit(s), not the already valid outfits.`,
         "Return valid JSON in the same schema.",
       ].join("\n"),

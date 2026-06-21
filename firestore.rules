@@ -62,6 +62,177 @@ service cloud.firestore {
       return value == null || value is map;
     }
 
+    function protectedAccessFields() {
+      return [
+        "admin",
+        "adminRole",
+        "adminRoles",
+        "adminSettings",
+        "aiAccess",
+        "aiCredits",
+        "aiEntitlements",
+        "aiQuota",
+        "aiUsage",
+        "allowPaidAI",
+        "betaAccess",
+        "betaRole",
+        "earlyAccess",
+        "earlyAccessAdmin",
+        "earlyAccessLimits",
+        "earlyAccessOverrides",
+        "earlyAccessQuota",
+        "earlyAccessUsage",
+        "entitlements",
+        "featureAccess",
+        "featureFlags",
+        "features",
+        "isAdmin",
+        "isBetaTester",
+        "isModerator",
+        "isPowerUser",
+        "moderator",
+        "moderatorRole",
+        "paidAccess",
+        "paidFeatures",
+        "plan",
+        "powerUser",
+        "premium",
+        "quota",
+        "quotaAdmin",
+        "quotaOverrides",
+        "quotaUsage",
+        "quotas",
+        "role",
+        "roles",
+        "subscription",
+        "subscriptionStatus",
+        "tier",
+        "usageAdmin"
+      ];
+    }
+
+    function allowedUserRootFields() {
+      return [
+        "accessoryPreferences",
+        "advancedFit",
+        "appSettings",
+        "avoidedBrands",
+        "avoidedColors",
+        "avoidedMaterials",
+        "avoidedStyles",
+        "body",
+        "budgetPreference",
+        "closetPreferences",
+        "createdAt",
+        "currencyMode",
+        "defaultSizes",
+        "detectedCurrency",
+        "displayName",
+        "email",
+        "favoriteColors",
+        "firstName",
+        "fitPreferences",
+        "goals",
+        "height",
+        "materialPreferences",
+        "name",
+        "notifications",
+        "occasionPriority",
+        "onboardingCompleted",
+        "photoURL",
+        "preferredBrands",
+        "preferredCurrency",
+        "preferredFit",
+        "preferredMaterials",
+        "preferredStyles",
+        "profilePreferences",
+        "profileUpdatedAt",
+        "region",
+        "selectedCategories",
+        "settings",
+        "shoppingGoals",
+        "sizePreferences",
+        "styleAesthetics",
+        "stylePreferences",
+        "sustainabilityPreference",
+        "uid",
+        "units",
+        "unitsPreference",
+        "updatedAt",
+        "wardrobeMode",
+        "weight"
+      ];
+    }
+
+    function allowedProfilePreferenceFields() {
+      return [
+        "accessoryPreferences",
+        "advancedFit",
+        "avoidedBrands",
+        "avoidedColors",
+        "avoidedMaterials",
+        "avoidedStyles",
+        "body",
+        "budgetPreference",
+        "closetPreferences",
+        "createdAt",
+        "currencyMode",
+        "defaultSizes",
+        "detectedCurrency",
+        "displayName",
+        "favoriteColors",
+        "firstName",
+        "fitPreferences",
+        "goals",
+        "height",
+        "materialPreferences",
+        "notifications",
+        "occasionPriority",
+        "onboardingCompleted",
+        "preferredBrands",
+        "preferredCurrency",
+        "preferredFit",
+        "preferredMaterials",
+        "preferredStyles",
+        "region",
+        "selectedCategories",
+        "shoppingGoals",
+        "styleAesthetics",
+        "stylePreferences",
+        "sustainabilityPreference",
+        "units",
+        "unitsPreference",
+        "updatedAt",
+        "wardrobeMode",
+        "weight"
+      ];
+    }
+
+    function validProfilePreferences(value) {
+      return value == null || (
+        value is map
+        && value.size() <= 80
+        && value.keys().hasOnly(allowedProfilePreferenceFields())
+        && !value.keys().hasAny(protectedAccessFields())
+      );
+    }
+
+    function protectedAccessFieldsAbsent(data) {
+      return !data.keys().hasAny(protectedAccessFields());
+    }
+
+    function protectedAccessFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedAccessFields());
+    }
+
+    function onlyAllowedProfileFieldsOnCreate() {
+      return request.resource.data.keys().hasOnly(allowedUserRootFields());
+    }
+
+    function onlyAllowedProfileFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedUserRootFields());
+    }
+
     function validUserRootDoc(data, uid) {
       return data is map
         && data.size() <= 80
@@ -70,8 +241,22 @@ service cloud.firestore {
         && (!("displayName" in data) || validOptionalString(data.displayName))
         && (!("name" in data) || validOptionalString(data.name))
         && (!("photoURL" in data) || validOptionalString(data.photoURL))
-        && (!("profilePreferences" in data) || data.profilePreferences is map)
+        && (!("profilePreferences" in data) || validProfilePreferences(data.profilePreferences))
+        && (!("profileUpdatedAt" in data) || data.profileUpdatedAt is number || data.profileUpdatedAt is timestamp)
+        && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp)
         && (!("updatedAt" in data) || data.updatedAt is number || data.updatedAt is timestamp);
+    }
+
+    function validUserRootCreate(data, uid) {
+      return validUserRootDoc(data, uid)
+        && onlyAllowedProfileFieldsOnCreate()
+        && protectedAccessFieldsAbsent(data);
+    }
+
+    function validUserRootUpdate(data, uid) {
+      return validUserRootDoc(data, uid)
+        && onlyAllowedProfileFieldsChanged()
+        && protectedAccessFieldsUnchanged();
     }
 
     function validCrop(value) {
@@ -402,7 +587,8 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if isOwner(uid);
-      allow create, update: if isOwner(uid) && validUserRootDoc(request.resource.data, uid);
+      allow create: if isOwner(uid) && validUserRootCreate(request.resource.data, uid);
+      allow update: if isOwner(uid) && validUserRootUpdate(request.resource.data, uid);
       allow delete: if false;
 
       match /items/{itemId} {
@@ -435,6 +621,11 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
         allow delete: if isOwner(uid);
+      }
+
+      match /usage/{docId} {
+        allow read: if isOwner(uid) && docId == "earlyAccess";
+        allow create, update, delete: if false;
       }
 
       match /assistantProfile/{docId} {

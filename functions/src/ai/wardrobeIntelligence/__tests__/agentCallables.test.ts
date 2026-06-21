@@ -151,4 +151,44 @@ describe("handleRunAuraStylingAgent", () => {
     expect(response.mode).toBe("generate_outfit");
     expect(response.outfits?.[0].title).toBe("Office Fit");
   });
+
+  it("normalizes bounded conversation context for the graph", async () => {
+    let sawContext: unknown;
+    await handleRunAuraStylingAgent("uid", {
+      query: "make outfit 2 more casual",
+      mode: "refine_outfit",
+      previousOutfit: { outfitId: "outfit-2", items: [] },
+      conversationContext: {
+        selectedOutfitId: "outfit-2",
+        selectedItemIds: ["pants", "pants"],
+        feedbackSignals: Array.from({ length: 20 }, (_, index) => `feedback ${index}`),
+        recentTurns: Array.from({ length: 12 }, (_, index) => ({
+          role: index % 2 ? "assistant" : "user",
+          text: `turn ${index}`,
+        })),
+        priorOutfitRefs: [
+          { outfitId: "outfit-2", index: 2, title: "Second", itemIds: ["pants", "shoe"] },
+        ],
+      },
+    }, {
+      ...deps(),
+      generateOutfits: async ({ state }) => {
+        sawContext = state.request.conversationContext;
+        return {
+          outfits: [outfit()],
+          validationErrors: [],
+          validationWarnings: [],
+          repaired: false,
+        };
+      },
+    });
+
+    expect(sawContext).toMatchObject({
+      selectedOutfitId: "outfit-2",
+      selectedItemIds: ["pants"],
+      priorOutfitRefs: [expect.objectContaining({ outfitId: "outfit-2", index: 2 })],
+    });
+    expect((sawContext as { recentTurns?: unknown[] }).recentTurns).toHaveLength(8);
+    expect((sawContext as { feedbackSignals?: unknown[] }).feedbackSignals).toHaveLength(12);
+  });
 });

@@ -11,6 +11,15 @@ import {
   assertFunctionRateLimit,
   redactUid,
 } from "./shared/rateLimit";
+import {
+  EARLY_ACCESS_ERRORS,
+  checkAndConsumeEarlyAccessUse,
+  getCachedEarlyAccessResult,
+  getEarlyAccessFeatureState,
+  makeEarlyAccessImageHash,
+  normalizeEarlyAccessImageHash,
+  setCachedEarlyAccessResult,
+} from "./shared/earlyAccess";
 import { safeFetch } from "./shared/safeFetch";
 
 type ProductImageQuality = {
@@ -35,6 +44,7 @@ type ImageInput = {
 
 const QUALITY_MODEL = "gpt-5.4-mini";
 const IMAGE_MODEL = "gpt-image-1";
+const PRODUCT_POLISH_MODEL_VERSION = `product-polish:${QUALITY_MODEL}:${IMAGE_MODEL}:v1`;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
 const BASE_REFINEMENT_PROMPT =
@@ -588,6 +598,44 @@ export const polishProductImage = onCall(
       data: { hasUid: true },
     });
 
+    const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
+    const featureState = await getEarlyAccessFeatureState(uid, "aiPolish");
+    if (!featureState.allowed) {
+      throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.featureNotAvailable.message, {
+        code: EARLY_ACCESS_ERRORS.featureNotAvailable.code,
+        message: EARLY_ACCESS_ERRORS.featureNotAvailable.message,
+      });
+    }
+    const imageUrl = String(data.imageUrl ?? "").trim();
+    const garmentMetadata = data.garmentMetadata ?? null;
+    const input = await readImageInput(uid, data, traceId);
+    const imageHash =
+      normalizeEarlyAccessImageHash(data.imageHash) ||
+      normalizeEarlyAccessImageHash(data.photoHash) ||
+      makeEarlyAccessImageHash(input.bytes);
+    const cached = await getCachedEarlyAccessResult(uid, "aiPolish", imageHash, PRODUCT_POLISH_MODEL_VERSION);
+    if (cached) {
+      logBackendPipeline({
+        traceId,
+        step: "early_access_cache_checked",
+        status: "success",
+        durationMs: durationMs(requestStartedAt),
+        data: {
+          featureKey: "aiPolish",
+          cacheHit: true,
+          modelVersion: PRODUCT_POLISH_MODEL_VERSION,
+        },
+      });
+      return cached.result;
+    }
+    if (featureState.remaining <= 0) {
+      throw new HttpsError("failed-precondition", EARLY_ACCESS_ERRORS.limitReached.message, {
+        code: EARLY_ACCESS_ERRORS.limitReached.code,
+        message: EARLY_ACCESS_ERRORS.limitReached.message,
+      });
+    }
+
     const rateLimitStartedAt = Date.now();
     logBackendPipeline({
       traceId,
@@ -615,12 +663,18 @@ export const polishProductImage = onCall(
       throw error;
     }
 
-    const uidHash = redactUid(uid);
-    setLogContext({ uidHash });
-    const imageUrl = String(data.imageUrl ?? "").trim();
-    const garmentMetadata = data.garmentMetadata ?? null;
+    await checkAndConsumeEarlyAccessUse(uid, "aiPolish", { runKey: imageHash });
+    logBackendPipeline({
+      traceId,
+      step: "early_access_usage_consumed",
+      status: "success",
+      data: {
+        featureKey: "aiPolish",
+        modelVersion: PRODUCT_POLISH_MODEL_VERSION,
+      },
+    });
+
     const client = new OpenAI({ apiKey: requireOpenAiApiKey() });
-    const input = await readImageInput(uid, data, traceId);
 
     logger.info("[ProductPolish] evaluating image", {
       traceId,
@@ -692,6 +746,13 @@ export const polishProductImage = onCall(
           warningCount: response.warnings.length,
         },
       });
+      await setCachedEarlyAccessResult(
+        uid,
+        "aiPolish",
+        imageHash,
+        PRODUCT_POLISH_MODEL_VERSION,
+        response,
+      );
       return response;
     }
 
@@ -731,6 +792,13 @@ export const polishProductImage = onCall(
           warningCount: warnings.length,
         },
       });
+      await setCachedEarlyAccessResult(
+        uid,
+        "aiPolish",
+        imageHash,
+        PRODUCT_POLISH_MODEL_VERSION,
+        response,
+      );
       return response;
     }
 
@@ -785,6 +853,13 @@ export const polishProductImage = onCall(
           warningCount: warnings.length,
         },
       });
+      await setCachedEarlyAccessResult(
+        uid,
+        "aiPolish",
+        imageHash,
+        PRODUCT_POLISH_MODEL_VERSION,
+        response,
+      );
       return response;
     } catch (error) {
       logger.error("[ProductPolish] refinement failed; continuing original", {
@@ -822,6 +897,13 @@ export const polishProductImage = onCall(
           warningCount: response.warnings.length,
         },
       });
+      await setCachedEarlyAccessResult(
+        uid,
+        "aiPolish",
+        imageHash,
+        PRODUCT_POLISH_MODEL_VERSION,
+        response,
+      );
       return response;
     }
   })

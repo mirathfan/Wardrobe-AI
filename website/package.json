@@ -1,0 +1,10 @@
+{
+  "name": "aura-early-access-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "node scripts/lint-static.mjs",
+    "build": "node scripts/build-static.mjs"
+  }
+}

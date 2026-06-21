@@ -509,50 +509,76 @@ export function buildCategoryBuckets(results: WardrobeRetrievalResult[]): Wardro
   return buckets;
 }
 
+export function buildWardrobeRetrievalResult(
+  input: NormalizedWardrobeRetrievalInput,
+  candidate: WardrobeVectorCandidate,
+  options: {
+    requireEmbedding?: boolean;
+    applyFilters?: boolean;
+    forceScore?: number;
+    reasonPrefix?: string;
+  } = {},
+): WardrobeRetrievalResult | null {
+  const requireEmbedding = options.requireEmbedding ?? true;
+  const applyFilters = options.applyFilters ?? true;
+  if (requireEmbedding ? !isRetrievableWardrobeItem(candidate.item) : !isReadyClosetItem(candidate.item)) {
+    return null;
+  }
+  const metadata = metadataForItem(candidate.item);
+  if (applyFilters && !matchesPostVectorFilters(input, candidate.item, metadata)) return null;
+  const bucket = itemBucket(candidate.item, metadata);
+  const scoreDiagnostics = scoreWardrobeRetrievalCandidate({
+    input,
+    item: candidate.item,
+    metadata,
+    distance: candidate.distance,
+  });
+  const forcedScore = Number(options.forceScore);
+  const score = Number.isFinite(forcedScore)
+    ? Number(Math.max(0, Math.min(1, forcedScore)).toFixed(4))
+    : scoreDiagnostics.finalScore;
+  const reason = [
+    cleanText(options.reasonPrefix),
+    buildRetrievalReason(
+      input,
+      candidate.item,
+      metadata,
+      scoreDiagnostics.boostsApplied,
+      scoreDiagnostics.penaltiesApplied,
+    ),
+  ].filter(Boolean).join("; ");
+  return {
+    itemId: candidate.itemId,
+    name: firstUsefulString(candidate.item, ["name", "title"]) || metadata.subcategory || "Untitled item",
+    category: bucket,
+    ...(metadata.subcategory ? { subcategory: metadata.subcategory } : {}),
+    ...(metadata.brand ? { brand: metadata.brand } : {}),
+    colors: itemColors(candidate.item, metadata),
+    score,
+    vectorScore: scoreDiagnostics.vectorScore,
+    finalScore: score,
+    boostsApplied: scoreDiagnostics.boostsApplied,
+    penaltiesApplied: scoreDiagnostics.penaltiesApplied,
+    distance: typeof candidate.distance === "number" && Number.isFinite(candidate.distance)
+      ? Number(candidate.distance.toFixed(6))
+      : null,
+    reason: reason || "semantically similar wardrobe match",
+    imageUrl: itemImageUrl(candidate.item),
+    aiMetadata: serializeMetadata(metadata),
+    embeddingTextPreview: previewText(candidate.item.embeddingText),
+    status: cleanText(candidate.item.status) || null,
+    itemLifecycleStatus: cleanText(candidate.item.itemLifecycleStatus) || null,
+  };
+}
+
 export function buildWardrobeRetrievalResults(
   input: NormalizedWardrobeRetrievalInput,
   candidates: WardrobeVectorCandidate[],
 ): WardrobeRetrievalResult[] {
   const results: WardrobeRetrievalResult[] = [];
   for (const candidate of candidates) {
-    if (!isRetrievableWardrobeItem(candidate.item)) continue;
-    const metadata = metadataForItem(candidate.item);
-    if (!matchesPostVectorFilters(input, candidate.item, metadata)) continue;
-    const bucket = itemBucket(candidate.item, metadata);
-    const scoreDiagnostics = scoreWardrobeRetrievalCandidate({
-      input,
-      item: candidate.item,
-      metadata,
-      distance: candidate.distance,
-    });
-    results.push({
-      itemId: candidate.itemId,
-      name: firstUsefulString(candidate.item, ["name", "title"]) || metadata.subcategory || "Untitled item",
-      category: bucket,
-      ...(metadata.subcategory ? { subcategory: metadata.subcategory } : {}),
-      ...(metadata.brand ? { brand: metadata.brand } : {}),
-      colors: itemColors(candidate.item, metadata),
-      score: scoreDiagnostics.finalScore,
-      vectorScore: scoreDiagnostics.vectorScore,
-      finalScore: scoreDiagnostics.finalScore,
-      boostsApplied: scoreDiagnostics.boostsApplied,
-      penaltiesApplied: scoreDiagnostics.penaltiesApplied,
-      distance: typeof candidate.distance === "number" && Number.isFinite(candidate.distance)
-        ? Number(candidate.distance.toFixed(6))
-        : null,
-      reason: buildRetrievalReason(
-        input,
-        candidate.item,
-        metadata,
-        scoreDiagnostics.boostsApplied,
-        scoreDiagnostics.penaltiesApplied,
-      ),
-      imageUrl: itemImageUrl(candidate.item),
-      aiMetadata: serializeMetadata(metadata),
-      embeddingTextPreview: previewText(candidate.item.embeddingText),
-      status: cleanText(candidate.item.status) || null,
-      itemLifecycleStatus: cleanText(candidate.item.itemLifecycleStatus) || null,
-    });
+    const result = buildWardrobeRetrievalResult(input, candidate);
+    if (result) results.push(result);
   }
   return results
     .sort((left, right) => {

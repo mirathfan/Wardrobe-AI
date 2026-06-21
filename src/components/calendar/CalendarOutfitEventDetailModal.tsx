@@ -160,7 +160,17 @@ export default function CalendarOutfitEventDetailModal({
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-            <FlatLayCanvas items={canvasItems(event, itemsById)} />
+            <View
+              style={[
+                styles.detailPreviewFrame,
+                {
+                  backgroundColor: colors.boardLight,
+                  borderColor: colors.borderWarm,
+                },
+              ]}
+            >
+              <FlatLayCanvas items={canvasItems(event, itemsById)} />
+            </View>
 
             {event.weatherWarnings.length ? (
               <View style={[styles.warningBox, { backgroundColor: colors.surfaceSoft, borderColor: colors.border }]}>
@@ -302,6 +312,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     gap: 14,
     paddingBottom: 4,
+  },
+  detailPreviewFrame: {
+    borderRadius: 24,
+    borderWidth: 1,
+    overflow: "hidden",
   },
   section: {
     gap: 9,

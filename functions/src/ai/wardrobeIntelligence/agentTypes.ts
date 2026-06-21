@@ -38,7 +38,33 @@ export type AuraStylingAgentRequest = {
   outfitId?: string;
   feedbackType?: FeedbackType;
   selectedItemIds?: string[];
+  conversationContext?: AuraAgentConversationContext;
   note?: string;
+};
+
+export type AuraAgentConversationTurn = {
+  role: "user" | "assistant";
+  text: string;
+};
+
+export type AuraAgentConversationOutfitRef = {
+  outfitId?: string;
+  sourceMessageId?: string;
+  index?: number;
+  title?: string;
+  occasion?: string;
+  formality?: string;
+  vibe?: string;
+  itemIds: string[];
+  summary?: string;
+};
+
+export type AuraAgentConversationContext = {
+  recentTurns: AuraAgentConversationTurn[];
+  priorOutfitRefs: AuraAgentConversationOutfitRef[];
+  selectedOutfitId?: string;
+  selectedItemIds: string[];
+  feedbackSignals: string[];
 };
 
 export type AuraStylingAgentIntentConstraints = {
@@ -51,6 +77,7 @@ export type AuraStylingAgentIntentConstraints = {
   styleHints: string[];
   avoidItemIds: string[];
   avoidCategories: OutfitRole[];
+  avoidTerms: string[];
   refinementInstruction?: string;
   feedbackType?: FeedbackType;
   selectedItemIds: string[];

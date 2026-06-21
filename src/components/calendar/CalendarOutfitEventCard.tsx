@@ -23,6 +23,9 @@ type Props = {
   compact?: boolean;
 };
 
+export const CALENDAR_OUTFIT_PREVIEW_WIDTH = 148;
+export const CALENDAR_OUTFIT_COMPACT_PREVIEW_WIDTH = 136;
+
 function canvasItems(event: OutfitCalendarEvent, itemsById: Map<string, ClothingItem>) {
   return {
     outerwear: event.itemsByCategory.outerwear ? itemsById.get(event.itemsByCategory.outerwear) ?? null : null,
@@ -36,6 +39,7 @@ export default function CalendarOutfitEventCard({ event, itemsById, onPress, com
   const { colors } = useAppTheme();
   const itemCount = outfitCalendarItemCount(event);
   const hasWeatherWarnings = event.weatherWarnings.length > 0;
+  const previewWidth = compact ? CALENDAR_OUTFIT_COMPACT_PREVIEW_WIDTH : CALENDAR_OUTFIT_PREVIEW_WIDTH;
 
   return (
     <Pressable
@@ -51,8 +55,19 @@ export default function CalendarOutfitEventCard({ event, itemsById, onPress, com
         },
       ]}
     >
-      <View style={compact ? styles.compactCanvas : styles.canvas}>
-        <FlatLayCanvas items={canvasItems(event, itemsById)} />
+      <View
+        style={[
+          styles.canvasFrame,
+          {
+            width: previewWidth,
+            height: previewWidth,
+          },
+        ]}
+      >
+        <FlatLayCanvas
+          items={canvasItems(event, itemsById)}
+          previewWidth={previewWidth}
+        />
       </View>
       <View style={styles.copy}>
         <View style={styles.badgeRow}>
@@ -95,13 +110,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: "row",
     gap: 12,
+    overflow: "hidden",
     padding: 10,
   },
-  canvas: {
-    width: 118,
-  },
-  compactCanvas: {
-    width: 104,
+  canvasFrame: {
+    alignItems: "center",
+    borderRadius: 18,
+    flexShrink: 0,
+    justifyContent: "center",
+    overflow: "hidden",
   },
   copy: {
     flex: 1,

@@ -8,6 +8,16 @@ Set `EXPO_PUBLIC_AURA_AGENT_ENABLED=1` or `true` to route supported AURA chat re
 
 When the flag is missing or false, the existing AURA chat flow remains unchanged.
 
+For EAS/TestFlight builds this value must exist at build time. The `preview` and `production` profiles in `eas.json` pin:
+
+```json
+"env": {
+  "EXPO_PUBLIC_AURA_AGENT_ENABLED": "1"
+}
+```
+
+If this flag is missing from the build profile or remote EAS environment, production builds render the legacy AURA card path for new styling prompts.
+
 ## Callable Wrapper
 
 Client calls go through `src/lib/auraStylingAgent.ts`.
@@ -29,7 +39,15 @@ The main AURA chat screen routes only styling-related requests to the agent:
 - outfit explanation
 - outfit feedback
 
-Attachments and non-styling flows continue through the classic AURA path. If the agent fails, the screen falls back to the existing AURA flow for initial sends. Suggested action failures show a friendly retryable message.
+Attachments and non-styling flows continue through the classic AURA path. If the agent route fails, the screen renders a friendly fallback message instead of silently producing a legacy outfit card. Suggested action failures show a friendly retryable message.
+
+Development builds show a small AURA chat route diagnostic with:
+
+- agent enabled state
+- last route: `agent`, `fallback`, or `agent_failed_fallback`
+- agent failure code when available
+
+Development outfit cards also show a source badge: `agent`, `legacy`, or `cached`.
 
 ## UI Surface
 

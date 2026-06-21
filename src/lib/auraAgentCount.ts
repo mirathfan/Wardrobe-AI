@@ -16,6 +16,10 @@ const WORD_COUNT_RE = new RegExp(
   `\\b(?:a\\s+)?(${Object.keys(COUNT_WORDS).join("|")})${BETWEEN_WORDS_RE}\\s+${COUNT_TARGET_RE}\\b`,
   "i",
 );
+const MORE_COUNT_RE = new RegExp(
+  `\\b(?:a\\s+)?(\\d{1,2}|${Object.keys(COUNT_WORDS).join("|")})\\s+more\\b`,
+  "i",
+);
 
 function clampRequestedCount(count: number) {
   return Math.max(1, Math.min(5, Math.round(count)));
@@ -37,6 +41,10 @@ export function extractRequestedOutfitCount(query: string): number | undefined {
   }
 
   const word = text.match(WORD_COUNT_RE)?.[1];
-  if (!word) return undefined;
-  return clampRequestedCount(COUNT_WORDS[word] ?? 1);
+  if (word) return clampRequestedCount(COUNT_WORDS[word] ?? 1);
+
+  const more = text.match(MORE_COUNT_RE)?.[1];
+  if (!more) return undefined;
+  const count = Number.parseInt(more, 10);
+  return Number.isFinite(count) ? clampRequestedCount(count) : clampRequestedCount(COUNT_WORDS[more] ?? 1);
 }

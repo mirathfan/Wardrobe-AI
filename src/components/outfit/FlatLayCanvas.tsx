@@ -1,69 +1,41 @@
-import AppImage from "@/src/components/common/AppImage";
 import React from "react";
-import { StyleSheet, View } from "react-native";
 
 import { Colors } from "@/constants/theme";
-import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
+import AuraOutfitVisualCard, { buildAuraLookFromSlotItems } from "@/src/components/aura/AuraOutfitVisualCard";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 
 type SlotKey = "outerwear" | "top" | "bottom" | "shoes";
 
 type Props = {
   items: Record<SlotKey, ClothingItem | null>;
+  previewWidth?: number;
 };
 
-const LAYOUT: Record<SlotKey, { left: `${number}%`; top: `${number}%`; width: `${number}%`; height: `${number}%` }> = {
-  outerwear: { left: "8%", top: "8%", width: "38%", height: "48%" },
-  top: { left: "44%", top: "6%", width: "38%", height: "42%" },
-  bottom: { left: "23%", top: "43%", width: "38%", height: "48%" },
-  shoes: { left: "61%", top: "53%", width: "30%", height: "34%" },
-};
+const THUMBNAIL_CARD_HORIZONTAL_PADDING = 24;
 
-function Piece({ item, slot }: { item: ClothingItem | null; slot: SlotKey }) {
-  const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "outfit_card" }) : null;
-  const uri = resolvedImage?.uri ?? null;
-  const frame = LAYOUT[slot];
-
-  if (!uri) return null;
-
-  return (
-    <View pointerEvents="none" style={[styles.piece, frame]}>
-      <AppImage
-        source={{
-          uri,
-        }}
-        resizeMode="contain"
-        style={StyleSheet.absoluteFill}
-        onError={() => (resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined)}
-      />
-    </View>
-  );
+export function getFlatLayCanvasViewportWidth(previewWidth?: number | null) {
+  if (!previewWidth || previewWidth <= 0) return undefined;
+  return previewWidth + THUMBNAIL_CARD_HORIZONTAL_PADDING;
 }
 
-export default function FlatLayCanvas({ items }: Props) {
+export default function FlatLayCanvas({ items, previewWidth }: Props) {
+  const look = React.useMemo(
+    () => buildAuraLookFromSlotItems(items),
+    [items],
+  );
+  const viewportWidth = getFlatLayCanvasViewportWidth(previewWidth);
+
+  if (!look) return null;
+
   return (
-    <View style={styles.canvas}>
-      <Piece slot="outerwear" item={items.outerwear} />
-      <Piece slot="top" item={items.top} />
-      <Piece slot="bottom" item={items.bottom} />
-      <Piece slot="shoes" item={items.shoes} />
-    </View>
+    <AuraOutfitVisualCard
+      accessibilityLabel="Outfit preview"
+      colors={Colors.dark}
+      look={look}
+      mode="thumbnail"
+      viewportWidth={viewportWidth}
+      style={previewWidth ? { width: previewWidth } : undefined}
+      densePreview={Boolean(previewWidth)}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  canvas: {
-    width: "100%",
-    aspectRatio: 1.35,
-    borderRadius: 24,
-    overflow: "hidden",
-    backgroundColor: Colors.dark.outfitBoardBackground,
-    borderWidth: 1,
-    borderColor: Colors.dark.borderWarm,
-  },
-  piece: {
-    position: "absolute",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

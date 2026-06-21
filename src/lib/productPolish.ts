@@ -218,6 +218,7 @@ export async function runProductPolishForLocalImage(
     {
       imageUrl: string;
       storagePath: string;
+      imageHash?: string | null;
       traceId?: string | null;
       garmentMetadata?: ProductPolishGarmentMetadata | null;
     },
@@ -241,6 +242,7 @@ export async function runProductPolishForLocalImage(
     result = await callable({
       imageUrl: source.imageUrl,
       storagePath: source.storagePath,
+      imageHash: params.photoHash,
       traceId: params.traceId ?? null,
       garmentMetadata: params.garmentMetadata ?? null,
     });

@@ -50,6 +50,11 @@ const ATTACHMENT_MENU_GAP = 12;
 const ATTACHMENT_MENU_CARET_LEFT = 17;
 const inputPalette = Colors.dark;
 
+type NativeTextInputHandle = TextInput & {
+  clear?: () => void;
+  setNativeProps?: (props: { text?: string }) => void;
+};
+
 function slotHeightFromLineCount(lineCount: number) {
   const nextLineCount = Math.max(1, Math.min(MAX_INPUT_LINES, lineCount));
   const nextInputHeight = nextLineCount * INPUT_LINE_HEIGHT + INPUT_VERTICAL_PADDING;
@@ -57,6 +62,24 @@ function slotHeightFromLineCount(lineCount: number) {
     MAX_INPUT_SLOT_HEIGHT,
     Math.max(BASE_ROW_HEIGHT, nextInputHeight + INPUT_SLOT_VERTICAL_PADDING),
   );
+}
+
+function asNativeTextInputHandle(input: TextInput | null): NativeTextInputHandle | null {
+  return input as NativeTextInputHandle | null;
+}
+
+function clearInputIfSupported(input: TextInput | null) {
+  const current = asNativeTextInputHandle(input);
+  if (typeof current?.clear === "function") {
+    current.clear();
+  }
+}
+
+function setNativeTextIfSupported(input: TextInput | null, text: string) {
+  const current = asNativeTextInputHandle(input);
+  if (typeof current?.setNativeProps === "function") {
+    current.setNativeProps({ text });
+  }
 }
 
 export default function InputBar({
@@ -240,10 +263,10 @@ export default function InputBar({
     if (value !== nativeValueRef.current) {
       nativeValueRef.current = value;
       if (!value && previousPropValue) {
-        inputRef.current?.clear();
-        inputRef.current?.setNativeProps({ text: "" });
+        clearInputIfSupported(inputRef.current);
+        setNativeTextIfSupported(inputRef.current, "");
       } else {
-        inputRef.current?.setNativeProps({ text: value });
+        setNativeTextIfSupported(inputRef.current, value);
       }
     }
     if (!value) {

@@ -21,6 +21,7 @@ import {
 } from "../../bg/removeBackground";
 import { normalizeCutoutImage } from "../../lib/cutoutNormalize";
 import { detectBrandLogo } from "../../lib/detectBrandLogo";
+import { useEarlyAccessFeature } from "../../lib/earlyAccess";
 import { getFriendlyErrorMessage, isRateLimitError } from "../../lib/errors";
 import { db } from "../../lib/firebase";
 import {
@@ -159,6 +160,8 @@ const POLISHED_LOCAL_FALLBACK_MESSAGE =
   "We couldn’t prepare the cleaned image. You can retry or continue with the original photo.";
 const POLISHED_CUTOUT_FAILED_MESSAGE =
   "Background removal failed, but you can still continue with the polished image.";
+const PRODUCT_POLISH_FAILED_MESSAGE =
+  "Polish didn’t complete. Your original preview is still saved.";
 
 function makeSelectedPhotoId() {
   return randomId();
@@ -375,6 +378,7 @@ export function usePhotoStep({
 }) {
   const selectedCategory = draft?.derived?.selectedCategory ?? draft?.state?.category ?? null;
   const selectedSubCategory = draft?.state?.subCategory ?? null;
+  const aiPolishEarlyAccess = useEarlyAccessFeature(uid, "aiPolish");
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [bgRemovalError, setBgRemovalError] = useState<string | null>(null);
@@ -399,6 +403,7 @@ export function usePhotoStep({
     useState<ProductImageVariant>("original");
   const [selectedStudioSource, setSelectedStudioSource] = useState<StudioSource>("original");
   const [studioSourceWarning, setStudioSourceWarning] = useState<string | null>(null);
+  const [productPolishError, setProductPolishError] = useState<string | null>(null);
   const [pendingImageQuality, setPendingImageQuality] = useState<ProductImageQuality | null>(null);
   const [pendingProductPolish, setPendingProductPolish] = useState<ProductPolishMetadata | null>(null);
   const [productPolishStatus, setProductPolishStatus] = useState<
@@ -628,6 +633,7 @@ export function usePhotoStep({
       setPendingRefinedPhotoUri(null);
       setPendingRefinedImageUrl(null);
       setPendingActiveImageVariant("original");
+      setProductPolishError(null);
       setPendingImageQuality(null);
       setPendingProductPolish(null);
       setPendingPhotoUri(null);
@@ -1688,6 +1694,7 @@ export function usePhotoStep({
     latestRefineRequestIdRef.current += 1;
     setRefiningCutout(false);
     setBgRemovalError(null);
+    setProductPolishError(null);
     setCleanedPhotoUrl(null);
     setServerCleanedUrl(null);
     setPendingVisualNormalization(null);
@@ -1737,6 +1744,7 @@ export function usePhotoStep({
       setPendingActiveImageVariant(variant);
       setBgRemovalError(null);
       setStudioSourceWarning(null);
+      setProductPolishError(null);
       logPhotoPipelineEvent(traceId, "studio_source_selected", "success", {
         selected: variant,
         previous: previousVariant,
@@ -2051,6 +2059,22 @@ export function usePhotoStep({
           productPolish: null,
         };
       }
+      if (aiPolishEarlyAccess.loading || !aiPolishEarlyAccess.allowed) {
+        logPhotoPipelineEvent(params.traceId, "product_polish_decision", "skip", {
+          reason: aiPolishEarlyAccess.loading
+            ? "early_access_check_pending"
+            : "feature_not_available",
+          remaining: aiPolishEarlyAccess.remaining,
+        });
+        return {
+          workingUri: params.normalizedUri,
+          refinedLocalUri: null,
+          refinedImageUrl: null,
+          activeImageVariant: "original",
+          imageQuality: null,
+          productPolish: null,
+        };
+      }
 
       setProductPolishStatus("analyzing");
       const polishStartedAt = photoPipelineNow();
@@ -2171,8 +2195,100 @@ export function usePhotoStep({
         clearTimeout(polishingDelay);
       }
     },
-    [appendPhotoPipelineEvent, logPhotoPipelineEvent, productPolishGarmentMetadata, uid]
+    [
+      aiPolishEarlyAccess.allowed,
+      aiPolishEarlyAccess.loading,
+      aiPolishEarlyAccess.remaining,
+      appendPhotoPipelineEvent,
+      logPhotoPipelineEvent,
+      productPolishGarmentMetadata,
+      uid,
+    ]
   );
+
+  const polishPrimaryProductPhoto = useCallback(async () => {
+    if (productPolishStatus !== "idle" || refiningCutout) return;
+    const entries = selectedPhotosRef.current;
+    const targetId = primaryPhotoId ?? entries[0]?.id ?? null;
+    const entry = entries.find((item) => item.id === targetId) ?? entries[0] ?? null;
+    if (!entry || !uid) return;
+
+    setProductPolishError(null);
+    setBgRemovalError(null);
+    setStudioSourceWarning(null);
+
+    if (entry.refinedLocalUri || entry.refinedImageUrl || entry.productPolish?.refinedImageUrl) {
+      await applyProductPhotoVariant("polished");
+      return;
+    }
+
+    const normalizedUri = entry.normalizedOriginalUri ?? entry.originalUri ?? entry.localUri;
+    try {
+      const sourceInspection = await inspectPipelineImageUri(normalizedUri);
+      if (!normalizedUri || !isUsablePipelineImage(sourceInspection)) {
+        throw new Error("Original image is unavailable for polish.");
+      }
+
+      const polish = await maybeRunProductPolish({
+        normalizedUri,
+        width: entry.originalWidth,
+        height: entry.originalHeight,
+        photoHash: entry.photoHash,
+        traceId: entry.traceId ?? photoTraceId,
+      });
+      const nextProductPolish = polish.productPolish
+        ? {
+            ...polish.productPolish,
+            activeVariant: "original" as const,
+          }
+        : null;
+      const hasPolishedResult = Boolean(polish.refinedLocalUri || polish.refinedImageUrl);
+      const nextEntry: SelectedPhotoEntry = {
+        ...entry,
+        refinedLocalUri: polish.refinedLocalUri,
+        refinedImageUrl: polish.refinedImageUrl,
+        imageQuality: polish.imageQuality,
+        productPolish: nextProductPolish,
+        uploaded: null,
+      };
+      const nextEntries = entries.map((item) => (item.id === entry.id ? nextEntry : item));
+      selectedPhotosRef.current = nextEntries;
+      setSelectedPhotos(nextEntries);
+      setPendingRefinedPhotoUri(polish.refinedLocalUri);
+      setPendingRefinedImageUrl(polish.refinedImageUrl);
+      setPendingImageQuality(polish.imageQuality);
+      setPendingProductPolish(nextProductPolish);
+      setUploadedPhotoRecord(null);
+
+      if (nextProductPolish?.status === "failed") {
+        setProductPolishError(PRODUCT_POLISH_FAILED_MESSAGE);
+        setProductPolishStatus("idle");
+        return;
+      }
+
+      if (!hasPolishedResult) {
+        setProductPolishStatus("idle");
+        return;
+      }
+
+      await applyProductPhotoVariant("polished");
+    } catch (error) {
+      logPhotoPipelineEvent(entry.traceId ?? photoTraceId, "product_polish_action", "failure", {
+        ...safeErrorData(error),
+      });
+      setProductPolishError(PRODUCT_POLISH_FAILED_MESSAGE);
+      setProductPolishStatus("idle");
+    }
+  }, [
+    applyProductPhotoVariant,
+    logPhotoPipelineEvent,
+    maybeRunProductPolish,
+    photoTraceId,
+    primaryPhotoId,
+    productPolishStatus,
+    refiningCutout,
+    uid,
+  ]);
 
   const processPickedAsset = useCallback(
     async (
@@ -2229,13 +2345,6 @@ export function usePhotoStep({
       const effectiveWidth = normalized.width ?? asset.width ?? null;
       const effectiveHeight = normalized.height ?? asset.height ?? null;
       const initialOptions = getRefineOptions(DEFAULT_REFINE_VALUE);
-      const polish = await maybeRunProductPolish({
-        normalizedUri,
-        width: effectiveWidth,
-        height: effectiveHeight,
-        photoHash: nextPhotoHash,
-        traceId,
-      });
       if (selectionId !== latestPhotoSelectionIdRef.current) {
         throw new Error("Photo selection superseded.");
       }
@@ -2246,12 +2355,12 @@ export function usePhotoStep({
         id: selectedPhotoId,
         traceId,
         source,
-        localUri: polish.refinedLocalUri ?? normalizedUri,
+        localUri: normalizedUri,
         originalUri,
         normalizedOriginalUri: normalizedUri,
-        refinedLocalUri: polish.refinedLocalUri,
-        refinedImageUrl: polish.refinedImageUrl,
-        activeImageVariant: polish.activeImageVariant,
+        refinedLocalUri: null,
+        refinedImageUrl: null,
+        activeImageVariant: "original",
         photoHash: nextPhotoHash,
         originalWidth: effectiveWidth,
         originalHeight: effectiveHeight,
@@ -2261,20 +2370,20 @@ export function usePhotoStep({
         transparentPixelRatio: 0,
         maskUri: null,
         visualNormalization: null,
-        imageQuality: polish.imageQuality,
-        productPolish: polish.productPolish,
-        imageSource: itemImageSourceFor(polish.activeImageVariant, false),
+        imageQuality: null,
+        productPolish: null,
+        imageSource: itemImageSourceFor("original", false),
         cutoutSourceKind: null,
         uploaded: null,
       };
       const resolvedVisionInput = await resolveCutoutInputSource({
         entry: seedEntry,
-        requestedSource: polish.activeImageVariant,
+        requestedSource: "original",
         reason: "initial_pick",
       });
       const shouldUseRefinedForVision = resolvedVisionInput?.sourceKind === "polished";
       const visionInputUri = resolvedVisionInput?.localUri ?? normalizedUri;
-      const activeImageVariant = resolvedVisionInput?.sourceKind ?? polish.activeImageVariant;
+      const activeImageVariant = resolvedVisionInput?.sourceKind ?? "original";
       const resolvedEntry = resolvedVisionInput?.entry ?? seedEntry;
 
       const brandPromise = detectBrandLogo(originalUri).catch(() => null);
@@ -2304,8 +2413,8 @@ export function usePhotoStep({
           traceId,
           usingRefinedImage: shouldUseRefinedForVision,
           originalLocalUri: originalUri,
-          refinedLocalUri: polish.refinedLocalUri,
-          refinedImageUrl: polish.refinedImageUrl,
+          refinedLocalUri: null,
+          refinedImageUrl: null,
         });
         cutoutUri = cutout.uri;
         cutoutHasTransparency = cutout.hasTransparency;
@@ -2379,8 +2488,8 @@ export function usePhotoStep({
         localUri: visionInputUri,
         originalUri,
         normalizedOriginalUri: normalizedUri,
-        refinedLocalUri: resolvedEntry.refinedLocalUri ?? polish.refinedLocalUri,
-        refinedImageUrl: polish.refinedImageUrl,
+        refinedLocalUri: resolvedEntry.refinedLocalUri,
+        refinedImageUrl: resolvedEntry.refinedImageUrl,
         activeImageVariant,
         photoHash: nextPhotoHash,
         originalWidth: effectiveWidth,
@@ -2394,13 +2503,13 @@ export function usePhotoStep({
         cutoutWidth,
         cutoutHeight,
         visualNormalization,
-        imageQuality: polish.imageQuality,
-        productPolish: polish.productPolish
+        imageQuality: resolvedEntry.imageQuality,
+        productPolish: resolvedEntry.productPolish
           ? {
-              ...polish.productPolish,
+              ...resolvedEntry.productPolish,
               activeVariant: activeImageVariant,
             }
-          : polish.productPolish,
+          : resolvedEntry.productPolish,
         imageSource: itemImageSourceFor(activeImageVariant, !!cutoutUri),
         cutoutSourceKind: cutoutUri ? activeImageVariant : null,
         uploaded: null,
@@ -2410,7 +2519,6 @@ export function usePhotoStep({
       analyzeCurrentVisualNormalization,
       buildNormalizedPreviewCutout,
       logPhotoPipelineEvent,
-      maybeRunProductPolish,
       normalizeImageForCutout,
       resolveCutoutInputSource,
       runBackgroundRemoval,
@@ -2543,6 +2651,7 @@ export function usePhotoStep({
       setDetectedBrand(null);
       setDetectedBrandConfidence(null);
       setBgRemovalError(null);
+      setProductPolishError(null);
       setUploadedPhotoRecord(null);
       setProductPolishStatus("idle");
       clearPendingCutoutState("pick-start");
@@ -3207,6 +3316,7 @@ export function usePhotoStep({
     setPendingActiveImageVariant("original");
     setSelectedStudioSource("original");
     setStudioSourceWarning(null);
+    setProductPolishError(null);
     setPendingImageQuality(null);
     setPendingProductPolish(null);
     setProductPolishStatus("idle");
@@ -3295,6 +3405,7 @@ export function usePhotoStep({
     pendingActiveImageVariant,
     selectedStudioSource,
     studioSourceWarning,
+    productPolishError,
     pendingImageQuality,
     pendingProductPolish,
     productPolishStatus,
@@ -3313,6 +3424,7 @@ export function usePhotoStep({
     uploadedPhotoRecord,
     selectedPhotos,
     primaryPhotoId,
+    aiPolishEarlyAccess,
   };
 
   const derived = {
@@ -3379,6 +3491,7 @@ export function usePhotoStep({
     handleDebugRefineEdgeTightenChange,
     useOriginalProductPhoto: () => void applyProductPhotoVariant("original"),
     usePolishedProductPhoto: () => void applyProductPhotoVariant("polished"),
+    polishProductPhoto: polishPrimaryProductPhoto,
     pickPhoto,
     resolvePhotoFields,
     retryPhotoUpload,

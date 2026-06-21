@@ -346,10 +346,59 @@ export function previousUserPrompt(messages: AIMessage[]) {
   return "";
 }
 
+function previousStylingPrompt(messages: AIMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.type !== "user") continue;
+    const text = String(message.text ?? "").trim();
+    if (!text) continue;
+    const intent = classifyAuraChatIntent(text, {
+      hasPreviousLook: latestAuraLookCount(messages.slice(0, index)) > 0,
+    });
+    if (intent !== "GENERAL_CHAT") return text;
+  }
+  return "";
+}
+
+function latestLookPromptContext(messages: AIMessage[]) {
+  const look = latestAuraLook(messages);
+  if (!look) return "";
+  const parts = [
+    look.lookTitle ? `last look "${look.lookTitle}"` : "",
+    look.occasion ? `occasion ${look.occasion}` : "",
+    look.vibe ? `vibe ${look.vibe}` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : "";
+}
+
+function promptHasExplicitStylingContext(prompt: string) {
+  const intent = classifyAuraStylingIntent(prompt, {
+    hasPreviousOutfit: false,
+  });
+  return Boolean(
+    intent.occasion ||
+      intent.vibe ||
+      intent.requiredItems.length ||
+      intent.excludedCategories.length ||
+      /\b(for|to|at|tonight|today|tomorrow|date|dinner|work|office|school|class|wedding|interview|formal|casual|streetwear|rave|club|vacation|hotel|restaurant)\b/i.test(prompt),
+  );
+}
+
 export function buildStructuredOutfitBatchPrompt(prompt: string, messages: AIMessage[]) {
   const current = String(prompt ?? "").trim();
   if (!current) return current;
-  if (MULTI_OUTFIT_REQUEST_RE.test(current)) return current;
+  if (MULTI_OUTFIT_REQUEST_RE.test(current)) {
+    if (promptHasExplicitStylingContext(current)) return current;
+    const prior = previousStylingPrompt(messages);
+    const lookContext = latestLookPromptContext(messages);
+    if (!prior && !lookContext) return current;
+    return [
+      prior ? `Previous styling request: ${prior}.` : "",
+      lookContext ? `Previous rendered look context: ${lookContext}.` : "",
+      `Keep the same occasion and styling intent unless the current request changes it.`,
+      `Current request: ${current}.`,
+    ].filter(Boolean).join(" ");
+  }
   if (!OUTFIT_REFINEMENT_RE.test(current)) return current;
   const prior = previousUserPrompt(messages);
   if (!prior || prior === current) {
