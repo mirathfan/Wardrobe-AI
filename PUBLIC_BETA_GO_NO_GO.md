@@ -1,39 +1,37 @@
 # Public Beta Go/No-Go
 
-Decision date: [INSERT DATE]
+Decision date: Not yet set.
 
-Decision owner: [INSERT OWNER]
+Decision owner: Owner input required.
 
 ## Launch Gates
 
-- [ ] No startup crash on the beta build.
+- [ ] No startup crash on the installed beta build.
 - [ ] Account creation, sign in, sign out, and account deletion verified.
 - [ ] Account deletion verified against Firebase Auth, Firestore, Storage, chats, and outfit plans.
 - [ ] Privacy Policy is final, owner-approved, and hosted.
 - [ ] Terms of Use is final, owner-approved, and hosted.
 - [ ] Support URL and support email are live.
-- [ ] App Store Connect beta info is complete.
-- [ ] App Store privacy answers are reviewed and submitted accurately.
-- [ ] Sentry is enabled with `EXPO_PUBLIC_SENTRY_DSN`.
-- [ ] Sentry event scrubber verified with a test error.
-- [ ] Sentry alerts route to the owner/support email.
+- [ ] App Store Connect beta information is complete.
+- [ ] App Store privacy answers are reviewed and published accurately.
+- [ ] Sentry is enabled for the build.
+- [ ] Sentry event scrubbing is verified with a test event.
+- [ ] Sentry alerts route to an owner-approved support/engineering email.
 - [ ] OpenAI spend monitoring is active.
 - [ ] Firebase/GCP budget alerts are active.
-- [ ] SerpApi cap is active or feature is disabled.
-- [ ] Rate limits are active for AURA chat, streaming chat, image ingestion, product import, product search, and voice transcription.
+- [ ] SerpApi cap is active or product search is disabled.
+- [ ] Rate limits are active for AURA chat, streaming chat, image ingestion, product import, product search, voice transcription, outfit generation, and product polish.
 - [ ] Product import does not corrupt images.
 - [ ] AURA does not duplicate or lose messages in normal and poor-network testing.
-- [ ] Known issues are documented below.
+- [ ] Known issues and accepted risks are documented.
 
 ## Known Issues
 
-| Issue | Severity | Workaround | Owner |
-|---|---|---|---|
-| [INSERT ISSUE] | [LOW/MEDIUM/HIGH/BLOCKER] | [INSERT WORKAROUND] | [INSERT OWNER] |
+No device/TestFlight issues are recorded by this repository-only stabilization pass. Populate this section after manual QA; do not interpret an empty list as proof that there are no issues.
 
 ## Decision
 
 - [ ] Go
 - [ ] No-Go
 
-Decision notes: [INSERT NOTES]
+Decision notes: Not yet recorded.

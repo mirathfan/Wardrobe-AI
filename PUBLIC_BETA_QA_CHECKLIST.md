@@ -1,10 +1,10 @@
 # Public Beta QA Checklist
 
-Build under test: [INSERT BUILD NUMBER]
+Build under test: Record the installed TestFlight build (next intended candidate: 8).
 
-Tester: [INSERT NAME]
+Tester: Record the tester name.
 
-Date: [INSERT DATE]
+Date: Record the test date.
 
 ## Core App
 
@@ -89,6 +89,4 @@ Date: [INSERT DATE]
 
 ## Notes
 
-Known issues found:
-
-- [INSERT ISSUE]
+Known issues found: Record each issue with severity, reproduction steps, and workaround. None are recorded by this repository-only stabilization pass.

@@ -4,6 +4,8 @@ Date: 2026-05-25
 
 App: AURA: AI Personal Stylist
 
+2026-08-15 status note: This document records the May readiness pass. The Sentry DSN is now present in the EAS production environment, the Firebase/Google bundle configuration is aligned for `com.kasat.aura`, and current owner actions are tracked in `TESTFLIGHT_SUBMISSION_CHECKLIST.md`, `PUBLIC_BETA_GO_NO_GO.md`, and `PROJECT_STATE.md`.
+
 ## 1. What Was Added
 
 - Installed `@sentry/react-native` for Expo React Native.
@@ -57,7 +59,7 @@ Note: the worktree had many unrelated QA changes before this pass. The list abov
 
 ## 3. Sentry Setup Status
 
-Status: code/config added, owner setup still required.
+Historical May status: code/config was added. As of 2026-08-15, the EAS production environment contains the Sentry DSN; test-event delivery, scrubbing, alerts, and optional source-map credentials still require owner verification.
 
 - SDK: installed.
 - App init: added in `app/_layout.tsx`.
@@ -110,17 +112,14 @@ The required public beta document set is present in repo root:
 - Security/secrets audit.
 - Cost/abuse readiness plan.
 
-## 6. Remaining Owner Placeholders
+## 6. Remaining Owner Inputs
 
 Owner must fill:
 
-- Effective dates.
-- Contact/support/privacy email.
-- Privacy Policy URL.
-- Terms URL.
-- Support URL.
+- Final policy/terms approval.
+- Production contact/support/privacy email.
+- Production website origin used by the `/privacy`, `/terms`, `/support`, and `/delete-account` routes.
 - Demo account email/password or reviewer account instructions.
-- Exact account deletion path copy.
 - Sentry organization/project/auth token if uploading source maps.
 - Sentry alert recipient email.
 - OpenAI budget threshold.

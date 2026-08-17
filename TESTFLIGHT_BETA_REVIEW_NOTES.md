@@ -24,24 +24,24 @@ This is a public beta build. AI suggestions are informational and may be imperfe
 
 ## Demo Account
 
-Demo email: [INSERT DEMO EMAIL]
+Demo email: Owner must provide a dedicated beta-review account or confirm reviewer self-registration.
 
-Demo password: [INSERT DEMO PASSWORD]
+Demo password: Owner must provide this securely in App Store Connect; never commit it.
 
 If no demo account is provided, reviewers can create a test account using email/password or configured Apple/Google sign-in.
 
 ## Account Deletion Path
 
-[INSERT EXACT IN-APP PATH, for example: Profile tab > Settings > Delete Account]
+Profile tab → Account → Danger Zone → Delete account, followed by both confirmation prompts.
 
 Backend deletion is intended to remove Firebase Auth, Firestore `users/{uid}` data, Storage `users/{uid}` files, chats, closet items, saved looks, and outfit plans.
 
 ## URLs
 
-Privacy Policy URL: [INSERT PRIVACY POLICY URL]
+Privacy Policy URL: `${NEXT_PUBLIC_SITE_URL}/privacy` after deployment.
 
-Support URL: [INSERT SUPPORT URL]
+Support URL: `${NEXT_PUBLIC_SITE_URL}/support` after deployment.
 
-Terms URL: [INSERT TERMS URL]
+Terms URL: `${NEXT_PUBLIC_SITE_URL}/terms` after deployment.
 
-Contact email: [INSERT CONTACT EMAIL]
+Contact email: Production value of `NEXT_PUBLIC_SUPPORT_EMAIL` (owner input required).

@@ -108,8 +108,7 @@ Changes made in this pass:
 - [x] Root error boundary added.
 - [x] AURA chat fallback reports safe exception context.
 - [x] Add Item fallback reports safe exception context.
-- [ ] Owner creates Sentry project.
-- [ ] Owner adds DSN to EAS env.
+- [x] Sentry project/DSN is configured in the EAS production environment (verified 2026-08-15 without changing the value).
 - [ ] Owner verifies one test event in Sentry.
 - [ ] Owner configures alert email.
 

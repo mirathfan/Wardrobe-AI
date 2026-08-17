@@ -1,10 +1,10 @@
 # Account Deletion Test Plan
 
-Build under test: [INSERT BUILD NUMBER]
+Build under test: Record the installed TestFlight build (next intended candidate: 8).
 
-Tester: [INSERT NAME]
+Tester: Record the tester name.
 
-Date: [INSERT DATE]
+Date: Record the test date.
 
 ## Manual Verification
 
@@ -16,7 +16,7 @@ Date: [INSERT DATE]
 6. Send at least one AURA chat message.
 7. Save or plan one outfit.
 8. If product import is enabled, import one product link.
-9. Open the in-app account deletion path: [INSERT ACCOUNT DELETION PATH].
+9. Open **Profile tab → Account → Danger Zone → Delete account** and complete both confirmation prompts.
 10. Delete the account.
 11. Confirm the app signs out and returns to auth/welcome.
 

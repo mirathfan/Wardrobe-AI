@@ -32,11 +32,11 @@ Secondary category: Shopping or Productivity, depending on whether shopping/sear
 
 ## URLs
 
-Support URL: [INSERT SUPPORT URL]
+Support URL: `${NEXT_PUBLIC_SITE_URL}/support` after website deployment.
 
-Privacy Policy URL: [INSERT PRIVACY POLICY URL]
+Privacy Policy URL: `${NEXT_PUBLIC_SITE_URL}/privacy` after website deployment.
 
-Terms URL: [INSERT TERMS URL]
+Terms URL: `${NEXT_PUBLIC_SITE_URL}/terms` after website deployment.
 
 ## Beta App Description
 
@@ -61,9 +61,9 @@ This is a beta build. AI styling suggestions are informational only and may be w
 
 ## Demo Account
 
-Demo email: [INSERT DEMO EMAIL]
+Demo email: Owner must provide a dedicated beta-review account or confirm reviewer self-registration.
 
-Demo password: [INSERT DEMO PASSWORD]
+Demo password: Owner must provide this securely in App Store Connect; never commit it.
 
 If no demo account is provided, reviewers may create a new account.
 

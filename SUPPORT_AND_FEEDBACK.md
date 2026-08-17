@@ -1,59 +1,26 @@
-# Support And Feedback
+# AURA Support And Feedback
 
-Support email: [INSERT SUPPORT EMAIL]
-
-Support URL: [INSERT SUPPORT URL]
+- Support email: production value of `NEXT_PUBLIC_SUPPORT_EMAIL` (owner input required).
+- Support URL after deployment: `${NEXT_PUBLIC_SITE_URL}/support`.
+- Account deletion URL after deployment: `${NEXT_PUBLIC_SITE_URL}/delete-account`.
 
 ## How Testers Should Report Bugs
 
-Send feedback through TestFlight or email support with the template below. Do not include passwords, auth tokens, private keys, full product URLs, or sensitive personal information.
+Send feedback through TestFlight or the configured support email. Include:
 
-## Bug Report Template
+- A short summary.
+- AURA build number.
+- iPhone model and iOS version.
+- Feature area.
+- Steps to reproduce.
+- Expected and actual results.
+- Screenshot or recording when useful.
+- Network condition.
 
-Title: [SHORT SUMMARY]
+Do not include passwords, authentication tokens, private keys, full private product URLs, or sensitive personal information.
 
-Build number: [BUILD NUMBER]
+## Privacy And Data Deletion
 
-Device and iOS version: [DEVICE, IOS VERSION]
+In-app path: **Profile tab → Account → Danger Zone → Delete account**, followed by both confirmation prompts.
 
-Account email used for beta: [EMAIL IF COMFORTABLE]
-
-Feature area: [Auth / Onboarding / Add Item / Closet / AURA Chat / Product Link / Outfit Planning / Account Deletion / Other]
-
-Steps to reproduce:
-
-1. [STEP]
-2. [STEP]
-3. [STEP]
-
-Expected result: [WHAT SHOULD HAVE HAPPENED]
-
-Actual result: [WHAT HAPPENED]
-
-Screenshots or screen recording: [ATTACH IF HELPFUL]
-
-Network condition: [Wi-Fi / Cellular / Poor network / Offline]
-
-## Known Issue Template
-
-Issue: [SUMMARY]
-
-Status: [Investigating / Fixed in next build / Workaround available]
-
-Affected builds: [BUILD NUMBERS]
-
-Workaround: [STEPS]
-
-Owner: [NAME]
-
-## Privacy And Data Deletion Requests
-
-Use the in-app account deletion path first: [INSERT ACCOUNT DELETION PATH].
-
-For privacy questions or deletion help, email [INSERT PRIVACY CONTACT EMAIL] with:
-
-- The email address used for the AURA beta account.
-- The request type: access, deletion, correction, or other privacy question.
-- Any relevant TestFlight build number.
-
-Do not send passwords, auth tokens, or private keys.
+For privacy or deletion help when the app cannot be accessed, contact the configured support email from the email associated with the beta account and describe the request. Do not send credentials.

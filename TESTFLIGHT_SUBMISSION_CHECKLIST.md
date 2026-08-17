@@ -1,53 +1,55 @@
 # AURA TestFlight Submission Checklist
 
-Audit date: 2026-05-11
+Repository audit date: 2026-08-15
 
-## Repo/Config Status
+## Repository And Configuration Status
 
 | Item | Status | Evidence | Required action |
 |---|---|---|---|
-| App name | PASS | `app.json` name `AURA`; native display name `AURA` | Confirm App Store listing name remains `AURA: AI Personal Stylist` |
-| Bundle ID | PARTIAL | Expo/iOS project use `com.kasat.aura` | Regenerate Firebase iOS config for this bundle |
-| Android package | PARTIAL | Expo/Android Gradle use `com.kasat.aura` | Regenerate Firebase Android config for this package |
-| Version/build number | FIXED | `version` 1.0.0, iOS `buildNumber` 1, Android `versionCode` 1 | Increment for every TestFlight upload |
-| Icons | PASS WITH MANUAL QA | App icons referenced in `assets/` | Verify actual icon appearance in TestFlight |
-| Splash screen | PASS WITH MANUAL QA | `expo-splash-screen` configured black background and splash icon | Verify first launch on device |
-| Camera permission text | PASS | Specific AURA text in `app.json`/Info.plist | Test prompt on device |
-| Photo library permission text | PASS | Specific AURA text in `app.json`/Info.plist | Test limited photo access |
-| Microphone/speech text | PASS | AURA voice dictation text present | Confirm voice feature is intended for launch |
-| Location text | FIXED | More specific foreground/location strings added | Verify no unwanted Always prompt appears |
-| Calendar/reminders text | FIXED | Calendar/reminders strings made less vague | Confirm reminders permission is actually required |
-| Support URL | MISSING | No repo/App Store metadata found | Add in App Store Connect |
-| Privacy Policy URL | MISSING | Draft file created, no hosted URL | Host reviewed policy before external testing |
-| Terms URL | MISSING | Draft file created, no hosted URL | Host reviewed terms before external testing |
-| App category | MISSING | Not represented in repo | Set in App Store Connect |
-| Minimum iOS version | PASS | Expo build properties deployment target 17.0 | Confirm iOS 17 minimum is acceptable |
-| EAS build profiles | FIXED | `eas.json` added with development/preview/production | Run `eas build --profile preview --platform ios` |
-| Firebase iOS config bundle match | FAIL | `GoogleService-Info.plist` says `com.athfan.AURA` | Download new `GoogleService-Info.plist` for `com.kasat.aura` |
-| Firebase Android config package match | FAIL | `google-services.json` says `com.athfan.aura` | Download new `google-services.json` for `com.kasat.aura` |
-| Firebase config included in EAS build | FAIL/RISK | Firebase config files are ignored/untracked by git | After replacing with correct configs, either commit them intentionally or configure EAS secret file handling so cloud builds receive them |
-| Google Sign-In OAuth | FAIL/RISK | Reversed client IDs are tied to old Firebase config | Regenerate OAuth clients and `.env.local` values |
-| No development-only endpoints | PARTIAL | No localhost client endpoints found; `parseOutfitIntent` HTTP endpoint exists | Decide whether `parseOutfitIntent` is still needed |
-| No test keys | PASS FROM TRACKED CODE | No service account/private key tracked | Firebase API keys exist in ignored local files; restrict in Google Cloud |
-| No hardcoded local URLs | PASS | `localhost` only blocked in server safe fetch or native dev config | None |
-| No debug screens exposed | PASS/RISK | Debug logs mostly gated; AURA training route exists as product feature | Manually inspect route access |
-| No sensitive console logs | PARTIAL/FIXED | Backend wardrobe context logs reduced; client debug logs gated by `__DEV__`/env | Review Functions logs after QA |
-| App Check | FAIL/RISK | No App Check SDK or `enforceAppCheck` found | Configure before external TestFlight if possible |
-| Privacy manifest | RISK | `ios/AURA/PrivacyInfo.xcprivacy` collected data array is empty | Legal/owner review required |
+| App name | PASS | Expo and native display name are `AURA` | Confirm App Store listing name |
+| iOS bundle ID | PASS | Expo, Xcode, and Firebase plist use `com.kasat.aura` | None |
+| Version/build baseline | PASS | Version `1.0.0`; checked-in iOS build `7` | Production EAS auto-increment is expected to create build `8` |
+| Icons and splash | PASS WITH MANUAL QA | Assets and native resources are present | Verify on a physical-device/TestFlight install |
+| Permissions | PASS WITH MANUAL QA | Native usage descriptions cover location, calendar, reminders, camera, photos, microphone, and speech | Verify prompt behavior and denied states on device |
+| Deep links | PASS | Native `aura` scheme matches Expo config | Smoke test sign-in and deep-link return |
+| Google Sign-In iOS scheme | FIXED | Native scheme matches the `com.kasat.aura` Firebase reversed client ID | Verify Google sign-in on build 8 |
+| Sign in with Apple | PASS WITH MANUAL QA | Native entitlement and Expo setting are present | Verify Apple sign-in on build 8 |
+| Firebase iOS config | PASS | Root/native plist bundle is `com.kasat.aura` | Keep both copies synchronized |
+| Firebase Android config | PASS FOR PACKAGE | Native config includes `com.kasat.aura` | Android release is outside build-8 scope |
+| EAS production environment | PASS FROM TOOLING | Firebase, Google client IDs, AURA agent, and Sentry DSN are configured | Do not change production values during cleanup |
+| EAS profile | PASS | Store distribution, local credentials, production environment, and auto-increment configured | Build only after review/commit/merge |
+| Firebase backend | PASS FROM TOOLING | Required Cloud Functions are deployed | No redeploy for this stabilization pass |
+| Privacy/terms/support routes | PASS IN SOURCE | Next.js routes exist at `/privacy`, `/terms`, `/support`, `/delete-account` | Owner approve and deploy website |
+| Support email and website origin | OWNER INPUT | Environment-backed; no production value exists in the repository | Configure Vercel values before external beta |
+| App Store metadata | DRAFT READY | Repository metadata draft is current | Enter and approve in App Store Connect |
+| App Privacy answers | OWNER REVIEW | Inventory and draft answers exist | Review third-party processors and publish answers |
+| App Check | DEFERRED RISK | No enforced App Check path was established in this cleanup | Accept for trusted beta or schedule before broader beta |
+| Privacy manifest | OWNER REVIEW | Native privacy manifest exists | Confirm collected-data declarations against App Store answers |
 
-## Required Before Internal TestFlight
+## Before Creating Build 8
 
-1. Register Firebase iOS app for `com.kasat.aura` and replace both root and native `GoogleService-Info.plist`.
-2. Register Firebase Android app for `com.kasat.aura` and replace both root and native `google-services.json` if Android is kept.
-3. Make sure the corrected Firebase config files are available to EAS cloud builds.
-4. Verify Google Sign-In iOS/web client IDs in `.env.local`.
-5. Run `eas build --profile preview --platform ios`.
-6. Smoke test on a physical iPhone.
+- [ ] Review and intentionally commit the stabilization diff.
+- [ ] Push the feature branch, merge through the chosen workflow, and build from a clean `main`.
+- [ ] Confirm `npm test`, `npm run lint`, mobile TypeScript, Expo Doctor, iOS export, backend validation, and website validation pass.
+- [ ] Configure/approve production website origin and support email.
+- [ ] Approve Privacy Policy and Terms text.
+- [ ] Confirm Apple Developer agreements and credentials remain valid.
 
-## Required Before External TestFlight
+## Before Internal TestFlight
 
-1. Host reviewed Privacy Policy and Terms.
-2. Complete App Store Connect privacy answers.
-3. Configure App Check or document why it is deferred for small internal-only launch.
-4. Confirm deletion behavior from Firebase Console.
-5. Set support URL, category, age rating, test instructions, and export compliance.
+- [ ] Manually inspect **App Store Connect → AURA → TestFlight** for build 7 and current status.
+- [ ] Create/upload build 8 if proceeding with the cleaned candidate.
+- [ ] Complete export-compliance prompts.
+- [ ] Install from TestFlight on a physical iPhone.
+- [ ] Complete the trusted-beta smoke test in `PUBLIC_BETA_QA_CHECKLIST.md`.
+
+## Before External TestFlight
+
+- [ ] Deploy the reviewed website and verify all four public routes.
+- [ ] Set support URL/email, privacy URL, terms URL, category, age rating, test instructions, and reviewer contact.
+- [ ] Provide a working demo account if required by review.
+- [ ] Complete and publish accurate App Privacy answers.
+- [ ] Verify account deletion against Firebase Auth, Firestore, Storage, chats, and outfit plans.
+- [ ] Verify Sentry delivery/scrubbing and alert routing.
+- [ ] Verify OpenAI and Firebase/GCP budget alerts and the SerpApi cap/disabled state.
+- [ ] Decide whether deferring App Check is acceptable for the size and trust level of the tester cohort.

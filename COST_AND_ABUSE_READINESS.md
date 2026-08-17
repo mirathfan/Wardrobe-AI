@@ -84,7 +84,7 @@ eas env:create --environment production --name SENTRY_PROJECT --value "..." --vi
 eas env:create --environment production --name SENTRY_AUTH_TOKEN --value "..." --visibility secret
 ```
 
-4. Configure an issue alert for new issues and regressions to [INSERT ALERT EMAIL].
+4. Configure an issue alert for new issues and regressions to the owner-approved support/engineering email.
 5. Verify a test event and confirm no prompts, emails, product URLs, image URLs, tokens, auth headers, or cookies appear.
 
 ## Monitoring Metrics
