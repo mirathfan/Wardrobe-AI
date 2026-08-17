@@ -7,4 +7,4 @@ export const AI_ACCENT = {
   border: "#dbeafe",
 };
 
-export const AI_LABEL = "Wardrobe AI";
+export const AI_LABEL = "AURA";

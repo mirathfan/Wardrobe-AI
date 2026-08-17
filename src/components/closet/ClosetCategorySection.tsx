@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
@@ -14,20 +14,26 @@ export function ClosetCategorySection({
   subcategories,
   onToggle,
   onPressItem,
+  onLongPressItem,
+  selectedItemIds,
 }: {
   title: string;
   count: number;
   expanded: boolean;
-  subcategories: Array<{ label: string; items: ClosetItem[] }>;
+  subcategories: { label: string; items: ClosetItem[] }[];
   onToggle: () => void;
   onPressItem: (item: ClosetItem) => void;
+  onLongPressItem?: (item: ClosetItem) => void;
+  selectedItemIds?: Set<string>;
 }) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const categoryItems = subcategories.flatMap((group) => group.items);
+  const gridGap = 16;
+  const gridCardWidth = (layout.width - layout.horizontalPadding * 2 - gridGap) / 2;
 
   return (
-    <View style={{ gap: 12 }}>
+    <View style={{ gap: 14 }}>
       <View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.055)" }} />
       <Pressable
         onPress={onToggle}
@@ -36,11 +42,11 @@ export function ClosetCategorySection({
           alignItems: "center",
           justifyContent: "space-between",
           gap: 12,
-          paddingVertical: 2,
+          paddingVertical: 4,
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900", letterSpacing: -0.2 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 9, flex: 1 }}>
+          <Text style={{ color: colors.text, fontSize: 18, fontWeight: "600", letterSpacing: 0 }}>
             {title}
           </Text>
           <View
@@ -51,7 +57,7 @@ export function ClosetCategorySection({
               backgroundColor: colors.overlay,
             }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "800" }}>{count}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: "600" }}>{count}</Text>
           </View>
         </View>
         <View
@@ -64,22 +70,24 @@ export function ClosetCategorySection({
             backgroundColor: colors.overlay,
           }}
         >
-          <Text style={{ color: colors.textSecondary, fontSize: 18, fontWeight: "700", marginTop: expanded ? -2 : 0 }}>
-            {expanded ? "⌃" : "+"}
-          </Text>
+          <Ionicons
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.textSecondary}
+          />
         </View>
       </Pressable>
 
       {expanded ? (
-        <View style={{ gap: 14 }}>
+        <View style={{ gap: 18 }}>
           {subcategories.map((group) => (
-            <View key={group.label} style={{ gap: 10 }}>
-              <View style={{ gap: 8 }}>
+            <View key={group.label} style={{ gap: 11 }}>
+              <View style={{ gap: 9 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "800", letterSpacing: 0.2 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "600", letterSpacing: 0.2 }}>
                     {group.label}
                   </Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "700", opacity: 0.75 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "600", opacity: 0.75 }}>
                     {group.items.length}
                   </Text>
                 </View>
@@ -92,28 +100,48 @@ export function ClosetCategorySection({
                   }}
                 />
               </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 10, paddingRight: 2 }}
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: gridGap,
+                }}
               >
-                {group.items.map((item) => (
-                  <ClosetItemCard key={item.id} item={item} onPress={() => onPressItem(item)} />
+                {group.items.map((item, index) => (
+                  <ClosetItemCard
+                    key={item.id}
+                    item={item}
+                    onPress={() => onPressItem(item)}
+                    onLongPress={onLongPressItem ? () => onLongPressItem(item) : undefined}
+                    selected={selectedItemIds?.has(item.id) ?? false}
+                    width={gridCardWidth}
+                    animateIndex={index}
+                  />
                 ))}
-              </ScrollView>
+              </View>
             </View>
           ))}
         </View>
       ) : (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 10, paddingRight: 2 }}
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            gap: gridGap,
+          }}
         >
-          {categoryItems.map((item) => (
-            <ClosetItemCard key={item.id} item={item} onPress={() => onPressItem(item)} />
+          {categoryItems.map((item, index) => (
+            <ClosetItemCard
+              key={item.id}
+              item={item}
+              onPress={() => onPressItem(item)}
+              onLongPress={onLongPressItem ? () => onLongPressItem(item) : undefined}
+              selected={selectedItemIds?.has(item.id) ?? false}
+              width={gridCardWidth}
+              animateIndex={index}
+            />
           ))}
-        </ScrollView>
+        </View>
       )}
     </View>
   );

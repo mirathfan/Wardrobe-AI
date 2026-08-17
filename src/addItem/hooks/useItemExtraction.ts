@@ -1,4 +1,4 @@
-import { InteractionManager, unstable_batchedUpdates } from "react-native";
+import { InteractionManager } from "react-native";
 import {
   collection,
   deleteDoc,
@@ -21,10 +21,13 @@ import {
   AUTOFILL_DEBOUNCE_MS,
   AUTOFILL_TIMEOUT_MS,
   AutofillSource,
+  buildUsefulItemName,
   hasTwoLegRegionCue,
+  isWeakItemName,
   nearestColorLabel,
   norm,
   normColor,
+  normalizeDisplayColorToDefault,
   normalizeColorList,
   normalizeIngestionStatus,
   parseHexRgb,
@@ -33,11 +36,217 @@ import {
 } from "../controllerShared";
 import { db } from "../../lib/firebase";
 import { normalizeCategoryForStorage } from "../../lib/items";
+import { photoPipelineDuration, photoPipelineNow, safeErrorData } from "../../lib/photoPipelineLogger";
 import {
   Category,
   isValidCategorySubCategory,
 } from "../../shared/wardrobeTaxonomy";
 import { uploadItemPhoto } from "../../lib/uploadImage";
+import type { ProductImageQuality, ProductPolishMetadata } from "../../types/ProductImageQuality";
+
+const UNBRANDED_LABEL = "Unbranded";
+const unknownBrandValues = new Set([
+  "",
+  "unknown",
+  "n/a",
+  "na",
+  "none",
+  "no brand",
+  "not found",
+  "unidentified",
+  "unreadable",
+]);
+
+function cleanDetectedBrand(value: unknown) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanupString(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function cleanupLower(value: unknown) {
+  return cleanupString(value).toLowerCase();
+}
+
+function cleanupRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function cleanupHasText(value: unknown) {
+  return cleanupString(value).length > 0;
+}
+
+function cleanupRecordsHaveImage(value: unknown) {
+  if (!Array.isArray(value)) return false;
+  return value.some((entry) => {
+    if (cleanupHasText(entry)) return true;
+    const record = cleanupRecord(entry);
+    return Object.keys(record).some((key) => {
+      const lowerKey = key.toLowerCase();
+      return (lowerKey.includes("url") || lowerKey.includes("uri")) && cleanupHasText(record[key]);
+    });
+  });
+}
+
+const CLEANUP_IMAGE_URL_KEY_PATTERN =
+  /(?:image|photo|thumb|thumbnail|crop|refined|cleaned|original|primary|preview|normalized|layout).*?(?:url|uri)|(?:url|uri).*?(?:image|photo|thumb|thumbnail|crop|refined|cleaned|original|primary|preview|normalized|layout)/i;
+
+function cleanupHasImageUrlLikeValue(value: unknown, keyHint = ""): boolean {
+  const imageKey = CLEANUP_IMAGE_URL_KEY_PATTERN.test(keyHint);
+  if (imageKey && cleanupHasText(value)) return true;
+
+  if (Array.isArray(value)) {
+    if (imageKey && value.some(cleanupHasText)) return true;
+    return value.some((entry) => cleanupHasImageUrlLikeValue(entry));
+  }
+
+  const record = cleanupRecord(value);
+  return Object.entries(record).some(([key, entry]) => cleanupHasImageUrlLikeValue(entry, key));
+}
+
+function cleanupHasProductOrSourceUrl(data: any) {
+  const product = cleanupRecord(data?.product);
+  const metadata = cleanupRecord(data?.metadata);
+  const linkMetadata = cleanupRecord(data?.linkMetadata);
+  const ingestionSource = cleanupRecord(data?.ingestionSource);
+  const source = cleanupRecord(data?.source);
+  return [
+    data?.sourceUrl,
+    data?.productUrl,
+    data?.productPageUrl,
+    data?.purchaseUrl,
+    data?.affiliateUrl,
+    data?.canonicalUrl,
+    data?.url,
+    product.url,
+    product.sourceUrl,
+    product.productUrl,
+    source.url,
+    source.sourceUrl,
+    source.productUrl,
+    metadata.sourceUrl,
+    metadata.productUrl,
+    metadata.canonicalUrl,
+    metadata.url,
+    linkMetadata.sourceUrl,
+    linkMetadata.productUrl,
+    linkMetadata.canonicalUrl,
+    linkMetadata.url,
+    ingestionSource.sourceUrl,
+    ingestionSource.productUrl,
+  ].some(cleanupHasText);
+}
+
+function isImmediateCleanupSafeEmptyDraft(data: any) {
+  if (data?.isDraft !== true) return false;
+  const draftState = cleanupLower(data?.draftState);
+  const lifecycle = cleanupLower(data?.itemLifecycleStatus);
+  const ingestion = cleanupRecord(data?.ingestion);
+  const nestedIngestionStatus = cleanupString(ingestion.status);
+  const photos = cleanupRecord(data?.photos);
+  const productPolish = cleanupRecord(data?.productPolish);
+  const photosProductPolish = cleanupRecord(photos.productPolish);
+  const outfitExtraction = cleanupRecord(data?.outfitExtraction);
+  const blocks = [
+    draftState && draftState !== "draft",
+    lifecycle && lifecycle !== "draft",
+    cleanupHasText(data?.ingestionStatus),
+    cleanupHasText(nestedIngestionStatus),
+    Object.keys(ingestion).some((key) => cleanupHasText(ingestion[key])),
+    cleanupHasText(data?.imageUrl),
+    cleanupHasText(data?.imageUri),
+    cleanupHasText(data?.photoUrl),
+    cleanupHasText(data?.photoUri),
+    cleanupHasText(data?.cleanedImageUrl),
+    cleanupHasText(data?.originalImageUrl),
+    cleanupHasText(data?.normalizedImageUrl),
+    cleanupHasText(data?.refinedImageUrl),
+    cleanupHasText(data?.layoutCropUrl),
+    cleanupHasText(data?.originalCropUrl),
+    cleanupHasText(data?.cropImageUrl),
+    cleanupHasText(data?.primaryImageUrl),
+    cleanupHasText(data?.thumbnailUrl),
+    cleanupHasText(data?.thumbUrl),
+    cleanupHasText(data?.sourceOriginalUrl),
+    cleanupHasText(productPolish.refinedImageUrl),
+    cleanupHasText(photos.primaryUrl),
+    cleanupHasText(photos.cleanedUrl),
+    cleanupHasText(photos.cleanedPhotoUrl),
+    cleanupHasText(photos.cleanedThumbUrl),
+    cleanupHasText(photos.originalUrl),
+    cleanupHasText(photos.normalizedUrl),
+    cleanupHasText(photos.normalizedImageUrl),
+    cleanupHasText(photos.refinedUrl),
+    cleanupHasText(photos.layoutCropUrl),
+    cleanupHasText(photos.originalCropUrl),
+    cleanupHasText(photos.previewUrl),
+    cleanupHasText(photos.croppedUrl),
+    cleanupHasText(photos.thumbnailUrl),
+    cleanupHasText(photos.aiUrl),
+    cleanupHasText(photos.thumbUrl),
+    cleanupHasText(photosProductPolish.refinedImageUrl),
+    cleanupHasText(outfitExtraction.imageUrl),
+    cleanupHasText(outfitExtraction.cleanedImageUrl),
+    cleanupHasText(outfitExtraction.normalizedImageUrl),
+    cleanupHasText(outfitExtraction.layoutCropUrl),
+    cleanupHasText(outfitExtraction.originalCropUrl),
+    cleanupHasText(outfitExtraction.cropImageUrl),
+    cleanupHasProductOrSourceUrl(data),
+    cleanupHasText(data?.embeddingHash),
+    data?.embeddingVector != null,
+    Array.isArray(data?.imageUrls) && data.imageUrls.some(cleanupHasText),
+    Array.isArray(data?.cleanedImageUrls) && data.cleanedImageUrls.some(cleanupHasText),
+    Array.isArray(data?.secondaryImageUrls) && data.secondaryImageUrls.some(cleanupHasText),
+    cleanupRecordsHaveImage(data?.images),
+    cleanupRecordsHaveImage(photos.images),
+    Array.isArray(photos.urls) && photos.urls.some(cleanupHasText),
+    Array.isArray(photos.imageUrls) && photos.imageUrls.some(cleanupHasText),
+    Array.isArray(photos.cleanedImageUrls) && photos.cleanedImageUrls.some(cleanupHasText),
+    cleanupHasImageUrlLikeValue(data),
+  ];
+  return !blocks.some(Boolean);
+}
+
+function brandConfidenceFor(data: any) {
+  const confidence = Number(
+    data?.brandConfidence ??
+      data?.confidence?.brand ??
+      data?.confidence?.brandConfidence ??
+      Number.NaN
+  );
+  return Number.isFinite(confidence) ? confidence : null;
+}
+
+function confidentBrandFor(data: any) {
+  const brand = cleanDetectedBrand(data?.brand);
+  const normalized = brand.toLowerCase();
+  if (unknownBrandValues.has(normalized)) return "";
+  const confidence = brandConfidenceFor(data);
+  if (confidence != null && confidence > 0 && confidence < 0.55) return "";
+  return brand;
+}
+
+function extractionFieldNamesFor(data: any) {
+  const fields: string[] = [];
+  const add = (field: string, present: boolean) => {
+    if (present && !fields.includes(field)) fields.push(field);
+  };
+  add("brand", !!confidentBrandFor(data));
+  add("name", !!norm(data?.name) && !isWeakItemName(norm(data?.name)));
+  add("category", !!normalizeCategoryForStorage(data?.category));
+  add("subcategory", !!norm(data?.subCategory));
+  add("color", normalizeColorList(data?.colors).length > 0 || !!norm(data?.primaryColor));
+  add("material", !!norm(data?.material));
+  add("fit", !!norm(data?.fit));
+  add("pattern", !!norm(data?.pattern));
+  add("notes", !!norm(data?.notes));
+  return fields;
+}
 
 export function useItemExtraction({
   uid,
@@ -69,6 +278,20 @@ export function useItemExtraction({
       .trim()
       .replace(/_/g, " ")
       .replace(/\b\w/g, (match) => match.toUpperCase());
+  const userFacingAutofillError = (error: unknown, fallback: string) => {
+    const raw = error instanceof Error ? error.message : String(error ?? "");
+    const lower = raw.toLowerCase();
+    if (lower.includes("timed out") || lower.includes("timeout")) {
+      return "AI autofill took too long. You can keep editing manually or try again.";
+    }
+    if (lower.includes("network") || lower.includes("unavailable") || lower.includes("offline")) {
+      return "AI autofill couldn’t stay connected. Check your connection and try again.";
+    }
+    if (lower.includes("upload") || lower.includes("storage")) {
+      return "Photo upload failed. Please try again.";
+    }
+    return fallback;
+  };
   const [draftItemId, setDraftItemId] = useState<string | null>(null);
   const [draftPhotoHash, setDraftPhotoHash] = useState<string | null>(null);
   const [autofillKick, setAutofillKick] = useState(0);
@@ -79,6 +302,7 @@ export function useItemExtraction({
   const [isAutofillRunning, setIsAutofillRunning] = useState(false);
   const [lastAutofillSummary, setLastAutofillSummary] = useState<string>("");
   const [autofillError, setAutofillError] = useState<string | null>(null);
+  const [extractionPartialSuccess, setExtractionPartialSuccess] = useState(false);
   const [aiPrediction, setAiPrediction] = useState<{
     category: string | null;
     colors: string[];
@@ -109,6 +333,7 @@ export function useItemExtraction({
   const [aiFit, setAiFit] = useState<string | null>(null);
   const [aiOccasionTags, setAiOccasionTags] = useState<string[]>([]);
   const [aiSeasonTags, setAiSeasonTags] = useState<string[]>([]);
+  const [aiColorNeedsReview, setAiColorNeedsReview] = useState(false);
 
   const aiRunIdRef = useRef(0);
   const lastAutofillStartedHashRef = useRef<string | null>(null);
@@ -147,6 +372,7 @@ export function useItemExtraction({
   const snapshotUpdateCountRef = useRef(0);
   const draftCreatePromiseRef = useRef<Promise<string | null> | null>(null);
   const activeAutofillHashRef = useRef<string | null>(null);
+  const extractionStartedAtByHashRef = useRef(new Map<string, number>());
   const autofillStatusDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingAutofillStatusRef = useRef<string | null>(null);
   const isFinalizingRef = useRef(false);
@@ -177,10 +403,36 @@ export function useItemExtraction({
     async (itemId: string | null) => {
       if (!uid || !itemId || isEdit) return;
       try {
-        await deleteDoc(doc(db, "users", uid, "items", itemId));
-      } catch {}
+        const draftRef = doc(db, "users", uid, "items", itemId);
+        const snap = await getDoc(draftRef);
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (!isImmediateCleanupSafeEmptyDraft(data)) {
+          if (__DEV__) {
+            console.log("[AddItemLifecycle] cleanupDraftDoc:skip-unsafe", {
+              itemId,
+              draftState: data?.draftState ?? null,
+              itemLifecycleStatus: data?.itemLifecycleStatus ?? null,
+              ingestionStatus: data?.ingestion?.status ?? data?.ingestionStatus ?? null,
+              hasPhoto: Boolean(data?.photoUrl ?? data?.photos?.primaryUrl ?? data?.cleanedImageUrl ?? data?.originalImageUrl),
+            });
+          }
+          return;
+        }
+        await deleteDoc(draftRef);
+      } catch {
+      }
     },
     [isEdit, uid]
+  );
+
+  const cleanupDraftDocIfInactive = useCallback(
+    (itemId: string | null) => {
+      if (!itemId) return;
+      if (createSessionRef.current.draftId === itemId) return;
+      void cleanupDraftDoc(itemId);
+    },
+    [cleanupDraftDoc, createSessionRef]
   );
 
   const ensureDraftDocExists = useCallback(async () => {
@@ -192,6 +444,7 @@ export function useItemExtraction({
     if (draftCreatePromiseRef.current) {
       return draftCreatePromiseRef.current;
     }
+    // TODO: Consider using separate users/{uid}/itemDrafts collection instead of users/{uid}/items for transient drafts.
     const draftRef = doc(collection(db, "users", uid, "items"));
     const now = Date.now();
     const payload = {
@@ -248,6 +501,8 @@ export function useItemExtraction({
     setIngestionStatus(null);
     setAiPattern(null);
     setAiMaterial(null);
+    setAiColorNeedsReview(false);
+    setExtractionPartialSuccess(false);
     photo.refs.syncedPreviewUriRef.current = null;
   }, [createSessionRef, draftItemId, draftPhotoHash, photo.refs, stopDraftSubscription]);
 
@@ -326,6 +581,11 @@ export function useItemExtraction({
       fit: norm(data?.fit),
       occasionTags: Array.isArray(data?.occasionTags) ? data.occasionTags : [],
       seasonTags: Array.isArray(data?.seasonTags) ? data.seasonTags : [],
+      estimatedValue: data?.estimatedValue ?? null,
+      purchasePrice: data?.purchasePrice ?? null,
+      retailPrice: data?.retailPrice ?? null,
+      currency: data?.currency ?? data?.priceCurrency ?? null,
+      priceSource: data?.priceSource ?? null,
       primaryUrl: norm(data?.photos?.primaryUrl ?? data?.photoUrl),
       cleanedPhotoUrl: norm(data?.photos?.cleanedUrl ?? data?.photos?.cleanedPhotoUrl),
     });
@@ -363,41 +623,85 @@ export function useItemExtraction({
       previousLifecycleStatus === "done" && normalizedStatus !== "done"
         ? "done"
         : normalizedStatus;
+    const extractionFieldNames = extractionFieldNamesFor(data);
+    const hasPartialExtraction =
+      effectiveStatus === "failed" &&
+      extractionFieldNames.some((field) => field !== "brand");
+    const statusForClient = hasPartialExtraction ? "done" : effectiveStatus;
+    const traceId =
+      String(data?.photoPipelineTraceId ?? photo.state.photoTraceId ?? "").trim() || null;
     if (activePhotoHash) {
       hashLifecycleRef.current.set(activePhotoHash, {
-        status: effectiveStatus,
+        status: statusForClient,
         draftId: createSessionRef.current.draftId,
       });
-      if (effectiveStatus === "failed") {
+      if (statusForClient === "failed") {
         terminalFailedHashesRef.current.add(activePhotoHash);
         verboseAutofillLog("[AddItem] autofill terminal failure recorded", {
           activeRunId,
           draftId: createSessionRef.current.draftId,
           photoHash: activePhotoHash,
         });
-      } else if (effectiveStatus === "done" || effectiveStatus === "processing") {
+      } else if (statusForClient === "done" || statusForClient === "processing") {
         terminalFailedHashesRef.current.delete(activePhotoHash);
       }
     }
     const shouldPreferDoneSnapshot = effectiveStatus === "done";
-    setIngestionStatus(effectiveStatus);
-    if (effectiveStatus === "pending" || effectiveStatus === "processing") {
+    const shouldApplyExtractionFields = effectiveStatus === "done" || hasPartialExtraction;
+    setIngestionStatus(statusForClient);
+    if (statusForClient === "pending" || statusForClient === "processing") {
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "start", {
+        status: statusForClient,
+        draftUpdated: true,
+        hasCategory: !!data?.category,
+        colorCount: Array.isArray(data?.colors) ? data.colors.length : 0,
+      });
       setAiStatus("running");
       setAutofillStatusThrottled("AI autofill running…");
       setIsAutofillRunning(true);
       setAutofillError(null);
+      setExtractionPartialSuccess(false);
       setAiStage("Details");
     } else if (effectiveStatus === "done") {
+      const startedAt = activePhotoHash ? extractionStartedAtByHashRef.current.get(activePhotoHash) : null;
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "success", {
+        status: effectiveStatus,
+        hasCategory: !!data?.category,
+        hasSubCategory: !!data?.subCategory,
+        colorCount: Array.isArray(data?.colors) ? data.colors.length : 0,
+        hasBrand: !!data?.brand,
+        hasName: !!data?.name,
+      }, startedAt ? photoPipelineDuration(startedAt) : null);
       setAiStatus("ready");
       setAutofillStatusThrottled("AI done");
       setIsAutofillRunning(false);
       setAutofillError(null);
+      setExtractionPartialSuccess(false);
+      setAiStage(null);
+    } else if (hasPartialExtraction) {
+      const startedAt = activePhotoHash ? extractionStartedAtByHashRef.current.get(activePhotoHash) : null;
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction_partial_success", "success", {
+        status: effectiveStatus,
+        brandDetected: !!confidentBrandFor(data),
+        fieldsApplied: extractionFieldNames.filter((field) => field !== "brand"),
+      }, startedAt ? photoPipelineDuration(startedAt) : null);
+      setAiStatus("ready");
+      setAutofillStatusThrottled("Detected most details — review before saving.");
+      setIsAutofillRunning(false);
+      setAutofillError(null);
+      setExtractionPartialSuccess(true);
       setAiStage(null);
     } else if (effectiveStatus === "failed") {
+      const startedAt = activePhotoHash ? extractionStartedAtByHashRef.current.get(activePhotoHash) : null;
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "failure", {
+        status: effectiveStatus,
+        hasError: !!data?.ingestion?.error,
+      }, startedAt ? photoPipelineDuration(startedAt) : null);
       setAiStatus("error");
       setAutofillStatusThrottled("AI couldn’t autofill—continue manually");
       setIsAutofillRunning(false);
       setAutofillError("AI autofill failed");
+      setExtractionPartialSuccess(false);
       setAiStage(null);
     }
     setAiPattern(norm(data?.pattern) || null);
@@ -405,6 +709,31 @@ export function useItemExtraction({
     setAiFit(norm(data?.fit) || null);
     setAiOccasionTags(Array.isArray(data?.occasionTags) ? data.occasionTags : []);
     setAiSeasonTags(Array.isArray(data?.seasonTags) ? data.seasonTags : []);
+    setAiColorNeedsReview(Boolean(data?.colorNeedsReview));
+    const incomingPrice =
+      typeof data?.estimatedValue === "number"
+        ? data.estimatedValue
+        : typeof data?.purchasePrice === "number"
+          ? data.purchasePrice
+          : typeof data?.retailPrice === "number"
+            ? data.retailPrice
+            : typeof data?.priceAmount === "number"
+              ? data.priceAmount
+              : typeof data?.price === "number"
+                ? data.price
+                : null;
+    if (!draft.refs.userEditedKeysRef.current.has("price") && incomingPrice != null) {
+      draft.actions.setPriceAmount(String(incomingPrice));
+      draft.actions.setPriceCurrency(norm(data?.currency ?? data?.priceCurrency) || "USD");
+      draft.actions.setPriceSource(
+        data?.priceSource === "product_link" ||
+          data?.priceSource === "manual" ||
+          data?.priceSource === "estimated"
+          ? data.priceSource
+          : "product_link"
+      );
+      draft.actions.setPriceDisplay(norm(data?.priceDisplay) || "");
+    }
 
     const serverPrimaryUrl = data?.photos?.primaryUrl ?? data?.photoUrl ?? null;
     const serverCleanedPhotoUrl =
@@ -414,7 +743,7 @@ export function useItemExtraction({
     if (serverPrimaryUrl) photo.actions.setPhotoUrl(serverPrimaryUrl);
     if (serverCleanedPhotoUrl) photo.actions.setCleanedPhotoUrl(serverCleanedPhotoUrl);
     if (serverGeneratedCleanedUrl) photo.actions.setServerCleanedUrl(serverGeneratedCleanedUrl);
-    if (effectiveStatus !== "done") {
+    if (!shouldApplyExtractionFields) {
       return;
     }
 
@@ -452,28 +781,50 @@ export function useItemExtraction({
     }
     setAiDebugAspectRatio(aspectRatio);
 
+    const aiDebug = data?.aiDebug ?? {};
     const rawColors = normalizeColorList(data?.colors);
-    const rawPrimary = normColor(String(data?.primaryColor ?? ""));
-    const colorNeedsReview = Boolean(data?.colorNeedsReview);
-    const pixelHex = norm(String(data?.pixelColorHex ?? data?.pixelHex ?? ""));
+    const rawPrimary = normalizeColorList([data?.primaryColor])[0] ?? "";
+    const debugColors = normalizeColorList([
+      ...(Array.isArray(aiDebug?.aiColors) ? aiDebug.aiColors : []),
+      aiDebug?.aiPrimaryColor,
+      aiDebug?.aiColorLabel,
+      aiDebug?.displayColor,
+      ...(Array.isArray(aiDebug?.displayColors) ? aiDebug.displayColors : []),
+      ...(Array.isArray(aiDebug?.pixelColors) ? aiDebug.pixelColors : []),
+    ]);
+    const pixelHex = norm(String(data?.pixelColorHex ?? data?.pixelHex ?? aiDebug?.pixelColorHex ?? ""));
     const dominantRgb = parseHexRgb(pixelHex);
     const dominantColor = dominantRgb ? nearestColorLabel(dominantRgb) : "";
-    const dominantColorLabel = colorNeedsReview ? "" : normColor(dominantColor);
+    const dominantColorLabel = normColor(dominantColor);
     const warmNeutralDominant = ["Beige", "Brown", "Khaki", "Tan", "Olive"].includes(
       dominantColorLabel
     );
-    const filteredRawColors = (colorNeedsReview ? [] : rawColors).filter(
+    const filteredRawColors = rawColors.filter(
       (color) => !(warmNeutralDominant && (color === "Orange" || color === "Grey"))
     );
     const filteredRawPrimary =
-      colorNeedsReview
-        ? ""
-        : warmNeutralDominant && (rawPrimary === "Orange" || rawPrimary === "Grey")
+      warmNeutralDominant && (rawPrimary === "Orange" || rawPrimary === "Grey")
         ? ""
         : rawPrimary;
+    const displayColorFallback = normalizeDisplayColorToDefault(
+      [
+        data?.displayColor,
+        ...(Array.isArray(data?.displayColors) ? data.displayColors : []),
+        data?.colorLabel,
+        aiDebug?.displayColor,
+        ...(Array.isArray(aiDebug?.displayColors) ? aiDebug.displayColors : []),
+        aiDebug?.aiColorLabel,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
     const finalColors = [
       ...filteredRawColors,
       ...(filteredRawPrimary ? [filteredRawPrimary] : []),
+      ...debugColors,
+      ...(filteredRawColors.length === 0 && !filteredRawPrimary && displayColorFallback
+        ? [displayColorFallback]
+        : []),
       ...(filteredRawColors.length === 0 && !filteredRawPrimary && dominantColorLabel
         ? [dominantColorLabel]
         : []),
@@ -591,6 +942,14 @@ export function useItemExtraction({
     ) {
       draft.actions.setSeasonTags(data.seasonTags);
     }
+    const incomingNotes = norm(data?.notes);
+    if (
+      !draft.refs.userEditedKeysRef.current.has("notes") &&
+      !draft.state.notes &&
+      incomingNotes
+    ) {
+      draft.actions.setNotes(incomingNotes);
+    }
 
     const normalizedCategory = finalCategoryCandidate ?? draft.derived.selectedCategory;
     const serverSubCategory = norm(data?.subCategory);
@@ -686,9 +1045,7 @@ export function useItemExtraction({
     }
 
     const summaryParts: string[] = [];
-    const summaryBrand = String(data?.brand ?? "")
-      .replace(/\s+/g, " ")
-      .trim();
+    const summaryBrand = confidentBrandFor(data);
     if (
       summaryBrand &&
       !draft.refs.userEditedKeysRef.current.has("brand") &&
@@ -703,9 +1060,22 @@ export function useItemExtraction({
         draft.actions.setBrand(summaryBrand);
         locked.brand = summaryBrand;
       }
+    } else if (
+      !summaryBrand &&
+      !draft.refs.userEditedKeysRef.current.has("brand") &&
+      !norm(draft.state.brand)
+    ) {
+      verboseAutofillLog("[AddItem] defaulting brand to unbranded", {
+        activeRunId,
+        shouldPreferDoneSnapshot,
+      });
+      draft.actions.setBrand(UNBRANDED_LABEL);
+      locked.brand = UNBRANDED_LABEL;
+      photo.actions.logPhotoPipelineEvent?.(traceId, "brand_defaulted_unbranded", "success", {
+        brandDetected: false,
+      });
     }
     const summaryCategory = norm(locked.category ?? finalCategoryCandidate ?? data?.category);
-    const summaryColors: string[] = locked.colors && locked.colors.length ? locked.colors : finalColors;
     const rawSummaryName = norm(data?.name);
     const displayColorForName =
       norm(String(data?.displayColor ?? "")) ||
@@ -713,10 +1083,18 @@ export function useItemExtraction({
         ? norm(String(data.displayColors[0] ?? ""))
         : "") ||
       "";
+    const generatedSummaryName = buildUsefulItemName({
+      displayColor: displayColorForName,
+      colors: finalColors,
+      material: incomingMaterial,
+      fit: norm(data?.fit),
+      subCategory: resolvedSubCategory,
+      category: summaryCategory,
+    });
     const summaryName =
-      colorNeedsReview
-        ? ""
-        : rawSummaryName ||
+      !isWeakItemName(rawSummaryName)
+        ? rawSummaryName
+        : generatedSummaryName ||
           [displayColorForName, summaryCategory]
             .filter(Boolean)
             .map((part) => humanizeAutofillLabel(part))
@@ -738,7 +1116,7 @@ export function useItemExtraction({
     if (summaryParts.length) {
       const summary = `AI found: ${summaryParts.join(" • ")}`;
       setLastAutofillSummary(summary);
-      if (effectiveStatus === "pending" || effectiveStatus === "processing") {
+      if (normalizedStatus === "pending" || normalizedStatus === "processing") {
         setAutofillStatusThrottled(summary);
       } else if (effectiveStatus === "done") {
         const doneBits = [summaryCategory].filter(Boolean).join(" • ");
@@ -753,7 +1131,7 @@ export function useItemExtraction({
         }
       }
     }
-    if (!isPlaceholderDraftCategory || normalizedStatus === "done") {
+    if (!isPlaceholderDraftCategory || effectiveStatus === "done") {
       aiCommittedRef.current = {
         source: incomingSource,
         category: finalCategoryCandidate,
@@ -766,7 +1144,14 @@ export function useItemExtraction({
           : 0,
       };
     }
-  }, [draft, photo.actions, photo.refs, setAutofillStatusThrottled]);
+  }, [
+    createSessionRef,
+    draft,
+    draftPhotoHash,
+    photo.actions,
+    photo.state,
+    setAutofillStatusThrottled,
+  ]);
 
   const attachDraftSubscription = useCallback(
     (itemId: string, sessionId?: string, runId?: number) => {
@@ -820,9 +1205,7 @@ export function useItemExtraction({
             snap.data()?.ingestion?.status ?? snap.data()?.ingestionStatus
           ),
         });
-        unstable_batchedUpdates(() => {
-          maybeApplyAutofillFromDraft(snap.data() as any, activeRunId);
-        });
+        maybeApplyAutofillFromDraft(snap.data() as any, activeRunId);
       });
       createSessionRef.current.unsub = draftSubscriptionRef.current;
       isSubscribedRef.current = true;
@@ -837,6 +1220,11 @@ export function useItemExtraction({
       localPhotoUri: string;
       cleanedLocalUri: string | null;
       normalizedLocalUri?: string | null;
+      sourceOriginalLocalUri?: string | null;
+      refinedLocalUri?: string | null;
+      imageQuality?: ProductImageQuality | null;
+      productPolish?: ProductPolishMetadata | null;
+      traceId?: string | null;
       originalWidth: number | null;
       token: { sessionId: string; requestId: number };
       runId?: number;
@@ -844,13 +1232,17 @@ export function useItemExtraction({
       if (!uid || isEdit) return;
       const runId = params.runId ?? aiRunIdRef.current;
       if (runId !== aiRunIdRef.current) return;
-      let failingStep = "upload";
       try {
         const {
           photoHash,
           localPhotoUri,
           cleanedLocalUri,
           normalizedLocalUri = null,
+          sourceOriginalLocalUri = null,
+          refinedLocalUri = null,
+          imageQuality = null,
+          productPolish = null,
+          traceId = null,
           originalWidth,
         } = params;
         if (draftPhotoHash === photoHash && draftItemId) {
@@ -895,12 +1287,16 @@ export function useItemExtraction({
               existingData?.photos?.cleanedPhotoUrl ??
               null;
             const existingNormalized = existingData?.photos?.normalizedUrl ?? null;
+            const existingRefined = existingData?.photos?.refinedUrl ?? existingData?.refinedImageUrl ?? null;
             if (existingPrimary) photo.actions.setPhotoUrl(existingPrimary);
             if (existingCleaned) {
               photo.actions.setCleanedPhotoUrl(existingCleaned);
               photo.actions.setServerCleanedUrl(existingCleaned);
             }
             photo.actions.setPendingNormalizedPreviewUri?.(existingNormalized);
+            photo.actions.setPendingRefinedImageUrl?.(existingRefined);
+            photo.actions.setPendingImageQuality?.(existingData?.imageQuality ?? existingData?.photos?.imageQuality ?? null);
+            photo.actions.setPendingProductPolish?.(existingData?.productPolish ?? existingData?.photos?.productPolish ?? null);
             attachDraftSubscription(draftRef.id, params.token.sessionId, runId);
             return;
           }
@@ -912,22 +1308,35 @@ export function useItemExtraction({
             localUri: localPhotoUri,
             cleanedLocalUri,
             normalizedLocalUri,
+            sourceOriginalLocalUri,
+            refinedLocalUri,
+            saveNormalizedAsCleaned: true,
             originalWidth,
+            imageQuality,
+            productPolish,
+            traceId,
+            onLog: photo.actions.appendPhotoPipelineEvent,
           }),
           UPLOAD_TIMEOUT_MS,
           "Photo upload"
         );
         if (runId !== aiRunIdRef.current) {
-          void cleanupDraftDoc(draftRef.id);
+          cleanupDraftDocIfInactive(draftRef.id);
           return;
         }
         const now = Date.now();
         const nextCleanedPhotoUrl = uploaded.cleanedUrl;
         const nextNormalizedPhotoUrl = uploaded.normalizedUrl;
-        failingStep = "create";
         const draftPayload = {
           photoUrl: uploaded.primaryUrl,
           photoUri: null,
+          originalImageUrl: uploaded.originalUrl,
+          cleanedImageUrl: uploaded.cleanedUrl,
+          refinedImageUrl: uploaded.refinedUrl,
+          imageQuality,
+          productPolish,
+          photoPipelineTraceId: traceId,
+          images: uploaded.images,
           createdAt: now,
           updatedAt: now,
           status: "AVAILABLE",
@@ -938,6 +1347,8 @@ export function useItemExtraction({
           lastWashedAt: null,
           isDraft: true,
           draftState: "photo_uploaded",
+          itemLifecycleStatus: "processing",
+          ingestionStatus: "pending",
           name: null,
           brand: null,
           subCategory: "",
@@ -953,7 +1364,13 @@ export function useItemExtraction({
           photos: {
             originalUrl: uploaded.originalUrl,
             primaryUrl: uploaded.primaryUrl,
-            urls: [uploaded.primaryUrl],
+            aiUrl: uploaded.aiUrl,
+            refinedUrl: uploaded.refinedUrl,
+            imageQuality,
+            productPolish,
+            traceId,
+            urls: uploaded.imageUrls,
+            images: uploaded.images,
             ...(nextCleanedPhotoUrl
               ? {
                   cleanedUrl: nextCleanedPhotoUrl,
@@ -975,9 +1392,17 @@ export function useItemExtraction({
             sourceType: nextCleanedPhotoUrl ? "ios_vision" : "original",
           },
         };
+        const draftUpdateStartedAt = photoPipelineNow();
         await setDoc(draftRef, draftPayload, { merge: true });
+        photo.actions.logPhotoPipelineEvent?.(traceId, "draft_updated", "success", {
+          draftId: draftRef.id,
+          hasPrimaryUrl: !!uploaded.primaryUrl,
+          hasCleanedUrl: !!uploaded.cleanedUrl,
+          hasRefinedUrl: !!uploaded.refinedUrl,
+          ingestionStatus: "pending",
+        }, photoPipelineDuration(draftUpdateStartedAt));
         if (runId !== aiRunIdRef.current) {
-          void cleanupDraftDoc(draftRef.id);
+          cleanupDraftDocIfInactive(draftRef.id);
           return;
         }
         setDraftItemId(draftRef.id);
@@ -989,30 +1414,38 @@ export function useItemExtraction({
         photo.actions.setServerCleanedUrl(nextCleanedPhotoUrl);
         photo.actions.setPendingNormalizedPreviewUri?.(nextNormalizedPhotoUrl ?? null);
         photo.actions.setUploadedPhotoRecord?.({
+          imageId: "primary",
           itemId: draftRef.id,
+          traceId,
           photoHash,
           originalUrl: uploaded.originalUrl,
+          sourceOriginalUrl: uploaded.sourceOriginalUrl,
           primaryUrl: uploaded.primaryUrl,
+          aiUrl: uploaded.aiUrl,
           cleanedUrl: nextCleanedPhotoUrl,
           normalizedUrl: nextNormalizedPhotoUrl,
+          refinedUrl: uploaded.refinedUrl,
           cleanedSource: uploaded.cleanedSource,
+          imageQuality,
+          productPolish,
         });
         photo.refs.syncedPreviewUriRef.current = localPhotoUri;
         attachDraftSubscription(draftRef.id, params.token.sessionId, runId);
         if (previousDraftId && previousDraftId !== draftRef.id) {
-          void cleanupDraftDoc(previousDraftId);
+          cleanupDraftDocIfInactive(previousDraftId);
         }
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Photo upload failed. Please retry.";
+        const message = userFacingAutofillError(error, "Photo upload failed. Please try again.");
+        photo.actions.logPhotoPipelineEvent?.(params.traceId ?? null, "draft_updated", "failure", {
+          ...safeErrorData(error),
+        });
         photo.actions.setUploadError(message);
         throw error;
       }
     },
     [
       attachDraftSubscription,
-      ensureDraftDocExists,
-      cleanupDraftDoc,
+      cleanupDraftDocIfInactive,
       createSessionRef,
       draftItemId,
       draftPhotoHash,
@@ -1082,6 +1515,8 @@ export function useItemExtraction({
     setAiFit(null);
     setAiOccasionTags([]);
     setAiSeasonTags([]);
+    setAiColorNeedsReview(false);
+    setExtractionPartialSuccess(false);
     setAiDebugInputUri("");
     setAiDebugInputSource("");
     setAiDebugAspectRatio(null);
@@ -1092,11 +1527,18 @@ export function useItemExtraction({
     setAiStage("Color");
     setIsAutofillRunning(!isEdit);
     lastAutofillStartedHashRef.current = null;
-  }, [bumpAiRun, isEdit, resetDraftTracking]);
+  }, [
+    bumpAiRun,
+    draft.actions,
+    draft.refs.userEditedKeysRef,
+    isEdit,
+    resetDraftTracking,
+  ]);
 
   const setAutofillRunningState = useCallback(() => {
     setAiStatus("running");
     setAiStage("Color");
+    setExtractionPartialSuccess(false);
     setAutofillStatusThrottled("Starting AI autofill…");
   }, [setAutofillStatusThrottled]);
 
@@ -1114,6 +1556,7 @@ export function useItemExtraction({
     setIsAutofillRunning(false);
     setLastAutofillSummary("");
     setAutofillError(null);
+    setExtractionPartialSuccess(false);
     setAiPrediction({ category: null, colors: [] });
     setFinalPrediction({ category: null, colors: [], crop: null });
     setAiDebugRunId(0);
@@ -1128,6 +1571,7 @@ export function useItemExtraction({
     setAiFit(null);
     setAiOccasionTags([]);
     setAiSeasonTags([]);
+    setAiColorNeedsReview(false);
     aiRunIdRef.current += 1;
     aiLockedValuesRef.current = { runId: aiRunIdRef.current };
     lastAutofillStartedHashRef.current = null;
@@ -1171,16 +1615,36 @@ export function useItemExtraction({
     setAiFit(null);
     setAiOccasionTags([]);
     setAiSeasonTags([]);
+    setAiColorNeedsReview(false);
   }, []);
 
   const autofillTriggerUri = useMemo(
-    () => photo.state.autofillCutoutUri ?? null,
-    [photo.state.autofillCutoutUri]
+    () =>
+      photo.state.autofillCutoutUri ??
+      photo.state.pendingPhotoUri ??
+      photo.state.originalPickedPhotoUri ??
+      null,
+    [
+      photo.state.autofillCutoutUri,
+      photo.state.originalPickedPhotoUri,
+      photo.state.pendingPhotoUri,
+    ]
   );
 
   const autofillInputSource = useMemo<"cutout" | "original" | "">(
-    () => (photo.state.autofillCutoutUri ? "cutout" : ""),
-    [photo.state.autofillCutoutUri]
+    () =>
+      photo.state.autofillCutoutUri &&
+      autofillTriggerUri === photo.state.autofillCutoutUri &&
+      photo.state.autofillCutoutUri !== photo.state.originalPickedPhotoUri
+        ? "cutout"
+        : autofillTriggerUri
+        ? "original"
+        : "",
+    [
+      autofillTriggerUri,
+      photo.state.autofillCutoutUri,
+      photo.state.originalPickedPhotoUri,
+    ]
   );
 
   const autofillTriggerHash = useMemo(() => {
@@ -1306,6 +1770,14 @@ export function useItemExtraction({
       }
       lastAutofillStartedHashRef.current = photoHash;
       activeAutofillHashRef.current = photoHash;
+      const traceId = String(photo.state.photoTraceId ?? "").trim() || null;
+      const extractionStartedAt = photoPipelineNow();
+      extractionStartedAtByHashRef.current.set(photoHash, extractionStartedAt);
+      photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "start", {
+        inputSource: autofillInputSource || "original",
+        hasCutoutUri: !!cutoutUri,
+        hasNormalizedPreviewUri: !!photo.state.pendingNormalizedPreviewUri,
+      });
       setAutofillError(null);
       setLastAutofillSummary("");
       setAiStatus("running");
@@ -1338,6 +1810,11 @@ export function useItemExtraction({
             localPhotoUri: imageUri,
             cleanedLocalUri: cutoutUri,
             normalizedLocalUri: photo.state.pendingNormalizedPreviewUri,
+            sourceOriginalLocalUri: photo.state.originalPickedPhotoUri ?? imageUri,
+            refinedLocalUri: photo.state.pendingRefinedPhotoUri,
+            imageQuality: photo.state.pendingImageQuality,
+            productPolish: photo.state.pendingProductPolish,
+            traceId,
             originalWidth: photo.state.pendingPhotoWidth,
             token,
             runId,
@@ -1353,8 +1830,13 @@ export function useItemExtraction({
         setIsAutofillRunning(true);
       } catch (error) {
         if (aiRunIdRef.current !== runId) return;
-        const message =
-          error instanceof Error ? error.message : "AI autofill timed out.";
+        const message = userFacingAutofillError(
+          error,
+          "AI autofill couldn’t finish. You can keep editing manually or try again."
+        );
+        photo.actions.logPhotoPipelineEvent?.(traceId, "extraction", "failure", {
+          ...safeErrorData(error),
+        }, photoPipelineDuration(extractionStartedAt));
         setAutofillStatusThrottled("AI couldn’t autofill—continue manually");
         setAiStatus("error");
         setAiStage(null);
@@ -1398,6 +1880,7 @@ export function useItemExtraction({
     isEdit,
     photo,
     startDraftAutofill,
+    attachDraftSubscription,
     uid,
     setAutofillStatusThrottled,
   ]);
@@ -1436,6 +1919,8 @@ export function useItemExtraction({
     aiFit,
     aiOccasionTags,
     aiSeasonTags,
+    aiColorNeedsReview,
+    extractionPartialSuccess,
   };
 
   const refs = {
@@ -1459,6 +1944,7 @@ export function useItemExtraction({
     stopDraftSubscription,
     attachDraftSubscription,
     cleanupDraftDoc,
+    cleanupDraftDocIfInactive,
     ensureDraftDocExists,
     resetDraftTracking,
     maybeApplyAutofillFromDraft,

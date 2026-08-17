@@ -1,8 +1,10 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
+  increment,
   limit,
   orderBy,
   query,
@@ -11,8 +13,21 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/lib/firebase";
-import type { AIMessage } from "@/src/components/ai/chatTypes";
-import type { AuraLook, AuraLookAction, AuraLookPiece, AuraResponse } from "@/src/types/aura";
+import { sanitizeAuraClientPayload } from "@/src/lib/auraHardening";
+import { messageOrderMillis, orderChatMessages, toMessageMillis } from "@/src/lib/chatMessageOrder";
+import { setCachedChatList, setCachedRecentMessages } from "@/src/lib/localCache";
+import type { AIMessage, ChatAttachment } from "@/src/components/ai/chatTypes";
+import type { AuraAgentResponse } from "@/src/types/auraAgent";
+import type {
+  AuraLook,
+  AuraLookAction,
+  AuraLookPiece,
+  AuraResponse,
+  AuraSuggestionItem,
+} from "@/src/types/aura";
+
+const DEBUG_AURA_CLIENT =
+  __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
 
 export type AIChatThread = {
   chatId: string;
@@ -22,7 +37,36 @@ export type AIChatThread = {
   lastMessagePreview: string;
   messageCount: number;
   threadId: string | null;
+  pinned: boolean;
+  archived: boolean;
+  titleEdited: boolean;
 };
+
+type ChatTitleSummaryInput = {
+  userText?: string | null;
+  assistantText?: string | null;
+  intent?: string | null;
+};
+
+const GENERIC_CHAT_TITLES = new Set([
+  "",
+  "aura chat",
+  "new chat",
+  "new stylist chat",
+  "image message",
+  "link shared",
+  "new message",
+]);
+
+const PRODUCT_BRAND_RULES: { pattern: RegExp; label: string }[] = [
+  { pattern: /\bhm\.com\b|\bh&m\b/i, label: "H&M" },
+  { pattern: /\bzara\.com\b|\bzara\b/i, label: "Zara" },
+  { pattern: /\bnike\.com\b|\bnike\b/i, label: "Nike" },
+  { pattern: /\baritzia\.com\b|\baritzia\b/i, label: "Aritzia" },
+  { pattern: /\buniqlo\.com\b|\buniqlo\b/i, label: "Uniqlo" },
+  { pattern: /\brevolve\.com\b|\brevolve\b/i, label: "Revolve" },
+  { pattern: /\bssense\.com\b|\bssense\b/i, label: "Ssense" },
+];
 
 function chatCollectionRef(uid: string) {
   return collection(db, "users", uid, "aiChats");
@@ -36,31 +80,211 @@ function messageCollectionRef(uid: string, chatId: string) {
   return collection(db, "users", uid, "aiChats", chatId, "messages");
 }
 
-function sanitizeMessagePreview(message: AIMessage) {
-  if (message.type === "outfit") return "Outfit suggestions";
-  const text = String(message.text ?? "").trim();
-  if (!text) return message.type === "system/action" ? "System update" : "New message";
-  return text.slice(0, 120);
+function sessionContextCollectionRef(uid: string, chatId: string) {
+  return collection(db, "users", uid, "aiChats", chatId, "sessionContext");
 }
 
-function deriveTitle(seedText?: string | null) {
-  const text = String(seedText ?? "").trim();
-  if (!text) return "New stylist chat";
-  return text.slice(0, 44);
+function stripUrls(value: string) {
+  return value
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/\bwww\.\S+/gi, " ")
+    .replace(/\?[^\s]+/g, " ");
+}
+
+function normalizeChatText(value?: string | null) {
+  return stripUrls(String(value ?? ""))
+    .replace(/[_|]+/g, " ")
+    .replace(/[^\w\s&/-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function titleCase(value: string) {
+  return value.replace(/\b([a-z])/g, (match) => match.toUpperCase());
+}
+
+function truncateWords(value: string, maxWords = 6) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, maxWords)
+    .join(" ");
+}
+
+function hasUrl(value?: string | null) {
+  return /https?:\/\/\S+|www\.\S+/i.test(String(value ?? ""));
+}
+
+function extractBrandLabel(value?: string | null) {
+  const source = String(value ?? "");
+  const match = PRODUCT_BRAND_RULES.find((rule) => rule.pattern.test(source));
+  return match?.label ?? null;
+}
+
+function cleanPreviewText(value?: string | null) {
+  const cleaned = normalizeChatText(value);
+  if (!cleaned) return "";
+  return cleaned.slice(0, 120).trim();
+}
+
+function sanitizeStoredPreview(value?: string | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (hasUrl(raw)) {
+    const brand = extractBrandLabel(raw);
+    return brand ? `Shared ${brand} link` : "Shared product link";
+  }
+  return cleanPreviewText(raw);
+}
+
+function fallbackTitleFromText(value?: string | null) {
+  const cleaned = truncateWords(normalizeChatText(value), 6);
+  if (!cleaned) return "New stylist chat";
+  return titleCase(cleaned);
+}
+
+function isGenericChatTitle(value?: string | null) {
+  const normalized = normalizeChatText(value).toLowerCase();
+  return (
+    !normalized ||
+    GENERIC_CHAT_TITLES.has(normalized) ||
+    hasUrl(value) ||
+    normalized.length > 48 ||
+    normalized.split(/\s+/).length > 7
+  );
+}
+
+export function summarizeChatTitle({
+  userText,
+  assistantText,
+  intent,
+}: ChatTitleSummaryInput) {
+  const rawUserText = String(userText ?? "").trim();
+  const combined = `${rawUserText} ${assistantText ?? ""} ${intent ?? ""}`.toLowerCase();
+  const brand = extractBrandLabel(rawUserText) ?? extractBrandLabel(assistantText);
+
+  if (hasUrl(rawUserText)) {
+    if (brand) return `Added ${brand} Item`;
+    return /\bcloset|wardrobe|import|add\b/i.test(rawUserText)
+      ? "Wardrobe Import"
+      : "Product Link Import";
+  }
+
+  if (/\bphoto|picture|selfie|mirror|wearing|fit check|outfit pic|analy[sz]e this outfit\b/i.test(combined)) {
+    return "Outfit Photo Analysis";
+  }
+
+  if (/\bimport|add to (?:my )?(?:closet|wardrobe)|save this item|product link|closet link\b/i.test(combined)) {
+    return brand ? `Added ${brand} Item` : "Wardrobe Import";
+  }
+
+  if (/\bunworn\b|\bignored pieces?\b|\bneglected pieces?\b/i.test(combined)) {
+    return "Unworn Pieces";
+  }
+
+  if (/\bwardrobe gaps?\b|\bwhat should i buy\b|\bwhat am i missing\b|\bmissing pieces?\b/i.test(combined)) {
+    return "Wardrobe Gaps";
+  }
+
+  if (/\bcloset insights?\b|\binsights?\b|\bcloset summary\b|\bwardrobe summary\b/i.test(combined)) {
+    return "Closet Insight Summary";
+  }
+
+  if (/\bsmart casual\b/i.test(combined)) {
+    return "Smart Casual Looks";
+  }
+
+  if (
+    /\b(3|three)\b/.test(combined) &&
+    /\boutfits?\b|\blooks?\b|\bdirections?\b|\boptions?\b/.test(combined)
+  ) {
+    return "Three Outfit Ideas";
+  }
+
+  if (/\bjacket|blazer|coat|outerwear\b/i.test(combined) && /\boutfit|look|style|wear\b/i.test(combined)) {
+    return "Jacket Outfit Options";
+  }
+
+  if (/\bstyle me today\b|\btoday'?s outfit\b|\bwhat should i wear today\b|\bstyle me now\b/i.test(combined)) {
+    return "Style Me Today";
+  }
+
+  return fallbackTitleFromText(rawUserText || assistantText || intent);
+}
+
+export function summarizeThreadDisplayTitle(
+  thread: Pick<AIChatThread, "title" | "lastMessagePreview"> & Partial<Pick<AIChatThread, "titleEdited">>
+) {
+  if (thread.titleEdited && String(thread.title ?? "").trim()) {
+    return String(thread.title).trim();
+  }
+  if (!isGenericChatTitle(thread.title)) {
+    return fallbackTitleFromText(thread.title);
+  }
+  return summarizeChatTitle({
+    userText: thread.title,
+    assistantText: thread.lastMessagePreview,
+  });
+}
+
+function sanitizeMessagePreview(message: AIMessage) {
+  if (message.type === "outfit") return "Outfit suggestions";
+  if (message.agentResponse?.outfits?.length) {
+    return message.agentResponse.outfits.length === 1
+      ? cleanPreviewText(message.agentResponse.message || message.agentResponse.outfits[0]?.title || "Outfit suggestion")
+      : `${message.agentResponse.outfits.length} outfit directions`;
+  }
+  if (message.agentResponse?.message) {
+    return cleanPreviewText(message.agentResponse.message);
+  }
+  if (message.aura?.lookOptions?.length) {
+    return `${message.aura.lookOptions.length} outfit directions`;
+  }
+  if (message.aura?.look) {
+    return cleanPreviewText(message.aura.title || message.aura.reply || "Outfit suggestion");
+  }
+  if (message.attachments?.some((attachment) => attachment.type === "image") && !String(message.text ?? "").trim()) {
+    return "Outfit photo shared";
+  }
+  const text = String(message.text ?? "").trim();
+  if (!text) return message.type === "system/action" ? "System update" : "New message";
+  if (hasUrl(text)) {
+    const brand = extractBrandLabel(text);
+    return brand ? `Shared ${brand} link` : "Shared product link";
+  }
+  return cleanPreviewText(text) || "New message";
 }
 
 function toChatThread(snapshot: { id: string; data: () => Record<string, unknown> }): AIChatThread {
   const data = snapshot.data() ?? {};
+  const rawTitle = typeof data.title === "string" ? data.title.trim() : "";
+  const rawPreview = typeof data.lastMessagePreview === "string" ? data.lastMessagePreview.trim() : "";
   return {
     chatId: snapshot.id,
-    title: typeof data.title === "string" && data.title.trim() ? data.title.trim() : "New stylist chat",
-    createdAt: typeof data.createdAt === "number" ? data.createdAt : Date.now(),
-    updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : Date.now(),
-    lastMessagePreview:
-      typeof data.lastMessagePreview === "string" ? data.lastMessagePreview.trim() : "",
+    title: summarizeThreadDisplayTitle({
+      title: rawTitle,
+      lastMessagePreview: rawPreview,
+      titleEdited: data.titleEdited === true,
+    }),
+    createdAt:
+      toMessageMillis(data.createdAt) ??
+      toMessageMillis(data.clientCreatedAt) ??
+      Date.now(),
+    updatedAt: toMessageMillis(data.updatedAt) ?? Date.now(),
+    lastMessagePreview: sanitizeStoredPreview(rawPreview),
     messageCount: typeof data.messageCount === "number" ? data.messageCount : 0,
     threadId: typeof data.threadId === "string" ? data.threadId : null,
+    pinned: data.pinned === true,
+    archived: data.archived === true,
+    titleEdited: data.titleEdited === true,
   };
+}
+
+function sortChatThreads(threads: AIChatThread[]) {
+  return [...threads].sort((left, right) => {
+    if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+    return right.updatedAt - left.updatedAt;
+  });
 }
 
 function toChatMessage(snapshot: { id: string; data: () => Record<string, unknown> }): AIMessage | null {
@@ -69,6 +293,21 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
   if (type !== "user" && type !== "assistant" && type !== "outfit" && type !== "system/action") {
     return null;
   }
+  const createdAt = toMessageMillis(data.createdAt);
+  const clientCreatedAt = toMessageMillis(data.clientCreatedAt);
+  const stableCreatedAt = createdAt ?? clientCreatedAt ?? messageOrderMillis({ id: snapshot.id });
+  const aura = isAuraResponse(data.aura) ? normalizeAuraCandidatePayload(data.aura) : undefined;
+  const agentResponse = isAuraAgentResponse(data.agentResponse)
+    ? normalizeAgentResponseForStorage(data.agentResponse)
+    : undefined;
+  if (DEBUG_AURA_CLIENT && aura?.lookOptions?.length) {
+    console.log("[AURA_MULTI]", "loaded multi-look chat message", {
+      messageId: snapshot.id,
+      lookOptionsCount: aura.lookOptions.length,
+      hasLook: !!aura.look,
+      presentation: aura.presentation,
+    });
+  }
   return {
     id: snapshot.id,
     type,
@@ -76,15 +315,126 @@ function toChatMessage(snapshot: { id: string; data: () => Record<string, unknow
       data.kind === "user_text" ||
       data.kind === "aura_text" ||
       data.kind === "aura_card" ||
+      data.kind === "aura_agent" ||
       data.kind === "system"
         ? data.kind
         : undefined,
     text: typeof data.text === "string" ? data.text : undefined,
+    assistantIntroText:
+      typeof data.assistantIntroText === "string" ? data.assistantIntroText : undefined,
+    attachments: parseChatAttachments(data.attachments),
     streaming: typeof data.streaming === "boolean" ? data.streaming : undefined,
     outfits: Array.isArray(data.outfits) ? (data.outfits as AIMessage["outfits"]) : undefined,
-    aura: isAuraResponse(data.aura) ? data.aura : undefined,
-    createdAt: typeof data.createdAt === "number" ? data.createdAt : Date.now(),
+    aura,
+    agentResponse,
+    agentActionStates:
+      data.agentActionStates && typeof data.agentActionStates === "object" && !Array.isArray(data.agentActionStates)
+        ? (data.agentActionStates as AIMessage["agentActionStates"])
+        : undefined,
+    createdAt: stableCreatedAt,
+    clientCreatedAt: clientCreatedAt ?? createdAt ?? stableCreatedAt,
+    localSequence:
+      typeof data.localSequence === "number" && Number.isFinite(data.localSequence)
+        ? data.localSequence
+        : undefined,
+    replyToMessageId: typeof data.replyToMessageId === "string" ? data.replyToMessageId : null,
   };
+}
+
+function normalizeAuraCandidatePayload(value: unknown): AuraResponse {
+  const response = value as AuraResponse;
+  const candidateItems = response.candidateItems ?? response.candidates ?? [];
+  if (!candidateItems.length) return response;
+  return {
+    ...response,
+    presentation: "candidate_preview",
+    candidateItems,
+    candidates: candidateItems,
+  };
+}
+
+function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripUndefinedDeep(entry)) as T;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .map(([key, entry]) => [key, stripUndefinedDeep(entry)])
+    ) as T;
+  }
+  return value;
+}
+
+export function sanitizeAgentResponseForStorage<T>(value: T): T {
+  return stripUndefinedDeep(sanitizeAuraClientPayload(value, {
+    includeDiagnostics: false,
+    includeScoreBreakdown: false,
+    dropAiMetadata: true,
+  }));
+}
+
+function normalizeAgentResponseForStorage(value: AuraAgentResponse): AuraAgentResponse {
+  return sanitizeAgentResponseForStorage({
+    ...value,
+    suggestedActions: Array.isArray(value.suggestedActions) ? value.suggestedActions : [],
+  });
+}
+
+function isAuraAgentResponse(value: unknown): value is AuraAgentResponse {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.mode === "string" &&
+    typeof candidate.message === "string" &&
+    candidate.intent !== null &&
+    typeof candidate.intent === "object" &&
+    (candidate.suggestedActions === undefined || Array.isArray(candidate.suggestedActions)) &&
+    (candidate.outfits === undefined || Array.isArray(candidate.outfits))
+  );
+}
+
+function parseChatAttachments(value: unknown): ChatAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const attachments = value.reduce<ChatAttachment[]>((out, entry) => {
+      if (!entry || typeof entry !== "object") return out;
+      const candidate = entry as Record<string, unknown>;
+      const type = candidate.type === "audio" ? "audio" : candidate.type === "image" ? "image" : null;
+      const uri = typeof candidate.uri === "string" ? candidate.uri : "";
+      const id = typeof candidate.id === "string" ? candidate.id : "";
+      if (!type || !uri || !id) return out;
+      if (type === "image") {
+        out.push({
+          id,
+          type,
+          uri,
+          localUri: typeof candidate.localUri === "string" ? candidate.localUri : null,
+          mimeType: typeof candidate.mimeType === "string" ? candidate.mimeType : null,
+          storagePath: typeof candidate.storagePath === "string" ? candidate.storagePath : null,
+          groupId: typeof candidate.groupId === "string" ? candidate.groupId : null,
+          role:
+            candidate.role === "same_item" ||
+            candidate.role === "separate_items" ||
+            candidate.role === "reference"
+              ? candidate.role
+              : undefined,
+          width: typeof candidate.width === "number" ? candidate.width : null,
+          height: typeof candidate.height === "number" ? candidate.height : null,
+        });
+        return out;
+      }
+      out.push({
+        id,
+        type,
+        uri,
+        localUri: typeof candidate.localUri === "string" ? candidate.localUri : null,
+        durationMs: typeof candidate.durationMs === "number" ? candidate.durationMs : null,
+        transcript: typeof candidate.transcript === "string" ? candidate.transcript : null,
+      });
+      return out;
+    }, []);
+  return attachments.length ? attachments : undefined;
 }
 
 function isAuraResponse(value: unknown): value is AuraResponse {
@@ -93,16 +443,94 @@ function isAuraResponse(value: unknown): value is AuraResponse {
   return (
     (candidate.presentation === undefined ||
       candidate.presentation === "chat" ||
-      candidate.presentation === "card") &&
+      candidate.presentation === "card" ||
+      candidate.presentation === "candidate_preview" ||
+      candidate.presentation === "outfit_analysis" ||
+      candidate.presentation === "laundry_confirmation") &&
     typeof candidate.title === "string" &&
     typeof candidate.reply === "string" &&
     typeof candidate.reason === "string" &&
     Array.isArray(candidate.outfitItems) &&
     (candidate.ownedPieces === undefined || Array.isArray(candidate.ownedPieces)) &&
     (candidate.recommendedAdditions === undefined || Array.isArray(candidate.recommendedAdditions)) &&
+    (candidate.missingPieces === undefined || Array.isArray(candidate.missingPieces)) &&
+    (candidate.upgradeSuggestions === undefined || Array.isArray(candidate.upgradeSuggestions)) &&
+    (candidate.upgradeSuggestionItems === undefined ||
+      (Array.isArray(candidate.upgradeSuggestionItems) &&
+        candidate.upgradeSuggestionItems.every(isAuraSuggestionItem))) &&
     Array.isArray(candidate.chips) &&
     typeof candidate.swapSuggestion === "string" &&
-    (candidate.look === undefined || candidate.look === null || isAuraLook(candidate.look))
+    (candidate.look === undefined || candidate.look === null || isAuraLook(candidate.look)) &&
+    (candidate.lookOptions === undefined ||
+      (Array.isArray(candidate.lookOptions) && candidate.lookOptions.every(isAuraLook))) &&
+    (candidate.candidates === undefined ||
+      (Array.isArray(candidate.candidates) && candidate.candidates.every(isAuraCandidateItem))) &&
+    (candidate.candidateItems === undefined ||
+      (Array.isArray(candidate.candidateItems) && candidate.candidateItems.every(isAuraCandidateItem))) &&
+    (candidate.laundryAction === undefined ||
+      candidate.laundryAction === null ||
+      isAuraLaundryAction(candidate.laundryAction))
+  );
+}
+
+function isAuraLaundryAction(value: unknown): boolean {
+  const candidate = value as Record<string, unknown>;
+  return (
+    !!candidate &&
+    typeof candidate === "object" &&
+    (candidate.targetStatus === "clean" ||
+      candidate.targetStatus === "needs_wash" ||
+      candidate.targetStatus === "in_laundry") &&
+    Array.isArray(candidate.matches) &&
+    candidate.matches.every((match) => {
+      const item = match as Record<string, unknown>;
+      return (
+        item &&
+        typeof item === "object" &&
+        typeof item.itemId === "string" &&
+        typeof item.label === "string" &&
+        (item.subtitle === undefined || item.subtitle === null || typeof item.subtitle === "string")
+      );
+    })
+  );
+}
+
+function isAuraSuggestionItem(value: unknown): value is AuraSuggestionItem {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.label === "string" &&
+    (candidate.searchQuery === undefined ||
+      candidate.searchQuery === null ||
+      typeof candidate.searchQuery === "string")
+  );
+}
+
+function isAuraCandidateItem(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.candidateId === "string" &&
+    Array.isArray(candidate.imageUrls) &&
+    candidate.imageUrls.every((url) => typeof url === "string") &&
+    (candidate.primaryImageUrl === undefined || candidate.primaryImageUrl === null || typeof candidate.primaryImageUrl === "string") &&
+    (candidate.secondaryImageUrls === undefined ||
+      (Array.isArray(candidate.secondaryImageUrls) && candidate.secondaryImageUrls.every((url) => typeof url === "string"))) &&
+    (candidate.title === undefined || candidate.title === null || typeof candidate.title === "string") &&
+    (candidate.category === undefined || candidate.category === null || typeof candidate.category === "string") &&
+    (candidate.subCategory === undefined || candidate.subCategory === null || typeof candidate.subCategory === "string") &&
+    (candidate.color === undefined || candidate.color === null || typeof candidate.color === "string") &&
+    (candidate.brand === undefined || candidate.brand === null || typeof candidate.brand === "string") &&
+    (candidate.material === undefined || candidate.material === null || typeof candidate.material === "string") &&
+    (candidate.fit === undefined || candidate.fit === null || typeof candidate.fit === "string") &&
+    (candidate.pattern === undefined || candidate.pattern === null || typeof candidate.pattern === "string") &&
+    (candidate.confidence === undefined || candidate.confidence === null || typeof candidate.confidence === "number") &&
+    (candidate.sourceType === "image" || candidate.sourceType === "link" || candidate.sourceType === "batch") &&
+    (candidate.sourceUrl === undefined || candidate.sourceUrl === null || typeof candidate.sourceUrl === "string") &&
+    (candidate.status === "awaiting_confirmation" ||
+      candidate.status === "added" ||
+      candidate.status === "cancelled" ||
+      candidate.status === "failed")
   );
 }
 
@@ -144,7 +572,11 @@ function isAuraLookAction(value: unknown): value is AuraLookAction {
   return (
     value === "saveLook" ||
     value === "planForToday" ||
+    value === "wearToday" ||
+    value === "likeLook" ||
+    value === "notMyVibe" ||
     value === "showMoreLikeThis" ||
+    value === "lessLikeThis" ||
     value === "shopMissingPieces" ||
     value === "useOnlyMyCloset" ||
     value === "makeItDressier"
@@ -155,12 +587,15 @@ export async function createChatThread(uid: string, seedText?: string | null) {
   const ref = doc(chatCollectionRef(uid));
   const now = Date.now();
   const payload = {
-    title: deriveTitle(seedText),
+    title: summarizeChatTitle({ userText: seedText }),
     createdAt: now,
     updatedAt: now,
     lastMessagePreview: "",
     messageCount: 0,
     threadId: null,
+    pinned: false,
+    archived: false,
+    titleEdited: false,
   };
   await setDoc(ref, payload);
   return {
@@ -173,15 +608,22 @@ export async function startNewChat(uid: string) {
   return createChatThread(uid);
 }
 
-export async function loadLatestChatThread(uid: string) {
-  const snap = await getDocs(query(chatCollectionRef(uid), orderBy("updatedAt", "desc"), limit(1)));
-  const docSnap = snap.docs[0];
-  return docSnap ? toChatThread(docSnap) : null;
+export async function loadLatestChatThread(uid: string, recentThreads?: AIChatThread[]) {
+  const threads = recentThreads ? sortChatThreads(recentThreads).filter((thread) => !thread.archived) : await loadRecentChatThreads(uid, 24);
+  return threads[0] ?? null;
 }
 
-export async function loadRecentChatThreads(uid: string, max = 8) {
-  const snap = await getDocs(query(chatCollectionRef(uid), orderBy("updatedAt", "desc"), limit(max)));
-  return snap.docs.map((entry) => toChatThread(entry));
+export async function loadRecentChatThreads(uid: string, max = 24) {
+  const fetchCount = Math.max(max * 3, 36);
+  const snap = await getDocs(query(chatCollectionRef(uid), orderBy("updatedAt", "desc"), limit(fetchCount)));
+  const threads = sortChatThreads(
+    snap.docs
+      .map((entry) => toChatThread(entry))
+      .filter((thread) => !thread.archived)
+      .slice(0, max)
+  );
+  void setCachedChatList(uid, threads);
+  return threads;
 }
 
 export async function loadChatThread(uid: string, chatId: string) {
@@ -190,8 +632,12 @@ export async function loadChatThread(uid: string, chatId: string) {
 }
 
 export async function loadChatMessages(uid: string, chatId: string) {
-  const snap = await getDocs(query(messageCollectionRef(uid, chatId), orderBy("createdAt", "asc")));
-  return snap.docs.map((entry) => toChatMessage(entry)).filter((entry): entry is AIMessage => !!entry);
+  const snap = await getDocs(messageCollectionRef(uid, chatId));
+  const messages = orderChatMessages(
+    snap.docs.map((entry) => toChatMessage(entry)).filter((entry): entry is AIMessage => !!entry),
+  );
+  void setCachedRecentMessages(uid, chatId, messages);
+  return messages;
 }
 
 export async function appendMessageToChat(
@@ -203,33 +649,95 @@ export async function appendMessageToChat(
   const chatRef = chatDocRef(uid, chatId);
   const messageRef = doc(messageCollectionRef(uid, chatId), message.id);
   const now = Date.now();
-  const existingChat = await getDoc(chatRef);
-  const existingCount =
-    existingChat.exists() && typeof existingChat.data()?.messageCount === "number"
-      ? (existingChat.data()?.messageCount as number)
-      : 0;
+  const sanitizedAura = message.aura ? stripUndefinedDeep(message.aura) : undefined;
+  const sanitizedAgentResponse = message.agentResponse
+    ? normalizeAgentResponseForStorage(message.agentResponse)
+    : undefined;
+  const persistedAttachments = message.attachments?.filter((attachment) => attachment.type === "image") ?? [];
+  const shouldUpdateGeneratedTitle = message.type === "user" && !!options?.titleFromUserText;
+  const [threadSnap, existingMessageSnap] = await Promise.all([
+    shouldUpdateGeneratedTitle ? getDoc(chatRef) : Promise.resolve(null),
+    getDoc(messageRef),
+  ]);
+  const existingThread = threadSnap?.exists() ? toChatThread(threadSnap) : null;
+  const isNewMessage = !existingMessageSnap.exists();
   const batch = writeBatch(db);
   batch.set(messageRef, {
     type: message.type,
     ...(message.kind ? { kind: message.kind } : {}),
     ...(message.text ? { text: message.text } : {}),
+    ...(message.assistantIntroText ? { assistantIntroText: message.assistantIntroText } : {}),
+    ...(persistedAttachments.length ? { attachments: persistedAttachments } : {}),
     ...(typeof message.streaming === "boolean" ? { streaming: message.streaming } : {}),
     ...(message.outfits ? { outfits: message.outfits } : {}),
-    ...(message.aura ? { aura: message.aura } : {}),
-    createdAt: typeof message.createdAt === "number" ? message.createdAt : now,
+    ...(sanitizedAura ? { aura: sanitizedAura } : {}),
+    ...(sanitizedAgentResponse ? { agentResponse: sanitizedAgentResponse } : {}),
+    ...(message.agentActionStates ? { agentActionStates: stripUndefinedDeep(message.agentActionStates) } : {}),
+    createdAt:
+      toMessageMillis(message.createdAt) ??
+      toMessageMillis(message.clientCreatedAt) ??
+      now,
+    clientCreatedAt:
+      toMessageMillis(message.clientCreatedAt) ??
+      toMessageMillis(message.createdAt) ??
+      now,
+    ...(typeof message.localSequence === "number" ? { localSequence: message.localSequence } : {}),
+    ...(message.replyToMessageId ? { replyToMessageId: message.replyToMessageId } : {}),
   });
+  if (DEBUG_AURA_CLIENT && sanitizedAura?.lookOptions?.length) {
+    console.log("[AURA_MULTI]", "storing multi-look chat message", {
+      messageId: message.id,
+      lookOptionsCount: sanitizedAura.lookOptions.length,
+      hasLook: !!sanitizedAura.look,
+      presentation: sanitizedAura.presentation,
+    });
+  }
+  if (DEBUG_AURA_CLIENT && (sanitizedAura?.candidateItems?.length || sanitizedAura?.candidates?.length)) {
+    console.log("[AURA_STORE]", "storing candidate preview message", {
+      messageId: message.id,
+      kind: message.kind,
+      candidateItemsCount: sanitizedAura.candidateItems?.length ?? 0,
+      candidatesCount: sanitizedAura.candidates?.length ?? 0,
+      auraKeys: Object.keys(sanitizedAura),
+    });
+  }
   batch.set(
     chatRef,
     {
       updatedAt: now,
       lastMessagePreview: sanitizeMessagePreview(message),
-      messageCount: existingCount + 1,
+      ...(isNewMessage ? { messageCount: increment(1) } : {}),
       ...(typeof options?.threadId === "string" || options?.threadId === null ? { threadId: options.threadId } : {}),
-      ...(message.type === "user" && options?.titleFromUserText
-        ? { title: deriveTitle(options.titleFromUserText) }
+      ...(shouldUpdateGeneratedTitle &&
+      !existingThread?.titleEdited
+        ? { title: summarizeChatTitle({ userText: options.titleFromUserText }) }
         : {}),
     },
     { merge: true }
+  );
+  await batch.commit();
+}
+
+export async function deleteMessagesFromChat(uid: string, chatId: string, messageIds: string[]) {
+  const uniqueIds = Array.from(
+    new Set(messageIds.map((messageId) => String(messageId ?? "").trim()).filter(Boolean)),
+  );
+  if (!uniqueIds.length) return;
+
+  const refs = uniqueIds.map((messageId) => doc(messageCollectionRef(uid, chatId), messageId));
+  const snaps = await Promise.all(refs.map((ref) => getDoc(ref)));
+  const existingRefs = refs.filter((_ref, index) => snaps[index]?.exists());
+  if (!existingRefs.length) return;
+
+  const batch = writeBatch(db);
+  existingRefs.forEach((ref) => batch.delete(ref));
+  batch.set(
+    chatDocRef(uid, chatId),
+    {
+      updatedAt: Date.now(),
+      messageCount: increment(-existingRefs.length),
+    },
+    { merge: true },
   );
   await batch.commit();
 }
@@ -239,8 +747,67 @@ export async function updateChatThread(uid: string, chatId: string, updates: Par
     chatDocRef(uid, chatId),
     {
       ...updates,
+      ...(typeof updates.title === "string"
+        ? { title: summarizeChatTitle({ userText: updates.title, assistantText: updates.lastMessagePreview }) }
+        : {}),
+      ...(typeof updates.lastMessagePreview === "string"
+        ? { lastMessagePreview: sanitizeStoredPreview(updates.lastMessagePreview) }
+        : {}),
       updatedAt: typeof updates.updatedAt === "number" ? updates.updatedAt : Date.now(),
     },
     { merge: true }
   );
+}
+
+export async function setChatPinned(uid: string, chatId: string, pinned: boolean) {
+  await setDoc(
+    chatDocRef(uid, chatId),
+    {
+      pinned,
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  );
+}
+
+export async function renameChatThread(uid: string, chatId: string, title: string) {
+  const nextTitle = String(title ?? "").trim() || "AURA chat";
+  await setDoc(
+    chatDocRef(uid, chatId),
+    {
+      title: nextTitle,
+      titleEdited: true,
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  );
+}
+
+export async function setChatArchived(uid: string, chatId: string, archived: boolean) {
+  await setDoc(
+    chatDocRef(uid, chatId),
+    {
+      archived,
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  );
+}
+
+async function deleteCollectionDocs(ref: ReturnType<typeof collection>) {
+  const snap = await getDocs(ref);
+  if (!snap.docs.length) return;
+
+  for (let index = 0; index < snap.docs.length; index += 400) {
+    const chunk = snap.docs.slice(index, index + 400);
+    const batch = writeBatch(db);
+    chunk.forEach((entry) => batch.delete(entry.ref));
+    await batch.commit();
+  }
+}
+
+export async function deleteChatThread(uid: string, chatId: string) {
+  await deleteCollectionDocs(messageCollectionRef(uid, chatId));
+  await deleteCollectionDocs(sessionContextCollectionRef(uid, chatId));
+  await deleteDoc(chatDocRef(uid, chatId));
 }

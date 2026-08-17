@@ -1,121 +1,316 @@
-import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
-import React from "react";
-import { Pressable, Text, View } from "react-native";
+import React, { useEffect } from "react";
+import { View } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from "react-native-reanimated";
 
 import type { AppColors } from "@/constants/theme";
+import { useReduceMotion } from "@/hooks/useReduceMotion";
+import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
+import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
+import AuraOutfitVisualCard, { buildAuraLookFromDailyOutfit } from "@/src/components/aura/AuraOutfitVisualCard";
+import { homeTypography } from "@/src/components/home/homeTypography";
+import { AuraText } from "@/src/components/ui/auraStylePrimitives";
+import { ACTION_GAP, HOME_CTA_HEIGHT, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
+import type { ClothingItem } from "@/src/types/ClothingItem";
+import type { DailyOutfitRecord } from "@/src/utils/dailyOutfits";
+
+const HERO_SECTION_GAP = 16;
+const HERO_CARD_GAP = 12;
+const HERO_STACK_GAP = 10;
+const HERO_TIGHT_GAP = 8;
+const HOME_PREFERENCE_CHIP_COPY = "You lean toward light neutrals and casual-minimal fits.";
+
+function IridecentHeroLine({ colors }: { colors: AppColors }) {
+  const reduceMotion = useReduceMotion();
+  const progress = useSharedValue(reduceMotion ? 1 : 0);
+
+  useEffect(() => {
+    progress.value = reduceMotion
+      ? 1
+      : withDelay(
+          300,
+          withTiming(1, {
+            duration: 600,
+            easing: Easing.out(Easing.cubic),
+          }),
+        );
+  }, [progress, reduceMotion]);
+
+  const lineStyle = useAnimatedStyle(() => ({
+    width: `${progress.value * 100}%`,
+  }));
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        {
+          position: "absolute",
+          top: 0,
+          left: 0,
+          height: 1,
+          overflow: "hidden",
+          opacity: 0.16,
+          zIndex: 4,
+        },
+        lineStyle,
+      ]}
+    >
+      <LinearGradient
+        colors={[
+          "transparent",
+          colors.iridescentStart,
+          colors.iridescentEnd,
+          "transparent",
+        ]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={{ flex: 1 }}
+      />
+    </Animated.View>
+  );
+}
 
 export default function HomeHero({
   colors,
   greeting,
   weatherLabel,
   personalHint,
-  onAskStylist,
-  onPlanToday,
+  stylistNote,
+  guidancePhrases,
+  record,
+  itemsById,
+  onPrimaryAction,
+  onWearToday,
 }: {
   colors: AppColors;
   greeting: string;
   weatherLabel: string;
   personalHint?: string | null;
-  onAskStylist: () => void;
-  onPlanToday: () => void;
+  stylistNote?: string | null;
+  guidancePhrases: string[];
+  record: DailyOutfitRecord | null;
+  itemsById: Map<string, ClothingItem>;
+  onPrimaryAction: () => void;
+  onWearToday?: () => void;
 }) {
   const layout = useResponsiveLayout();
+  const hasPlan = !!record?.plannedOutfit;
+  const hasWorn = !!record?.wornOutfit;
+  const cardPadding = layout.screenSize === "compact" ? 14 : 16;
+  const visibleGuidancePhrases = guidancePhrases.slice(0, 1);
+  const canWearPlannedLook = hasPlan && !hasWorn && !!onWearToday;
+  const primaryLabel = canWearPlannedLook ? "Wear this today" : "Style me today";
+  const statusEyebrow = hasWorn ? "ON YOU TODAY" : hasPlan ? "PLANNED FOR TODAY" : "AURA READY";
+  const title = hasWorn || hasPlan ? "Your outfit is ready." : "Ready when you are.";
+  const dailyLook = React.useMemo(
+    () => buildAuraLookFromDailyOutfit(record, itemsById),
+    [itemsById, record],
+  );
+  const subtitle =
+    hasWorn || hasPlan
+      ? "Wear it, or ask AURA for a new direction when the mood changes."
+      : "Start with one strong outfit built from what is wearable now.";
+
   return (
-    <View style={{ gap: 12 }}>
-      <View style={{ gap: 6 }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: "700" }} numberOfLines={1} ellipsizeMode="tail">
+    <View style={{ gap: HERO_SECTION_GAP }}>
+      <View style={{ gap: HERO_TIGHT_GAP }}>
+        <AuraText variant="caption" tone="secondary" style={[homeTypography.bodySmall, { fontWeight: "500", opacity: 0.88 }]} numberOfLines={1} ellipsizeMode="tail">
           {greeting}
-        </Text>
-        <Text style={{ color: colors.text, fontSize: 34 * layout.titleScale, fontWeight: "900", letterSpacing: -1.2 }} numberOfLines={1} ellipsizeMode="tail">
-          Home
-        </Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 14 }} numberOfLines={1} ellipsizeMode="tail">
+        </AuraText>
+        <AuraText
+          variant="title"
+          style={[
+            homeTypography.titleLarge,
+            {
+              fontSize: 34 * layout.titleScale,
+              lineHeight: 40 * layout.titleScale,
+            },
+          ]}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          Today&apos;s Look
+        </AuraText>
+        <AuraText variant="caption" tone="secondary" style={homeTypography.bodySmall} numberOfLines={1} ellipsizeMode="tail">
           {weatherLabel}
-        </Text>
+        </AuraText>
       </View>
 
-      <BlurView
-        intensity={22}
-        tint="dark"
+      <AuraGlassCard
+        warmHero
+        intensity={29}
         style={{
           borderRadius: layout.largeRadius,
-          overflow: "hidden",
+          shadowColor: "#000",
+          shadowOpacity: 0.14,
+          shadowRadius: 19,
+          shadowOffset: { width: 0, height: 14 },
+        }}
+        contentStyle={{
+          backgroundColor: colors.surface,
+          borderColor: "rgba(251,228,216,0.035)",
           borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.08)",
-          backgroundColor: "rgba(255,255,255,0.03)",
         }}
       >
+        <IridecentHeroLine colors={colors} />
         <LinearGradient
           pointerEvents="none"
-          colors={["rgba(102,120,168,0.24)", "rgba(32,36,46,0.06)", "rgba(214,197,161,0.10)"]}
+          colors={["rgba(251,228,216,0.030)", "rgba(34,31,40,0.025)", "rgba(9,8,10,0.12)"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ position: "absolute", inset: 0 }}
         />
-        <View style={{ minHeight: layout.heroHeight, padding: layout.cardPadding, gap: 16, justifyContent: "space-between" }}>
-          <View style={{ gap: 8 }}>
-            <Text style={{ color: colors.text, fontSize: 28 * layout.titleScale, fontWeight: "900", letterSpacing: -1 }} numberOfLines={2} ellipsizeMode="tail">
-              Your wardrobe, ready for today.
-            </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 15, lineHeight: 22 }} numberOfLines={3} ellipsizeMode="tail">
-              Start with what you should wear now, then branch into planning, care, and wardrobe tools.
-            </Text>
+        <LinearGradient
+          pointerEvents="none"
+          colors={["rgba(255,255,255,0.060)", "rgba(251,228,216,0.010)", "transparent"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={{ position: "absolute", top: 0, left: 0, right: 0, height: 88, opacity: 0.28 }}
+        />
+        <LinearGradient
+          pointerEvents="none"
+          colors={["rgba(255,255,255,0.050)", "rgba(251,228,216,0.010)", "transparent"]}
+          start={{ x: 0.05, y: 0.15 }}
+          end={{ x: 0.95, y: 0.9 }}
+          style={{ position: "absolute", inset: 0, opacity: 0.22 }}
+        />
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 1,
+            left: 18,
+            right: 18,
+            height: 1,
+            backgroundColor: "rgba(251,228,216,0.04)",
+          }}
+        />
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 18,
+            bottom: 18,
+            left: 1,
+            width: 1,
+            backgroundColor: "rgba(251,228,216,0.03)",
+          }}
+        />
+        <View style={{ minHeight: layout.heroHeight + 4, padding: cardPadding, gap: HERO_CARD_GAP, justifyContent: "space-between" }}>
+          <View style={{ gap: HERO_STACK_GAP }}>
+            <AuraText variant="metadata" tone="accent" style={[homeTypography.label, { opacity: 0.7, fontSize: 11.5, lineHeight: 15, letterSpacing: 1.2 }]}>
+              {statusEyebrow}
+            </AuraText>
+
+            <View style={{ gap: HERO_TIGHT_GAP }}>
+              <AuraText
+                variant="title"
+                style={[
+                  homeTypography.titleMedium,
+                  {
+                    fontSize: 30 * layout.titleScale,
+                    lineHeight: 36 * layout.titleScale,
+                  },
+                ]}
+                numberOfLines={2}
+                ellipsizeMode="tail"
+              >
+                {title}
+              </AuraText>
+              <AuraText variant="body" tone="secondary" style={[homeTypography.body, { opacity: 0.8 }]} numberOfLines={2} ellipsizeMode="tail">
+                {subtitle}
+              </AuraText>
+              {stylistNote ? (
+                <AuraText variant="caption" tone="accent" style={[homeTypography.accentNote, { opacity: 0.72 }]} numberOfLines={1} ellipsizeMode="tail">
+                  {stylistNote}
+                </AuraText>
+              ) : null}
+            </View>
+
+            {dailyLook ? (
+              <AuraOutfitVisualCard
+                colors={colors}
+                look={dailyLook}
+                mode="thumbnail"
+                viewportWidth={layout.width - layout.horizontalPadding * 2 - cardPadding * 2}
+              />
+            ) : (
+              <View style={{ gap: HERO_TIGHT_GAP }}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: HERO_TIGHT_GAP }}>
+                  {visibleGuidancePhrases.map((phrase) => (
+                    <View
+                      key={phrase}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 999,
+                        backgroundColor: colors.chipBackground,
+                        borderWidth: 1,
+                        borderColor: colors.border,
+                      }}
+                    >
+                      <AuraText variant="caption" style={homeTypography.chipText}>
+                        {phrase}
+                      </AuraText>
+                    </View>
+                  ))}
+                </View>
+                <AuraText variant="caption" tone="secondary" style={[homeTypography.caption, { opacity: 0.86 }]} numberOfLines={1}>
+                  AURA starts with what is wearable now.
+                </AuraText>
+              </View>
+            )}
+
             {personalHint ? (
               <View
                 style={{
                   alignSelf: "flex-start",
-                  marginTop: 4,
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
+                  paddingHorizontal: 11,
+                  paddingVertical: 6,
                   borderRadius: layout.pillRadius,
-                  backgroundColor: "rgba(255,255,255,0.06)",
+                  backgroundColor: colors.surfaceMuted,
+                  borderColor: colors.borderSoft,
                   borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.07)",
                 }}
               >
-                <Text style={{ color: colors.textSecondary, fontSize: 12.5 }} numberOfLines={2} ellipsizeMode="tail">
-                  {personalHint}
-                </Text>
+                <AuraText variant="caption" tone="secondary" style={homeTypography.caption} numberOfLines={1} ellipsizeMode="tail">
+                  {HOME_PREFERENCE_CHIP_COPY}
+                </AuraText>
               </View>
             ) : null}
           </View>
 
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <Pressable
-              onPress={onAskStylist}
-              style={({ pressed }) => ({
-                flex: 1,
-                borderRadius: layout.mediumRadius,
-                paddingVertical: 14,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: colors.accent,
-                opacity: pressed ? 0.88 : 1,
-              })}
-            >
-              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "900" }}>Ask Stylist</Text>
-            </Pressable>
-            <Pressable
-              onPress={onPlanToday}
-              style={({ pressed }) => ({
-                flex: 1,
-                borderRadius: layout.mediumRadius,
-                paddingVertical: 14,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "rgba(255,255,255,0.05)",
-                borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.08)",
-                opacity: pressed ? 0.82 : 1,
-              })}
-            >
-              <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900" }}>Plan Today</Text>
-            </Pressable>
+          <View style={{ flexDirection: "row", gap: ACTION_GAP, alignItems: "stretch" }}>
+            <View style={{ flex: 1 }}>
+              <AuraGradientButton
+                label={primaryLabel}
+                onPress={canWearPlannedLook ? onWearToday : onPrimaryAction}
+                gradientColors={[colors.ctaCream, colors.ctaCream]}
+                labelColor={colors.ctaText}
+                innerBackgroundColor={colors.ctaCream}
+                innerOverlayColors={["rgba(255,255,255,0.14)", "rgba(255,255,255,0.04)"]}
+                labelStyle={{ fontSize: 16.5, lineHeight: 21, fontWeight: "600", letterSpacing: 0.1 }}
+                style={{
+                  height: HOME_CTA_HEIGHT,
+                  minHeight: HOME_CTA_HEIGHT,
+                  borderRadius: PILL_RADIUS,
+                  shadowOpacity: 0.055,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 5 },
+                }}
+              />
+            </View>
           </View>
         </View>
-      </BlurView>
+      </AuraGlassCard>
     </View>
   );
 }

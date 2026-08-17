@@ -327,6 +327,14 @@ export async function loadBehaviorProfile(uid: string) {
   return snap.exists() ? parseBehavior(snap.data()) : emptyBehavior();
 }
 
+export async function clearAssistantMemory(uid: string) {
+  const now = Date.now();
+  await Promise.all([
+    setDoc(profileDocRef(uid, MAIN_DOC_ID), { ...emptyMain(), updatedAt: now }),
+    setDoc(profileDocRef(uid, BEHAVIOR_DOC_ID), { ...emptyBehavior(), updatedAt: now }),
+  ]);
+}
+
 export function buildCompactMemorySummary(
   main: AssistantProfileMain,
   behavior?: AssistantProfileBehavior | null

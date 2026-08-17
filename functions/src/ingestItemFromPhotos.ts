@@ -2,8 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
+import { removeBackground } from "@imgly/background-removal-node";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import sharp from "sharp";
 import {
   ALLOWED_AESTHETIC_TAGS,
@@ -18,14 +19,33 @@ import {
   isValidCategorySubCategory,
   wearSlot,
 } from "./shared/wardrobeTaxonomy";
+import {
+  RATE_LIMIT_MESSAGE,
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  isRateLimitError,
+  redactUid,
+} from "./shared/rateLimit";
+import { redactUrlForLogs, safeFetch, validateSafeUrlForFetch } from "./shared/safeFetch";
 
 if (!getApps().length) {
   initializeApp();
 }
 
-type IngestionStatus = "pending" | "processing" | "done" | "failed";
+type IngestionStatus =
+  | "awaiting_confirmation"
+  | "pending"
+  | "processing"
+  | "done"
+  | "failed";
 
 type ItemDoc = {
+  images?: {
+    originalUrl?: string | null;
+    aiUrl?: string | null;
+    cleanedUrl?: string | null;
+    isPrimary?: boolean;
+  }[] | null;
   brand?: string | null;
   name?: string | null;
   brandConfidence?: number;
@@ -36,6 +56,8 @@ type ItemDoc = {
   category?: string;
   subCategory?: string;
   type?: string | null;
+  pattern?: string | null;
+  material?: string | null;
   fit?: string;
   style?: string;
   sleeveLength?: string;
@@ -55,15 +77,25 @@ type ItemDoc = {
   visualWeight?: string | null;
   versatilityScore?: number | null;
   photos?: {
+    originalUrl?: string | null;
     primaryUrl?: string | null;
     urls?: string[];
+    images?: {
+      originalUrl?: string | null;
+      aiUrl?: string | null;
+      cleanedUrl?: string | null;
+      isPrimary?: boolean;
+    }[];
     cleanedUrl?: string | null;
     cleanedPhotoUrl?: string | null;
     normalizedUrl?: string | null;
+    aiUrl?: string | null;
     croppedUrl?: string;
     thumbUrl?: string;
   };
   photoUrl?: string | null;
+  originalImageUrl?: string | null;
+  cleanedImageUrl?: string | null;
   photoUri?: string | null;
   colors?: string[];
   colorLabel?: string;
@@ -72,6 +104,7 @@ type ItemDoc = {
   displayColors?: string[] | null;
   colorSource?: "ai" | "user";
   colorUpdatedAt?: number;
+  userEditedFields?: string[];
   aiColorLabel?: string;
   aiColors?: string[];
   pixelColors?: string[];
@@ -93,10 +126,18 @@ type ItemDoc = {
   ingestion?: {
     status?: IngestionStatus;
     lastRunAt?: Timestamp | { toMillis?: () => number } | number | null;
-    error?: { message: string; code?: string };
+    startedAt?: Timestamp | { toMillis?: () => number } | number | null;
+    completedAt?: Timestamp | { toMillis?: () => number } | number | null;
+    failedAt?: Timestamp | { toMillis?: () => number } | number | null;
+    error?: { message: string; code?: string } | null;
+    errorCode?: string | null;
+    errorMessage?: string | null;
     lastProcessedPhotoHash?: string;
     lastProcessedSourceHash?: string;
     runId?: string;
+    attempt?: number;
+    workerVersion?: string;
+    canRetry?: boolean;
   };
   ingestionStatus?: string | null;
   isDraft?: boolean | null;
@@ -105,7 +146,10 @@ type ItemDoc = {
     sourceHash?: string;
     sourceType?: string;
   };
+  itemLifecycleStatus?: string | null;
+  removedAt?: number | null;
   cleanedFromHash?: string;
+  backgroundRemovalMethod?: "client" | "server" | "none";
 };
 
 type RawExtraction = {
@@ -117,12 +161,17 @@ type RawExtraction = {
   subCategory?: string;
   type?: string | null;
   name?: string | null;
+  color?: string | null;
   colors?: string[];
   primaryColor?: string | null;
+  secondaryColors?: string[];
+  dominantColors?: string[];
+  palette?: string[];
   displayColor?: string | null;
   displayColors?: string[] | null;
   pattern?: string;
   material?: string;
+  materialConfidence?: number;
   fit?:
     | "slim"
     | "regular"
@@ -184,6 +233,12 @@ type RawExtraction = {
     subCategory?: number;
     colors?: number;
     brand?: number;
+    material?: number;
+  };
+  detailTags?: string[];
+  confidenceSummary?: {
+    overall?: number;
+    notes?: string;
   };
   formalityScore?: number;
   warmthScore?: number;
@@ -198,6 +253,11 @@ type LastRunAtValue =
 
 const MODEL = "gpt-5.4-mini";
 const HOUR_MS = 60 * 60 * 1000;
+const STALE_PROCESSING_MS = 10 * 60 * 1000;
+const INGEST_WORKER_VERSION = "add-item-ingestion-2026-05-08";
+const MAX_PROCESSING_IMAGE_DIMENSION = 1600;
+const MAX_CROP_IMAGE_DIMENSION = 1024;
+const SERVER_BG_REMOVAL_MAX_BYTES = 3 * 1024 * 1024;
 const ALLOWED_PATTERNS = new Set([
   "solid",
   "striped",
@@ -330,14 +390,92 @@ function toMillis(value: LastRunAtValue): number | null {
   return null;
 }
 
+function getProcessingStartedAtMs(item: ItemDoc | undefined): number | null {
+  return (
+    toMillis(item?.ingestion?.startedAt) ??
+    toMillis(item?.ingestion?.lastRunAt)
+  );
+}
+
+function isStaleProcessingStatus(
+  item: ItemDoc | undefined,
+  status: IngestionStatus | "",
+  nowMs = Date.now(),
+): boolean {
+  if (status !== "processing") return false;
+  const startedAtMs = getProcessingStartedAtMs(item);
+  return !startedAtMs || nowMs - startedAtMs >= STALE_PROCESSING_MS;
+}
+
+function getIngestionAttempt(item: ItemDoc | undefined): number {
+  const attempt = Number(item?.ingestion?.attempt ?? 0);
+  if (!Number.isFinite(attempt)) return 0;
+  return Math.max(0, Math.floor(attempt));
+}
+
+function safeIngestionFailureMessage(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("rate limit")) return RATE_LIMIT_MESSAGE;
+  if (lower.includes("openai_api_key")) {
+    return "AI item detection is temporarily unavailable.";
+  }
+  if (lower.includes("image is too large")) {
+    return "The photo is too large to process. Please try a smaller image.";
+  }
+  if (lower.includes("failed to download") || lower.includes("image")) {
+    return "The photo could not be processed. Please try another image.";
+  }
+  return "AI item detection failed. Please try again.";
+}
+
+function normalizeComparableValue(value: unknown): unknown {
+  if (value == null) return null;
+  if (Array.isArray(value)) return value.map(normalizeComparableValue);
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const normalized: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      normalized[key] = normalizeComparableValue(record[key]);
+    }
+    return normalized;
+  }
+  return value;
+}
+
+function valuesDiffer(left: unknown, right: unknown): boolean {
+  return (
+    JSON.stringify(normalizeComparableValue(left)) !==
+    JSON.stringify(normalizeComparableValue(right))
+  );
+}
+
+function stringSet(value: unknown): Set<string> {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(
+    value
+      .map((entry) => String(entry ?? "").trim())
+      .filter(Boolean),
+  );
+}
+
 function extractPhotoUrls(item: ItemDoc): string[] {
   const values = [
+    ...(Array.isArray(item.images)
+      ? item.images.flatMap((image) => [image?.aiUrl ?? "", image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      : []),
+    ...(Array.isArray(item.photos?.images)
+      ? item.photos.images.flatMap((image) => [image?.aiUrl ?? "", image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      : []),
+    item.photos?.aiUrl ?? "",
     item.photos?.cleanedUrl ?? "",
     item.photos?.cleanedPhotoUrl ?? "",
+    item.photos?.originalUrl ?? "",
     item.photos?.primaryUrl ?? "",
+    item.cleanedImageUrl ?? "",
+    item.originalImageUrl ?? "",
     item.photoUrl ?? "",
     item.photoUri ?? "",
-    ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
+    ...(Array.isArray(item.photos?.urls) ? item.photos.urls : []),
   ];
 
   const deduped = Array.from(
@@ -355,13 +493,23 @@ function getIngestionStatus(item: ItemDoc | undefined): IngestionStatus | "" {
 
 function extractIngestionSourceUrls(item: ItemDoc): string[] {
   const values = [
+    ...(Array.isArray(item.images)
+      ? item.images.flatMap((image) => [image?.aiUrl ?? "", image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      : []),
+    ...(Array.isArray(item.photos?.images)
+      ? item.photos.images.flatMap((image) => [image?.aiUrl ?? "", image?.cleanedUrl ?? "", image?.originalUrl ?? ""])
+      : []),
+    item.photos?.aiUrl ?? "",
     item.photos?.cleanedUrl ?? "",
     item.photos?.cleanedPhotoUrl ?? "",
     item.photos?.normalizedUrl ?? "",
+    item.photos?.originalUrl ?? "",
     item.photos?.primaryUrl ?? "",
+    item.cleanedImageUrl ?? "",
+    item.originalImageUrl ?? "",
     item.photoUrl ?? "",
     item.photoUri ?? "",
-    ...(Array.isArray(item.photos?.urls) ? item.photos!.urls : []),
+    ...(Array.isArray(item.photos?.urls) ? item.photos.urls : []),
   ];
   const deduped = Array.from(
     new Set(values.map((v) => String(v).trim()).filter(Boolean)),
@@ -371,6 +519,53 @@ function extractIngestionSourceUrls(item: ItemDoc): string[] {
 
 function hashPhotoUrls(urls: string[]): string {
   return createHash("sha1").update(urls.join("|")).digest("hex");
+}
+
+function extractStoragePathFromUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "firebasestorage.googleapis.com") {
+      const marker = "/o/";
+      const markerIndex = parsed.pathname.indexOf(marker);
+      if (markerIndex === -1) return null;
+      const encodedPath = parsed.pathname.slice(markerIndex + marker.length);
+      return decodeURIComponent(encodedPath);
+    }
+    if (parsed.hostname.endsWith(".appspot.com") || parsed.hostname.endsWith(".firebasestorage.app")) {
+      const path = parsed.pathname.replace(/^\/+/, "");
+      return path ? decodeURIComponent(path) : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function isUserOwnedStoragePath(uid: string, storagePath: string | null) {
+  return !!storagePath && storagePath.startsWith(`users/${uid}/`);
+}
+
+function extractDownloadTokenFromUrl(url: string): string | null {
+  try {
+    return new URL(url).searchParams.get("token");
+  } catch {
+    return null;
+  }
+}
+
+function hasClientCleanedImage(item: ItemDoc): boolean {
+  const values = [
+    ...(Array.isArray(item.images)
+      ? item.images.map((image) => image?.cleanedUrl ?? "")
+      : []),
+    ...(Array.isArray(item.photos?.images)
+      ? item.photos.images.map((image) => image?.cleanedUrl ?? "")
+      : []),
+    item.photos?.cleanedUrl ?? "",
+    item.photos?.cleanedPhotoUrl ?? "",
+    item.cleanedImageUrl ?? "",
+  ];
+  return values.some((value) => /^https?:\/\//i.test(String(value ?? "").trim()));
 }
 
 function clampScore(value: unknown): number {
@@ -586,24 +781,27 @@ function normalizeColorToken(raw: string): AllowedColor | null {
   if (text.includes("navy")) return "navy";
   if (text.includes("blue")) return "blue";
   if (text.includes("black")) return "black";
-  if (text.includes("white")) return "white";
   if (
     text.includes("cream") ||
     text.includes("ivory") ||
-    text.includes("off white")
+    text.includes("off white") ||
+    text.includes("offwhite")
   ) {
     return "cream";
   }
+  if (text.includes("white")) return "white";
   if (text.includes("gold")) return "gold";
   if (text.includes("silver")) return "silver";
   if (
-    text.includes("beige") ||
-    text.includes("tan") ||
-    text.includes("khaki")
-  ) {
-    return "beige";
-  }
-  if (text.includes("brown")) return "brown";
+    text.includes("chocolate") ||
+    text.includes("mocha") ||
+    text.includes("espresso") ||
+    text.includes("taupe") ||
+    text.includes("brown")
+  ) return "brown";
+  if (text.includes("camel") || text.includes("tan")) return "tan";
+  if (text.includes("khaki")) return "khaki";
+  if (text.includes("beige")) return "beige";
   if (text.includes("red")) return "red";
   if (text.includes("green")) return "green";
   if (text.includes("yellow")) return "yellow";
@@ -663,6 +861,20 @@ function normalizeDisplayColors(values: unknown): string[] {
   return out;
 }
 
+function normalizeDetailTags(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeFreeTextLabel(value, 24)
+      ?.toLowerCase()
+      .replace(/\s+/g, "_");
+    if (!normalized || out.includes(normalized)) continue;
+    out.push(normalized);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
 function toHex(r: number, g: number, b: number): string {
   const parts = [r, g, b].map((n) => Math.max(0, Math.min(255, Math.round(n))));
   return `#${parts
@@ -712,6 +924,15 @@ function mapRgbToAllowedColor(r: number, g: number, b: number): AllowedColor {
     return "grey";
   }
 
+  // Brown garments live in the red/orange/yellow hue range, but with
+  // lower value than true orange or yellow. Catch that before hue mapping.
+  if (h >= 10 && h < 55 && s >= 0.18 && v >= 0.16 && v < 0.72) {
+    return "brown";
+  }
+  if (h >= 20 && h < 65 && s >= 0.12 && v >= 0.45 && v < 0.86) {
+    return "tan";
+  }
+
   const mapByHue = (): AllowedColor | null => {
     if (h >= 345 || h < 15) return "red";
     if (h >= 15 && h < 45) return "orange";
@@ -735,13 +956,208 @@ function mapRgbToAllowedColor(r: number, g: number, b: number): AllowedColor {
   return "grey";
 }
 
-async function downloadImageBytes(url: string): Promise<Buffer> {
-  const response = await fetch(url);
+async function validateImageInputUrls(uid: string, itemId: string, urls: string[], label: string) {
+  const safeUrls: string[] = [];
+  for (const url of urls) {
+    const storagePath = extractStoragePathFromUrl(url);
+    if (storagePath) {
+      if (isUserOwnedStoragePath(uid, storagePath)) {
+        safeUrls.push(url);
+      } else {
+        logger.warn("[INGEST_SECURITY] rejected foreign Storage image URL", {
+          uidHash: redactUid(uid),
+          itemId,
+          label,
+          hasStoragePath: !!storagePath,
+        });
+      }
+      continue;
+    }
+    try {
+      safeUrls.push((await validateSafeUrlForFetch(url)).toString());
+    } catch (error) {
+      logger.warn("[INGEST_SECURITY] rejected unsafe external image URL", {
+        uidHash: redactUid(uid),
+        itemId,
+        label,
+        url: redactUrlForLogs(url),
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return Array.from(new Set(safeUrls));
+}
+
+async function downloadImageBytes(uid: string, url: string): Promise<Buffer> {
+  const storagePath = extractStoragePathFromUrl(url);
+  if (storagePath) {
+    if (!isUserOwnedStoragePath(uid, storagePath)) {
+      throw new Error("Image Storage path is not owned by this user.");
+    }
+    const file = getStorage().bucket().file(storagePath);
+    const [metadata] = await file.getMetadata();
+    const size = Number(metadata.size ?? 0);
+    const contentType = String(metadata.contentType ?? "").toLowerCase();
+    if (Number.isFinite(size) && size > 10 * 1024 * 1024) {
+      throw new Error("Image is too large.");
+    }
+    if (!contentType.startsWith("image/")) {
+      throw new Error("Storage file is not an image.");
+    }
+    const [bytes] = await file.download();
+    return bytes;
+  }
+
+  const response = await safeFetch(url, {
+    expectedKind: "image",
+    maxBytes: 10 * 1024 * 1024,
+  });
   if (!response.ok) {
     throw new Error(`Failed to download image: ${response.status}`);
   }
-  const arrayBuffer = await response.arrayBuffer();
+  return response.bytes;
+}
+
+async function normalizeImageBytesForProcessing(
+  uid: string,
+  itemId: string,
+  bytes: Buffer,
+): Promise<Buffer> {
+  const metadata = await sharp(bytes).metadata();
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+  const maxDimension = Math.max(width, height);
+  const hasAlpha = Boolean(metadata.hasAlpha);
+  let pipeline = sharp(bytes).rotate();
+  if (maxDimension > MAX_PROCESSING_IMAGE_DIMENSION) {
+    pipeline = pipeline.resize({
+      width: MAX_PROCESSING_IMAGE_DIMENSION,
+      height: MAX_PROCESSING_IMAGE_DIMENSION,
+      fit: "inside",
+      withoutEnlargement: true,
+    });
+  }
+
+  const normalized = hasAlpha
+    ? await pipeline.png({ compressionLevel: 9 }).toBuffer()
+    : await pipeline.jpeg({ quality: 86, mozjpeg: true }).toBuffer();
+
+  logger.info("[INGEST_IMAGE] normalized source image for processing", {
+    uidHash: redactUid(uid),
+    itemId,
+    originalBytes: bytes.byteLength,
+    normalizedBytes: normalized.byteLength,
+    originalWidth: width || null,
+    originalHeight: height || null,
+    maxDimension,
+    resized: maxDimension > MAX_PROCESSING_IMAGE_DIMENSION,
+    preservedAlpha: hasAlpha,
+  });
+
+  return normalized;
+}
+
+function shouldAttemptServerBackgroundRemoval(params: {
+  sourceType: string;
+  imageBytes: Buffer;
+}): boolean {
+  const sourceType = params.sourceType.trim().toLowerCase();
+  if (
+    sourceType === "aura_chat" ||
+    sourceType === "aura_product_link" ||
+    sourceType === "original"
+  ) {
+    return false;
+  }
+  return params.imageBytes.byteLength <= SERVER_BG_REMOVAL_MAX_BYTES;
+}
+
+async function hasTransparentPngBackground(bytes: Buffer): Promise<boolean> {
+  const metadata = await sharp(bytes).metadata();
+  if (metadata.format !== "png" || !metadata.hasAlpha) return false;
+
+  const raw = await sharp(bytes)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const channels = raw.info.channels;
+  const data = raw.data;
+  for (let i = channels - 1; i < data.length; i += channels) {
+    if (data[i] < 255) return true;
+  }
+  return false;
+}
+
+async function blobToBuffer(blob: Blob): Promise<Buffer> {
+  const arrayBuffer = await blob.arrayBuffer();
   return Buffer.from(arrayBuffer);
+}
+
+async function applyServerBackgroundRemoval(params: {
+  uid: string;
+  itemId: string;
+  photoUrl: string;
+  imageBytes: Buffer;
+}): Promise<{
+  bytes: Buffer;
+  method: "server" | "none";
+}> {
+  const { uid, itemId, photoUrl, imageBytes } = params;
+  try {
+    if (await hasTransparentPngBackground(imageBytes)) {
+      logger.info("[BgRemoval] Server-side removal skipped; PNG already has transparency", {
+        uidHash: redactUid(uid),
+        itemId,
+      });
+      return { bytes: imageBytes, method: "none" };
+    }
+
+    const storagePath = extractStoragePathFromUrl(photoUrl);
+    if (!storagePath) {
+      logger.warn("[BgRemoval] Server-side removal skipped; unable to parse Storage path", {
+        uidHash: redactUid(uid),
+        itemId,
+        photoUrl: redactUrlForLogs(photoUrl),
+      });
+      return { bytes: imageBytes, method: "none" };
+    }
+    if (!isUserOwnedStoragePath(uid, storagePath)) {
+      logger.warn("[BgRemoval] Server-side removal skipped; Storage path is not user-owned", {
+        uidHash: redactUid(uid),
+        itemId,
+        hasStoragePath: !!storagePath,
+      });
+      return { bytes: imageBytes, method: "none" };
+    }
+
+    const result = await removeBackground(imageBytes, {
+      output: { format: "image/png", quality: 0.92 },
+    });
+    const pngBytes = await blobToBuffer(result);
+    const token = extractDownloadTokenFromUrl(photoUrl) ?? randomUUID();
+    await getStorage().bucket().file(storagePath).save(pngBytes, {
+      metadata: {
+        contentType: "image/png",
+        metadata: {
+          firebaseStorageDownloadTokens: token,
+        },
+      },
+      resumable: false,
+    });
+    logger.info("[BgRemoval] Server-side removal applied", {
+      uidHash: redactUid(uid),
+      itemId,
+      hasStoragePath: !!storagePath,
+    });
+    return { bytes: pngBytes, method: "server" };
+  } catch (error) {
+    logger.error("[BgRemoval] Server-side removal failed; continuing original image", {
+      uidHash: redactUid(uid),
+      itemId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { bytes: imageBytes, method: "none" };
+  }
 }
 
 function clampBbox(
@@ -1056,11 +1472,17 @@ function safeJsonExtract(text: string): RawExtraction | null {
   }
 }
 
-async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
+async function extractWithOpenAI(photoUrls: string[]): Promise<RawExtraction> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not configured");
   }
+  const visionPhotoUrls = photoUrls.slice(0, 3);
+  logger.info("[INGEST_VISION_PAYLOAD] prepared image payload", {
+    inputImageCount: photoUrls.length,
+    visionImageCount: visionPhotoUrls.length,
+    detail: "high",
+  });
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -1076,9 +1498,9 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
         {
           role: "system",
           content: [
-            "You are a fashion catalog parser and wardrobe stylist. Analyze one clothing item from the image and output ONLY one JSON object matching the schema. No markdown. No prose. No extra keys.",
+            "You are a fashion catalog parser and wardrobe stylist. You are given multiple images of the same clothing item. Combine information across all images to determine the most accurate attributes and output ONLY one JSON object matching the schema. No markdown. No prose. No extra keys.",
             "Be visually grounded. Use only what is visible in the garment image. Prefer null over guessing when uncertain.",
-            "Schema keys only: category, subCategory, type, name, brand, brandConfidence, colors, primaryColor, displayColor, displayColors, pattern, material, fit, style, sleeveLength, neckline, closure, length, rise, legShape, hasLogo, logoPlacement, formality, warmth, layerRole, aestheticTags, occasionTags, seasonTags, visualWeight, versatilityScore, confidence.",
+            "Schema keys only: category, subCategory, type, name, brand, brandConfidence, colors, primaryColor, displayColor, displayColors, pattern, material, materialConfidence, fit, style, sleeveLength, neckline, closure, length, rise, legShape, hasLogo, logoPlacement, formality, warmth, layerRole, aestheticTags, occasionTags, seasonTags, visualWeight, versatilityScore, detailTags, confidenceSummary, confidence.",
             "HARD category disambiguation priority:",
             "1) If two leg openings, inseam, crotch seam, fly, waistband, belt loops, or drawstring at the waist are visible, category MUST be bottom.",
             "2) If collar or neckline plus sleeves are visible, category is top unless it is clearly open-front outerwear.",
@@ -1125,7 +1547,9 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
             {
               type: "text",
               text: [
-                "Analyze this garment photo.",
+                "Analyze these garment photos together as one item.",
+                "Use all images to improve brand, material, pattern, color, and visible-detail accuracy.",
+                "If the images conflict, choose the most consistent signal and lower confidence.",
                 "Prefer visible garment type and visible logo/text/tag only.",
                 "Use waistband/fly/two-leg cues to avoid misclassifying pants as tops.",
                 "If uncertain, return null instead of guessing.",
@@ -1134,10 +1558,10 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
                 "If a piece has multiple visible garment colors, include them and choose the main one as primaryColor.",
               ].join(" "),
             },
-            {
-              type: "image_url",
-              image_url: { url: photoUrl },
-            },
+            ...visionPhotoUrls.map((photoUrl) => ({
+              type: "image_url" as const,
+              image_url: { url: photoUrl, detail: "high" },
+            })),
           ],
         },
       ],
@@ -1145,26 +1569,26 @@ async function extractWithOpenAI(photoUrl: string): Promise<RawExtraction> {
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(
-      `OpenAI request failed: ${response.status} ${body.slice(0, 240)}`,
-    );
+    await response.text().catch(() => "");
+    throw new Error(`OpenAI request failed: ${response.status}`);
   }
 
   const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: { message?: { content?: string } }[];
   };
 
   const content = data.choices?.[0]?.message?.content ?? "";
-  logger.info("OpenAI raw extraction response", {
-    rawText: content.slice(0, 2000),
+  logger.info("[INGEST_VISION] OpenAI extraction response received", {
+    responseLength: content.length,
     truncated: content.length > 2000,
   });
   const parsed = safeJsonExtract(content);
   if (!parsed) {
     throw new Error("OpenAI returned invalid JSON payload");
   }
-  logger.info("OpenAI parsed extraction payload", { parsed });
+  logger.info("[INGEST_VISION] parsed extraction shape", {
+    parsedKeys: Object.keys(parsed as Record<string, unknown>),
+  });
 
   return parsed;
 }
@@ -1173,43 +1597,154 @@ export const ingestItemFromPhotos = onDocumentWritten(
   {
     document: "users/{uid}/items/{itemId}",
     secrets: ["OPENAI_API_KEY"],
+    memory: "1GiB",
+    timeoutSeconds: 240,
   },
-  async (event) => {
+  tracedHandler(async (event) => {
     const uid = String(event.params.uid ?? "");
     const itemId = String(event.params.itemId ?? "");
+    const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
     const before = event.data?.before.data() as ItemDoc | undefined;
     const after = event.data?.after.data() as ItemDoc | undefined;
     if (!after) return;
 
-    const photoUrls = extractPhotoUrls(after);
-    const hasPhoto =
-      photoUrls.length > 0 || !!String(after.photoUrl ?? "").trim();
+    const rawPhotoUrls = extractPhotoUrls(after);
+    const rawSourceUrls = extractIngestionSourceUrls(after);
+    const photoUrls = await validateImageInputUrls(uid, itemId, rawPhotoUrls, "photo");
+    const sourceUrls = await validateImageInputUrls(uid, itemId, rawSourceUrls, "source");
+    const sourceType = String(after.ingestionSource?.sourceType ?? "").trim();
+    const isSnapDoneDraft =
+      after.isDraft === true &&
+      (sourceType === "aura_chat" || sourceType === "aura_product_link");
+    const hasPhoto = photoUrls.length > 0;
     const status = getIngestionStatus(after);
-    logger.info("INGEST CHECK", {
-      uid,
+    const nowMs = Date.now();
+    const processingStartedAtMs = getProcessingStartedAtMs(after);
+    const staleProcessingRetry = isStaleProcessingStatus(after, status, nowMs);
+    const lifecycleStatus = String(after.itemLifecycleStatus ?? "").trim().toLowerCase();
+    const draftState = String(after.draftState ?? "").trim().toLowerCase();
+    const isCancelledOrDeleted =
+      lifecycleStatus === "deleted" ||
+      lifecycleStatus === "candidate" ||
+      draftState === "cancelled" ||
+      draftState === "awaiting_confirmation" ||
+      status === "awaiting_confirmation";
+    logger.info("[INGEST_TRIGGER] item write received", {
+      uidHash,
       itemId,
       status: status || null,
-      photoUrl: String(after.photoUrl ?? "").trim() || null,
-      photosPrimaryUrl: String(after.photos?.primaryUrl ?? "").trim() || null,
-      photosUrls: Array.isArray(after.photos?.urls) ? after.photos?.urls : [],
-      extractedPhotoUrls: photoUrls,
+      sourceType: sourceType || null,
+      isSnapDoneDraft,
+      lifecycleStatus: lifecycleStatus || null,
+      draftState: draftState || null,
+      isDraft: after.isDraft ?? null,
+      hasImagesArray: Array.isArray(after.images),
+      imagesCount: Array.isArray(after.images) ? after.images.length : 0,
+      photoUrl: redactUrlForLogs(String(after.photoUrl ?? "").trim() || null),
+      photosPrimaryUrl: redactUrlForLogs(String(after.photos?.primaryUrl ?? "").trim() || null),
+      photosUrls: Array.isArray(after.photos?.urls)
+        ? after.photos?.urls.map((url) => redactUrlForLogs(url))
+        : [],
+      extractedPhotoUrls: photoUrls.map((url) => redactUrlForLogs(url)),
       hasPhoto,
+      processingStartedAtMs,
+      processingAgeMs: processingStartedAtMs ? nowMs - processingStartedAtMs : null,
+      staleProcessingRetry,
     });
-    if (status === "processing" || status === "done") {
-      logger.info("Skipping ingestion: active or terminal status", {
-        uid,
+    if (isCancelledOrDeleted) {
+      logger.info("[INGEST_VALIDATE] skipping cancelled, deleted, or candidate item", {
+        uidHash,
         itemId,
         status,
+        lifecycleStatus: lifecycleStatus || null,
+        draftState: draftState || null,
+      });
+      return;
+    }
+    if (status === "done") {
+      logger.info("[INGEST_VALIDATE] skipping active or terminal status", {
+        uidHash,
+        itemId,
+        status,
+        sourceType: sourceType || null,
+        isSnapDoneDraft,
+      });
+      return;
+    }
+    if (status === "processing" && !staleProcessingRetry) {
+      logger.info("[INGEST_VALIDATE] skipping fresh processing status", {
+        uidHash,
+        itemId,
+        status,
+        sourceType: sourceType || null,
+        isSnapDoneDraft,
+        processingStartedAtMs,
+        processingAgeMs: processingStartedAtMs ? nowMs - processingStartedAtMs : null,
+      });
+      return;
+    }
+    if (staleProcessingRetry) {
+      logger.warn("[INGEST_VALIDATE] retrying stale processing item", {
+        uidHash,
+        itemId,
+        status,
+        sourceType: sourceType || null,
+        isSnapDoneDraft,
+        processingStartedAtMs,
+        processingAgeMs: processingStartedAtMs ? nowMs - processingStartedAtMs : null,
+      });
+    }
+    if (draftState === "awaiting_confirmation" || draftState === "cancelled") {
+      logger.info("Skipping ingestion: awaiting user confirmation", {
+        uidHash,
+        itemId,
+        status,
+        draftState: draftState || null,
       });
       return;
     }
     if (!hasPhoto) {
-      logger.info("Skipping ingestion: no photo URLs", { uid, itemId });
+      if (rawPhotoUrls.length > 0) {
+        await getFirestore()
+          .doc(`users/${uid}/items/${itemId}`)
+          .set(
+            {
+              ...(after.isDraft === true ? { draftState: "failed" } : {}),
+              itemLifecycleStatus: "failed",
+              ingestionStatus: "failed",
+              ingestion: {
+                status: "failed",
+                lastRunAt: FieldValue.serverTimestamp(),
+                failedAt: FieldValue.serverTimestamp(),
+                errorCode: "unsafe_image_url",
+                errorMessage: "Image URL is not safe to process.",
+                canRetry: true,
+                error: {
+                  code: "unsafe_image_url",
+                  message: "Image URL is not safe to process.",
+                },
+              },
+              updatedAt: Date.now(),
+            },
+            { merge: true },
+          );
+      }
+      logger.info("[INGEST_VALIDATE] skipping no photo URLs", {
+        uidHash,
+        itemId,
+        sourceType: sourceType || null,
+        isSnapDoneDraft,
+        hasImagesArray: Array.isArray(after.images),
+        imagesCount: Array.isArray(after.images) ? after.images.length : 0,
+        hasPhotosMap: !!after.photos,
+      });
       return;
     }
 
-    const sourceUrls = extractIngestionSourceUrls(after);
-    const beforeSourceUrls = before ? extractIngestionSourceUrls(before) : [];
+    const beforeSourceUrls = before
+      ? await validateImageInputUrls(uid, itemId, extractIngestionSourceUrls(before), "before-source")
+      : [];
     const photoHash = hashPhotoUrls(photoUrls);
     const declaredSourceHash =
       String(after.ingestionSource?.sourceHash ?? "").trim() || null;
@@ -1276,21 +1811,22 @@ export const ingestItemFromPhotos = onDocumentWritten(
     const shouldRun =
       hasSourcePhoto &&
       !retryBlocked &&
-      (isCreate ||
+      (staleProcessingRetry ||
+        isCreate ||
         !status ||
         !currentSourceHash ||
         !processedSourceHash ||
         !alreadyProcessedCurrentSource ||
         explicitRetryRequested);
 
-    logger.info("Ingestion trigger decision", {
-      uid,
+    logger.info("[INGEST_VALIDATE] trigger decision", {
+      uidHash,
       itemId,
       beforeExists: !!before,
       beforeStatus: String(before?.ingestion?.status ?? "").trim() || null,
       afterStatus: status || null,
-      beforeSourceUrls,
-      afterSourceUrls: sourceUrls,
+      beforeSourceUrls: beforeSourceUrls.map((url) => redactUrlForLogs(url)),
+      afterSourceUrls: sourceUrls.map((url) => redactUrlForLogs(url)),
       declaredSourceHash,
       previousSourceHash: previousSourceHash || null,
       currentSourceHash: currentSourceHash || null,
@@ -1301,11 +1837,14 @@ export const ingestItemFromPhotos = onDocumentWritten(
       alreadyProcessedCurrentSource,
       retryBlocked,
       explicitRetryRequested,
+      staleProcessingRetry,
       shouldRun,
       skipReason: !hasSourcePhoto
         ? "missing-source-photo"
         : retryBlocked
           ? "recent-failed-same-source"
+          : staleProcessingRetry
+            ? null
           : explicitRetryRequested
             ? null
             : shouldRun
@@ -1314,13 +1853,14 @@ export const ingestItemFromPhotos = onDocumentWritten(
     });
 
     if (!shouldRun) {
-      logger.info("Skipping ingestion: conditions not met", {
-        uid,
+      logger.info("[INGEST_VALIDATE] skipping conditions not met", {
+        uidHash,
         itemId,
         status: status ?? "missing",
         hasNewPhoto,
         retryBlocked,
         explicitRetryRequested,
+        staleProcessingRetry,
         declaredSourceHash,
         previousSourceHash: previousSourceHash || null,
         currentSourceHash: currentSourceHash || null,
@@ -1335,26 +1875,29 @@ export const ingestItemFromPhotos = onDocumentWritten(
     const latestSnapshot = await ref.get();
     const latestData = latestSnapshot.data() as ItemDoc | undefined;
     const latestStatus = getIngestionStatus(latestData);
+    const latestStaleProcessingRetry = isStaleProcessingStatus(latestData, latestStatus);
     const latestProcessedSourceHash = String(
       latestData?.ingestion?.lastProcessedSourceHash ?? "",
     ).trim();
-    if (latestStatus === "processing" || latestStatus === "done") {
-      logger.info("Skipping ingestion: latest state already active/terminal", {
-        uid,
+    if (latestStatus === "done" || (latestStatus === "processing" && !latestStaleProcessingRetry)) {
+      logger.info("[INGEST_VALIDATE] skipping latest state already active/terminal", {
+        uidHash,
         itemId,
         latestStatus,
+        latestStaleProcessingRetry,
       });
       return;
     }
     if (
       latestProcessedSourceHash &&
       currentSourceHash &&
-      latestProcessedSourceHash === currentSourceHash
+      latestProcessedSourceHash === currentSourceHash &&
+      !(latestStatus === "processing" && latestStaleProcessingRetry)
     ) {
       logger.info(
-        "Skipping ingestion: latest source already processed for current hash",
+        "[INGEST_VALIDATE] skipping latest source already processed for current hash",
         {
-          uid,
+          uidHash,
           itemId,
           currentSourceHash,
           latestProcessedSourceHash,
@@ -1363,11 +1906,11 @@ export const ingestItemFromPhotos = onDocumentWritten(
       return;
     }
 
-    if (after.cleanedFromHash === currentSourceHash) {
+    if (after.cleanedFromHash === currentSourceHash && !staleProcessingRetry) {
       logger.info(
-        "Skipping ingestion: cleanedFromHash already matches current source",
+        "[INGEST_VALIDATE] skipping cleanedFromHash already matches current source",
         {
-          uid,
+          uidHash,
           itemId,
           currentSourceHash,
         },
@@ -1375,30 +1918,135 @@ export const ingestItemFromPhotos = onDocumentWritten(
       return;
     }
 
+    try {
+      await assertFunctionRateLimit(uid, "imageIngestion", RATE_LIMITS.imageIngestion);
+    } catch (error) {
+      if (!isRateLimitError(error)) throw error;
+      logger.warn("[INGEST_RATE_LIMIT] image ingestion blocked", {
+        uidHash,
+        itemId,
+      });
+      await ref.set(
+        {
+          ...(after.isDraft === true ? { draftState: "failed" } : {}),
+          itemLifecycleStatus: "failed",
+          ingestionStatus: "failed",
+          ingestion: {
+            status: "failed",
+            lastRunAt: FieldValue.serverTimestamp(),
+            failedAt: FieldValue.serverTimestamp(),
+            errorCode: "rate_limit",
+            errorMessage: RATE_LIMIT_MESSAGE,
+            canRetry: true,
+            error: {
+              code: "rate_limit",
+              message: RATE_LIMIT_MESSAGE,
+            },
+          },
+          updatedAt: Date.now(),
+        },
+        { merge: true },
+      );
+      return;
+    }
+
     const runId = randomUUID();
-    logger.info("Ingestion transition", {
-      uid,
+    const nextAttempt = getIngestionAttempt(latestData ?? after) + 1;
+    logger.info("[INGEST_START] transition to processing", {
+      uidHash,
       itemId,
+      isSnapDoneDraft,
       from: status ?? "missing",
       to: "processing",
+      attempt: nextAttempt,
+      workerVersion: INGEST_WORKER_VERSION,
     });
     await ref.set(
       {
         ...(after.isDraft === true ? { draftState: "ingesting" } : {}),
+        itemLifecycleStatus: "processing",
+        ingestionStatus: "processing",
+        backgroundRemovalMethod: hasClientCleanedImage(after) ? "client" : "none",
         ingestion: {
           runId,
           status: "processing",
           lastRunAt: FieldValue.serverTimestamp(),
+          startedAt: FieldValue.serverTimestamp(),
+          attempt: nextAttempt,
+          workerVersion: INGEST_WORKER_VERSION,
+          canRetry: false,
+          failedAt: null,
+          errorCode: null,
+          errorMessage: null,
+          error: null,
           lastProcessedPhotoHash: photoHash,
           lastProcessedSourceHash: currentSourceHash,
         },
+        updatedAt: Date.now(),
       },
       { merge: true },
     );
 
     try {
-      const extracted = await extractWithOpenAI(photoUrls[0]);
+      let backgroundRemovalMethod: "client" | "server" | "none" =
+        hasClientCleanedImage(after) ? "client" : "none";
+      const extracted = await extractWithOpenAI(photoUrls);
+      let imageBytes = await downloadImageBytes(uid, photoUrls[0]);
+      imageBytes = await normalizeImageBytesForProcessing(uid, itemId, imageBytes);
+      if (backgroundRemovalMethod !== "client") {
+        if (
+          shouldAttemptServerBackgroundRemoval({
+            sourceType,
+            imageBytes,
+          })
+        ) {
+          const serverRemoval = await applyServerBackgroundRemoval({
+            uid,
+            itemId,
+            photoUrl: photoUrls[0],
+            imageBytes,
+          });
+          imageBytes = serverRemoval.bytes;
+          backgroundRemovalMethod = serverRemoval.method;
+        } else {
+          logger.info("[BgRemoval] Server-side removal skipped; optional for this source", {
+            uidHash,
+            itemId,
+            sourceType: sourceType || null,
+            normalizedBytes: imageBytes.byteLength,
+          });
+        }
+      }
       let warning: string | null = null;
+      const storedImageCandidates: {
+        originalUrl?: string | null;
+        aiUrl?: string | null;
+        cleanedUrl?: string | null;
+        isPrimary?: boolean;
+      }[] = Array.isArray(after.images)
+        ? after.images
+        : Array.isArray(after.photos?.images)
+          ? after.photos.images
+          : photoUrls.map((url, index) => ({
+              originalUrl: url,
+              isPrimary: index === 0,
+            }));
+
+      const storedImages = storedImageCandidates
+        .map((image) => ({
+          originalUrl: String(image?.originalUrl ?? "").trim(),
+          ...(String(image?.aiUrl ?? "").trim()
+            ? { aiUrl: String(image?.aiUrl ?? "").trim() }
+            : {}),
+          ...(String(image?.cleanedUrl ?? "").trim()
+            ? { cleanedUrl: String(image?.cleanedUrl ?? "").trim() }
+            : {}),
+          isPrimary: Boolean(image?.isPrimary),
+        }))
+        .filter((image) => image.originalUrl);
+      const primaryStoredImage =
+        storedImages.find((image) => image.isPrimary) ?? storedImages[0] ?? null;
+      const primaryCleanedUrl = String(primaryStoredImage?.cleanedUrl ?? "").trim() || null;
 
       let category = normalizeCategory(extracted.category);
       let subCategory = normalizeSubCategory(extracted.subCategory);
@@ -1438,6 +2086,9 @@ export const ingestItemFromPhotos = onDocumentWritten(
 
       const pattern = normalizePattern(extracted.pattern);
       const material = normalizeMaterial(extracted.material);
+      const materialConfidence = clamp01(
+        extracted.materialConfidence ?? extracted.confidence?.material ?? 0,
+      );
       const fit = normalizeEnum(extracted.fit, ALLOWED_FITS);
       const style = normalizeEnum(extracted.style, ALLOWED_STYLES);
       const sleeveLength = normalizeEnum(
@@ -1543,19 +2194,29 @@ export const ingestItemFromPhotos = onDocumentWritten(
         extracted.confidence?.subCategory ?? 0,
       );
       const colorsConfidence = clamp01(extracted.confidence?.colors ?? 0);
+      const detailTags = normalizeDetailTags(extracted.detailTags);
+      const extractionColorInputs = [
+        ...(Array.isArray(extracted.colors) ? extracted.colors : []),
+        extracted.primaryColor,
+        extracted.color,
+        ...(Array.isArray(extracted.secondaryColors) ? extracted.secondaryColors : []),
+        ...(Array.isArray(extracted.dominantColors) ? extracted.dominantColors : []),
+        ...(Array.isArray(extracted.palette) ? extracted.palette : []),
+        extracted.displayColor,
+        ...(Array.isArray(extracted.displayColors) ? extracted.displayColors : []),
+      ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
       const { colors: aiColorsRaw, colorLabel } = normalizeColors(
-        extracted.colors,
+        extractionColorInputs,
       );
       const aiPrimaryColor = normalizeColorToken(
-        String(extracted.primaryColor ?? ""),
+        String(extracted.primaryColor ?? extracted.color ?? aiColorsRaw[0] ?? ""),
       );
       const aiColors = aiColorsRaw.slice(0, 3);
       const safeAiColorLabel = colorLabel?.trim() ? colorLabel.trim() : null;
       const aiDisplayColor = normalizeDisplayColorValue(extracted.displayColor);
       const aiDisplayColors = normalizeDisplayColors(extracted.displayColors);
 
-      const originalBytes = await downloadImageBytes(photoUrls[0]);
-      const metadata = await sharp(originalBytes).metadata();
+      const metadata = await sharp(imageBytes).metadata();
       const imageWidth = metadata.width ?? 0;
       const imageHeight = metadata.height ?? 0;
       if (!imageWidth || !imageHeight) {
@@ -1563,15 +2224,22 @@ export const ingestItemFromPhotos = onDocumentWritten(
       }
 
       const cropRect = clampBbox(extracted.bbox, imageWidth, imageHeight);
-      const croppedForColorBytes = await sharp(originalBytes)
+      const croppedForColorBytes = await sharp(imageBytes)
         .extract({
           left: cropRect.left,
           top: cropRect.top,
           width: cropRect.cropWidth,
           height: cropRect.cropHeight,
         })
+        .resize({
+          width: MAX_CROP_IMAGE_DIMENSION,
+          height: MAX_CROP_IMAGE_DIMENSION,
+          fit: "inside",
+          withoutEnlargement: true,
+        })
         .png()
         .toBuffer();
+      const pixelResult = await detectPixelColor(croppedForColorBytes);
       const croppedBytes = await sharp(croppedForColorBytes)
         .jpeg({ quality: 85 })
         .toBuffer();
@@ -1588,7 +2256,6 @@ export const ingestItemFromPhotos = onDocumentWritten(
       );
       const thumbUrl = await uploadImageAndGetUrl(thumbStoragePath, thumbBytes);
 
-      const pixelResult = await detectPixelColor(croppedForColorBytes);
       const pixelPrimary = pixelResult.pixelColor;
       const pixelColors: AllowedColor[] = pixelPrimary ? [pixelPrimary] : [];
 
@@ -1665,6 +2332,24 @@ export const ingestItemFromPhotos = onDocumentWritten(
       );
       let formalityScore = constrainedScores.formalityScore;
       let warmthScore = constrainedScores.warmthScore;
+      const confidenceOverall = Number(
+        (
+          (categoryConfidence +
+            subCategoryConfidence +
+            colorsConfidence +
+            brandConfidence +
+            materialConfidence) /
+          5
+        ).toFixed(3),
+      );
+      const confidenceSummary = {
+        overall: confidenceOverall,
+        notes:
+          normalizeFreeTextLabel(extracted.confidenceSummary?.notes, 180) ??
+          (photoUrls.length > 1
+            ? "Combined multiple images for a more reliable extraction."
+            : "Built from a single item image."),
+      };
 
       if (subCategory === "tshirt") {
         formalityScore = Math.min(formalityScore, 0.5);
@@ -1672,28 +2357,31 @@ export const ingestItemFromPhotos = onDocumentWritten(
       }
 
       logger.info("Ingestion normalized output", {
-        uid,
+        uidHash,
         itemId,
         normalized: {
           category,
           subCategory,
           type: itemType,
+          wearSlot: wearSlot(category),
           confidence: {
             category: categoryConfidence,
             subCategory: subCategoryConfidence,
             colors: colorsConfidence,
             brand: brandConfidence,
+            material: materialConfidence,
           },
-          brand:
+          hasBrand: !!(
             hasUserBrandOverride || shouldPreserveLegacyManualBrand
-              ? (after.brand ?? null)
-              : brand,
+              ? after.brand
+              : brand
+          ),
           brandConfidence,
-          brandEvidence,
-          brandCandidates,
-          wearSlot: wearSlot(category),
+          hasBrandEvidence: !!brandEvidence,
+          brandCandidateCount: brandCandidates.length,
           pattern,
           material,
+          materialConfidence,
           fit,
           style,
           formality,
@@ -1701,41 +2389,33 @@ export const ingestItemFromPhotos = onDocumentWritten(
           layerRole,
           visualWeight,
           versatilityScore,
-          sleeveLength,
-          neckline,
-          closure,
-          length: itemLength,
-          rise,
-          legShape,
+          detailTagCount: detailTags.length,
+          colorCount: finalColors.length,
+          displayColorCount: finalDisplayColors.length,
+          occasionTagCount: occasionTags.length,
+          seasonTagCount: seasonTags.length,
+          aestheticTagCount: aestheticTags.length,
           hasLogo,
-          logoPlacement,
-          occasionTags,
-          seasonTags,
-          aestheticTags,
-          crop: cropRect.normalized,
-          photos: {
-            primaryUrl: photoUrls[0],
-            urls: photoUrls,
-            croppedUrl,
-            thumbUrl,
-          },
-          finalColors,
-          ...(finalColorLabel ? { finalColorLabel } : {}),
-          finalPrimaryColor,
-          finalDisplayColor,
-          finalDisplayColors,
-          generatedName: inferredName,
+          hasLogoPlacement: !!logoPlacement,
+          hasCrop: !!cropRect.normalized,
+          hasCroppedUrl: !!croppedUrl,
+          hasThumbUrl: !!thumbUrl,
+          hasFinalPrimaryColor: !!finalPrimaryColor,
+          hasFinalDisplayColor: !!finalDisplayColor,
+          confidenceOverall,
+          generatedNameLength: String(inferredName ?? "").length,
+          backgroundRemovalMethod,
           colorSource: hasUserColorOverride ? "user" : "ai",
           formalityScore,
           warmthScore,
           aiDebug: {
-            brandEvidence,
-            brandCandidates,
-            aiColors,
-            aiPrimaryColor: aiPrimaryColor ? toTitleCase(aiPrimaryColor) : null,
-            aiColorLabel: safeAiColorLabel ?? null,
-            pixelColors,
-            pixelColorHex: pixelResult.pixelHex,
+            hasBrandEvidence: !!brandEvidence,
+            brandCandidateCount: brandCandidates.length,
+            aiColorCount: aiColors.length,
+            hasAiPrimaryColor: !!aiPrimaryColor,
+            hasAiColorLabel: !!safeAiColorLabel,
+            pixelColorCount: pixelColors.length,
+            hasPixelColorHex: !!pixelResult.pixelHex,
             colorConfidence,
             colorNeedsReview: persistedColorNeedsReview,
           },
@@ -1747,29 +2427,61 @@ export const ingestItemFromPhotos = onDocumentWritten(
       });
 
       logger.info("Ingestion final write payload", {
-        uid,
+        uidHash,
         itemId,
         finalWrite: {
           category,
           subCategory,
           type: itemType,
-          colors: finalColors,
-          brand:
+          colorCount: finalColors.length,
+          detailTagCount: detailTags.length,
+          hasBrand: !!(
             hasUserBrandOverride || shouldPreserveLegacyManualBrand
-              ? (after.brand ?? null)
-              : brand,
-          generatedName: inferredName,
+              ? after.brand
+              : brand
+          ),
+          generatedNameLength: String(inferredName ?? "").length,
           lastProcessedSourceHash: currentSourceHash,
+          backgroundRemovalMethod,
         },
       });
 
       const latestBeforeDone = await ref.get();
+      if (!latestBeforeDone.exists) {
+        logger.warn("[INGEST_VALIDATE] skipping completion because item doc was hard-deleted", {
+          uidHash,
+          itemId,
+          runId,
+        });
+        return;
+      }
       const latestRunId = String(
         latestBeforeDone.get("ingestion.runId") ?? "",
       ).trim();
+      const latestDraftState = String(
+        latestBeforeDone.get("draftState") ?? "",
+      ).trim().toLowerCase();
+      const latestLifecycleStatus = String(
+        latestBeforeDone.get("itemLifecycleStatus") ?? "",
+      ).trim().toLowerCase();
+      if (
+        latestDraftState === "cancelled" ||
+        latestDraftState === "awaiting_confirmation" ||
+        latestLifecycleStatus === "deleted" ||
+        latestLifecycleStatus === "candidate"
+      ) {
+        logger.warn("[INGEST_VALIDATE] skipping completion because item was removed or is candidate-only", {
+          uidHash,
+          itemId,
+          runId,
+          latestDraftState,
+          latestLifecycleStatus,
+        });
+        return;
+      }
       if (latestRunId && latestRunId !== runId) {
         logger.warn("Skipping stale ingestion completion write", {
-          uid,
+          uidHash,
           itemId,
           runId,
           latestRunId,
@@ -1777,20 +2489,182 @@ export const ingestItemFromPhotos = onDocumentWritten(
         return;
       }
 
+      const latestImageCandidates: {
+        originalUrl?: string | null;
+        aiUrl?: string | null;
+        cleanedUrl?: string | null;
+        isPrimary?: boolean;
+      }[] = Array.isArray(latestBeforeDone.get("images"))
+        ? latestBeforeDone.get("images")
+        : Array.isArray(latestBeforeDone.get("photos.images"))
+          ? latestBeforeDone.get("photos.images")
+          : [];
+      const latestImages = latestImageCandidates
+        .map((image) => ({
+          originalUrl: String(image?.originalUrl ?? "").trim(),
+          ...(String(image?.aiUrl ?? "").trim()
+            ? { aiUrl: String(image?.aiUrl ?? "").trim() }
+            : {}),
+          ...(String(image?.cleanedUrl ?? "").trim()
+            ? { cleanedUrl: String(image?.cleanedUrl ?? "").trim() }
+            : {}),
+          isPrimary: Boolean(image?.isPrimary),
+        }))
+        .filter((image) => image.originalUrl);
+      const latestPrimaryImage =
+        latestImages.find((image) => image.isPrimary) ?? latestImages[0] ?? null;
+      const preservedOriginalImageUrl =
+        String(
+          latestPrimaryImage?.originalUrl ??
+            latestBeforeDone.get("originalImageUrl") ??
+            primaryStoredImage?.originalUrl ??
+            after.originalImageUrl ??
+            photoUrls[0] ??
+            "",
+        ).trim() || photoUrls[0];
+      const preservedCleanedImageUrl =
+        String(
+          latestPrimaryImage?.cleanedUrl ??
+            latestBeforeDone.get("cleanedImageUrl") ??
+            latestBeforeDone.get("photos.cleanedUrl") ??
+            primaryCleanedUrl ??
+            after.cleanedImageUrl ??
+            "",
+        ).trim() || null;
+      const preservedImages =
+        latestImages.length > 0
+          ? latestImages
+          : storedImages.map((image, index) => ({
+              originalUrl:
+                index === 0 ? preservedOriginalImageUrl : image.originalUrl,
+              ...(index === 0 && preservedCleanedImageUrl
+                ? { cleanedUrl: preservedCleanedImageUrl }
+                : image.cleanedUrl
+                  ? { cleanedUrl: image.cleanedUrl }
+                  : {}),
+              ...(image.aiUrl ? { aiUrl: image.aiUrl } : {}),
+              isPrimary: image.isPrimary,
+            }));
+      const preservedPrimaryDisplayUrl =
+        preservedCleanedImageUrl ??
+        (String(
+          latestBeforeDone.get("photoUrl") ??
+            latestBeforeDone.get("photos.primaryUrl") ??
+            preservedOriginalImageUrl,
+        ).trim() ||
+          preservedOriginalImageUrl);
+      const preservedPhotoUrls = Array.isArray(latestBeforeDone.get("imageUrls"))
+        ? latestBeforeDone
+            .get("imageUrls")
+            .map((value: unknown) => String(value ?? "").trim())
+            .filter(Boolean)
+        : photoUrls;
+      const latestUserEditedFields = stringSet(
+        latestBeforeDone.get("userEditedFields"),
+      );
+      const latestValueChanged = (fieldPath: string, originalValue: unknown) =>
+        valuesDiffer(latestBeforeDone.get(fieldPath), originalValue);
+      const latestBrandSource = String(
+        latestBeforeDone.get("brandSource") ?? after.brandSource ?? "",
+      )
+        .trim()
+        .toLowerCase();
+      const latestColorSource = String(
+        latestBeforeDone.get("colorSource") ?? after.colorSource ?? "",
+      )
+        .trim()
+        .toLowerCase();
+      const latestName = String(latestBeforeDone.get("name") ?? "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const preserveCategory =
+        latestUserEditedFields.has("category") ||
+        latestValueChanged("category", after.category);
+      const preserveSubCategory =
+        preserveCategory ||
+        latestUserEditedFields.has("subCategory") ||
+        latestValueChanged("subCategory", after.subCategory);
+      const preservePattern =
+        latestUserEditedFields.has("pattern") ||
+        latestValueChanged("pattern", after.pattern);
+      const preserveMaterial =
+        latestUserEditedFields.has("material") ||
+        latestValueChanged("material", after.material);
+      const preserveFit =
+        latestUserEditedFields.has("fit") ||
+        latestValueChanged("fit", after.fit);
+      const preserveOccasionTags =
+        latestUserEditedFields.has("occasionTags") ||
+        latestValueChanged("occasionTags", after.occasionTags);
+      const preserveSeasonTags =
+        latestUserEditedFields.has("seasonTags") ||
+        latestValueChanged("seasonTags", after.seasonTags);
+      const preserveName =
+        latestUserEditedFields.has("name") ||
+        latestValueChanged("name", after.name);
+      const latestDisplayColorsValue = latestBeforeDone.get("displayColors");
+      const latestDisplayColorCandidates = [
+        latestBeforeDone.get("displayColor"),
+        ...(Array.isArray(latestDisplayColorsValue) ? latestDisplayColorsValue : []),
+      ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+      const latestStoredColors = normalizeColors(latestBeforeDone.get("colors")).colors;
+      const latestStoredPrimaryColor = normalizeColorToken(
+        String(latestBeforeDone.get("primaryColor") ?? ""),
+      );
+      const latestStoredDisplayColors = normalizeColors(latestDisplayColorCandidates).colors;
+      const latestHasConcreteColorValue =
+        latestStoredColors.length > 0 ||
+        !!latestStoredPrimaryColor ||
+        latestStoredDisplayColors.length > 0;
+      const latestHasUserColorIntent =
+        latestColorSource === "user" ||
+        latestUserEditedFields.has("colors") ||
+        latestUserEditedFields.has("primaryColor") ||
+        latestUserEditedFields.has("displayColor") ||
+        latestUserEditedFields.has("displayColors");
+      const latestColorChangedWithValue =
+        latestHasConcreteColorValue &&
+        (latestValueChanged("colors", after.colors) ||
+          latestValueChanged("primaryColor", after.primaryColor) ||
+          latestValueChanged("displayColor", after.displayColor) ||
+          latestValueChanged("displayColors", after.displayColors));
+      const preserveColors =
+        latestHasConcreteColorValue &&
+        (latestHasUserColorIntent || latestColorChangedWithValue);
+      const preserveBrand =
+        latestBrandSource === "user" ||
+        latestUserEditedFields.has("brand") ||
+        latestValueChanged("brand", after.brand);
+      const completionColorNeedsReview = preserveColors
+        ? false
+        : colorNeedsReview;
+      const completionLifecycleFields =
+        after.isDraft === true
+          ? isSnapDoneDraft
+            ? { isDraft: false, draftState: "ready", itemLifecycleStatus: "ready" }
+            : { draftState: "photo_uploaded", itemLifecycleStatus: "needs_review" }
+          : { draftState: "ready", itemLifecycleStatus: "ready" };
+
       await ref.set(
         {
           cleanedFromHash: currentSourceHash,
-          ...(after.isDraft === true ? { draftState: "photo_uploaded" } : {}),
-          ...(!String(after.name ?? "").trim() && inferredName
+          originalImageUrl: preservedOriginalImageUrl,
+          cleanedImageUrl: preservedCleanedImageUrl,
+          photoUrl: preservedPrimaryDisplayUrl,
+          imageUrls: preservedPhotoUrls,
+          images: preservedImages,
+          ...completionLifecycleFields,
+          ...(!preserveName && !latestName && inferredName
             ? { name: inferredName }
             : {}),
-          category,
-          subCategory,
+          ...(!preserveCategory ? { category, wearSlot: wearSlot(category) } : {}),
+          ...(!preserveSubCategory ? { subCategory } : {}),
           ...(itemType ? { type: itemType } : {}),
-          wearSlot: wearSlot(category),
-          pattern,
-          material,
-          fit,
+          ...(!preservePattern ? { pattern } : {}),
+          ...(!preserveMaterial ? { material, materialConfidence } : {}),
+          ...(detailTags.length > 0 ? { detailTags } : {}),
+          confidenceSummary,
+          ...(!preserveFit ? { fit } : {}),
           style,
           ...(formality ? { formality } : {}),
           ...(warmth ? { warmth } : {}),
@@ -1805,11 +2679,15 @@ export const ingestItemFromPhotos = onDocumentWritten(
           legShape,
           hasLogo,
           logoPlacement,
-          ...(occasionTags.length > 0 ? { occasionTags } : {}),
-          ...(seasonTags.length > 0 ? { seasonTags } : {}),
+          ...(!preserveOccasionTags && occasionTags.length > 0
+            ? { occasionTags }
+            : {}),
+          ...(!preserveSeasonTags && seasonTags.length > 0
+            ? { seasonTags }
+            : {}),
           ...(aestheticTags.length > 0 ? { aestheticTags } : {}),
           crop: cropRect.normalized,
-          ...(!hasUserColorOverride
+          ...(!preserveColors
             ? {
                 ...(finalColors.length > 0 ? { colors: finalColors } : {}),
                 ...(finalColorLabel ? { colorLabel: finalColorLabel } : {}),
@@ -1826,11 +2704,20 @@ export const ingestItemFromPhotos = onDocumentWritten(
                       ),
                     }
                   : {}),
+                colorConfidence,
+                colorNeedsReview: completionColorNeedsReview,
+                ...(aiColors.length > 0 ? { aiColors } : {}),
+                ...(pixelColors.length > 0 ? { pixelColors } : {}),
+                ...(pixelResult.pixelHex
+                  ? { pixelColorHex: pixelResult.pixelHex }
+                  : {}),
                 colorSource: "ai",
                 colorUpdatedAt: Date.now(),
               }
-            : {}),
-          ...(!hasUserBrandOverride && !shouldPreserveLegacyManualBrand
+            : {
+                colorNeedsReview: completionColorNeedsReview,
+              }),
+          ...(!preserveBrand && !shouldPreserveLegacyManualBrand
             ? {
                 brand,
                 brandConfidence,
@@ -1856,72 +2743,124 @@ export const ingestItemFromPhotos = onDocumentWritten(
             ...(pixelResult.pixelHex
               ? { pixelColorHex: pixelResult.pixelHex }
               : {}),
-            ...(hasUserColorOverride ? {} : { colorConfidence }),
-            colorNeedsReview: persistedColorNeedsReview,
+            ...(preserveColors ? {} : { colorConfidence }),
+            colorNeedsReview: completionColorNeedsReview,
           },
           formalityScore,
           warmthScore,
           photos: {
-            primaryUrl: photoUrls[0],
-            urls: photoUrls,
+            originalUrl: preservedOriginalImageUrl,
+            primaryUrl: preservedPrimaryDisplayUrl,
+            urls: preservedPhotoUrls,
+            images: preservedImages,
+            ...(preservedCleanedImageUrl
+              ? {
+                  cleanedUrl: preservedCleanedImageUrl,
+                  cleanedSource: "vision",
+                }
+              : {}),
             croppedUrl,
             thumbUrl,
           },
+          backgroundRemovalMethod,
+          ingestionStatus: "done",
           ingestion: {
             runId,
             status: "done",
             lastRunAt: FieldValue.serverTimestamp(),
+            completedAt: FieldValue.serverTimestamp(),
+            attempt: nextAttempt,
+            workerVersion: INGEST_WORKER_VERSION,
+            canRetry: false,
+            failedAt: null,
+            errorCode: null,
+            errorMessage: null,
             lastProcessedPhotoHash: photoHash,
             lastProcessedSourceHash: currentSourceHash,
-            ...(warning
-              ? { error: { message: warning, code: "warning" } }
-              : {}),
+            error: warning ? { message: warning, code: "warning" } : null,
           },
+          updatedAt: Date.now(),
         },
         { merge: true },
       );
 
-      logger.info("Ingestion transition", {
-        uid,
+      logger.info("[INGEST_SUCCESS] transition to done", {
+        uidHash,
         itemId,
+        isSnapDoneDraft,
+        finalizedDraft: isSnapDoneDraft,
         from: "processing",
         to: "done",
         category,
         subCategory,
-        colors: finalColors,
-        brand:
+        colorCount: finalColors.length,
+        hasBrand: !!(
           hasUserBrandOverride || shouldPreserveLegacyManualBrand
-            ? (after.brand ?? null)
-            : brand,
+            ? after.brand
+            : brand
+        ),
         processedSourceHash: currentSourceHash,
       });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unknown ingestion error";
-      logger.error("Ingestion failed", { uid, itemId, error: message });
+      const safeMessage = safeIngestionFailureMessage(message);
+      logger.error("[INGEST_ERROR] ingestion failed", {
+        uidHash,
+        itemId,
+        isSnapDoneDraft,
+        error: safeMessage,
+      });
 
       const latest = await ref.get();
+      if (!latest.exists) {
+        logger.warn("[INGEST_ERROR] skipping failure write because item doc was hard-deleted", {
+          uidHash,
+          itemId,
+          runId,
+          error: safeMessage,
+        });
+        return;
+      }
       const latestStatus = String(
         latest.get("ingestion.status") ?? latest.get("ingestionStatus") ?? "",
       )
         .trim()
         .toLowerCase();
       const latestRunId = String(latest.get("ingestion.runId") ?? "").trim();
+      const latestDraftState = String(latest.get("draftState") ?? "").trim().toLowerCase();
+      const latestLifecycleStatus = String(latest.get("itemLifecycleStatus") ?? "").trim().toLowerCase();
       if (latestStatus === "done") {
-        logger.warn("Ingestion failure ignored because item is already done", {
-          uid,
+        logger.warn("[INGEST_ERROR] failure ignored because item is already done", {
+          uidHash,
           itemId,
-          error: message,
+          error: safeMessage,
         });
         return;
       }
       if (latestRunId && latestRunId !== runId) {
-        logger.warn("Skipping stale ingestion failure write", {
-          uid,
+        logger.warn("[INGEST_ERROR] skipping stale failure write", {
+          uidHash,
           itemId,
           runId,
           latestRunId,
-          error: message,
+          error: safeMessage,
+        });
+        return;
+      }
+      if (
+        latestDraftState === "cancelled" ||
+        latestDraftState === "awaiting_confirmation" ||
+        latestLifecycleStatus === "deleted" ||
+        latestLifecycleStatus === "candidate"
+      ) {
+        logger.warn("[INGEST_ERROR] skipping failure write because item was removed or is candidate-only", {
+          uidHash,
+          itemId,
+          runId,
+          latestDraftState,
+          latestLifecycleStatus,
+          error: safeMessage,
         });
         return;
       }
@@ -1929,17 +2868,29 @@ export const ingestItemFromPhotos = onDocumentWritten(
       await ref.set(
         {
           ...(after.isDraft === true ? { draftState: "failed" } : {}),
+          itemLifecycleStatus: "failed",
+          ingestionStatus: "failed",
           ingestion: {
             runId,
             status: "failed",
             lastRunAt: FieldValue.serverTimestamp(),
+            failedAt: FieldValue.serverTimestamp(),
+            attempt: nextAttempt,
+            workerVersion: INGEST_WORKER_VERSION,
+            canRetry: true,
+            errorCode: "ingestion_failed",
+            errorMessage: safeMessage,
             lastProcessedPhotoHash: photoHash,
             lastProcessedSourceHash: currentSourceHash,
-            error: { message },
+            error: {
+              code: "ingestion_failed",
+              message: safeMessage,
+            },
           },
+          updatedAt: Date.now(),
         },
         { merge: true },
       );
     }
-  },
+  }),
 );

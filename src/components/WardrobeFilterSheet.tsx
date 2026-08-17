@@ -31,11 +31,11 @@ function FilterPill({
         paddingHorizontal: 12,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: active ? colors.accent : colors.border,
-        backgroundColor: active ? colors.accent : colors.surface,
+        borderColor: active ? colors.purpleBorder : colors.border,
+        backgroundColor: active ? colors.purpleSurface : colors.chipBackground,
       }}
     >
-      <Text style={{ color: active ? "#fff" : colors.text, fontWeight: "700" }}>{label}</Text>
+      <Text style={{ color: active ? colors.ctaCream : colors.textSecondary, fontWeight: "700" }}>{label}</Text>
     </Pressable>
   );
 }
@@ -181,14 +181,14 @@ export const WardrobeFilterSheet = React.memo(function WardrobeFilterSheet<
             onPress={closeWithAnimation}
             style={{
               marginTop: 4,
-              backgroundColor: colors.accent,
+              backgroundColor: colors.ctaCream,
               borderRadius: 12,
               alignItems: "center",
               justifyContent: "center",
               paddingVertical: 11,
             }}
           >
-            <Text style={{ color: "#fff", fontWeight: "900" }}>Done</Text>
+            <Text style={{ color: colors.ctaText, fontWeight: "900" }}>Done</Text>
           </Pressable>
         </Animated.View>
       </Pressable>

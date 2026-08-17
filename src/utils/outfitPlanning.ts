@@ -1,4 +1,4 @@
-import { toCanonicalCategory } from "../../src/lib/items";
+import { normalizeLaundryStatus, toCanonicalCategory } from "../../src/lib/items";
 import { ClothingItem } from "../../src/types/ClothingItem";
 import { parseDateValue } from "./date";
 
@@ -173,7 +173,7 @@ export function inferTimelineVibe(events: EventLike[]) {
 }
 
 export function generateDailyPlan(items: ClothingItem[], context: PlannerContext): DailyOutfitPlan {
-  const available = items.filter((item) => item.status !== "IN_LAUNDRY");
+  const available = items.filter((item) => normalizeLaundryStatus(item) !== "in_laundry");
 
   const tops = available.filter((item) => toCanonicalCategory(item.category) === "top");
   const bottoms = available.filter((item) => toCanonicalCategory(item.category) === "bottom");

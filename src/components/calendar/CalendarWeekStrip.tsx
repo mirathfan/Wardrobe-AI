@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { Colors } from "@/constants/theme";
 import { formatDayNumber, formatWeekLabel, isSameLocalDate, toDayKey } from "../../utils/date";
 
 type DayStatus = {
@@ -37,7 +38,7 @@ export default function CalendarWeekStrip({ days, selectedDate, today, statuses 
             <View style={styles.indicators}>
               {status.planned ? <View style={[styles.dot, styles.planDot]} /> : <View style={styles.dotSpacer} />}
               {status.worn ? <Text style={[styles.check, isSelected ? styles.activeText : null]}>✓</Text> : <View style={styles.dotSpacer} />}
-              {status.streak ? <Text style={styles.fire}>🔥</Text> : <View style={styles.dotSpacer} />}
+              {status.streak ? <View style={styles.streakDot} /> : <View style={styles.dotSpacer} />}
             </View>
 
             {isToday ? <View style={[styles.todayDot, isSelected ? styles.todayDotActive : null]} /> : null}
@@ -58,29 +59,29 @@ const styles = StyleSheet.create({
   pill: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: Colors.dark.border,
     borderRadius: 12,
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark.chipBackground,
     alignItems: "center",
     paddingVertical: 8,
   },
   pillActive: {
-    backgroundColor: "#111",
-    borderColor: "#111",
+    backgroundColor: Colors.dark.surfaceElevated,
+    borderColor: Colors.dark.borderStrong,
   },
   week: {
     fontSize: 11,
-    color: "#666",
-    fontWeight: "700",
+    color: Colors.dark.textSecondary,
+    fontWeight: "500",
   },
   day: {
     marginTop: 2,
     fontSize: 16,
-    color: "#111",
-    fontWeight: "800",
+    color: Colors.dark.text,
+    fontWeight: "600",
   },
   activeText: {
-    color: "#fff",
+    color: Colors.dark.textPrimary,
   },
   indicators: {
     marginTop: 4,
@@ -95,17 +96,19 @@ const styles = StyleSheet.create({
     borderRadius: 2.5,
   },
   planDot: {
-    backgroundColor: "#3b82f6",
+    backgroundColor: Colors.dark.ctaCream,
   },
   check: {
     fontSize: 9,
-    color: "#16a34a",
-    fontWeight: "900",
+    color: Colors.dark.success,
+    fontWeight: "700",
     lineHeight: 9,
   },
-  fire: {
-    fontSize: 9,
-    lineHeight: 9,
+  streakDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.dark.borderStrong,
   },
   dotSpacer: {
     width: 5,
@@ -116,9 +119,9 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     marginTop: 4,
-    backgroundColor: "#111",
+    backgroundColor: Colors.dark.ctaCream,
   },
   todayDotActive: {
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark.ctaCream,
   },
 });

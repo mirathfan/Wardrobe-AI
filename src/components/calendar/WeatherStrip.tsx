@@ -16,14 +16,14 @@ export default function WeatherStrip({ days }: Props) {
           style={[
             styles.cell,
             { borderColor: colors.border, backgroundColor: colors.surface },
-            day.selected ? [styles.cellSelected, { backgroundColor: colors.accent, borderColor: colors.accent }] : null,
+            day.selected ? [styles.cellSelected, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderStrong }] : null,
           ]}
         >
-          <Text style={[styles.label, { color: colors.textSecondary }, day.selected ? styles.labelSelected : null]}>{day.label}</Text>
-          <Text style={[styles.temp, { color: colors.text }, day.selected ? styles.labelSelected : null]}>
+          <Text style={[styles.label, { color: day.selected ? colors.text : colors.textSecondary }]}>{day.label}</Text>
+          <Text style={[styles.temp, { color: day.selected ? colors.text : colors.text }]}>
             {typeof day.high === "number" ? Math.round(day.high) : "—"}°
           </Text>
-          <Text style={[styles.sub, { color: colors.textSecondary }, day.selected ? styles.labelSelected : null]}>
+          <Text style={[styles.sub, { color: day.selected ? colors.textSecondary : colors.textSecondary }]}>
             {typeof day.low === "number" ? Math.round(day.low) : "—"}°
           </Text>
         </View>
@@ -42,8 +42,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cellSelected: {},
-  label: { fontSize: 10, fontWeight: "700" },
-  temp: { fontSize: 12, fontWeight: "800", marginTop: 2 },
+  label: { fontSize: 10, fontWeight: "500" },
+  temp: { fontSize: 12, fontWeight: "600", marginTop: 2 },
   sub: { fontSize: 10 },
-  labelSelected: { color: "#fff" },
 });

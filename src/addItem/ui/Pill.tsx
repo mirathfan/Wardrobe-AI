@@ -1,5 +1,9 @@
 import React from "react";
-import { Pressable, Text } from "react-native";
+import { Text } from "react-native";
+
+import AuraPressable from "@/src/components/aura/AuraPressable";
+import { auraChipStyle, auraChipTextStyle } from "@/src/components/ui/auraStylePrimitives";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 export const Pill = React.memo(function Pill({
   label,
@@ -10,19 +14,28 @@ export const Pill = React.memo(function Pill({
   active: boolean;
   onPress: () => void;
 }) {
+  const { colors } = useAppTheme();
+
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.96}
+      pressedOpacity={0.88}
       style={{
-        paddingVertical: 8,
+        ...auraChipStyle(colors, active ? "selected" : "unselected"),
         paddingHorizontal: 14,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: active ? "#111" : "#ddd",
-        backgroundColor: active ? "#111" : "transparent",
       }}
     >
-      <Text style={{ color: active ? "#fff" : "#111", fontWeight: "700" }}>{label}</Text>
-    </Pressable>
+      <Text
+        style={[
+          auraChipTextStyle(colors, active ? "selected" : "unselected"),
+          { fontSize: 13, lineHeight: 17 },
+        ]}
+      >
+        {label}
+      </Text>
+    </AuraPressable>
   );
 });

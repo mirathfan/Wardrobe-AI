@@ -1,7 +1,11 @@
 import React from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import AuraPressable from "@/src/components/aura/AuraPressable";
+import { homeTypography } from "@/src/components/home/homeTypography";
+import { auraButtonStyle, auraButtonTextStyle, auraSurfaceTiers } from "@/src/components/ui/auraStylePrimitives";
+import { CTA_HEIGHT, CTA_HORIZONTAL_PADDING, PILL_RADIUS } from "@/src/constants/auraControls";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 export default function InsightCard({
@@ -25,23 +29,43 @@ export default function InsightCard({
       style={{
         borderRadius: layout.mediumRadius,
         padding: layout.cardPadding,
-        backgroundColor: "rgba(255,255,255,0.045)",
-        borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.08)",
-        gap: 8,
+        ...auraSurfaceTiers.surfaceBase,
+        gap: 12,
       }}
     >
-      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "800", letterSpacing: 0.8 }} numberOfLines={1} ellipsizeMode="tail">
+      <Text style={[homeTypography.label, { color: colors.lightPurple }]} numberOfLines={1} ellipsizeMode="tail">
         {eyebrow}
       </Text>
-      <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }} numberOfLines={2} ellipsizeMode="tail">{title}</Text>
-      <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }} numberOfLines={3} ellipsizeMode="tail">{body}</Text>
+      <Text style={[homeTypography.titleSmall, { color: colors.text }]} numberOfLines={2} ellipsizeMode="tail">{title}</Text>
+      <Text style={[homeTypography.bodySmall, { color: colors.textSecondary, opacity: 0.86 }]} numberOfLines={2} ellipsizeMode="tail">{body}</Text>
       {ctaLabel ? (
-        <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800", marginTop: 4 }} numberOfLines={1} ellipsizeMode="tail">{ctaLabel}</Text>
+        <View
+          style={{
+            alignSelf: "flex-start",
+            marginTop: 2,
+            ...auraButtonStyle(colors, "primary"),
+            borderRadius: PILL_RADIUS,
+            minHeight: CTA_HEIGHT,
+            paddingHorizontal: CTA_HORIZONTAL_PADDING,
+            paddingVertical: 0,
+          }}
+        >
+          <Text style={[auraButtonTextStyle(colors, "primary"), { fontSize: 13, lineHeight: 17 }]} numberOfLines={1} ellipsizeMode="tail">{ctaLabel} →</Text>
+        </View>
       ) : null}
     </View>
   );
 
   if (!onPress) return content;
-  return <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.84 : 1 })}>{content}</Pressable>;
+  return (
+    <AuraPressable
+      onPress={onPress}
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.985}
+      pressedOpacity={0.88}
+    >
+      {content}
+    </AuraPressable>
+  );
 }

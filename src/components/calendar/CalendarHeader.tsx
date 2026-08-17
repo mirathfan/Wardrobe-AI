@@ -1,8 +1,7 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
-import { formatHeaderDate } from "../../utils/date";
-import { useAppTheme } from "@/src/hooks/useAppTheme";
+import { AuraButton, AuraText } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
 type Props = {
@@ -12,12 +11,7 @@ type Props = {
 };
 
 export default function CalendarHeader({ selectedDate, today, onJumpToToday }: Props) {
-  const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
-  const monthLabel = new Intl.DateTimeFormat(undefined, {
-    month: "long",
-    year: "numeric",
-  }).format(selectedDate);
 
   const isToday =
     selectedDate.getFullYear() === today.getFullYear() &&
@@ -26,18 +20,29 @@ export default function CalendarHeader({ selectedDate, today, onJumpToToday }: P
 
   return (
     <View style={[styles.wrap, { gap: 8 }]}>
-      <Text style={[styles.kicker, { color: colors.textSecondary }]}>Plan the week</Text>
-      <Text style={[styles.title, { color: colors.text, fontSize: 30 * layout.titleScale }]}>Calendar</Text>
-      <Text style={[styles.date, { color: colors.textSecondary }]}>{formatHeaderDate(selectedDate)}</Text>
+      <AuraText variant="metadata" tone="accent" style={styles.kicker}>
+        This week
+      </AuraText>
       <View style={styles.row}>
-        <Text style={[styles.month, { color: colors.text }]}>{monthLabel}</Text>
+        <View style={{ flex: 1, gap: 3 }}>
+          <AuraText variant="title" style={[styles.title, { fontSize: 30 * layout.titleScale }]}>
+            Style calendar
+          </AuraText>
+          <AuraText variant="caption" tone="secondary" style={styles.date}>
+            Plan what to wear by date
+          </AuraText>
+        </View>
         {!isToday ? (
-          <Pressable
+          <AuraButton
+            label="Today"
             onPress={onJumpToToday}
-            style={[styles.todayBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
-          >
-            <Text style={[styles.todayBtnText, { color: colors.text }]}>Jump to Today</Text>
-          </Pressable>
+            variant="tertiary"
+            size="small"
+            haptic="selection"
+            hapticTrigger="press"
+            pressedScale={0.96}
+            style={styles.todayBtn}
+          />
         ) : null}
       </View>
     </View>
@@ -48,21 +53,16 @@ const styles = StyleSheet.create({
   wrap: {
     marginBottom: 8,
   },
-  kicker: { fontSize: 13, fontWeight: "700" },
-  title: { fontWeight: "900" },
-  date: { marginTop: 2, fontSize: 14 },
+  kicker: { letterSpacing: 1.25, textTransform: "uppercase" },
+  title: { letterSpacing: 0 },
+  date: { marginTop: 2, fontSize: 14, lineHeight: 22, opacity: 0.65 },
   row: {
-    marginTop: 10,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: 12,
   },
-  month: { fontSize: 16, fontWeight: "800" },
   todayBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
+    minHeight: 34,
   },
-  todayBtnText: { fontSize: 12, fontWeight: "700" },
 });

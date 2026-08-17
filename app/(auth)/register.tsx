@@ -1,116 +1,134 @@
-import { Link, router } from "expo-router";
+import { router } from "expo-router";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import React, { useState } from "react";
-import { Alert, Pressable, Text, TextInput, View } from "react-native";
+import React, { useRef, useState } from "react";
+import { Alert, TextInput, View } from "react-native";
 
-import { auth } from "../../src/lib/firebase";
+import {
+  AuthInlineLink,
+  AuthInput,
+  AuthScaffold,
+  PrimaryAuthButton,
+} from "@/src/components/auth/AuthScaffold";
+import { getAuthErrorMessage } from "@/src/auth/authErrors";
+import { getRegisterValidationError } from "@/src/auth/registerValidation";
+import { auth } from "@/src/lib/firebase";
+import { trackLaunchEvent } from "@/src/lib/analytics";
+import { EMPTY_USER_PROFILE_PREFERENCES, saveUserAccountProfile, saveUserProfilePreferences } from "@/src/lib/userProfile";
 
-function norm(value: string) {
+function normalize(value: string) {
   return value.trim();
 }
 
 export default function RegisterScreen() {
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmPasswordRef = useRef<TextInput>(null);
 
   async function onRegister() {
-    const e = norm(email).toLowerCase();
-    const p = password;
-    const cp = confirmPassword;
-
-    if (!e) return Alert.alert("Missing email", "Enter your email.");
-    if (!p) return Alert.alert("Missing password", "Enter a password.");
-    if (p.length < 6) return Alert.alert("Weak password", "Use at least 6 characters.");
-    if (p !== cp) return Alert.alert("Password mismatch", "Passwords do not match.");
+    const normalizedName = normalize(name);
+    const normalizedEmail = normalize(email).toLowerCase();
+    const validationError = getRegisterValidationError({
+      name,
+      email,
+      password,
+      confirmPassword,
+    });
+    if (validationError) {
+      return Alert.alert(validationError.title, validationError.message);
+    }
 
     try {
       setLoading(true);
-      await createUserWithEmailAndPassword(auth, e, p);
-      router.replace("/(tabs)");
-    } catch (err: any) {
-      Alert.alert("Registration failed", err?.message ?? "Unable to create account.");
+      const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+      await Promise.all([
+        saveUserAccountProfile(credential.user.uid, {
+          name: normalizedName,
+          displayName: normalizedName,
+        }),
+        saveUserProfilePreferences(credential.user.uid, {
+          ...EMPTY_USER_PROFILE_PREFERENCES,
+          firstName: normalizedName,
+          onboardingCompleted: false,
+        }),
+      ]);
+      void trackLaunchEvent({
+        userId: credential.user.uid,
+        eventName: "auth_signed_up",
+        properties: {
+          provider: "password",
+        },
+      });
+      router.replace("/(onboarding)");
+    } catch (error: any) {
+      Alert.alert("Create account failed", getAuthErrorMessage(error));
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <View style={{ flex: 1, padding: 16, justifyContent: "center", gap: 12 }}>
-      <Text style={{ fontSize: 28, fontWeight: "900", textAlign: "center" }}>
-        Register
-      </Text>
-
-      <TextInput
+    <AuthScaffold
+      eyebrow="YOUR AI WARDROBE STYLIST"
+      title="Create your AURA profile"
+      subtitle="Set up your wardrobe profile so AURA can personalize from day one."
+      footer={
+        <View style={{ alignItems: "flex-start" }}>
+          <AuthInlineLink label="Already have an account? Sign in" onPress={() => router.replace("/(auth)/login")} />
+        </View>
+      }
+    >
+      <AuthInput
+        value={name}
+        onChangeText={setName}
+        autoComplete="name"
+        maxLength={100}
+        placeholder="First name"
+        returnKeyType="next"
+        blurOnSubmit={false}
+        onSubmitEditing={() => emailRef.current?.focus()}
+      />
+      <AuthInput
+        ref={emailRef}
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
         keyboardType="email-address"
+        autoComplete="email"
+        maxLength={254}
         placeholder="Email"
-        style={input}
+        returnKeyType="next"
+        blurOnSubmit={false}
+        onSubmitEditing={() => passwordRef.current?.focus()}
       />
-
-      <TextInput
+      <AuthInput
+        ref={passwordRef}
         value={password}
         onChangeText={setPassword}
         secureTextEntry
+        autoComplete="new-password"
+        maxLength={128}
         placeholder="Password"
-        style={input}
+        returnKeyType="next"
+        blurOnSubmit={false}
+        onSubmitEditing={() => confirmPasswordRef.current?.focus()}
       />
-
-      <TextInput
+      <AuthInput
+        ref={confirmPasswordRef}
         value={confirmPassword}
         onChangeText={setConfirmPassword}
         secureTextEntry
+        autoComplete="new-password"
+        maxLength={128}
         placeholder="Confirm password"
-        style={input}
+        returnKeyType="done"
+        onSubmitEditing={onRegister}
       />
-
-      <Pressable onPress={onRegister} style={[btnPrimary, loading ? { opacity: 0.6 } : null]} disabled={loading}>
-        <Text style={btnPrimaryText}>{loading ? "Creating..." : "Create account"}</Text>
-      </Pressable>
-
-      <Link href="/(auth)/login" asChild>
-        <Pressable style={btnSecondary}>
-          <Text style={btnSecondaryText}>Back to login</Text>
-        </Pressable>
-      </Link>
-    </View>
+      <PrimaryAuthButton label={loading ? "Creating..." : "Create Account"} onPress={onRegister} disabled={loading} />
+    </AuthScaffold>
   );
 }
-
-const input = {
-  borderWidth: 1,
-  borderColor: "#ddd",
-  borderRadius: 12,
-  paddingHorizontal: 12,
-  paddingVertical: 12,
-  fontSize: 16,
-} as const;
-
-const btnPrimary = {
-  marginTop: 4,
-  paddingVertical: 14,
-  borderRadius: 12,
-  backgroundColor: "#111",
-  alignItems: "center",
-} as const;
-
-const btnPrimaryText = {
-  color: "#fff",
-  fontWeight: "900",
-} as const;
-
-const btnSecondary = {
-  paddingVertical: 12,
-  borderRadius: 12,
-  borderWidth: 1,
-  borderColor: "#ddd",
-  alignItems: "center",
-} as const;
-
-const btnSecondaryText = {
-  color: "#111",
-  fontWeight: "800",
-} as const;

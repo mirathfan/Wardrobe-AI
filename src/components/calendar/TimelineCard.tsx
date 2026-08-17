@@ -45,7 +45,7 @@ export default function TimelineCard({ events }: Props) {
         return (
           <View key={event.id} style={styles.row}>
             <Text style={[styles.hour, { color: colors.textSecondary }]}>{`${hour.toString().padStart(2, "0")}:00`}</Text>
-            <View style={[styles.block, { backgroundColor: colors.overlay }]}>
+            <View style={[styles.block, { backgroundColor: colors.surfaceMuted }]}>
               <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>{event.title}</Text>
               <Text style={[styles.time, { color: colors.textSecondary }]}>{event.timeLabel}</Text>
             </View>
@@ -61,9 +61,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   row: { flexDirection: "row", gap: 10, marginBottom: 8 },
-  hour: { width: 44, fontWeight: "700", fontSize: 12 },
+  hour: { width: 44, fontWeight: "500", fontSize: 12 },
   block: { flex: 1, borderRadius: 14, padding: 10 },
-  title: { fontWeight: "700" },
+  title: { fontWeight: "600" },
   time: { marginTop: 2, fontSize: 12 },
   muted: {},
 });

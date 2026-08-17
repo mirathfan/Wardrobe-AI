@@ -1,7 +1,7 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
-import { logger } from "firebase-functions/v2";
+import { logger, setLogContext, tracedHandler } from "./shared/logger";
 import {
   applyFollowupToIntent,
   clampNumOutfits,
@@ -27,7 +27,13 @@ import {
   loadAssistantProfile,
   loadBehaviorProfile,
 } from "./shared/assistantMemory";
+import { loadCompactAuraMemoryContext } from "./shared/auraMemory";
 import { getOrRefreshWardrobeSummary } from "./shared/wardrobeSummary";
+import {
+  RATE_LIMITS,
+  assertFunctionRateLimit,
+  redactUid,
+} from "./shared/rateLimit";
 
 if (!getApps().length) {
   initializeApp();
@@ -96,7 +102,11 @@ function normalizeAction(value: unknown): ChatAction {
 
 function normalizeSlot(value: unknown): Slot | null {
   const raw = String(value ?? "").trim().toLowerCase();
-  return raw === "top" || raw === "bottom" || raw === "footwear" || raw === "outerwear"
+  return raw === "top" ||
+    raw === "bottom" ||
+    raw === "footwear" ||
+    raw === "outerwear" ||
+    raw === "accessory"
     ? raw
     : null;
 }
@@ -161,13 +171,14 @@ function normalizeProfile(profile: unknown): UserProfile | null {
 }
 
 function countSlots(items: WardrobeItem[]): Record<Slot, number> {
-  const counts: Record<Slot, number> = {top: 0, bottom: 0, footwear: 0, outerwear: 0};
+  const counts: Record<Slot, number> = {top: 0, bottom: 0, footwear: 0, outerwear: 0, accessory: 0};
   for (const item of items) {
     const category = String(item.category ?? "").trim().toLowerCase();
     if (category === "top" || category === "one_piece") counts.top += 1;
     else if (category === "bottom") counts.bottom += 1;
     else if (category === "footwear" || category === "shoes") counts.footwear += 1;
     else if (category === "outerwear") counts.outerwear += 1;
+    else if (category === "accessory") counts.accessory += 1;
   }
   return counts;
 }
@@ -342,6 +353,9 @@ async function parseChatAction(params: {
             "Use one of these actions: generate_outfits, swap_item, tweak, ask_clarify, none.",
             "Return JSON keys only: assistantText, action, intentText, outfitCount, constraints, references, followup.",
             "constraints keys only: occasion, formalityTarget, warmthTarget, colorsWanted, colorsAvoid, avoidLogos, excludeLaundry, mustInclude, avoidItems, notes.",
+            "Indirect styling requests like 'give me a fit', 'another version', 'nah too loud', 'make it date appropriate', and 'switch the shoes' must use an outfit action, not action=none.",
+            "Map detailed occasions into constraints.occasion: first date/date night/coffee date => date; fancy dinner/wedding/formal => formal; interview/business casual/work => work; club/rave => party; airport/travel => travel.",
+            "For date, wedding, interview, business casual, and formal requests, add sports jerseys, team jerseys, gym shorts, slides, and overly sporty pieces to avoidItems unless the user explicitly requests sports bar, game day, football game, watch party, or a jersey.",
             "mustInclude entries may contain slot and itemHint. avoidItems entries may contain itemHint.",
             "references keys only: outfitId, slot.",
             "followup keys only: type.",
@@ -394,8 +408,8 @@ async function parseChatAction(params: {
 }
 
 function buildIncompleteWardrobeMessage(slotCounts: Record<Slot, number>): string {
-  const missing = (Object.keys(slotCounts) as Slot[])
-    .filter((slot) => slot !== "outerwear" && slotCounts[slot] === 0)
+  const missing = (["top", "bottom", "footwear"] as Slot[])
+    .filter((slot) => slotCounts[slot] === 0)
     .map((slot) => slot.replace(/_/g, " "));
   if (missing.length === 0) {
     return "I can only build partial outfits right now. Add more analyzed items and try again.";
@@ -405,11 +419,14 @@ function buildIncompleteWardrobeMessage(slotCounts: Record<Slot, number>): strin
 
 export const outfitChatV1 = onCall(
   {secrets: ["OPENAI_API_KEY"]},
-  async (request) => {
+  tracedHandler(async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
+    await assertFunctionRateLimit(uid, "outfitChat", RATE_LIMITS.outfitChat);
+    const uidHash = redactUid(uid);
+    setLogContext({ uidHash });
 
     const message = String(request.data?.message ?? "").trim();
     const incomingThreadId = String(request.data?.threadId ?? "").trim() || null;
@@ -433,12 +450,13 @@ export const outfitChatV1 = onCall(
       }, {merge: true});
     }
 
-    const [recentMessagesSnap, userSnap, allItems, assistantProfile, behaviorProfile] = await Promise.all([
+    const [recentMessagesSnap, userSnap, allItems, assistantProfile, behaviorProfile, memory] = await Promise.all([
       threadRef.collection("messages").orderBy("createdAt", "asc").limitToLast(12).get(),
       userRef.get(),
       fetchWardrobeItems(db, uid),
       loadAssistantProfile(db, uid),
       loadBehaviorProfile(db, uid),
+      loadCompactAuraMemoryContext(db, uid, null),
     ]);
 
     const recentMessages = recentMessagesSnap.docs.map((docSnap) => docSnap.data() as ChatMessageDoc);
@@ -467,14 +485,14 @@ export const outfitChatV1 = onCall(
     );
 
     logger.info("outfitChatV1 parsed action", {
-      uid,
+      uidHash,
       threadId,
       action: parsed.action,
       requestedOutfitCount: parsed.requestedOutfitCount,
       outfitCount: parsed.clampedOutfitCount,
-      constraints: mergedConstraints,
-      references: {...parsed.references, outfitId: resolvedOutfitId},
-      followup: parsed.followup,
+      constraintsKeys: Object.keys(mergedConstraints ?? {}),
+      hasResolvedOutfitId: !!resolvedOutfitId,
+      hasFollowup: !!parsed.followup,
       slotCounts,
     });
 
@@ -555,10 +573,11 @@ export const outfitChatV1 = onCall(
           constraints: mergedConstraints,
           excludeItemIds: explicitExcludes,
           lockedItemsBySlot,
+          memory,
         });
 
         logger.info("outfitChatV1 slot counts", {
-          uid,
+          uidHash,
           threadId,
           eligible: generated.eligibleCount,
           ...generated.slotCounts,
@@ -584,8 +603,9 @@ export const outfitChatV1 = onCall(
           const outfitData = outfitSnap.exists
             ? (outfitSnap.data() as {picks?: Array<{slot: Slot; itemId: string}>} | undefined)
             : null;
-          const currentPicks = Array.isArray(outfitData?.picks)
-            ? outfitData!.picks.filter((pick) => normalizeSlot(pick.slot))
+          const existingPicks = outfitData?.picks;
+          const currentPicks = Array.isArray(existingPicks)
+            ? existingPicks.filter((pick) => normalizeSlot(pick.slot))
             : [];
 
           if (currentPicks.length === 0) {
@@ -650,7 +670,7 @@ export const outfitChatV1 = onCall(
     }, {merge: true});
 
     logger.info("outfitChatV1 completed", {
-      uid,
+      uidHash,
       threadId,
       action: parsed.action,
       outfitCount: outfits.length,
@@ -662,5 +682,5 @@ export const outfitChatV1 = onCall(
       assistantMessage: {text: assistantText},
       ...(outfits.length > 0 ? {outfits} : {}),
     };
-  }
+  })
 );

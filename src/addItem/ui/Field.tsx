@@ -1,6 +1,9 @@
 import React from "react";
 import { Text, View } from "react-native";
 
+import { auraTypography } from "@/src/components/ui/auraStylePrimitives";
+import { useAppTheme } from "@/src/hooks/useAppTheme";
+
 export const Field = React.memo(function Field({
   label,
   children,
@@ -10,6 +13,8 @@ export const Field = React.memo(function Field({
   children: React.ReactNode;
   right?: React.ReactNode;
 }) {
+  const { colors } = useAppTheme();
+
   return (
     <View style={{ gap: 8 }}>
       <View
@@ -20,7 +25,9 @@ export const Field = React.memo(function Field({
           gap: 8,
         }}
       >
-        <Text style={{ fontSize: 16, fontWeight: "700" }}>{label}</Text>
+        <Text style={[auraTypography.body, { color: colors.text, fontWeight: "800" }]}>
+          {label}
+        </Text>
         {right}
       </View>
       {children}

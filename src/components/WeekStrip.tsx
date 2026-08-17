@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { Colors } from "@/constants/theme";
 import { formatDayNumber, formatWeekLabel, isSameLocalDate } from "../utils/streak";
 
 type Props = {
@@ -47,38 +48,38 @@ const styles = StyleSheet.create({
   dayChip: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: Colors.dark.border,
     borderRadius: 12,
     paddingVertical: 10,
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark.chipBackground,
   },
   dayChipSelected: {
-    backgroundColor: "#111",
-    borderColor: "#111",
+    backgroundColor: Colors.dark.purpleSurface,
+    borderColor: Colors.dark.purpleBorder,
   },
   dayChipLabel: {
     fontSize: 11,
-    color: "#666",
+    color: Colors.dark.textSecondary,
     fontWeight: "700",
   },
   dayChipNumber: {
     marginTop: 2,
     fontSize: 16,
     fontWeight: "800",
-    color: "#111",
+    color: Colors.dark.text,
   },
   dayChipLabelSelected: {
-    color: "#fff",
+    color: Colors.dark.ctaCream,
   },
   todayDot: {
     marginTop: 6,
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: "#111",
+    backgroundColor: Colors.dark.ctaCream,
   },
   todayDotSelected: {
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark.ctaCream,
   },
 });

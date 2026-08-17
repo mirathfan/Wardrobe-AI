@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { Colors } from "@/constants/theme";
 import { formatDayNumber, formatWeekLabel, isSameLocalDate } from "../utils/date";
 
 type Props = {
@@ -43,38 +44,38 @@ const styles = StyleSheet.create({
   pill: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: Colors.dark.border,
     borderRadius: 12,
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark.chipBackground,
     alignItems: "center",
     paddingVertical: 9,
   },
   pillActive: {
-    backgroundColor: "#111",
-    borderColor: "#111",
+    backgroundColor: Colors.dark.purpleSurface,
+    borderColor: Colors.dark.purpleBorder,
   },
   week: {
     fontSize: 11,
-    color: "#666",
+    color: Colors.dark.textSecondary,
     fontWeight: "700",
   },
   day: {
     marginTop: 2,
     fontSize: 16,
-    color: "#111",
+    color: Colors.dark.text,
     fontWeight: "800",
   },
   activeText: {
-    color: "#fff",
+    color: Colors.dark.ctaCream,
   },
   dot: {
     width: 4,
     height: 4,
     borderRadius: 2,
     marginTop: 5,
-    backgroundColor: "#111",
+    backgroundColor: Colors.dark.ctaCream,
   },
   dotActive: {
-    backgroundColor: "#fff",
+    backgroundColor: Colors.dark.ctaCream,
   },
 });

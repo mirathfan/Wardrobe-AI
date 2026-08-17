@@ -1,14 +1,15 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Storage } from "@/src/lib/storage";
 
 const CACHE_PREFIX = "outfit-chat:";
-const LATEST_KEY = `${CACHE_PREFIX}latest-thread`;
-const SESSIONS_KEY = `${CACHE_PREFIX}sessions-v2`;
-const LATEST_CHAT_KEY = `${CACHE_PREFIX}latest-chat-v3`;
 const MAX_MESSAGES_PER_SESSION = 30;
 const MAX_SESSIONS = 6;
+const DEBUG_LOCAL_CHAT_CACHE = __DEV__ && process.env.EXPO_PUBLIC_AURA_DEBUG === "1";
+export const AURA_CHAT_SESSION_TTL_MS = 10 * 60 * 1000;
 
 function logSession(event: string, data: Record<string, unknown>) {
-  console.log(`[AIChatSession] ${event}`, data);
+  if (__DEV__ && DEBUG_LOCAL_CHAT_CACHE) {
+    console.log(`[AIChatSession] ${event}`, data);
+  }
 }
 
 export type LocalChatSession<T> = {
@@ -31,21 +32,54 @@ type SessionStore<T> = {
   sessions: LocalChatSession<T>[];
 };
 
+export type AuraChatSessionMeta = {
+  chatId: string | null;
+  openedAt: number;
+};
+
 function createSessionId() {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function getScopedKey(uid: string, suffix: string) {
+  return `${CACHE_PREFIX}${uid}:${suffix}`;
+}
+
+function normalizeChatId(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function sanitizeForCache<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeForCache(entry)) as T;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key !== "localUri")
+        .map(([key, entry]) => [key, sanitizeForCache(entry)])
+        .filter(([, entry]) => entry !== undefined)
+    ) as T;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^data:/i.test(trimmed) || /^file:/i.test(trimmed)) return undefined as T;
+    return (trimmed.length > 8000 ? `${trimmed.slice(0, 8000)}...` : trimmed) as T;
+  }
+  return value;
+}
+
 function trimMessages<T>(messages: T[]) {
-  return messages.slice(-MAX_MESSAGES_PER_SESSION);
+  return messages.slice(-MAX_MESSAGES_PER_SESSION).map((message) => sanitizeForCache(message));
 }
 
 function sortSessions<T>(sessions: LocalChatSession<T>[]) {
   return [...sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SESSIONS);
 }
 
-async function loadRawStore<T>(): Promise<SessionStore<T> | null> {
+async function loadRawStore<T>(uid: string): Promise<SessionStore<T> | null> {
   try {
-    const raw = await AsyncStorage.getItem(SESSIONS_KEY);
+    const raw = await Storage.getItem(getScopedKey(uid, "sessions-v2"));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SessionStore<T>;
     if (!parsed || !Array.isArray(parsed.sessions)) return null;
@@ -66,39 +100,8 @@ async function loadRawStore<T>(): Promise<SessionStore<T> | null> {
   }
 }
 
-async function migrateLegacyStore<T>(): Promise<SessionStore<T> | null> {
-  try {
-    const raw = await AsyncStorage.getItem(LATEST_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as CachePayload<T>;
-    const now = Date.now();
-    const migrated: SessionStore<T> = {
-      latestSessionId: createSessionId(),
-      sessions: [
-        {
-          sessionId: createSessionId(),
-          threadId: parsed?.threadId ?? null,
-          createdAt: now,
-          updatedAt: now,
-          messages: Array.isArray(parsed?.messages) ? trimMessages(parsed.messages) : [],
-        },
-      ],
-    };
-    migrated.latestSessionId = migrated.sessions[0]?.sessionId ?? null;
-    await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify(migrated));
-    await AsyncStorage.removeItem(LATEST_KEY);
-    logSession("migrateLegacyStore", {
-      latestSessionId: migrated.latestSessionId,
-      sessionCount: migrated.sessions.length,
-    });
-    return migrated;
-  } catch {
-    return null;
-  }
-}
-
-async function loadStore<T>(): Promise<SessionStore<T>> {
-  const existing = await loadRawStore<T>();
+async function loadStore<T>(uid: string): Promise<SessionStore<T>> {
+  const existing = await loadRawStore<T>(uid);
   if (existing) {
     return {
       latestSessionId: existing.latestSessionId,
@@ -106,16 +109,13 @@ async function loadStore<T>(): Promise<SessionStore<T>> {
     };
   }
 
-  const migrated = await migrateLegacyStore<T>();
-  if (migrated) return migrated;
-
   return { latestSessionId: null, sessions: [] };
 }
 
-async function persistStore<T>(store: SessionStore<T>): Promise<void> {
+async function persistStore<T>(uid: string, store: SessionStore<T>): Promise<void> {
   try {
-    await AsyncStorage.setItem(
-      SESSIONS_KEY,
+    await Storage.setItem(
+      getScopedKey(uid, "sessions-v2"),
       JSON.stringify({
         latestSessionId: store.latestSessionId,
         sessions: sortSessions(store.sessions).map((session) => ({
@@ -140,8 +140,8 @@ export function createNewSession<T>(): LocalChatSession<T> {
   };
 }
 
-export async function loadLatestSession<T>(): Promise<LocalChatSession<T> | null> {
-  const store = await loadStore<T>();
+export async function loadLatestSession<T>(uid: string): Promise<LocalChatSession<T> | null> {
+  const store = await loadStore<T>(uid);
   const latest =
     store.sessions.find((session) => session.sessionId === store.latestSessionId) ??
     store.sessions[0] ??
@@ -153,8 +153,8 @@ export async function loadLatestSession<T>(): Promise<LocalChatSession<T> | null
   return latest;
 }
 
-export async function saveSession<T>(session: LocalChatSession<T>): Promise<void> {
-  const store = await loadStore<T>();
+export async function saveSession<T>(uid: string, session: LocalChatSession<T>): Promise<void> {
+  const store = await loadStore<T>(uid);
   const nextSession: LocalChatSession<T> = {
     ...session,
     updatedAt: typeof session.updatedAt === "number" ? session.updatedAt : Date.now(),
@@ -164,7 +164,7 @@ export async function saveSession<T>(session: LocalChatSession<T>): Promise<void
     nextSession,
     ...store.sessions.filter((entry) => entry.sessionId !== nextSession.sessionId),
   ]);
-  await persistStore({
+  await persistStore(uid, {
     latestSessionId: nextSession.sessionId,
     sessions,
   });
@@ -176,12 +176,12 @@ export async function saveSession<T>(session: LocalChatSession<T>): Promise<void
   });
 }
 
-export async function clearSession(sessionId?: string): Promise<void> {
-  const store = await loadStore<unknown>();
+export async function clearSession(uid: string, sessionId?: string): Promise<void> {
+  const store = await loadStore<unknown>(uid);
   const nextSessions = sessionId
     ? store.sessions.filter((session) => session.sessionId !== sessionId)
     : store.sessions.filter((session) => session.sessionId !== store.latestSessionId);
-  await persistStore({
+  await persistStore(uid, {
     latestSessionId: nextSessions[0]?.sessionId ?? null,
     sessions: nextSessions,
   });
@@ -192,24 +192,24 @@ export async function clearSession(sessionId?: string): Promise<void> {
   });
 }
 
-export async function loadLatestChatCache<T>(): Promise<CachePayload<T> | null> {
+export async function loadLatestChatCache<T>(uid: string): Promise<CachePayload<T> | null> {
   try {
-    const raw = await AsyncStorage.getItem(LATEST_CHAT_KEY);
+    const raw = await Storage.getItem(getScopedKey(uid, "latest-chat-v3"));
     if (raw) {
       const parsed = JSON.parse(raw) as CachePayload<T>;
       if (parsed && Array.isArray(parsed.messages)) {
         return {
           chatId: typeof parsed.chatId === "string" ? parsed.chatId : null,
           threadId: typeof parsed.threadId === "string" ? parsed.threadId : null,
-          messages: parsed.messages,
+          messages: trimMessages(parsed.messages),
           updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
         };
       }
     }
   } catch {
-    // fall through to legacy session cache
+    // fall through to session cache
   }
-  const latest = await loadLatestSession<T>();
+  const latest = await loadLatestSession<T>(uid);
   if (!latest) return null;
   return {
     chatId: latest.sessionId,
@@ -220,17 +220,18 @@ export async function loadLatestChatCache<T>(): Promise<CachePayload<T> | null> 
 }
 
 export async function saveLatestChatCache<T>(
+  uid: string,
   chatId: string | null,
   threadId: string | null,
   messages: T[]
 ): Promise<void> {
   try {
     if (!chatId) {
-      await AsyncStorage.removeItem(LATEST_CHAT_KEY);
+      await Storage.removeItem(getScopedKey(uid, "latest-chat-v3"));
       return;
     }
-    await AsyncStorage.setItem(
-      LATEST_CHAT_KEY,
+    await Storage.setItem(
+      getScopedKey(uid, "latest-chat-v3"),
       JSON.stringify({
         chatId,
         threadId,
@@ -243,13 +244,53 @@ export async function saveLatestChatCache<T>(
   }
 }
 
-export async function clearLatestChatCache(): Promise<void> {
+export async function clearLatestChatCache(uid: string): Promise<void> {
   try {
-    await AsyncStorage.removeItem(LATEST_CHAT_KEY);
+    await Storage.removeItem(getScopedKey(uid, "latest-chat-v3"));
   } catch {
     // ignore
   }
-  const latest = await loadLatestSession<unknown>();
+  const latest = await loadLatestSession<unknown>(uid);
   if (!latest) return;
-  await clearSession(latest.sessionId);
+  await clearSession(uid, latest.sessionId);
+}
+
+export async function loadAuraChatSessionMeta(uid: string): Promise<AuraChatSessionMeta | null> {
+  try {
+    const raw = await Storage.getItem(getScopedKey(uid, "aura-session-v1"));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AuraChatSessionMeta>;
+    const openedAt = typeof parsed.openedAt === "number" ? parsed.openedAt : 0;
+    if (!openedAt) return null;
+    return {
+      chatId: normalizeChatId(parsed.chatId),
+      openedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function isAuraChatSessionFresh(
+  session: AuraChatSessionMeta | null,
+  now = Date.now(),
+) {
+  return !!session?.openedAt && now - session.openedAt < AURA_CHAT_SESSION_TTL_MS;
+}
+
+export async function saveAuraChatSessionMeta(
+  uid: string,
+  chatId: string | null,
+): Promise<void> {
+  try {
+    await Storage.setItem(
+      getScopedKey(uid, "aura-session-v1"),
+      JSON.stringify({
+        chatId: normalizeChatId(chatId),
+        openedAt: Date.now(),
+      } satisfies AuraChatSessionMeta),
+    );
+  } catch {
+    // Session metadata should never block chat.
+  }
 }

@@ -17,15 +17,26 @@ import {
 } from "firebase/firestore";
 
 import { db } from "../lib/firebase";
+import { logAnalyzedOutfitStyleEvent, logWornOutfitStyleEvent } from "../lib/auraMemory";
+import type { OutfitSnapshot } from "../lib/outfitSnapshot";
+import type { AuraDetectedOutfitPiece } from "../types/aura";
 import { toDayKey } from "./date";
+import type {
+  AuraOutfitWeatherContext,
+  AuraOutfitWeatherWarning,
+} from "@/shared/auraOutfitCalendar";
 
 export type OutfitItemsByCategory = {
   outerwear?: string;
   top?: string;
   bottom?: string;
   shoes?: string;
+  accessories?: string[];
 };
 
+// Canonical saved daily plan shape for Calendar, Today, and AURA "Plan Today".
+// Server-generated candidate outfits may share users/{uid}/outfits, but they are
+// not daily plan records unless they include this plannedOutfit shape on a date-key doc.
 export type PlannedOutfit = {
   itemsByCategory: OutfitItemsByCategory;
   locked?: {
@@ -37,10 +48,33 @@ export type PlannedOutfit = {
   score: number;
   reasons: string[];
   createdAt: number;
+  source?: string;
+  title?: string;
+  outfitId?: string;
+  outfitFingerprint?: string;
+  outfitSnapshot?: OutfitSnapshot;
+  weatherContext?: AuraOutfitWeatherContext;
+  weatherWarnings?: AuraOutfitWeatherWarning[];
 };
 
 export type WornOutfit = {
   itemsByCategory: OutfitItemsByCategory;
+  wornAt: number;
+  source?: string;
+  title?: string;
+  outfitId?: string;
+  outfitFingerprint?: string;
+  outfitSnapshot?: OutfitSnapshot;
+  weatherContext?: AuraOutfitWeatherContext;
+  weatherWarnings?: AuraOutfitWeatherWarning[];
+};
+
+export type AnalyzedWornOutfit = {
+  detectedPieces: AuraDetectedOutfitPiece[];
+  outfitVibe?: string | null;
+  stylingNotes?: string[];
+  missingToComplete?: string[];
+  sourceImageUrl?: string | null;
   wornAt: number;
 };
 
@@ -97,6 +131,7 @@ function cleanItemIds(itemsByCategory: OutfitItemsByCategory) {
     itemsByCategory.top,
     itemsByCategory.bottom,
     itemsByCategory.shoes,
+    ...(itemsByCategory.accessories ?? []),
   ].filter(Boolean) as string[];
 }
 
@@ -185,6 +220,8 @@ export async function savePlannedOutfit(
 ) {
   const key = normalizeDateKey(dateKey);
   const ref = outfitDocRef(uid, key);
+  // Daily docs are keyed by date and must carry plannedOutfit. Do not replace
+  // this with server candidate payloads that only contain picks/itemIds.
   const rawPayload = {
     dateKey: key,
     itemIds: itemIds.filter(Boolean),
@@ -195,33 +232,37 @@ export async function savePlannedOutfit(
   };
   const payload = removeUndefinedFields(rawPayload);
 
-  console.log("[OutfitSave] savePlannedOutfit:raw", {
-    path: ref.path,
-    uid,
-    dateKey: key,
-    itemIds,
-    rawPayload,
-  });
-  console.log("[OutfitSave] savePlannedOutfit:clean", {
-    path: ref.path,
-    uid,
-    dateKey: key,
-    itemIds: Array.isArray(payload.itemIds) ? payload.itemIds : [],
-    payload,
-  });
-
-  try {
-    await setDoc(ref, payload, { merge: true });
-  } catch (error) {
-    console.log("[OutfitSave] savePlannedOutfit:error", {
+  if (__DEV__) {
+    console.log("[OutfitSave] savePlannedOutfit:raw", {
       path: ref.path,
       uid,
       dateKey: key,
       itemIds,
       rawPayload,
-      payload,
-      error,
     });
+    console.log("[OutfitSave] savePlannedOutfit:clean", {
+      path: ref.path,
+      uid,
+      dateKey: key,
+      itemIds: Array.isArray(payload.itemIds) ? payload.itemIds : [],
+      payload,
+    });
+  }
+
+  try {
+    await setDoc(ref, payload, { merge: true });
+  } catch (error) {
+    if (__DEV__) {
+      console.log("[OutfitSave] savePlannedOutfit:error", {
+        path: ref.path,
+        uid,
+        dateKey: key,
+        itemIds,
+        rawPayload,
+        payload,
+        error,
+      });
+    }
     throw error;
   }
   return getOutfitByDate(uid, key);
@@ -260,6 +301,38 @@ export async function markOutfitWorn(
     payload,
     { merge: true }
   );
+  void logWornOutfitStyleEvent(uid, wornOutfit);
+  return getOutfitByDate(uid, key);
+}
+
+export async function markAnalyzedOutfitWorn(
+  uid: string,
+  dateKey: string | Date,
+  wornOutfit: AnalyzedWornOutfit
+) {
+  const key = normalizeDateKey(dateKey);
+  const ref = outfitDocRef(uid, key);
+  const payload = removeUndefinedFields({
+    dateKey: key,
+    itemIds: [],
+    planned: false,
+    wornOutfit: {
+      itemsByCategory: {},
+      wornAt: wornOutfit.wornAt,
+      source: "aura_outfit_photo",
+      sourceImageUrl: wornOutfit.sourceImageUrl ?? null,
+      detectedPieces: wornOutfit.detectedPieces,
+      outfitVibe: wornOutfit.outfitVibe ?? null,
+      stylingNotes: wornOutfit.stylingNotes ?? [],
+      missingToComplete: wornOutfit.missingToComplete ?? [],
+    },
+    wornAtMs: wornOutfit.wornAt,
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp(),
+  });
+
+  await setDoc(ref, payload, { merge: true });
+  void logAnalyzedOutfitStyleEvent(uid, wornOutfit);
   return getOutfitByDate(uid, key);
 }
 
@@ -270,8 +343,29 @@ export async function clearPlannedOutfit(uid: string, dateKey: string | Date) {
     ref,
     {
       planned: false,
-      itemIds: deleteField(),
+      itemIds: [],
       plannedOutfit: deleteField(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return getOutfitByDate(uid, key);
+}
+
+export async function clearWornOutfit(uid: string, dateKey: string | Date) {
+  const key = normalizeDateKey(dateKey);
+  const ref = outfitDocRef(uid, key);
+  const current = await getOutfitByDate(uid, key);
+  const plannedItemIds = current?.plannedOutfit
+    ? cleanItemIds(current.plannedOutfit.itemsByCategory)
+    : [];
+  await setDoc(
+    ref,
+    {
+      itemIds: plannedItemIds,
+      planned: Boolean(current?.plannedOutfit),
+      wornOutfit: deleteField(),
+      wornAtMs: deleteField(),
       updatedAt: serverTimestamp(),
     },
     { merge: true }
@@ -334,6 +428,10 @@ export async function setWorn(uid: string, dateKey: string | Date, wornOutfit: W
 
 export async function clearPlan(uid: string, dateKey: string | Date) {
   return clearPlannedOutfit(uid, dateKey);
+}
+
+export async function clearWorn(uid: string, dateKey: string | Date) {
+  return clearWornOutfit(uid, dateKey);
 }
 
 export async function copyPlan(uid: string, fromDateKey: string | Date, toDateKey: string | Date) {

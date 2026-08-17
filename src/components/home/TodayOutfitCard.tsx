@@ -1,9 +1,15 @@
+import AppImage from "@/src/components/common/AppImage";
 import React from "react";
-import { Image, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import type { AppColors } from "@/constants/theme";
+import AuraGlassCard from "@/src/components/aura/AuraGlassCard";
+import AuraGradientButton from "@/src/components/aura/AuraGradientButton";
+import { homeTypography } from "@/src/components/home/homeTypography";
+import { auraButtonStyle, auraButtonTextStyle } from "@/src/components/ui/auraStylePrimitives";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
-import { getItemImageUrl } from "@/src/lib/itemImage";
+import { getItemImagePresentation } from "@/src/lib/itemImage";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "@/src/lib/resolveItemImage";
 import type { ClothingItem } from "@/src/types/ClothingItem";
 import type { DailyOutfitRecord } from "@/src/utils/dailyOutfits";
 
@@ -41,27 +47,25 @@ export default function TodayOutfitCard({
   const slots: SlotKey[] = ["outerwear", "top", "bottom", "shoes"];
 
   return (
-    <View
+    <AuraGlassCard
+      auraBorder
       style={{
         borderRadius: layout.largeRadius,
-        padding: layout.cardPadding,
-        backgroundColor: "rgba(255,255,255,0.035)",
-        borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.08)",
         gap: 16,
       }}
     >
+      <View style={{ padding: layout.cardPadding, gap: 16 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <View style={{ gap: 4 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "800", letterSpacing: 0.8 }}>
+          <Text style={[homeTypography.label, { color: colors.textSecondary }]}>
             TODAY’S OUTFIT
           </Text>
-          <Text style={{ color: colors.text, fontSize: 22, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">
+          <Text style={[homeTypography.titleMedium, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">
             {hasWorn ? "Already worn" : hasPlan ? "Ready to go" : "Not planned yet"}
           </Text>
         </View>
         <Pressable onPress={onOpenCalendar}>
-          <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: "800" }} numberOfLines={1} ellipsizeMode="tail">
+          <Text style={[homeTypography.caption, { color: colors.textSecondary, fontWeight: "600" }]} numberOfLines={1} ellipsizeMode="tail">
             Open day
           </Text>
         </Pressable>
@@ -71,26 +75,39 @@ export default function TodayOutfitCard({
         <View style={{ flexDirection: "row", gap: 10 }}>
           {slots.map((slot) => {
             const item = itemForSlot(record, itemsById, slot);
-            const imageUri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+            const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "home_today" }) : null;
+            const imageUri = resolvedImage?.uri ?? null;
+            const imagePresentation = getItemImagePresentation(item, {
+              surface: "home_today",
+            });
             return (
               <View key={slot} style={{ flex: 1, gap: 6 }}>
                 <View
                   style={{
                     height: 92,
                     borderRadius: layout.mediumRadius,
-                    backgroundColor: colors.surface,
+                    backgroundColor: colors.boardLight,
                     alignItems: "center",
                     justifyContent: "center",
                     padding: 8,
                     borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.06)",
+                    borderColor: colors.borderWarm,
                   }}
                 >
                   {imageUri ? (
-                    <Image source={{ uri: imageUri }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
+                    <AppImage
+                      source={{
+                        uri: imageUri,
+                      }}
+                      style={[{ width: "100%", height: "100%" }, imagePresentation.imageStyle]}
+                      resizeMode="contain"
+                      onError={() =>
+                        resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined
+                      }
+                    />
                   ) : null}
                 </View>
-                <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: "700", textAlign: "center" }}>
+                <Text style={[homeTypography.caption, { color: colors.textSecondary, textAlign: "center" }]}>
                   {slotLabel(slot)}
                 </Text>
               </View>
@@ -98,7 +115,7 @@ export default function TodayOutfitCard({
           })}
         </View>
       ) : (
-        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 22 }} numberOfLines={3} ellipsizeMode="tail">
+        <Text style={[homeTypography.body, { color: colors.textSecondary }]} numberOfLines={3} ellipsizeMode="tail">
           Build a look from your wardrobe, save it to today, and come back here when you need it fast.
         </Text>
       )}
@@ -106,7 +123,7 @@ export default function TodayOutfitCard({
       {reasons.length ? (
         <View style={{ gap: 4 }}>
           {reasons.map((reason) => (
-            <Text key={reason} style={{ color: colors.textSecondary, fontSize: 13 }} numberOfLines={2} ellipsizeMode="tail">
+            <Text key={reason} style={[homeTypography.bodySmall, { color: colors.textSecondary }]} numberOfLines={2} ellipsizeMode="tail">
               • {reason}
             </Text>
           ))}
@@ -114,39 +131,28 @@ export default function TodayOutfitCard({
       ) : null}
 
       <View style={{ flexDirection: "row", gap: 10 }}>
-        <Pressable
-          onPress={hasPlan || hasWorn ? onOpenCalendar : onPlanToday}
-          style={({ pressed }) => ({
-            flex: 1,
-            borderRadius: layout.mediumRadius,
-            paddingVertical: 13,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: colors.accent,
-            opacity: pressed ? 0.88 : 1,
-          })}
-        >
-          <Text style={{ color: "#fff", fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">
-            {hasPlan || hasWorn ? "View in Calendar" : "Plan Today"}
-          </Text>
-        </Pressable>
+        <View style={{ flex: 1 }}>
+          <AuraGradientButton
+            label={hasPlan || hasWorn ? "View in Calendar" : "Plan Today"}
+            onPress={hasPlan || hasWorn ? onOpenCalendar : onPlanToday}
+          />
+        </View>
         <Pressable
           onPress={onAskStylist}
           style={({ pressed }) => ({
+            ...auraButtonStyle(colors, "secondary"),
             flex: 1,
             borderRadius: layout.mediumRadius,
             paddingVertical: 13,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: "rgba(255,255,255,0.05)",
-            borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.08)",
             opacity: pressed ? 0.82 : 1,
           })}
         >
-          <Text style={{ color: colors.text, fontWeight: "900" }} numberOfLines={1} ellipsizeMode="tail">Ask Stylist</Text>
+          <Text style={auraButtonTextStyle(colors, "secondary")} numberOfLines={1} ellipsizeMode="tail">Ask Stylist</Text>
         </Pressable>
       </View>
-    </View>
+      </View>
+    </AuraGlassCard>
   );
 }

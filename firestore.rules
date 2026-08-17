@@ -14,6 +14,10 @@ service cloud.firestore {
       return status in ["AVAILABLE", "WORN", "IN_LAUNDRY"];
     }
 
+    function validLaundryStatus(status) {
+      return status in ["clean", "needs_wash", "in_laundry"];
+    }
+
     function validCategory(category) {
       return category in [
         "top",
@@ -35,7 +39,7 @@ service cloud.firestore {
     }
 
     function validDraftState(state) {
-      return state in ["draft", "photo_uploaded", "ingesting", "ready", "failed"];
+      return state in ["draft", "awaiting_confirmation", "photo_uploaded", "ingesting", "ready", "failed", "cancelled"];
     }
 
     function validOptionalString(value) {
@@ -50,8 +54,209 @@ service cloud.firestore {
       return value == null || value is bool;
     }
 
+    function validOptionalStringList(value, maxSize) {
+      return value == null || (value is list && value.size() <= maxSize);
+    }
+
     function validOptionalMap(value) {
       return value == null || value is map;
+    }
+
+    function protectedAccessFields() {
+      return [
+        "admin",
+        "adminRole",
+        "adminRoles",
+        "adminSettings",
+        "aiAccess",
+        "aiCredits",
+        "aiEntitlements",
+        "aiQuota",
+        "aiUsage",
+        "allowPaidAI",
+        "betaAccess",
+        "betaRole",
+        "earlyAccess",
+        "earlyAccessAdmin",
+        "earlyAccessLimits",
+        "earlyAccessOverrides",
+        "earlyAccessQuota",
+        "earlyAccessUsage",
+        "entitlements",
+        "featureAccess",
+        "featureFlags",
+        "features",
+        "isAdmin",
+        "isBetaTester",
+        "isModerator",
+        "isPowerUser",
+        "moderator",
+        "moderatorRole",
+        "paidAccess",
+        "paidFeatures",
+        "plan",
+        "powerUser",
+        "premium",
+        "quota",
+        "quotaAdmin",
+        "quotaOverrides",
+        "quotaUsage",
+        "quotas",
+        "role",
+        "roles",
+        "subscription",
+        "subscriptionStatus",
+        "tier",
+        "usageAdmin"
+      ];
+    }
+
+    function allowedUserRootFields() {
+      return [
+        "accessoryPreferences",
+        "advancedFit",
+        "appSettings",
+        "avoidedBrands",
+        "avoidedColors",
+        "avoidedMaterials",
+        "avoidedStyles",
+        "body",
+        "budgetPreference",
+        "closetPreferences",
+        "createdAt",
+        "currencyMode",
+        "defaultSizes",
+        "detectedCurrency",
+        "displayName",
+        "email",
+        "favoriteColors",
+        "firstName",
+        "fitPreferences",
+        "goals",
+        "height",
+        "materialPreferences",
+        "name",
+        "notifications",
+        "occasionPriority",
+        "onboardingCompleted",
+        "photoURL",
+        "preferredBrands",
+        "preferredCurrency",
+        "preferredFit",
+        "preferredMaterials",
+        "preferredStyles",
+        "profilePreferences",
+        "profileUpdatedAt",
+        "region",
+        "selectedCategories",
+        "settings",
+        "shoppingGoals",
+        "sizePreferences",
+        "styleAesthetics",
+        "stylePreferences",
+        "sustainabilityPreference",
+        "uid",
+        "units",
+        "unitsPreference",
+        "updatedAt",
+        "wardrobeMode",
+        "weight"
+      ];
+    }
+
+    function allowedProfilePreferenceFields() {
+      return [
+        "accessoryPreferences",
+        "advancedFit",
+        "avoidedBrands",
+        "avoidedColors",
+        "avoidedMaterials",
+        "avoidedStyles",
+        "body",
+        "budgetPreference",
+        "closetPreferences",
+        "createdAt",
+        "currencyMode",
+        "defaultSizes",
+        "detectedCurrency",
+        "displayName",
+        "favoriteColors",
+        "firstName",
+        "fitPreferences",
+        "goals",
+        "height",
+        "materialPreferences",
+        "notifications",
+        "occasionPriority",
+        "onboardingCompleted",
+        "preferredBrands",
+        "preferredCurrency",
+        "preferredFit",
+        "preferredMaterials",
+        "preferredStyles",
+        "region",
+        "selectedCategories",
+        "shoppingGoals",
+        "styleAesthetics",
+        "stylePreferences",
+        "sustainabilityPreference",
+        "units",
+        "unitsPreference",
+        "updatedAt",
+        "wardrobeMode",
+        "weight"
+      ];
+    }
+
+    function validProfilePreferences(value) {
+      return value == null || (
+        value is map
+        && value.size() <= 80
+        && value.keys().hasOnly(allowedProfilePreferenceFields())
+        && !value.keys().hasAny(protectedAccessFields())
+      );
+    }
+
+    function protectedAccessFieldsAbsent(data) {
+      return !data.keys().hasAny(protectedAccessFields());
+    }
+
+    function protectedAccessFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedAccessFields());
+    }
+
+    function onlyAllowedProfileFieldsOnCreate() {
+      return request.resource.data.keys().hasOnly(allowedUserRootFields());
+    }
+
+    function onlyAllowedProfileFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedUserRootFields());
+    }
+
+    function validUserRootDoc(data, uid) {
+      return data is map
+        && data.size() <= 80
+        && noForeignUidField(data, uid)
+        && (!("email" in data) || validOptionalString(data.email))
+        && (!("displayName" in data) || validOptionalString(data.displayName))
+        && (!("name" in data) || validOptionalString(data.name))
+        && (!("photoURL" in data) || validOptionalString(data.photoURL))
+        && (!("profilePreferences" in data) || validProfilePreferences(data.profilePreferences))
+        && (!("profileUpdatedAt" in data) || data.profileUpdatedAt is number || data.profileUpdatedAt is timestamp)
+        && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp)
+        && (!("updatedAt" in data) || data.updatedAt is number || data.updatedAt is timestamp);
+    }
+
+    function validUserRootCreate(data, uid) {
+      return validUserRootDoc(data, uid)
+        && onlyAllowedProfileFieldsOnCreate()
+        && protectedAccessFieldsAbsent(data);
+    }
+
+    function validUserRootUpdate(data, uid) {
+      return validUserRootDoc(data, uid)
+        && onlyAllowedProfileFieldsChanged()
+        && protectedAccessFieldsUnchanged();
     }
 
     function validCrop(value) {
@@ -95,6 +300,9 @@ service cloud.firestore {
       let changed = data.diff(resource.data).affectedKeys();
       return data is map
         && (!changed.hasAny(["status"]) || validStatus(data.status))
+        && (!changed.hasAny(["laundryStatus"]) || validLaundryStatus(data.laundryStatus))
+        && (!changed.hasAny(["laundryUpdatedAt"]) || data.laundryUpdatedAt is timestamp || data.laundryUpdatedAt is number)
+        && (!changed.hasAny(["lastWornAt"]) || data.lastWornAt is timestamp || data.lastWornAt is number || data.lastWornAt == null)
         && (!changed.hasAny(["category"]) || validCategory(data.category))
         && (!changed.hasAny(["subCategory"]) || validOptionalString(data.subCategory))
         && (!changed.hasAny(["brand"]) || validOptionalString(data.brand))
@@ -119,9 +327,9 @@ service cloud.firestore {
         && (!changed.hasAny(["size"]) || validOptionalString(data.size))
         && (!changed.hasAny(["notes"]) || validOptionalString(data.notes))
         && (!changed.hasAny(["careTags"]) || data.careTags == null || data.careTags is list)
-        && (!changed.hasAny(["lastWashedAt"]) || validOptionalNumber(data.lastWashedAt))
-        && (!changed.hasAny(["lastWornDate"]) || validOptionalString(data.lastWornDate))
-        && (!changed.hasAny(["lastWashedDate"]) || validOptionalString(data.lastWashedDate))
+        && (!changed.hasAny(["lastWashedAt"]) || data.lastWashedAt is timestamp || data.lastWashedAt is number || data.lastWashedAt == null)
+        && (!changed.hasAny(["lastWornDate"]) || data.lastWornDate is timestamp || data.lastWornDate is number || data.lastWornDate is string || data.lastWornDate == null)
+        && (!changed.hasAny(["lastWashedDate"]) || data.lastWashedDate is timestamp || data.lastWashedDate is number || data.lastWashedDate is string || data.lastWashedDate == null)
         && (!changed.hasAny(["pattern"]) || validOptionalString(data.pattern))
         && (!changed.hasAny(["material"]) || validOptionalString(data.material))
         && (!changed.hasAny(["occasionTags"]) || data.occasionTags == null || data.occasionTags is list)
@@ -189,21 +397,199 @@ service cloud.firestore {
         && (!("lastMessagePreview" in data) || validOptionalString(data.lastMessagePreview))
         && (!("messageCount" in data) || data.messageCount is number)
         && (!("threadId" in data) || validOptionalString(data.threadId))
+        && (!("pinned" in data) || data.pinned is bool)
+        && (!("archived" in data) || data.archived is bool)
+        && (!("titleEdited" in data) || data.titleEdited is bool)
         && noForeignUidField(data, uid);
     }
 
     function validAiChatMessageDoc(data, uid) {
       return data is map
+        && data.size() <= 50
         && data.keys().hasAll(["type", "createdAt"])
         && data.type in ["user", "assistant", "outfit", "system/action"]
         && data.createdAt is number
-        && (!("text" in data) || validOptionalString(data.text))
-        && (!("outfits" in data) || data.outfits is list)
+        && (!("kind" in data) || validOptionalString(data.kind))
+        && (!("text" in data) || data.text == null || (data.text is string && data.text.size() <= 12000))
+        && (!("attachments" in data) || (data.attachments is list && data.attachments.size() <= 12))
+        && (!("streaming" in data) || data.streaming is bool)
+        && (!("outfits" in data) || (data.outfits is list && data.outfits.size() <= 12))
+        && (!("aura" in data) || data.aura is map)
         && noForeignUidField(data, uid);
     }
 
+    function validOwnedSmallDoc(data, uid) {
+      return data is map
+        && data.size() <= 80
+        && noForeignUidField(data, uid)
+        && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp)
+        && (!("updatedAt" in data) || data.updatedAt is number || data.updatedAt is timestamp);
+    }
+
+    function validCommerceEventDoc(data, uid) {
+      return data is map
+        && data.size() <= 40
+        && noForeignUidField(data, uid)
+        && (!("userId" in data) || data.userId == uid)
+        && (!("type" in data) || data.type is string)
+        && (!("eventName" in data) || data.eventName is string)
+        && (!("suggestionId" in data) || validOptionalString(data.suggestionId))
+        && (!("itemType" in data) || validOptionalString(data.itemType))
+        && (!("category" in data) || validOptionalString(data.category))
+        && (!("sourceScreen" in data) || validOptionalString(data.sourceScreen))
+        && (!("merchant" in data) || validOptionalString(data.merchant))
+        && (!("timestamp" in data) || data.timestamp is number)
+        && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp);
+    }
+
+    function validShoppingRecommendationFeedbackAction(action) {
+      return action in ["viewed", "clicked", "saved", "dismissed", "purchased"];
+    }
+
+    function validShoppingRecommendationFeedbackReason(reason) {
+      return reason in [
+        "too_expensive",
+        "not_my_style",
+        "wrong_size",
+        "already_own_similar",
+        "wrong_colour",
+        "wrong_brand",
+        "not_relevant",
+        "other"
+      ];
+    }
+
+    function validShoppingRecommendationSourceSurface(sourceSurface) {
+      return sourceSurface in ["home", "insights", "aura", "outfit", "item", "profile"];
+    }
+
+    function validShoppingProductSnapshot(data) {
+      return data is map
+        && data.size() <= 20
+        && data.keys().hasOnly([
+          "id",
+          "providerProductId",
+          "retailer",
+          "title",
+          "url",
+          "imageUrl",
+          "price",
+          "currency",
+          "brand",
+          "category",
+          "subcategory",
+          "colours",
+          "sizesAvailable",
+          "material",
+          "styleTags",
+          "seasonTags",
+          "occasionTags",
+          "inStock",
+          "source"
+        ])
+        && (!("id" in data) || validOptionalString(data.id))
+        && (!("providerProductId" in data) || validOptionalString(data.providerProductId))
+        && (!("retailer" in data) || validOptionalString(data.retailer))
+        && (!("title" in data) || validOptionalString(data.title))
+        && (!("url" in data) || validOptionalString(data.url))
+        && (!("imageUrl" in data) || validOptionalString(data.imageUrl))
+        && (!("price" in data) || validOptionalNumber(data.price))
+        && (!("currency" in data) || validOptionalString(data.currency))
+        && (!("brand" in data) || validOptionalString(data.brand))
+        && (!("category" in data) || validOptionalString(data.category))
+        && (!("subcategory" in data) || validOptionalString(data.subcategory))
+        && (!("colours" in data) || validOptionalStringList(data.colours, 20))
+        && (!("sizesAvailable" in data) || validOptionalStringList(data.sizesAvailable, 20))
+        && (!("material" in data) || validOptionalString(data.material))
+        && (!("styleTags" in data) || validOptionalStringList(data.styleTags, 20))
+        && (!("seasonTags" in data) || validOptionalStringList(data.seasonTags, 20))
+        && (!("occasionTags" in data) || validOptionalStringList(data.occasionTags, 20))
+        && (!("inStock" in data) || validOptionalBool(data.inStock))
+        && (!("source" in data) || validOptionalString(data.source));
+    }
+
+    function validShoppingRecommendationFeedbackDoc(data, uid) {
+      return data is map
+        && data.size() <= 9
+        && data.keys().hasAll(["userId", "productId", "action", "createdAt"])
+        && data.keys().hasOnly([
+          "userId",
+          "productId",
+          "recommendationId",
+          "action",
+          "reason",
+          "sourceSurface",
+          "productSnapshot",
+          "createdAt"
+        ])
+        && data.userId == uid
+        && data.productId is string
+        && validShoppingRecommendationFeedbackAction(data.action)
+        && (!("recommendationId" in data) || validOptionalString(data.recommendationId))
+        && (!("reason" in data) || validShoppingRecommendationFeedbackReason(data.reason))
+        && (!("sourceSurface" in data) || validShoppingRecommendationSourceSurface(data.sourceSurface))
+        && (!("productSnapshot" in data) || validShoppingProductSnapshot(data.productSnapshot))
+        && (data.createdAt is number || data.createdAt is timestamp)
+        && noForeignUidField(data, uid);
+    }
+
+    function validLaunchEventDoc(data, uid) {
+      return data is map
+        && data.size() <= 20
+        && noForeignUidField(data, uid)
+        && (!("userId" in data) || data.userId == uid)
+        && (!("type" in data) || data.type is string)
+        && (!("eventName" in data) || data.eventName is string)
+        && (!("sessionId" in data) || validOptionalString(data.sessionId))
+        && (!("platform" in data) || validOptionalString(data.platform))
+        && (!("appVersion" in data) || validOptionalString(data.appVersion))
+        && (!("buildNumber" in data) || data.buildNumber == null || data.buildNumber is string || data.buildNumber is number)
+        && (!("timestamp" in data) || data.timestamp is number)
+        && (!("properties" in data) || data.properties is map)
+        && (!("createdAt" in data) || data.createdAt is number || data.createdAt is timestamp);
+    }
+
+    function validStyleEventDoc(data, uid) {
+      return data is map
+        && data.size() <= 50
+        && data.keys().hasAll(["type", "createdAt"])
+        && data.type is string
+        && (data.createdAt is number || data.createdAt is timestamp)
+        && noForeignUidField(data, uid);
+    }
+
+    function validSavedLookDoc(data, uid) {
+      return data is map
+        && data.size() <= 50
+        && data.keys().hasOnly([
+          "id",
+          "pieces",
+          "vibe",
+          "title",
+          "createdAt",
+          "updatedAt",
+          "source",
+          "sessionId",
+          "itemIds",
+          "stylingNote",
+          "previewImageUrls",
+          "outfitSnapshot",
+          "look",
+          "savedLookEventWritten",
+          "feedbackProcessed"
+        ])
+        && noForeignUidField(data, uid);
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
     match /users/{uid} {
-      allow read, write: if isOwner(uid);
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && validUserRootCreate(request.resource.data, uid);
+      allow update: if isOwner(uid) && validUserRootUpdate(request.resource.data, uid);
+      allow delete: if false;
 
       match /items/{itemId} {
         allow read: if isOwner(uid);
@@ -232,11 +618,25 @@ service cloud.firestore {
       }
 
       match /ai/{docId} {
-        allow read, write: if isOwner(uid);
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+      }
+
+      match /usage/{docId} {
+        allow read: if isOwner(uid) && docId == "earlyAccess";
+        allow create, update, delete: if false;
       }
 
       match /assistantProfile/{docId} {
         allow read, write: if isOwner(uid) && (docId == "main" || docId == "behavior");
+      }
+
+      match /profile/{docId} {
+        allow read, write: if isOwner(uid) && (
+          docId == "styleProfile" ||
+          docId == "learnedStyleMemory"
+        );
       }
 
       match /aiChats/{chatId} {
@@ -249,6 +649,58 @@ service cloud.firestore {
           allow create, update: if isOwner(uid) && validAiChatMessageDoc(request.resource.data, uid);
           allow delete: if isOwner(uid);
         }
+
+        match /sessionContext/{docId} {
+          allow read, write: if isOwner(uid) && docId == "current";
+        }
+      }
+
+      match /styleEvents/{eventId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validStyleEventDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+      }
+
+      match /savedLooks/{lookId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validSavedLookDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+      }
+
+      match /auraLooks/{lookId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+      }
+
+      match /savedOutfits/{lookId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+      }
+
+      match /outfitFeedback/{feedbackId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validOwnedSmallDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+      }
+
+      match /commerceEvents/{eventId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && validCommerceEventDoc(request.resource.data, uid);
+        allow update, delete: if false;
+      }
+
+      match /shoppingRecommendationFeedback/{feedbackId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validShoppingRecommendationFeedbackDoc(request.resource.data, uid);
+        allow delete: if isOwner(uid);
+      }
+
+      match /launchEvents/{eventId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && validLaunchEventDoc(request.resource.data, uid);
+        allow update, delete: if false;
       }
     }
 

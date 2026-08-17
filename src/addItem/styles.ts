@@ -1,50 +1,42 @@
 import { StyleSheet } from "react-native";
 import type { AppColors } from "@/constants/theme";
+import { auraButtonStyle, auraButtonTextStyle, auraSpacing } from "@/src/components/ui/auraStylePrimitives";
 
 export function createStyles(colors: AppColors) {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
     container: { flex: 1, backgroundColor: colors.background },
-    listContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 180 },
-    headerRow: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: 8,
-    },
+    listContent: { paddingHorizontal: auraSpacing.md, paddingTop: auraSpacing.sm, paddingBottom: 160 },
     footer: {
       borderTopWidth: 1,
       borderTopColor: colors.border,
-      backgroundColor: colors.surface,
-      paddingHorizontal: 16,
-      paddingTop: 10,
-      gap: 8,
+      backgroundColor: "rgba(9,0,11,0.90)",
+      paddingHorizontal: auraSpacing.md,
+      paddingTop: auraSpacing.xs,
+      gap: auraSpacing.xs,
     },
-    ctaStatus: { color: colors.textSecondary, fontSize: 13 },
+    ctaStatus: { color: colors.textSecondary, fontSize: 13, lineHeight: 18 },
     btnPrimary: {
-      marginTop: 6,
-      paddingVertical: 14,
-      borderRadius: 14,
-      backgroundColor: colors.accent,
-      alignItems: "center",
+      ...auraButtonStyle(colors, "primary"),
+      marginTop: 4,
+      shadowColor: colors.ctaCream,
+      shadowOpacity: 0.1,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 2,
     },
     btnSecondary: {
-      paddingVertical: 10,
-      paddingHorizontal: 14,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: colors.border,
-      alignItems: "center",
-      backgroundColor: colors.surface,
+      ...auraButtonStyle(colors, "secondary", false, "compact"),
+      minHeight: 44,
     },
-    btnSecondaryText: { fontWeight: "800", color: colors.text },
+    btnSecondaryText: { ...auraButtonTextStyle(colors, "secondary"), fontSize: 13, lineHeight: 17 },
     inlineInfo: {
-      gap: 6,
-      padding: 12,
+      gap: auraSpacing.xs,
+      padding: auraSpacing.sm,
       borderRadius: 16,
       borderWidth: 1,
       borderColor: colors.border,
-      backgroundColor: colors.card,
+      backgroundColor: colors.surfaceInteractive,
     },
   });
 }

@@ -1,7 +1,10 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { Colors } from "@/constants/theme";
 import { DailyWeather } from "../utils/weatherDaily";
+
+const colors = Colors.dark;
 
 type Props = {
   permission: "unknown" | "granted" | "denied" | "blocked";
@@ -49,27 +52,27 @@ export default function WeatherCard({ permission, state, weather, onPermissionAc
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderColor: "#dedede",
+    borderColor: colors.border,
     borderRadius: 16,
     padding: 14,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
   },
   summary: {
-    color: "#111",
+    color: colors.textPrimary,
     fontWeight: "700",
   },
   muted: {
-    color: "#666",
+    color: colors.textSecondary,
   },
   linkBtn: {
     alignSelf: "flex-start",
     paddingVertical: 7,
     paddingHorizontal: 10,
     borderRadius: 10,
-    backgroundColor: "#f3f4f6",
+    backgroundColor: colors.chipBackground,
   },
   linkText: {
-    color: "#111",
+    color: colors.textPrimary,
     fontWeight: "700",
   },
 });

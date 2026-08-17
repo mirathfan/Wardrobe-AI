@@ -1,6 +1,10 @@
 import React from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
+import { Colors } from "@/constants/theme";
+
+const colors = Colors.dark;
+
 type Props = {
   visible: boolean;
   reasons: string[];
@@ -43,11 +47,11 @@ export default function WhyOutfitModal({ visible, reasons, onClose, onRegenerate
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.25)",
+    backgroundColor: "rgba(9,0,11,0.72)",
     justifyContent: "flex-end",
   },
   sheet: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 18,
@@ -56,16 +60,17 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: "800",
+    color: colors.textPrimary,
   },
   list: {
     gap: 8,
   },
   reasonText: {
-    color: "#222",
+    color: colors.textSecondary,
     lineHeight: 20,
   },
   empty: {
-    color: "#666",
+    color: colors.textMuted,
   },
   actions: {
     flexDirection: "row",
@@ -74,24 +79,24 @@ const styles = StyleSheet.create({
   secondaryBtn: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingVertical: 11,
     alignItems: "center",
   },
   secondaryBtnText: {
-    color: "#111",
+    color: colors.textPrimary,
     fontWeight: "700",
   },
   primaryBtn: {
     flex: 1,
-    backgroundColor: "#111",
+    backgroundColor: colors.ctaCream,
     borderRadius: 12,
     paddingVertical: 11,
     alignItems: "center",
   },
   primaryBtnText: {
-    color: "#fff",
+    color: colors.ctaText,
     fontWeight: "800",
   },
 });

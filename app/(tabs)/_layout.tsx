@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 import FloatingGlassTabBar from '@/components/FloatingGlassTabBar';
+import { MotionDurations } from '@/src/constants/motion';
 
 export default function TabLayout() {
   return (
@@ -9,6 +10,13 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: false,
         tabBarHideOnKeyboard: true,
+        animation: 'fade',
+        transitionSpec: {
+          animation: 'timing',
+          config: {
+            duration: MotionDurations.sm,
+          },
+        },
       }}>
       <Tabs.Screen
         name="index"
@@ -25,7 +33,7 @@ export default function TabLayout() {
       <Tabs.Screen
        name="ai"
        options={{
-       title: 'AI',
+       title: 'AURA',
        }}
       />
        <Tabs.Screen
@@ -44,19 +52,28 @@ export default function TabLayout() {
         name="add"
         options={{
          href: null,
-         unmountOnBlur: true,
+         animation: 'fade',
         }}
       />
       <Tabs.Screen
         name="item/[id]"
         options={{
          href: null,
+         animation: 'fade',
         }}
         />
       <Tabs.Screen
         name="laundry"
         options={{
          href: null,
+         animation: 'fade',
+        }}
+      />
+      <Tabs.Screen
+        name="studio"
+        options={{
+         href: null,
+         animation: 'fade',
         }}
       />
     </Tabs>

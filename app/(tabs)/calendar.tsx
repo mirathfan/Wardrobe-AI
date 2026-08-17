@@ -1,19 +1,34 @@
 import { router } from "expo-router";
-import { collection, doc, increment, onSnapshot, orderBy, query, serverTimestamp, writeBatch } from "firebase/firestore";
-import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import Reanimated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from "react-native-reanimated";
 
 import AgendaCard from "@/src/components/AgendaCard";
 import DailyOutfitCard from "@/src/components/DailyOutfitCard";
 import WhyModal from "@/src/components/WhyModal";
 import CalendarHeader from "@/src/components/calendar/CalendarHeader";
+import CalendarOutfitEventDetailModal from "@/src/components/calendar/CalendarOutfitEventDetailModal";
 import DateRail from "@/src/components/calendar/DateRail";
 import DayContextCard from "@/src/components/calendar/DayContextCard";
 import SwapSheet from "@/src/components/calendar/SwapSheet";
 import TimelineCard from "@/src/components/calendar/TimelineCard";
-import WeatherStrip from "@/src/components/calendar/WeatherStrip";
+import { AuraAnimatedSection } from "@/src/components/motion";
+import {
+  auraButtonStyle,
+  auraButtonTextStyle,
+  auraCardStyle,
+  auraSheetBackdropStyle,
+  AuraTopSafeAreaScrim,
+  auraTypography,
+} from "@/src/components/ui/auraStylePrimitives";
+import { AuraSkeleton, AuraSkeletonLine } from "@/src/components/ui/AuraSkeleton";
 import { useDayEvents } from "@/src/hooks/useDayEvents";
 import { useDayWeather } from "@/src/hooks/useDayWeather";
 import { useNow } from "@/src/hooks/useNow";
@@ -27,7 +42,6 @@ import {
   clearPlan,
   copyPlan,
   setPlanned,
-  setWorn,
   subscribeOutfitByDate,
   subscribeOutfitsInRange,
 } from "@/src/utils/dailyOutfits";
@@ -36,22 +50,26 @@ import { getDailyWeather } from "@/src/utils/weatherDaily";
 import { getLoggedOutfitDays, getOutfitStreak } from "@/src/utils/streak";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useAuth } from "@/src/hooks/useAuth";
-import { db } from "@/src/lib/firebase";
-import { MAX_WEARS_BEFORE_WASH, isVisibleWardrobeItem, toCanonicalCategory } from "@/src/lib/items";
+import { useReduceMotion } from "@/hooks/useReduceMotion";
+import { listenToItems, normalizeLaundryStatus, toCanonicalCategory } from "@/src/lib/items";
+import { impactLight } from "@/src/lib/haptics";
+import { Toast } from "@/src/lib/toast";
+import { markOutfitWorn, planOutfitForToday } from "@/src/lib/wearOutfit";
+import { getAuraPlanningWeatherContext } from "@/src/lib/auraPlanningWeather";
+import {
+  buildOutfitCalendarEvents,
+  cancelOutfitEvent,
+  type OutfitCalendarEventStatus,
+} from "@/src/lib/outfitCalendar";
+import { FLOATING_TAB_BAR_HEIGHT } from "@/src/constants/dock";
 import type { ClothingItem } from "@/src/types/ClothingItem";
+import { buildOutfitWeatherWarnings } from "@/shared/auraOutfitCalendar";
 
 type SectionIconName = "calendar" | "sparkles" | "chart.bar.xaxis";
-type SlotKey = keyof OutfitItemsByCategory;
+type SlotKey = Exclude<keyof OutfitItemsByCategory, "accessories">;
+type RailWeather = { high?: number; low?: number; label?: string };
 
-const DateTimePickerModule = (() => {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require("@react-native-community/datetimepicker");
-  } catch {
-    return null;
-  }
-})();
-const NativeDatePicker = DateTimePickerModule?.default ?? null;
+const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;
 
 function iconFallback(name: SectionIconName): keyof typeof Ionicons.glyphMap {
   if (name === "calendar") return "calendar-outline";
@@ -65,8 +83,25 @@ function SectionHeader({ icon, title }: { icon: SectionIconName; title: string }
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   return (
     <View style={styles.sectionHeader}>
-      <Ionicons name={iconFallback(icon)} size={17} color={colors.text} />
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>{title}</Text>
+      <Ionicons name={iconFallback(icon)} size={17} color={colors.textSecondary} />
+      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{title}</Text>
+    </View>
+  );
+}
+
+function CalendarStatusSkeleton() {
+  const layout = useResponsiveLayout();
+  return (
+    <View
+      style={{
+        gap: 10,
+        padding: layout.cardPadding,
+        borderRadius: layout.mediumRadius,
+        overflow: "hidden",
+      }}
+    >
+      <AuraSkeletonLine width="42%" height={12} />
+      <AuraSkeleton height={56} radius={14} />
     </View>
   );
 }
@@ -88,12 +123,8 @@ function computeDaysSinceLastWorn(item: ClothingItem) {
   return Math.max(0, Math.floor((Date.now() - date.getTime()) / (24 * 60 * 60 * 1000)));
 }
 
-async function hapticLight() {
-  try {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  } catch {
-    // no-op
-  }
+function hapticLight() {
+  return impactLight();
 }
 
 function lookToPlanned(look: PlannedLook): PlannedOutfit {
@@ -114,6 +145,32 @@ function buildRailDateKeys(anchor: Date) {
   return Array.from({ length: 121 }, (_, i) => toDayKey(addDays(anchor, i - 60)));
 }
 
+function dateOnly(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, offset: number) {
+  return new Date(date.getFullYear(), date.getMonth() + offset, 1);
+}
+
+function buildCalendarWeeks(month: Date) {
+  const monthStart = startOfMonth(month);
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(monthStart.getDate() - monthStart.getDay());
+
+  return Array.from({ length: 6 }, (_, weekIndex) =>
+    Array.from({ length: 7 }, (_, dayIndex) => {
+      const date = new Date(gridStart);
+      date.setDate(gridStart.getDate() + weekIndex * 7 + dayIndex);
+      return date;
+    }),
+  );
+}
+
 function DatePickerSheet({
   visible,
   value,
@@ -132,28 +189,152 @@ function DatePickerSheet({
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(value));
+
+  useEffect(() => {
+    if (visible) {
+      setVisibleMonth(startOfMonth(value));
+    }
+  }, [value, visible]);
+
+  const todayKey = toDayKey(new Date());
+  const selectedKey = useMemo(() => toDayKey(value), [value]);
+  const calendarWeeks = useMemo(() => buildCalendarWeeks(visibleMonth), [visibleMonth]);
+  const monthLabel = useMemo(
+    () => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(visibleMonth),
+    [visibleMonth],
+  );
+
+  const onSelectDate = useCallback(
+    (date: Date) => {
+      const nextDate = dateOnly(date);
+      setVisibleMonth(startOfMonth(nextDate));
+      onChange(nextDate);
+      void hapticLight();
+    },
+    [onChange],
+  );
+
+  const onDone = useCallback(() => {
+    void hapticLight();
+    onConfirm();
+  }, [onConfirm]);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={styles.modalBackdrop}>
         <View style={styles.modalSheet}>
-          <Text style={styles.modalTitle}>{title}</Text>
-          {NativeDatePicker ? (
-            <NativeDatePicker
-              value={value}
-              mode="date"
-              display="spinner"
-              onChange={(_: unknown, nextDate?: Date) => {
-                if (nextDate) onChange(nextDate);
-              }}
-            />
-          ) : (
-            <Text style={styles.muted}>Date picker is unavailable in this client.</Text>
-          )}
+          <View style={styles.modalHeaderRow}>
+            <Text style={styles.modalTitle}>{title}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close date picker"
+              hitSlop={8}
+              style={styles.modalCloseButton}
+              onPress={onCancel}
+            >
+              <Ionicons name="close" size={18} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+
+          <View style={styles.monthNavRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Previous month"
+              hitSlop={8}
+              style={styles.monthNavButton}
+              onPress={() => setVisibleMonth((month) => addMonths(month, -1))}
+            >
+              <Ionicons name="chevron-back" size={19} color={colors.text} />
+            </Pressable>
+            <Text style={styles.monthTitle}>{monthLabel}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Next month"
+              hitSlop={8}
+              style={styles.monthNavButton}
+              onPress={() => setVisibleMonth((month) => addMonths(month, 1))}
+            >
+              <Ionicons name="chevron-forward" size={19} color={colors.text} />
+            </Pressable>
+          </View>
+
+          <View style={styles.weekdayRow}>
+            {WEEKDAY_LABELS.map((label, index) => (
+              <Text key={`${label}-${index}`} style={styles.weekdayLabel}>
+                {label}
+              </Text>
+            ))}
+          </View>
+
+          <View style={styles.calendarGrid}>
+            {calendarWeeks.map((week, weekIndex) => (
+              <View key={`week-${weekIndex}`} style={styles.calendarGridRow}>
+                {week.map((date) => {
+                  const dateKey = toDayKey(date);
+                  const inVisibleMonth =
+                    date.getFullYear() === visibleMonth.getFullYear() && date.getMonth() === visibleMonth.getMonth();
+                  const isSelected = dateKey === selectedKey;
+                  const isToday = dateKey === todayKey;
+                  return (
+                    <Pressable
+                      key={dateKey}
+                      accessibilityRole="button"
+                      accessibilityState={isSelected ? { selected: true } : undefined}
+                      style={styles.dateCell}
+                      onPress={() => onSelectDate(date)}
+                    >
+                      <View
+                        style={[
+                          styles.dateCircle,
+                          {
+                            borderColor: isToday ? colors.ctaCream : "transparent",
+                            opacity: inVisibleMonth ? 1 : 0.42,
+                          },
+                          isSelected
+                            ? {
+                                backgroundColor: colors.ctaCream,
+                                borderColor: colors.ctaCream,
+                                shadowColor: colors.ctaCream,
+                              }
+                            : null,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.dateText,
+                            {
+                              color: isSelected
+                                ? colors.primaryText
+                                : inVisibleMonth
+                                  ? colors.text
+                                  : colors.textMuted,
+                            },
+                          ]}
+                        >
+                          {date.getDate()}
+                        </Text>
+                        {isToday ? (
+                          <View
+                            style={[
+                              styles.todayMarker,
+                              { backgroundColor: isSelected ? colors.primaryText : colors.ctaCream },
+                            ]}
+                          />
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+
           <View style={styles.modalActions}>
             <Pressable style={styles.modalSecondary} onPress={onCancel}>
               <Text style={styles.modalSecondaryText}>Cancel</Text>
             </Pressable>
-            <Pressable style={styles.modalPrimary} onPress={onConfirm}>
+            <Pressable style={styles.modalPrimary} onPress={onDone}>
               <Text style={styles.modalPrimaryText}>Done</Text>
             </Pressable>
           </View>
@@ -168,7 +349,7 @@ export default function CalendarScreen() {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const uid = user?.uid ?? null;
-  const bottomDockPadding = layout.bottomDockPadding;
+  const bottomDockPadding = layout.bottomDockPadding + 24;
 
   const { greeting, timeLabel } = useNow();
   const day = useSelectedDate();
@@ -179,6 +360,7 @@ export default function CalendarScreen() {
 
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [record, setRecord] = useState<DailyOutfitRecord | null>(null);
   const [looks, setLooks] = useState<PlannedLook[]>([]);
@@ -189,15 +371,22 @@ export default function CalendarScreen() {
   const [loggedDaySet, setLoggedDaySet] = useState<Set<string>>(new Set());
   const [railStatuses, setRailStatuses] = useState<Record<string, { planned?: boolean; worn?: boolean; streak?: boolean }>>({});
   const [weeklyFlags, setWeeklyFlags] = useState<number[]>(Array.from({ length: 7 }, () => 0));
-  const [weekWeather, setWeekWeather] = useState<{ label: string; high?: number; low?: number; selected: boolean }[]>([]);
+  const [railWeatherByDate, setRailWeatherByDate] = useState<Record<string, RailWeather>>({});
   const [swapOpen, setSwapOpen] = useState(false);
   const [swapSlot, setSwapSlot] = useState<SlotKey | null>(null);
   const [jumpPickerOpen, setJumpPickerOpen] = useState(false);
   const [copyPickerOpen, setCopyPickerOpen] = useState(false);
   const [pickerDate, setPickerDate] = useState(day.selectedDate);
+  const [selectedOutfitEventStatus, setSelectedOutfitEventStatus] = useState<OutfitCalendarEventStatus | null>(null);
+  const [outfitEventBusy, setOutfitEventBusy] = useState(false);
 
   const itemsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const selectedDateLabel = useMemo(() => formatHeaderDate(day.selectedDate), [day.selectedDate]);
+  const outfitEvents = useMemo(() => buildOutfitCalendarEvents(record), [record]);
+  const selectedOutfitEvent = useMemo(
+    () => outfitEvents.find((event) => event.status === selectedOutfitEventStatus) ?? null,
+    [outfitEvents, selectedOutfitEventStatus],
+  );
   const selectedLook = useMemo(
     () => looks.find((look) => look.id === selectedLookId) ?? looks[0] ?? null,
     [looks, selectedLookId]
@@ -222,7 +411,6 @@ export default function CalendarScreen() {
   }, [loadStreakData]);
 
   useEffect(() => {
-    let unsub: undefined | (() => void);
     if (!uid) {
       setItems([]);
       setLoadingItems(false);
@@ -230,24 +418,24 @@ export default function CalendarScreen() {
       return;
     }
 
-    const itemsRef = collection(db, "users", uid, "items");
-    const qItems = query(itemsRef, orderBy("createdAt", "desc"));
-    unsub = onSnapshot(
-      qItems,
-      (snap) => {
-        const next = snap.docs
-          .map((d) => ({ id: d.id, ...(d.data() as Omit<ClothingItem, "id">) }))
-          .filter((item) => isVisibleWardrobeItem(item));
+    setItems([]);
+    setLoadingItems(true);
+    const unsub = listenToItems(
+      uid,
+      (next) => {
         setItems(next as ClothingItem[]);
         setLoadingItems(false);
       },
-      (err) => {
-        console.log(err);
-        Alert.alert("Firestore error", err.message);
-        setLoadingItems(false);
+      {
+        status: "ALL",
+        sort: "NEWEST",
+        onError: () => {
+          Alert.alert("Calendar", "Unable to load your calendar data. Please try again.");
+          setLoadingItems(false);
+        },
       }
     );
-    return () => unsub?.();
+    return () => unsub();
   }, [uid]);
 
   useEffect(() => {
@@ -323,9 +511,9 @@ export default function CalendarScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadWeekWeather() {
+    async function loadRailWeather() {
       if (weather.permission !== "granted") {
-        setWeekWeather([]);
+        setRailWeatherByDate({});
         return;
       }
 
@@ -354,26 +542,39 @@ export default function CalendarScreen() {
         const values = await Promise.all(dates.map((date) => getDailyWeather(lat, lon, date)));
         if (cancelled) return;
 
-        setWeekWeather(
-          values.map((value, index) => ({
-            label: new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(dates[index]),
+        const nextWeatherByDate: Record<string, RailWeather> = {};
+        values.forEach((value, index) => {
+          nextWeatherByDate[toDayKey(dates[index])] = {
             high: value.highC,
             low: value.lowC,
-            selected: toDayKey(dates[index]) === selectedDayKey,
-          }))
-        );
+            label: value.conditionLabel,
+          };
+        });
+        setRailWeatherByDate(nextWeatherByDate);
       } catch {
-        if (!cancelled) setWeekWeather([]);
+        if (!cancelled) setRailWeatherByDate({});
       }
     }
 
-    loadWeekWeather().catch(() => {
-      if (!cancelled) setWeekWeather([]);
+    loadRailWeather().catch(() => {
+      if (!cancelled) setRailWeatherByDate({});
     });
     return () => {
       cancelled = true;
     };
-  }, [day.weekDates, selectedDayKey, weather.permission]);
+  }, [day.weekDates, weather.permission]);
+
+  const dateRailWeather = useMemo(() => {
+    const next = { ...railWeatherByDate };
+    if (weather.weather) {
+      next[selectedDayKey] = {
+        high: weather.weather.highC,
+        low: weather.weather.lowC,
+        label: weather.weather.conditionLabel,
+      };
+    }
+    return next;
+  }, [railWeatherByDate, selectedDayKey, weather.weather]);
 
   const weatherSummary = useMemo(() => {
     if (weather.permission === "unknown" || weather.permission === "denied") return "Enable weather insights";
@@ -390,6 +591,7 @@ export default function CalendarScreen() {
   const contextEventSummary = useMemo(() => {
     if (events.events.length === 0) return "No events for this day";
     const next = events.events[0];
+    if (!next) return "No events for this day";
     return `Next: ${next.timeLabel} — ${next.title}`;
   }, [events.events]);
 
@@ -439,6 +641,22 @@ export default function CalendarScreen() {
     if (events.permission === "granted" && events.state === "error") return events.actions.refresh();
   }, [events.actions, events.permission, events.state]);
 
+  const onRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    const startedAt = Date.now();
+    try {
+      await Promise.allSettled([
+        loadStreakData(),
+        events.actions.refresh(),
+        weather.actions.refresh(),
+      ]);
+    } finally {
+      const remaining = Math.max(0, 450 - (Date.now() - startedAt));
+      setTimeout(() => setRefreshing(false), remaining);
+    }
+  }, [events.actions, loadStreakData, refreshing, weather.actions]);
+
   const onSelectDate = useCallback(async (date: Date) => {
     day.setSelectedDate(date);
     await hapticLight();
@@ -454,24 +672,50 @@ export default function CalendarScreen() {
     if (record?.plannedOutfit) return record.plannedOutfit;
     if (!selectedLook) return null;
     const planned = lookToPlanned(selectedLook);
-    const next = await setPlanned(uid, selectedDayKey, planned);
-    setRecord(next);
+    await planOutfitForToday({
+      uid,
+      source: "calendar",
+      title: selectedLook.label,
+      look: planned,
+      date: day.selectedDate,
+    });
+    const next = {
+      dateKey: selectedDayKey,
+      plannedOutfit: planned,
+    };
+    if (!next) return null;
+    setRecord((prev) => ({ ...(prev ?? { dateKey: selectedDayKey }), plannedOutfit: planned }));
     return next.plannedOutfit ?? null;
-  }, [record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
+  }, [day.selectedDate, record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
 
   const onUseOutfit = useCallback(async () => {
     if (!uid || !selectedLook) return;
-    const planned = lookToPlanned(selectedLook);
-    const next = await setPlanned(uid, selectedDayKey, planned);
-    setRecord(next);
-    setSelectedLookId(selectedLook.id);
-    await hapticLight();
-  }, [selectedDayKey, selectedLook, uid]);
+    try {
+      const planned = lookToPlanned(selectedLook);
+      await planOutfitForToday({
+        uid,
+        source: "calendar",
+        title: selectedLook.label,
+        look: planned,
+        date: day.selectedDate,
+      });
+      setRecord((prev) => ({ ...(prev ?? { dateKey: selectedDayKey }), plannedOutfit: planned }));
+      setSelectedLookId(selectedLook.id);
+      Toast.success("Planned", "Outfit attached to this day.");
+      await hapticLight();
+    } catch {
+      Toast.error("Plan failed", "Unable to plan this outfit.");
+    }
+  }, [day.selectedDate, selectedDayKey, selectedLook, uid]);
 
   const onClearPlan = useCallback(async () => {
     if (!uid) return;
-    const next = await clearPlan(uid, selectedDayKey);
-    setRecord(next);
+    try {
+      const next = await clearPlan(uid, selectedDayKey);
+      setRecord(next);
+    } catch {
+      Toast.error("Clear plan failed", "Unable to clear this plan.");
+    }
   }, [selectedDayKey, uid]);
 
   const onOpenCopyPicker = useCallback(() => {
@@ -557,59 +801,152 @@ export default function CalendarScreen() {
       return;
     }
 
-    const wornItems = planned.itemsByCategory;
-    if (toDayKey(day.selectedDate) === toDayKey(new Date()) && uid) {
-      const ids = [wornItems.outerwear, wornItems.top, wornItems.bottom, wornItems.shoes].filter(Boolean) as string[];
-      for (const itemId of ids) {
-        const item = itemsById.get(itemId);
-        if (!item) continue;
-        if (item.status === "IN_LAUNDRY") {
-          Alert.alert("Cannot mark outfit worn", `${item.name || item.category} is in laundry.`);
-          return;
-        }
-        if ((item.wearCountSinceWash ?? 0) >= MAX_WEARS_BEFORE_WASH) {
-          Alert.alert("Wash required", `${item.name || item.category} reached the wear limit.`);
-          return;
-        }
-      }
-
-      try {
-        setSaving(true);
-        const batch = writeBatch(db);
-        ids.forEach((itemId) => {
-          const itemRef = doc(db, "users", uid, "items", itemId);
-          batch.update(itemRef, {
-            status: "WORN",
-            wearCountSinceWash: increment(1),
-            lastWornDate: serverTimestamp(),
-          });
-        });
-        await batch.commit();
-      } catch (e: unknown) {
-        const err = e as { message?: string };
-        Alert.alert("Error", err.message ?? "Failed to update worn status");
-      } finally {
-        setSaving(false);
-      }
-    }
-
     if (!uid) return;
+    try {
+      setSaving(true);
+      const wearSource = planned.source === "aura_agent" ? "aura" : "calendar";
+      const result = await markOutfitWorn({
+        uid,
+        source: wearSource,
+        title: planned.title ?? selectedLook?.label ?? "Calendar outfit",
+        look: planned,
+        wornAt: day.selectedDate,
+        updateItemWearCounts: toDayKey(day.selectedDate) === toDayKey(new Date()),
+      });
+      setRecord((prev) => ({
+        ...(prev ?? { dateKey: selectedDayKey }),
+        plannedOutfit: planned ?? prev?.plannedOutfit,
+        wornOutfit: {
+          itemsByCategory: planned.itemsByCategory,
+          wornAt: day.selectedDate.getTime(),
+          source: planned.source ?? wearSource,
+          title: planned.title ?? selectedLook?.label ?? "Calendar outfit",
+          outfitId: planned.outfitId,
+          outfitFingerprint: planned.outfitFingerprint,
+          outfitSnapshot: result.outfitSnapshot,
+          weatherContext: planned.weatherContext,
+          weatherWarnings: planned.weatherWarnings,
+        },
+      }));
+      if (result.alreadyMarked) {
+        Toast.success("Already marked worn today", "This outfit was not double-counted.");
+      } else {
+        Toast.worn();
+      }
+      await loadStreakData();
+      await hapticLight();
+    } catch {
+      Toast.error("Couldn't mark worn. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }, [day.selectedDate, loadStreakData, record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
 
-    const next = await setWorn(uid, selectedDayKey, {
-      itemsByCategory: wornItems,
-      wornAt: Date.now(),
+  const onCancelSelectedOutfitEvent = useCallback(() => {
+    if (!uid || !selectedOutfitEvent) return;
+    const label = selectedOutfitEvent.status === "worn" ? "worn log" : "plan";
+    Alert.alert(
+      `Remove ${label}?`,
+      selectedOutfitEvent.status === "worn"
+        ? "This removes the Calendar wear log for this date."
+        : "This removes the planned outfit from this date.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => {
+            setOutfitEventBusy(true);
+            cancelOutfitEvent(uid, selectedOutfitEvent.dateKey, selectedOutfitEvent.status)
+              .then(async (next) => {
+                if (selectedOutfitEvent.dateKey === selectedDayKey) setRecord(next);
+                setSelectedOutfitEventStatus(null);
+                Toast.success(
+                  selectedOutfitEvent.status === "worn" ? "Wear log removed" : "Plan removed",
+                  "Calendar updated.",
+                );
+                await hapticLight();
+              })
+              .catch(() => {
+                Toast.error("Could not update Calendar", "Try again in a moment.");
+              })
+              .finally(() => setOutfitEventBusy(false));
+          },
+        },
+      ],
+    );
+  }, [selectedDayKey, selectedOutfitEvent, uid]);
+
+  const onMarkSelectedEventWorn = useCallback(async () => {
+    if (!selectedOutfitEvent || selectedOutfitEvent.status !== "planned") return;
+    await onMarkWorn();
+    setSelectedOutfitEventStatus(null);
+  }, [onMarkWorn, selectedOutfitEvent]);
+
+  const onPlanSelectedEventAgain = useCallback(async () => {
+    if (!uid || !selectedOutfitEvent) return;
+    const targetDate = addDays(day.selectedDate, 1);
+    const targetDateKey = toDayKey(targetDate);
+    setOutfitEventBusy(true);
+    try {
+      const weatherContext = await getAuraPlanningWeatherContext(targetDateKey);
+      const weatherItems = selectedOutfitEvent.itemIds
+        .map((itemId) => itemsById.get(itemId))
+        .filter((item): item is ClothingItem => Boolean(item))
+        .map((item) => ({
+          itemId: item.id,
+          role: toCanonicalCategory(item.category),
+          name: item.name,
+          category: item.category,
+          subcategory: item.subCategory,
+          brand: item.brand,
+          colors: item.colors ?? [],
+        }));
+      const nextPlanned: PlannedOutfit = {
+        itemsByCategory: selectedOutfitEvent.itemsByCategory,
+        score: "score" in selectedOutfitEvent.raw ? selectedOutfitEvent.raw.score : 90,
+        reasons: selectedOutfitEvent.reasons.length
+          ? selectedOutfitEvent.reasons
+          : [`Repeat ${selectedOutfitEvent.title} as a planned outfit.`],
+        createdAt: Date.now(),
+        source: selectedOutfitEvent.source ?? "calendar",
+        title: selectedOutfitEvent.title,
+        outfitId: selectedOutfitEvent.outfitId,
+        outfitFingerprint: selectedOutfitEvent.outfitFingerprint,
+        weatherContext,
+        weatherWarnings: buildOutfitWeatherWarnings({ items: weatherItems }, weatherContext),
+      };
+      const next = await setPlanned(uid, targetDateKey, nextPlanned);
+      if (targetDateKey === selectedDayKey) setRecord(next);
+      setSelectedOutfitEventStatus(null);
+      Toast.success("Planned again", `Added to ${targetDateKey}.`);
+      await hapticLight();
+    } catch {
+      Toast.error("Could not plan outfit", "Try again in a moment.");
+    } finally {
+      setOutfitEventBusy(false);
+    }
+  }, [day.selectedDate, itemsById, selectedDayKey, selectedOutfitEvent, uid]);
+
+  const onRemixSelectedEvent = useCallback(() => {
+    if (!selectedOutfitEvent) return;
+    router.push({
+      pathname: "/(tabs)/ai",
+      params: {
+        prompt: `Remix ${selectedOutfitEvent.title}`,
+        promptKey: `calendar-remix-${selectedOutfitEvent.id}-${Date.now()}`,
+        requiredItemIds: selectedOutfitEvent.itemIds.join(","),
+      },
     });
-    setRecord(next);
-    await loadStreakData();
-    await hapticLight();
-  }, [day.selectedDate, itemsById, loadStreakData, record?.plannedOutfit, selectedDayKey, selectedLook, uid]);
+    setSelectedOutfitEventStatus(null);
+  }, [selectedOutfitEvent]);
 
   const swapOptions = useMemo(() => {
     if (!swapSlot) return [];
     const wantedCategory = slotToCategory(swapSlot);
     return items
       .filter((item) => toCanonicalCategory(item.category) === wantedCategory)
-      .filter((item) => item.status !== "IN_LAUNDRY")
+      .filter((item) => normalizeLaundryStatus(item) !== "in_laundry")
       .sort((a, b) => computeDaysSinceLastWorn(b) - computeDaysSinceLastWorn(a))
       .map((item) => ({
         id: item.id,
@@ -631,11 +968,21 @@ export default function CalendarScreen() {
 
   return (
     <View style={themedStyles.screen}>
+      <AuraTopSafeAreaScrim color={colors.background} />
       <ScrollView
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.ctaCream}
+            colors={[colors.ctaCream]}
+            progressBackgroundColor={colors.background}
+          />
+        }
         contentContainerStyle={{
           paddingHorizontal: layout.horizontalPadding,
           paddingTop: layout.topContentInset,
-          paddingBottom: Math.max(bottomDockPadding, 120),
+          paddingBottom: Math.max(bottomDockPadding, 160),
         }}
         showsVerticalScrollIndicator={false}
       >
@@ -655,87 +1002,102 @@ export default function CalendarScreen() {
           <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
         </Pressable>
 
-        <DateRail selectedDate={day.selectedDate} onSelectDate={onSelectDate} statuses={railStatuses} />
-
-        <DayContextCard
-          greeting={greeting}
-          timeLabel={timeLabel}
-          eventSummary={contextEventSummary}
-          weatherSummary={weatherSummary}
-          suggestion={daySuggestion}
-          streak={streak}
-          weatherPermission={weather.permission}
-          weatherState={weather.state}
-          onWeatherAction={onWeatherAction}
+        <DateRail
+          selectedDate={day.selectedDate}
+          onSelectDate={onSelectDate}
+          statuses={railStatuses}
+          weatherByDate={dateRailWeather}
         />
 
-        {weekWeather.length > 0 ? (
-          <View style={themedStyles.weatherStripWrap}>
-            <WeatherStrip days={weekWeather} />
-          </View>
+        <AuraAnimatedSection index={0} withLayout>
+          <DayContextCard
+            greeting={greeting}
+            timeLabel={timeLabel}
+            eventSummary={contextEventSummary}
+            weatherSummary={weatherSummary}
+            suggestion={daySuggestion}
+            streak={streak}
+            weatherPermission={weather.permission}
+            weatherState={weather.state}
+            onWeatherAction={onWeatherAction}
+          />
+        </AuraAnimatedSection>
+
+        <AuraAnimatedSection index={1} withLayout>
+          <SectionHeader icon="calendar" title="Agenda" />
+          <AgendaCard
+            permission={events.permission}
+            state={events.state}
+            events={events.events}
+            moreCount={events.moreCount}
+            timelineVibe={timelineVibe}
+            onPermissionAction={onCalendarAction}
+          />
+        </AuraAnimatedSection>
+
+        {events.events.length ? (
+          <AuraAnimatedSection index={2} withLayout>
+            <View style={themedStyles.sectionGap} />
+            <View style={themedStyles.timelineQuiet}>
+              <TimelineCard events={events.events} />
+            </View>
+          </AuraAnimatedSection>
         ) : null}
 
-        <SectionHeader icon="calendar" title="Agenda" />
-        <AgendaCard
-          permission={events.permission}
-          state={events.state}
-          events={events.events}
-          moreCount={events.moreCount}
-          timelineVibe={timelineVibe}
-          onPermissionAction={onCalendarAction}
-        />
-
         <View style={themedStyles.sectionGap} />
-        <TimelineCard events={events.events} />
-
-        <View style={themedStyles.sectionGap} />
-        <SectionHeader icon="sparkles" title="Outfit for this date" />
-        {isPast && !record?.wornOutfit ? (
-          <View style={themedStyles.card}>
-            <Text style={themedStyles.muted}>No outfit logged for {selectedDateLabel}.</Text>
-            <Pressable style={themedStyles.planCta} onPress={() => setSelectedLookId("casual")}>
-              <Text style={themedStyles.planCtaText}>Plan an outfit</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <DailyOutfitCard
-            dateLabel={selectedDateLabel}
-            isPastDate={isPast}
-            record={record}
-            looks={looks}
-            selectedLookId={selectedLookId}
-            itemsById={itemsById}
-            thinking={aiThinking}
-            onSelectLook={onSelectLook}
-            onUseOutfit={onUseOutfit}
-            onWhy={() => setWhyOpen(true)}
-            onMarkWorn={onMarkWorn}
-            onClearPlan={onClearPlan}
-            onCopyPlan={onOpenCopyPicker}
-            onSwapSlot={onSwapSlot}
-          />
-        )}
-
-        <View style={themedStyles.sectionGap} />
-        <SectionHeader icon="chart.bar.xaxis" title="Wardrobe Insights" />
-        <View style={themedStyles.card}>
-          <View style={themedStyles.weekBars}>
-            {weeklyFlags.map((value, index) => (
-              <View key={`week-${index}`} style={themedStyles.weekBarTrack}>
-                <View style={[themedStyles.weekBarFill, { height: value ? 18 : 6 }]} />
-              </View>
-            ))}
-          </View>
-          <View style={themedStyles.insightsList}>
-            {weeklyInsights.map((line) => (
-              <Pressable key={line} onPress={() => router.push("/(tabs)")}>
-                <Text style={themedStyles.muted}>• {line}</Text>
+        <AuraAnimatedSection index={3} withLayout>
+          <SectionHeader icon="sparkles" title="Outfit for this date" />
+          {isPast && !record?.wornOutfit && !record?.plannedOutfit ? (
+            <View style={[themedStyles.card, themedStyles.emptyDayCard]}>
+              <Text style={themedStyles.emptyDayTitle}>No outfit logged</Text>
+              <Text style={themedStyles.muted}>
+                Nothing was marked worn for {selectedDateLabel}.
+              </Text>
+              <Pressable style={themedStyles.planCta} onPress={() => setSelectedLookId("casual")}>
+                <Text style={themedStyles.planCtaText}>Plan an outfit</Text>
               </Pressable>
-            ))}
-          </View>
-        </View>
+            </View>
+          ) : (
+            <DailyOutfitCard
+              dateLabel={selectedDateLabel}
+              isPastDate={isPast}
+              record={record}
+              looks={looks}
+              selectedLookId={selectedLookId}
+              itemsById={itemsById}
+              thinking={aiThinking}
+              onSelectLook={onSelectLook}
+              onUseOutfit={onUseOutfit}
+              onWhy={() => setWhyOpen(true)}
+              onMarkWorn={onMarkWorn}
+              onClearPlan={onClearPlan}
+              onCopyPlan={onOpenCopyPicker}
+              onSwapSlot={onSwapSlot}
+              onOpenOutfitEvent={setSelectedOutfitEventStatus}
+            />
+          )}
+        </AuraAnimatedSection>
 
-        {loadingItems ? <Text style={themedStyles.muted}>Loading wardrobe…</Text> : null}
+        <View style={themedStyles.sectionGap} />
+        <AuraAnimatedSection index={4} withLayout>
+          <SectionHeader icon="chart.bar.xaxis" title="Wardrobe rhythm" />
+          <View style={[themedStyles.card, themedStyles.insightsQuietCard]}>
+            <View style={themedStyles.weekBars}>
+              {weeklyFlags.map((value, index) => (
+                <View key={`week-${index}`} style={themedStyles.weekBarTrack}>
+                  <AnimatedWeekBar active={Boolean(value)} index={index} />
+                </View>
+              ))}
+            </View>
+            <View style={themedStyles.insightsList}>
+              {weeklyInsights.map((line) => (
+                <Text key={line} style={themedStyles.muted}>{line}</Text>
+              ))}
+            </View>
+          </View>
+        </AuraAnimatedSection>
+
+        {loadingItems ? <CalendarStatusSkeleton /> : null}
         {saving ? <Text style={themedStyles.muted}>Saving worn status…</Text> : null}
       </ScrollView>
 
@@ -764,9 +1126,9 @@ export default function CalendarScreen() {
         title="Jump to date"
         onChange={setPickerDate}
         onCancel={() => setJumpPickerOpen(false)}
-        onConfirm={async () => {
+        onConfirm={() => {
           setJumpPickerOpen(false);
-          await onSelectDate(pickerDate);
+          day.setSelectedDate(pickerDate);
         }}
       />
 
@@ -778,8 +1140,48 @@ export default function CalendarScreen() {
         onCancel={() => setCopyPickerOpen(false)}
         onConfirm={onConfirmCopy}
       />
+
+      <CalendarOutfitEventDetailModal
+        visible={Boolean(selectedOutfitEvent)}
+        event={selectedOutfitEvent}
+        dateLabel={selectedDateLabel}
+        itemsById={itemsById}
+        busy={outfitEventBusy || saving}
+        onClose={() => setSelectedOutfitEventStatus(null)}
+        onMarkWorn={selectedOutfitEvent?.status === "planned" ? onMarkSelectedEventWorn : undefined}
+        onCancel={onCancelSelectedOutfitEvent}
+        onPlanAgain={selectedOutfitEvent?.status === "worn" ? onPlanSelectedEventAgain : undefined}
+        onRemix={onRemixSelectedEvent}
+      />
     </View>
   );
+}
+
+function AnimatedWeekBar({ active, index }: { active: boolean; index: number }) {
+  const { colors } = useAppTheme();
+  const reduceMotion = useReduceMotion();
+  const height = useSharedValue(reduceMotion ? (active ? 18 : 6) : 0);
+
+  useEffect(() => {
+    const target = active ? 18 : 6;
+    if (reduceMotion) {
+      height.value = target;
+      return;
+    }
+    height.value = withDelay(
+      index * 80,
+      withTiming(target, {
+        duration: 400,
+        easing: Easing.out(Easing.cubic),
+      }),
+    );
+  }, [active, height, index, reduceMotion]);
+
+  const barStyle = useAnimatedStyle(() => ({
+    height: height.value,
+  }));
+
+  return <Reanimated.View style={[{ borderRadius: 5, backgroundColor: colors.iridescentStart, width: "100%" }, barStyle]} />;
 }
 
 function createStyles(
@@ -799,11 +1201,11 @@ return StyleSheet.create({
     gap: 8,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: "800",
+    ...auraTypography.eyebrow,
+    letterSpacing: 1.15,
   },
   monthPicker: {
-    marginTop: 8,
+    marginTop: 6,
     marginBottom: 4,
     alignSelf: "flex-start",
     flexDirection: "row",
@@ -812,27 +1214,42 @@ return StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    backgroundColor: colors.surfaceMuted,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
   },
   monthPickerText: {
-    color: colors.text,
+    color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: "700",
-  },
-  weatherStripWrap: {
-    marginTop: layout.sectionGap - 10,
+    fontWeight: "500",
   },
   sectionGap: {
     height: layout.sectionGap - 4,
   },
   card: {
-    borderWidth: 1,
+    ...auraCardStyle(colors, "card"),
     borderColor: colors.glassBorder,
     borderRadius: layout.mediumRadius,
     padding: layout.cardPadding,
-    backgroundColor: colors.surface,
+  },
+  timelineQuiet: {
+    opacity: 0.72,
+  },
+  insightsQuietCard: {
+    opacity: 0.82,
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+  },
+  emptyDayCard: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+  },
+  emptyDayTitle: {
+    color: colors.text,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "700",
+    marginBottom: 4,
   },
   muted: {
     color: colors.textSecondary,
@@ -842,14 +1259,10 @@ return StyleSheet.create({
   planCta: {
     marginTop: 10,
     alignSelf: "flex-start",
-    borderRadius: 999,
-    backgroundColor: colors.accent,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    ...auraButtonStyle(colors, "primary", false, "compact"),
   },
   planCtaText: {
-    color: "#fff",
-    fontWeight: "700",
+    ...auraButtonTextStyle(colors, "primary"),
     fontSize: 12,
   },
   weekBars: {
@@ -862,7 +1275,7 @@ return StyleSheet.create({
     flex: 1,
     height: 20,
     borderRadius: 6,
-    backgroundColor: colors.overlay,
+    backgroundColor: colors.surfaceMuted,
     justifyContent: "flex-end",
     padding: 1,
   },
@@ -875,48 +1288,137 @@ return StyleSheet.create({
     gap: 5,
   },
   modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.24)",
-    justifyContent: "flex-end",
+    ...auraSheetBackdropStyle(colors),
   },
   modalSheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: layout.largeRadius,
-    borderTopRightRadius: layout.largeRadius,
+    ...auraCardStyle(colors, "sheet"),
+    marginHorizontal: layout.horizontalPadding,
+    marginBottom: layout.floatingDockBottom + FLOATING_TAB_BAR_HEIGHT + 12,
+    borderRadius: layout.largeRadius,
+    borderColor: colors.borderStrong,
     padding: layout.cardPadding,
+    gap: 13,
+    overflow: "hidden",
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.14,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 5,
+  },
+  modalHeaderRow: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: 12,
   },
   modalTitle: {
-    fontSize: 16,
-    fontWeight: "800",
+    ...auraTypography.cardTitle,
     color: colors.text,
+    flex: 1,
+  },
+  modalCloseButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+  },
+  monthNavRow: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  monthNavButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+  },
+  monthTitle: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  weekdayRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  weekdayLabel: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  calendarGrid: {
+    gap: 5,
+  },
+  calendarGridRow: {
+    minHeight: 38,
+    flexDirection: "row",
+    gap: 4,
+  },
+  dateCell: {
+    flex: 1,
+    minHeight: 38,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surfaceMuted,
+  },
+  dateText: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  todayMarker: {
+    position: "absolute",
+    bottom: 4,
+    width: 3.5,
+    height: 3.5,
+    borderRadius: 1.75,
   },
   modalActions: {
     flexDirection: "row",
     gap: 10,
+    marginTop: 2,
   },
   modalSecondary: {
     flex: 1,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 10,
-    alignItems: "center",
+    ...auraButtonStyle(colors, "secondary", false, "compact"),
   },
   modalSecondaryText: {
-    color: colors.text,
-    fontWeight: "700",
+    ...auraButtonTextStyle(colors, "secondary"),
   },
   modalPrimary: {
     flex: 1,
-    borderRadius: 12,
-    backgroundColor: colors.accent,
-    paddingVertical: 10,
-    alignItems: "center",
+    ...auraButtonStyle(colors, "primary", false, "compact"),
   },
   modalPrimaryText: {
-    color: "#fff",
-    fontWeight: "800",
+    ...auraButtonTextStyle(colors, "primary"),
   },
 });
 }

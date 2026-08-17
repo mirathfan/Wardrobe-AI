@@ -12,6 +12,10 @@
   },
   "compileOnSave": true,
   "include": [
-    "src"
+    "src",
+    "../shared/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
   ]
 }

@@ -1,9 +1,13 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import AppImage from "@/src/components/common/AppImage";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { getItemImageUrl } from "../../src/lib/itemImage";
+import { Colors } from "@/constants/theme";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "../../src/lib/resolveItemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
 import { formatLastWorn, PlannedLook } from "../utils/outfitPlanning";
+
+const colors = Colors.dark;
 
 type Props = {
   looks: PlannedLook[];
@@ -26,11 +30,19 @@ function slotTitle(label: string, item: ClothingItem | null) {
 }
 
 function SlotCard({ label, item }: { label: string; item: ClothingItem | null }) {
-  const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+  const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "calendar_outfit_card" }) : null;
+  const uri = resolvedImage?.uri ?? null;
   return (
     <View style={styles.slotCard}>
       {uri ? (
-        <Image source={{ uri }} style={styles.slotImage} resizeMode="contain" />
+        <AppImage
+          source={{
+            uri,
+          }}
+          style={styles.slotImage}
+          resizeMode="contain"
+          onError={() => (resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined)}
+        />
       ) : (
         <View style={styles.slotPlaceholder}>
           <Text style={styles.placeholderText}>No photo</Text>
@@ -114,12 +126,13 @@ export default function OutfitPlanCard({
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderColor: "#dedede",
+    borderColor: colors.border,
     borderRadius: 16,
     padding: 14,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
   },
   title: {
+    color: colors.textPrimary,
     fontSize: 16,
     fontWeight: "800",
   },
@@ -133,24 +146,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
+    borderColor: colors.border,
+    backgroundColor: colors.chipBackground,
   },
   segChipActive: {
-    backgroundColor: "#111",
-    borderColor: "#111",
+    backgroundColor: colors.purpleSurface,
+    borderColor: colors.purpleBorder,
   },
   segChipText: {
-    color: "#333",
+    color: colors.textSecondary,
     fontWeight: "700",
     fontSize: 12,
   },
   segChipTextActive: {
-    color: "#fff",
+    color: colors.ctaCream,
   },
   thinking: {
     marginTop: 8,
-    color: "#6b7280",
+    color: colors.textSecondary,
     fontSize: 12,
     fontWeight: "600",
   },
@@ -163,10 +176,10 @@ const styles = StyleSheet.create({
   slotCard: {
     width: "47%",
     borderWidth: 1,
-    borderColor: "#ebebeb",
+    borderColor: colors.borderWarm,
     borderRadius: 12,
     padding: 8,
-    backgroundColor: "#fafafa",
+    backgroundColor: colors.boardLight,
   },
   slotImage: {
     width: "100%",
@@ -176,40 +189,40 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 60,
     borderRadius: 8,
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "rgba(25,0,25,0.06)",
     alignItems: "center",
     justifyContent: "center",
   },
   placeholderText: {
-    color: "#999",
+    color: colors.textOnLightSecondary,
     fontSize: 11,
   },
   slotCategory: {
     marginTop: 6,
-    color: "#666",
+    color: colors.textOnLightSecondary,
     fontSize: 11,
     fontWeight: "700",
   },
   slotName: {
     marginTop: 2,
     fontSize: 13,
-    color: "#111",
+    color: colors.textOnLight,
     fontWeight: "800",
   },
   slotMeta: {
     marginTop: 2,
     fontSize: 11,
-    color: "#555",
+    color: colors.textOnLightSecondary,
   },
   scoreRow: {
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#e8e8e8",
+    borderTopColor: colors.border,
   },
   scoreText: {
     fontSize: 13,
-    color: "#111",
+    color: colors.textPrimary,
     fontWeight: "800",
   },
   reasons: {
@@ -217,7 +230,7 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   reasonLine: {
-    color: "#555",
+    color: colors.textSecondary,
     fontSize: 12,
   },
   actions: {
@@ -229,23 +242,23 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 11,
     borderRadius: 12,
-    backgroundColor: "#111",
+    backgroundColor: colors.ctaCream,
     alignItems: "center",
   },
   primaryBtnText: {
-    color: "#fff",
+    color: colors.ctaText,
     fontWeight: "800",
   },
   secondaryBtn: {
     borderWidth: 1,
-    borderColor: "#111",
+    borderColor: colors.border,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 14,
   },
   secondaryBtnText: {
-    color: "#111",
+    color: colors.textPrimary,
     fontWeight: "800",
   },
 });

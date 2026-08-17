@@ -2,6 +2,8 @@ import * as ImagePicker from "expo-image-picker";
 
 import { Category } from "../shared/wardrobeTaxonomy";
 
+export type AddItemMode = "create" | "edit" | "duplicate";
+
 export const CATEGORIES: Category[] = Object.values(Category);
 
 export const DEFAULT_COLORS = [
@@ -81,7 +83,7 @@ export const PATTERN_OPTIONS = [
 ] as const;
 
 export const DEFAULT_REFINE_VALUE = 1 / 3;
-export const CURRENCIES = ["USD", "INR", "EUR", "GBP", "CAD", "AUD"] as const;
+export const CURRENCIES = ["USD", "INR", "EUR", "GBP", "CAD", "AUD", "AED"] as const;
 export const UPLOAD_TIMEOUT_MS = 25_000;
 export const CUTOUT_TIMEOUT_MS = 55_000;
 export const AUTOFILL_TIMEOUT_MS = 20_000;
@@ -104,14 +106,94 @@ export function normColor(s: string) {
   return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
 }
 
+export function normalizeDisplayColorToDefault(value: unknown) {
+  const text = norm(String(value ?? ""))
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  if (!text) return "";
+
+  const aliases: [string, string][] = [
+    ["off white", "Cream"],
+    ["offwhite", "Cream"],
+    ["ivory", "Cream"],
+    ["cream", "Cream"],
+    ["light blue", "Blue"],
+    ["dark blue", "Navy"],
+    ["navy", "Navy"],
+    ["indigo", "Blue"],
+    ["denim", "Blue"],
+    ["grey", "Grey"],
+    ["gray", "Grey"],
+    ["charcoal", "Grey"],
+    ["khaki", "Khaki"],
+    ["camel", "Tan"],
+    ["olive", "Olive"],
+    ["tan", "Tan"],
+    ["beige", "Beige"],
+    ["chocolate", "Brown"],
+    ["mocha", "Brown"],
+    ["espresso", "Brown"],
+    ["taupe", "Brown"],
+    ["dark brown", "Brown"],
+    ["brown", "Brown"],
+    ["black", "Black"],
+    ["white", "White"],
+    ["green", "Green"],
+    ["red", "Red"],
+    ["gold", "Gold"],
+    ["silver", "Silver"],
+  ];
+
+  const match = aliases.find(([needle]) => text.includes(needle));
+  if (match) return match[1];
+
+  const direct = DEFAULT_COLORS.find((color) => text.includes(color.toLowerCase()));
+  return direct ? normColor(direct) : "";
+}
+
+export function isWeakItemName(value: unknown) {
+  const normalized = norm(String(value ?? ""))
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  return (
+    !normalized ||
+    ["top", "tops", "bottom", "bottoms", "item", "clothing", "garment", "piece", "one piece", "accessory"].includes(
+      normalized
+    )
+  );
+}
+
+export function titleCaseLabel(value: unknown) {
+  return norm(String(value ?? ""))
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+export function buildUsefulItemName(parts: {
+  displayColor?: string | null;
+  colors?: string[];
+  material?: string | null;
+  fit?: string | null;
+  subCategory?: string | null;
+  category?: string | null;
+}) {
+  const color = norm(parts.displayColor ?? "") || norm(parts.colors?.[0] ?? "");
+  const noun = norm(parts.subCategory ?? "") || norm(parts.category ?? "") || "item";
+  const rawParts = [color, parts.fit, parts.material, noun]
+    .map((part) => norm(String(part ?? "")).toLowerCase().replace(/[_-]+/g, " "))
+    .filter(Boolean);
+  const deduped = rawParts.filter((part, index) => rawParts.indexOf(part) === index);
+  return titleCaseLabel(deduped.join(" "));
+}
+
 export function getRefineOptions(value: number) {
   const normalizedValue = Math.max(0, Math.min(1, value));
-  const edgeTighten =
-    normalizedValue >= 0.7 ? 0.03 + ((normalizedValue - 0.7) / 0.3) * 0.12 : 0.03;
+  const edgeTighten = 0.45 + normalizedValue * 0.2;
   return {
-    threshold: 0.60 + normalizedValue * 0.08,
+    threshold: 0.63 + normalizedValue * 0.03,
     cleanupRadius: 2,
-    feather: 1,
+    feather: 0,
     edgeTighten,
     edgePolish: 0.5,
     maskToAlpha: true,
@@ -196,7 +278,16 @@ export function nearestColorLabel(rgb: { r: number; g: number; b: number }) {
 
 export function normalizeColorList(values: unknown) {
   if (!Array.isArray(values)) return [] as string[];
-  return values.map((v) => normColor(String(v))).filter(Boolean).slice(0, 2);
+  const allowed = new Set(DEFAULT_COLORS);
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized =
+      normalizeDisplayColorToDefault(value) || normColor(String(value));
+    if (!normalized || !allowed.has(normalized) || out.includes(normalized)) continue;
+    out.push(normalized);
+    if (out.length >= 2) break;
+  }
+  return out;
 }
 
 export function hasTwoLegRegionCue(data: any) {

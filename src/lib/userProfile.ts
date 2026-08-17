@@ -1,14 +1,60 @@
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
 import { db } from "./firebase";
+import {
+  detectDeviceCurrency,
+  isSupportedCurrencyCode,
+  normalizeCurrencyCode,
+} from "./currency";
+import { getCachedProfilePreferences, setCachedProfilePreferences } from "./localCache";
 import { Category } from "../shared/wardrobeTaxonomy";
 import type { UserProfilePreferences } from "../types/UserProfilePreferences";
 
 export type UserAccountProfile = {
   name: string | null;
+  displayName?: string | null;
+  photoURL?: string | null;
 };
 
+const DEFAULT_DETECTED_CURRENCY = detectDeviceCurrency();
+
 export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
+  onboardingCompleted: false,
+  displayName: null,
+  firstName: null,
+  region: null,
+  unitsPreference: "metric",
+  currencyMode: "auto",
+  preferredCurrency: DEFAULT_DETECTED_CURRENCY,
+  detectedCurrency: DEFAULT_DETECTED_CURRENCY,
+  wardrobeMode: "mixed",
+  selectedCategories: [],
+  styleAesthetics: [],
+  preferredFit: null,
+  budgetPreference: null,
+  preferredBrands: [],
+  avoidedBrands: [],
+  preferredStyles: [],
+  avoidedStyles: [],
+  preferredMaterials: [],
+  avoidedMaterials: [],
+  shoppingGoals: [],
+  sustainabilityPreference: null,
+  favoriteColors: [],
+  avoidedColors: [],
+  accessoryPreferences: [],
+  occasionPriority: [],
+  goals: [],
+  height: {
+    value: null,
+    unit: "cm",
+  },
+  weight: {
+    value: null,
+    unit: "kg",
+  },
+  createdAt: null,
+  updatedAt: null,
   units: {
     length: "cm",
     weight: "kg",
@@ -17,15 +63,27 @@ export const EMPTY_USER_PROFILE_PREFERENCES: UserProfilePreferences = {
   },
   body: {},
   defaultSizes: {},
+  advancedFit: {},
   fitPreferences: {},
   stylePreferences: {},
+  materialPreferences: {},
   closetPreferences: {},
   notifications: {},
 };
 
 export const EMPTY_USER_ACCOUNT_PROFILE: UserAccountProfile = {
   name: null,
+  photoURL: null,
 };
+
+function isOfflineFirestoreError(error: unknown) {
+  const code = typeof error === "object" && error && "code" in error ? String((error as any).code) : "";
+  const message =
+    typeof error === "object" && error && "message" in error
+      ? String((error as any).message)
+      : String(error ?? "");
+  return code === "unavailable" || /client is offline/i.test(message);
+}
 
 function cleanString(value: unknown) {
   const text = String(value ?? "").trim();
@@ -53,13 +111,87 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
   const root = readRecord(value);
   const units = readRecord(root.units);
   const body = readRecord(root.body);
+  const height = readRecord(root.height);
+  const weight = readRecord(root.weight);
   const defaultSizes = readRecord(root.defaultSizes);
+  const advancedFit = readRecord(root.advancedFit);
   const fitPreferences = readRecord(root.fitPreferences);
   const stylePreferences = readRecord(root.stylePreferences);
+  const materialPreferences = readRecord(root.materialPreferences);
   const closetPreferences = readRecord(root.closetPreferences);
   const notifications = readRecord(root.notifications);
+  const detectedCurrency = detectDeviceCurrency();
+  const rawPreferredCurrency =
+    typeof root.preferredCurrency === "string" ? root.preferredCurrency : null;
+  const preferredCurrency = isSupportedCurrencyCode(rawPreferredCurrency)
+    ? normalizeCurrencyCode(rawPreferredCurrency) ?? detectedCurrency
+    : detectedCurrency;
 
   return {
+    onboardingCompleted: typeof root.onboardingCompleted === "boolean" ? root.onboardingCompleted : false,
+    displayName: cleanString(root.displayName),
+    firstName: cleanString(root.firstName),
+    region: cleanString(root.region),
+    unitsPreference:
+      root.unitsPreference === "imperial" || root.unitsPreference === "metric"
+        ? root.unitsPreference
+        : units.length === "in" || units.weight === "lb"
+          ? "imperial"
+          : "metric",
+    currencyMode: root.currencyMode === "manual" ? "manual" : "auto",
+    preferredCurrency,
+    detectedCurrency,
+    wardrobeMode:
+      root.wardrobeMode === "masculine" ||
+      root.wardrobeMode === "feminine" ||
+      root.wardrobeMode === "neutral" ||
+      root.wardrobeMode === "mixed" ||
+      root.wardrobeMode === "custom"
+        ? root.wardrobeMode
+        : "mixed",
+    selectedCategories: cleanStringList(root.selectedCategories),
+    styleAesthetics: cleanStringList(root.styleAesthetics),
+    preferredFit:
+      root.preferredFit === "slim" ||
+      root.preferredFit === "regular" ||
+      root.preferredFit === "relaxed" ||
+      root.preferredFit === "oversized"
+        ? root.preferredFit
+        : null,
+    budgetPreference:
+      root.budgetPreference === "budget" ||
+      root.budgetPreference === "mid" ||
+      root.budgetPreference === "premium"
+        ? root.budgetPreference
+        : null,
+    preferredBrands: cleanStringList(root.preferredBrands ?? stylePreferences.preferredBrands),
+    avoidedBrands: cleanStringList(root.avoidedBrands ?? stylePreferences.avoidedBrands),
+    preferredStyles: cleanStringList(root.preferredStyles ?? stylePreferences.preferredStyles),
+    avoidedStyles: cleanStringList(root.avoidedStyles ?? stylePreferences.avoidedStyles),
+    preferredMaterials: cleanStringList(root.preferredMaterials ?? materialPreferences.preferred),
+    avoidedMaterials: cleanStringList(root.avoidedMaterials ?? materialPreferences.avoided),
+    shoppingGoals: cleanStringList(root.shoppingGoals ?? root.goals),
+    sustainabilityPreference:
+      root.sustainabilityPreference === "new" ||
+      root.sustainabilityPreference === "secondhand" ||
+      root.sustainabilityPreference === "either"
+        ? root.sustainabilityPreference
+        : null,
+    favoriteColors: cleanStringList(root.favoriteColors),
+    avoidedColors: cleanStringList(root.avoidedColors),
+    accessoryPreferences: cleanStringList(root.accessoryPreferences),
+    occasionPriority: cleanStringList(root.occasionPriority),
+    goals: cleanStringList(root.goals),
+    height: {
+      value: cleanNumber(height.value ?? body.height),
+      unit: height.unit === "ft_in" ? "ft_in" : "cm",
+    },
+    weight: {
+      value: cleanNumber(weight.value ?? body.weight),
+      unit: weight.unit === "lb" ? "lb" : "kg",
+    },
+    createdAt: cleanNumber(root.createdAt),
+    updatedAt: cleanNumber(root.updatedAt),
     units: {
       length: units.length === "in" ? "in" : "cm",
       weight: units.weight === "lb" ? "lb" : "kg",
@@ -87,14 +219,29 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
       footLength: cleanNumber(body.footLength),
     },
     defaultSizes: {
+      tops: cleanString(defaultSizes.tops ?? defaultSizes.top),
       top: cleanString(defaultSizes.top),
       outerwear: cleanString(defaultSizes.outerwear),
       hoodie: cleanString(defaultSizes.hoodie),
       formalShirt: cleanString(defaultSizes.formalShirt),
+      bottoms: cleanString(defaultSizes.bottoms ?? defaultSizes.bottomWaist),
       bottomWaist: cleanString(defaultSizes.bottomWaist),
+      bottomsWaist: cleanString(defaultSizes.bottomsWaist ?? defaultSizes.bottomWaist),
+      bottomsLength: cleanString(defaultSizes.bottomsLength ?? defaultSizes.bottomLength),
       bottomLength: cleanString(defaultSizes.bottomLength),
       jeans: cleanString(defaultSizes.jeans),
+      dresses: cleanString(defaultSizes.dresses),
+      skirts: cleanString(defaultSizes.skirts),
       shoes: cleanString(defaultSizes.shoes),
+    },
+    advancedFit: {
+      bust: cleanString(advancedFit.bust ?? body.chest),
+      waistMeasurement: cleanString(advancedFit.waistMeasurement ?? body.waist),
+      hips: cleanString(advancedFit.hips ?? body.hips),
+      inseam: cleanString(advancedFit.inseam ?? body.inseam),
+      shoulderWidth: cleanString(advancedFit.shoulderWidth ?? body.shoulders),
+      sleeveLength: cleanString(advancedFit.sleeveLength ?? body.sleeve),
+      braSize: cleanString(advancedFit.braSize),
     },
     fitPreferences: {
       tops:
@@ -132,10 +279,18 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
           : null,
     },
     stylePreferences: {
-      preferredStyles: cleanStringList(stylePreferences.preferredStyles),
-      favoriteColors: cleanStringList(stylePreferences.favoriteColors),
-      avoidedColors: cleanStringList(stylePreferences.avoidedColors),
-      preferredBrands: cleanStringList(stylePreferences.preferredBrands),
+      preferredStyles: cleanStringList(
+        stylePreferences.preferredStyles ?? root.preferredStyles ?? root.styleAesthetics,
+      ),
+      favoriteColors: cleanStringList(stylePreferences.favoriteColors ?? root.favoriteColors),
+      avoidedColors: cleanStringList(stylePreferences.avoidedColors ?? root.avoidedColors),
+      preferredBrands: cleanStringList(stylePreferences.preferredBrands ?? root.preferredBrands),
+      avoidedBrands: cleanStringList(stylePreferences.avoidedBrands ?? root.avoidedBrands),
+      avoidedStyles: cleanStringList(stylePreferences.avoidedStyles ?? root.avoidedStyles),
+    },
+    materialPreferences: {
+      preferred: cleanStringList(materialPreferences.preferred ?? root.preferredMaterials),
+      avoided: cleanStringList(materialPreferences.avoided ?? root.avoidedMaterials),
     },
     closetPreferences: {
       prioritizeUnderused:
@@ -166,22 +321,41 @@ export function normalizeUserProfilePreferences(value: unknown): UserProfilePref
 }
 
 export async function loadUserProfilePreferences(uid: string) {
-  const snap = await getDoc(doc(db, "users", uid));
-  if (!snap.exists()) return EMPTY_USER_PROFILE_PREFERENCES;
-  return normalizeUserProfilePreferences(snap.data()?.profilePreferences);
+  try {
+    const snap = await getDoc(doc(db, "users", uid));
+    const profile = snap.exists()
+      ? normalizeUserProfilePreferences(snap.data()?.profilePreferences)
+      : EMPTY_USER_PROFILE_PREFERENCES;
+    void setCachedProfilePreferences(uid, profile);
+    return profile;
+  } catch (error) {
+    if (isOfflineFirestoreError(error)) {
+      const cached = await getCachedProfilePreferences(uid).catch(() => null);
+      if (cached?.data) return cached.data;
+    }
+    throw error;
+  }
 }
 
 export function normalizeUserAccountProfile(value: unknown): UserAccountProfile {
   const root = readRecord(value);
+  const displayName = cleanString(root.displayName ?? root.name);
   return {
-    name: cleanString(root.name),
+    name: cleanString(root.name ?? root.displayName),
+    displayName,
+    photoURL: cleanString(root.photoURL),
   };
 }
 
 export async function loadUserAccountProfile(uid: string) {
-  const snap = await getDoc(doc(db, "users", uid));
-  if (!snap.exists()) return EMPTY_USER_ACCOUNT_PROFILE;
-  return normalizeUserAccountProfile(snap.data());
+  try {
+    const snap = await getDoc(doc(db, "users", uid));
+    if (!snap.exists()) return EMPTY_USER_ACCOUNT_PROFILE;
+    return normalizeUserAccountProfile(snap.data());
+  } catch (error) {
+    if (isOfflineFirestoreError(error)) return EMPTY_USER_ACCOUNT_PROFILE;
+    throw error;
+  }
 }
 
 export async function saveUserAccountProfile(uid: string, accountProfile: UserAccountProfile) {
@@ -190,6 +364,7 @@ export async function saveUserAccountProfile(uid: string, accountProfile: UserAc
     doc(db, "users", uid),
     {
       ...normalized,
+      displayName: normalized.displayName ?? normalized.name,
       profileUpdatedAt: Date.now(),
     },
     { merge: true },
@@ -201,14 +376,99 @@ export async function saveUserProfilePreferences(
   profilePreferences: UserProfilePreferences,
 ) {
   const normalized = normalizeUserProfilePreferences(profilePreferences);
+  const timestamp = Date.now();
   await setDoc(
     doc(db, "users", uid),
     {
-      profilePreferences: normalized,
+      profilePreferences: {
+        ...normalized,
+        displayName: normalized.displayName ?? normalized.firstName ?? null,
+        createdAt: normalized.createdAt ?? timestamp,
+        updatedAt: timestamp,
+        height: normalized.height,
+        weight: normalized.weight,
+        stylePreferences: {
+          ...normalized.stylePreferences,
+          preferredStyles: normalized.preferredStyles?.length
+            ? normalized.preferredStyles
+            : normalized.styleAesthetics,
+          favoriteColors: normalized.favoriteColors,
+          avoidedColors: normalized.avoidedColors,
+          preferredBrands: normalized.stylePreferences.preferredBrands?.length
+            ? normalized.stylePreferences.preferredBrands
+            : normalized.preferredBrands ?? [],
+          avoidedBrands: normalized.stylePreferences.avoidedBrands?.length
+            ? normalized.stylePreferences.avoidedBrands
+            : normalized.avoidedBrands ?? [],
+          avoidedStyles: normalized.stylePreferences.avoidedStyles?.length
+            ? normalized.stylePreferences.avoidedStyles
+            : normalized.avoidedStyles ?? [],
+        },
+        materialPreferences: {
+          ...normalized.materialPreferences,
+          preferred:
+            normalized.materialPreferences?.preferred ?? normalized.preferredMaterials ?? [],
+          avoided:
+            normalized.materialPreferences?.avoided ?? normalized.avoidedMaterials ?? [],
+        },
+        fitPreferences: {
+          ...normalized.fitPreferences,
+          tops: normalized.preferredFit ?? normalized.fitPreferences.tops ?? null,
+        },
+        defaultSizes: {
+          ...normalized.defaultSizes,
+          top: normalized.defaultSizes.top ?? normalized.defaultSizes.tops ?? null,
+          tops: normalized.defaultSizes.tops ?? normalized.defaultSizes.top ?? null,
+          bottomWaist:
+            normalized.defaultSizes.bottomWaist ?? normalized.defaultSizes.bottoms ?? null,
+          bottomsWaist:
+            normalized.defaultSizes.bottomsWaist ??
+            normalized.defaultSizes.bottomWaist ??
+            normalized.defaultSizes.bottoms ??
+            null,
+          bottoms:
+            normalized.defaultSizes.bottoms ?? normalized.defaultSizes.bottomWaist ?? null,
+          bottomLength:
+            normalized.defaultSizes.bottomLength ?? normalized.defaultSizes.bottomsLength ?? null,
+          bottomsLength:
+            normalized.defaultSizes.bottomsLength ?? normalized.defaultSizes.bottomLength ?? null,
+          dresses: normalized.defaultSizes.dresses ?? null,
+          skirts: normalized.defaultSizes.skirts ?? null,
+        },
+        advancedFit: {
+          ...normalized.advancedFit,
+          bust: normalized.advancedFit.bust ?? null,
+          waistMeasurement: normalized.advancedFit.waistMeasurement ?? null,
+          hips: normalized.advancedFit.hips ?? null,
+          inseam: normalized.advancedFit.inseam ?? null,
+          shoulderWidth: normalized.advancedFit.shoulderWidth ?? null,
+          sleeveLength: normalized.advancedFit.sleeveLength ?? null,
+          braSize: normalized.advancedFit.braSize ?? null,
+        },
+        body: {
+          ...normalized.body,
+          height: normalized.height.value ?? normalized.body.height ?? null,
+          weight: normalized.weight.value ?? normalized.body.weight ?? null,
+          chest: normalized.advancedFit.bust ?? normalized.body.chest ?? null,
+          waist:
+            normalized.advancedFit.waistMeasurement ?? normalized.body.waist ?? null,
+          hips: normalized.advancedFit.hips ?? normalized.body.hips ?? null,
+          inseam: normalized.advancedFit.inseam ?? normalized.body.inseam ?? null,
+          shoulders:
+            normalized.advancedFit.shoulderWidth ?? normalized.body.shoulders ?? null,
+          sleeve:
+            normalized.advancedFit.sleeveLength ?? normalized.body.sleeve ?? null,
+        },
+      },
       profileUpdatedAt: Date.now(),
     },
     { merge: true },
   );
+  void setCachedProfilePreferences(uid, {
+    ...normalized,
+    createdAt: normalized.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  });
 }
 
 export function getDefaultSizeForSelection(
@@ -221,15 +481,23 @@ export function getDefaultSizeForSelection(
   const defaults = profile.defaultSizes;
   if (category === Category.OUTERWEAR) return defaults.outerwear ?? "";
   if (category === Category.FOOTWEAR) return defaults.shoes ?? "";
+  if (category === Category.ONE_PIECE) {
+    if (sub === "dress" && defaults.dresses) return defaults.dresses;
+    return defaults.dresses ?? defaults.tops ?? defaults.top ?? "";
+  }
   if (category === Category.BOTTOM) {
     if (sub === "jeans" && defaults.jeans) return defaults.jeans;
-    const parts = [defaults.bottomWaist, defaults.bottomLength].filter(Boolean);
+    if (sub === "skirt" && defaults.skirts) return defaults.skirts;
+    const parts = [
+      defaults.bottoms ?? defaults.bottomsWaist ?? defaults.bottomWaist,
+      defaults.bottomsLength ?? defaults.bottomLength,
+    ].filter(Boolean);
     return parts.join(" / ");
   }
   if (category === Category.TOP) {
     if (sub === "hoodie" || sub === "sweatshirt") return defaults.hoodie ?? defaults.top ?? "";
     if (sub === "shirt" || sub === "polo") return defaults.formalShirt ?? defaults.top ?? "";
-    return defaults.top ?? "";
+    return defaults.tops ?? defaults.top ?? "";
   }
   return "";
 }

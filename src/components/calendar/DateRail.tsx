@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { FlatList, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
-import { addDays, isSameLocalDate, toDayKey } from "../../utils/date";
+import { addDays, toDayKey } from "../../utils/date";
+import AuraPressable from "@/src/components/aura/AuraPressable";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 
 type Status = {
@@ -10,111 +11,227 @@ type Status = {
   streak?: boolean;
 };
 
+type RailWeather = {
+  high?: number;
+  low?: number;
+  label?: string;
+};
+
 type Props = {
   selectedDate: Date;
   onSelectDate: (date: Date) => void;
   statuses?: Record<string, Status>;
+  weatherByDate?: Record<string, RailWeather>;
+};
+
+type RailDate = {
+  date: Date;
+  key: string;
+  weekdayLabel: string;
+  dayLabel: string;
 };
 
 const WINDOW = 365 * 2 + 1;
 const HALF = Math.floor(WINDOW / 2);
-const ITEM_WIDTH = 62;
+const ITEM_WIDTH = 78;
+const RAIL_SIDE_PADDING = 8;
 
-export default function DateRail({ selectedDate, onSelectDate, statuses = {} }: Props) {
+function formatWeatherLine(weather?: RailWeather) {
+  const high = typeof weather?.high === "number" ? Math.round(weather.high) : null;
+  const low = typeof weather?.low === "number" ? Math.round(weather.low) : null;
+  if (high !== null || low !== null) {
+    return `${high ?? "—"}°/${low ?? "—"}°`;
+  }
+  return weather?.label ?? "";
+}
+
+export default function DateRail({ selectedDate, onSelectDate, statuses = {}, weatherByDate = {} }: Props) {
   const { colors } = useAppTheme();
-  const listRef = useRef<FlatList<Date>>(null);
+  const { width } = useWindowDimensions();
+  const listRef = useRef<FlatList<RailDate>>(null);
+  const didInitialScrollRef = useRef(false);
 
   const dates = useMemo(
-    () => Array.from({ length: WINDOW }, (_, index) => addDays(new Date(), index - HALF)),
+    () =>
+      Array.from({ length: WINDOW }, (_, index) => {
+        const date = addDays(new Date(), index - HALF);
+        return {
+          date,
+          key: toDayKey(date),
+          weekdayLabel: new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date),
+          dayLabel: new Intl.DateTimeFormat(undefined, { day: "numeric" }).format(date),
+        };
+      }),
     []
   );
 
   const selectedKey = toDayKey(selectedDate);
 
   const selectedIndex = useMemo(() => {
-    const index = dates.findIndex((date) => toDayKey(date) === selectedKey);
+    const index = dates.findIndex((date) => date.key === selectedKey);
     return index >= 0 ? index : HALF;
   }, [dates, selectedKey]);
 
+  const renderDate = useCallback(
+    ({ item }: { item: RailDate }) => {
+      const isActive = item.key === selectedKey;
+      const dayStatus = statuses[item.key];
+      const weatherLine = formatWeatherLine(weatherByDate[item.key]);
+      const weekdayColor = isActive ? colors.text : colors.textSecondary;
+      const dayColor = colors.text;
+      const weatherColor = isActive ? colors.textSecondary : colors.textMuted;
+      const markerColor = isActive ? colors.accent : colors.textSecondary;
+      return (
+        <AuraPressable
+          haptic="selection"
+          hapticTrigger="press"
+          pressedScale={0.96}
+          pressedOpacity={0.88}
+          style={[
+            styles.cell,
+            { borderColor: colors.border, backgroundColor: colors.surfaceSoft },
+            isActive
+              ? [
+                  styles.cellActive,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.borderStrong,
+                    shadowColor: colors.shadow,
+                  },
+                ]
+              : null,
+          ]}
+          onPress={() => onSelectDate(item.date)}
+        >
+          <Text style={[styles.week, { color: weekdayColor }]} numberOfLines={1}>
+            {item.weekdayLabel}
+          </Text>
+          <Text style={[styles.day, { color: dayColor }]} numberOfLines={1}>
+            {item.dayLabel}
+          </Text>
+          <View style={styles.weatherSlot}>
+            {weatherLine ? (
+              <Text
+                style={[styles.weather, { color: weatherColor }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.82}
+              >
+                {weatherLine}
+              </Text>
+            ) : null}
+          </View>
+          <View style={styles.indicatorRow}>
+            {dayStatus?.planned ? <View style={[styles.planDot, { backgroundColor: markerColor }]} /> : null}
+            {dayStatus?.worn ? <Text style={[styles.check, { color: isActive ? colors.accent : colors.success }]}>✓</Text> : null}
+            {dayStatus?.streak ? <View style={[styles.streakDot, { backgroundColor: isActive ? colors.accent : colors.borderStrong }]} /> : null}
+          </View>
+        </AuraPressable>
+      );
+    },
+    [
+      colors.border,
+      colors.accent,
+      colors.borderStrong,
+      colors.surfaceElevated,
+      colors.shadow,
+      colors.surfaceSoft,
+      colors.success,
+      colors.text,
+      colors.textMuted,
+      colors.textSecondary,
+      onSelectDate,
+      selectedKey,
+      statuses,
+      weatherByDate,
+    ],
+  );
+
   useEffect(() => {
-    listRef.current?.scrollToIndex({
-      index: selectedIndex,
-      animated: true,
-      viewPosition: 0.5,
-    });
-  }, [selectedIndex]);
+    const timer = setTimeout(() => {
+      listRef.current?.scrollToIndex({
+        index: selectedIndex,
+        viewPosition: 0.5,
+        animated: didInitialScrollRef.current,
+      });
+      didInitialScrollRef.current = true;
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [selectedIndex, width]);
 
   return (
     <FlatList
       ref={listRef}
       horizontal
       data={dates}
-      keyExtractor={(item) => toDayKey(item)}
+      keyExtractor={(item) => item.key}
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.content}
+      initialScrollIndex={Math.max(0, selectedIndex - 1)}
+      onScrollToIndexFailed={(info) => {
+        requestAnimationFrame(() => {
+          listRef.current?.scrollToOffset({
+            offset: Math.max(0, info.averageItemLength * info.index - ITEM_WIDTH * 2),
+            animated: false,
+          });
+        });
+      }}
       snapToAlignment="center"
       decelerationRate="fast"
       getItemLayout={(_, index) => ({ length: ITEM_WIDTH, offset: ITEM_WIDTH * index, index })}
-      renderItem={({ item }) => {
-        const isActive = isSameLocalDate(item, selectedDate);
-        const key = toDayKey(item);
-        const dayStatus = statuses[key];
-        return (
-          <Pressable
-            style={[
-              styles.cell,
-              { borderColor: colors.border, backgroundColor: colors.surface },
-              isActive ? [styles.cellActive, { backgroundColor: colors.accent, borderColor: colors.accent }] : null,
-            ]}
-            onPress={() => onSelectDate(item)}
-          >
-            <Text style={[styles.week, { color: colors.textSecondary }, isActive ? styles.activeText : null]}>
-              {new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(item)}
-            </Text>
-            <Text style={[styles.day, { color: colors.text }, isActive ? styles.activeText : null]}>
-              {new Intl.DateTimeFormat(undefined, { day: "numeric" }).format(item)}
-            </Text>
-            <View style={styles.indicatorRow}>
-              {dayStatus?.planned ? <View style={[styles.planDot, { backgroundColor: colors.aiAccent }]} /> : null}
-              {dayStatus?.worn ? <Text style={styles.check}>✓</Text> : null}
-              {dayStatus?.streak ? <Text style={styles.fire}>🔥</Text> : null}
-            </View>
-          </Pressable>
-        );
-      }}
+      renderItem={renderDate}
+      removeClippedSubviews={false}
+      initialNumToRender={12}
+      maxToRenderPerBatch={8}
+      windowSize={7}
     />
   );
 }
 
 const styles = StyleSheet.create({
   content: {
-    paddingVertical: 8,
-    paddingHorizontal: 2,
+    paddingTop: 6,
+    paddingBottom: 10,
+    paddingHorizontal: RAIL_SIDE_PADDING,
   },
   cell: {
     width: ITEM_WIDTH - 6,
     marginHorizontal: 3,
-    borderRadius: 18,
+    minHeight: 76,
+    borderRadius: 16,
     borderWidth: 1,
     alignItems: "center",
+    justifyContent: "center",
     paddingVertical: 8,
+    paddingHorizontal: 5,
   },
   cellActive: {
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
   },
   week: {
     fontSize: 11,
-    fontWeight: "700",
+    fontWeight: "500",
   },
   day: {
     marginTop: 2,
     fontSize: 16,
-    fontWeight: "800",
+    fontWeight: "600",
   },
-  activeText: {
-    color: "#fff",
+  weatherSlot: {
+    minHeight: 14,
+    marginTop: 3,
+    justifyContent: "center",
+  },
+  weather: {
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: "500",
   },
   indicatorRow: {
-    marginTop: 4,
+    marginTop: 3,
     minHeight: 10,
     flexDirection: "row",
     alignItems: "center",
@@ -127,12 +244,12 @@ const styles = StyleSheet.create({
   },
   check: {
     fontSize: 9,
-    color: "#16a34a",
-    fontWeight: "900",
+    fontWeight: "700",
     lineHeight: 9,
   },
-  fire: {
-    fontSize: 9,
-    lineHeight: 9,
+  streakDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
   },
 });

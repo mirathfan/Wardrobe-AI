@@ -1,5 +1,6 @@
 import { Timestamp } from "firebase/firestore";
 import type { VisualNormalization } from "../lib/visualNormalization";
+import type { ItemImageSource, ProductImageQuality, ProductImageVariant, ProductPolishMetadata } from "./ProductImageQuality";
 import {
   AllowedFormality,
   AllowedLayerRole,
@@ -9,6 +10,7 @@ import {
 } from "../shared/wardrobeTaxonomy";
 
 export type ClothingStatus = "AVAILABLE" | "WORN" | "IN_LAUNDRY";
+export type LaundryStatus = "clean" | "needs_wash" | "in_laundry";
 export type ClothingPattern =
   | "solid"
   | "striped"
@@ -26,15 +28,40 @@ export type ClothingPattern =
 
 export type ClothingItem = {
   id: string;
+  images?: {
+    traceId?: string | null;
+    originalUrl: string;
+    sourceOriginalUrl?: string | null;
+    refinedUrl?: string | null;
+    cleanedUrl?: string | null;
+    imageSource?: ItemImageSource | null;
+    cutoutSourceKind?: ProductImageVariant | null;
+    isPrimary: boolean;
+  }[] | null;
+  originalImageUrl?: string | null;
+  refinedImageUrl?: string | null;
+  cleanedImageUrl?: string | null;
+  imageSource?: ItemImageSource | null;
+  cutoutSourceKind?: ProductImageVariant | null;
+  imageQuality?: ProductImageQuality | null;
+  productPolish?: ProductPolishMetadata | null;
+  photoPipelineTraceId?: string | null;
+  backgroundRemovalMethod?: "client" | "server" | "none";
 
   // core
   brand: string;
+  isUnbranded?: boolean | null;
+  brandSource?: "user" | "ai" | "default_unbranded" | string | null;
+  brandUpdatedAt?: number | null;
+  brandConfidence?: number | null;
   category?: Category | "shoes" | string;
   subCategory?: string;
   type?: string | null;
   wearSlot?: "core" | "accessory";
   pattern?: ClothingPattern;
   material?: string;
+  materials?: string[];
+  materialConfidence?: number | null;
   style?: string | null;
   formality?: AllowedFormality | null;
   warmth?: AllowedWarmth | null;
@@ -55,8 +82,24 @@ export type ClothingItem = {
   ingestionStatus?: "pending" | "processing" | "done" | "failed" | null;
   embeddings?: { image?: number[] };
   photos?: {
+    traceId?: string | null;
     originalUrl?: string | null;
     primaryUrl?: string | null;
+    images?: {
+      traceId?: string | null;
+      originalUrl?: string | null;
+      sourceOriginalUrl?: string | null;
+      refinedUrl?: string | null;
+      cleanedUrl?: string | null;
+      imageSource?: ItemImageSource | null;
+      cutoutSourceKind?: ProductImageVariant | null;
+      isPrimary?: boolean;
+    }[] | null;
+    refinedUrl?: string | null;
+    imageQuality?: ProductImageQuality | null;
+    productPolish?: ProductPolishMetadata | null;
+    imageSource?: ItemImageSource | null;
+    cutoutSourceKind?: ProductImageVariant | null;
     normalizedUrl?: string | null;
     previewUrl?: string | null;
     urls?: string[];
@@ -84,7 +127,12 @@ export type ClothingItem = {
   pixelColors?: string[];
   pixelColorHex?: string;
   colorConfidence?: number;
+  confidenceSummary?: {
+    overall: number;
+    notes: string;
+  } | null;
   colorNeedsReview?: boolean;
+  detailTags?: string[] | null;
   crop?: { x: number; y: number; w: number; h: number; source: "ai" };
   cleanedUpdatedAt?: number;
   aiDebug?: {
@@ -104,22 +152,59 @@ export type ClothingItem = {
   price?: number | null;
   priceAmount?: number | null;
   priceCurrency?: string | null;
+  purchasePrice?: number | null;
+  retailPrice?: number | null;
+  estimatedValue?: number | null;
+  value?: number | null;
+  currency?: string | null;
+  originalPrice?: number | null;
+  salePrice?: number | null;
+  originalCurrency?: string | null;
+  priceSource?: "product_link" | "manual" | "estimated" | null;
+  priceDisplay?: string | null;
+  productUrl?: string | null;
   purchaseDate?: string | null;
+  sourceUrl?: string | null;
+  source?: string | null;
+  retailer?: string | null;
+  domain?: string | null;
   occasionTags?: string[] | null;
   seasonTags?: string[] | null;
-  fit?: "slim" | "regular" | "oversized" | "relaxed" | "unknown" | null;
+  fit?: "slim" | "regular" | "oversized" | "relaxed" | "loose" | "straight" | "unknown" | null;
+  sleeveLength?: string | null;
+  collar?: string | null;
+  length?: string | null;
+  sizeOptions?: string[] | null;
+  availableSizes?: string[] | null;
+  careInstructions?: string[] | null;
+  productDescription?: string | null;
+  graphicText?: string | null;
+  motif?: string | null;
+  collaborationName?: string | null;
   rise?: "low" | "mid" | "high" | "unknown" | null;
   legShape?: "skinny" | "tapered" | "straight" | "wide" | "flare" | "unknown" | null;
   warmthPreference?: number | null;
   photoUrl?: string | null;
   photoUri?: string | null;
+  isFavorite?: boolean | null;
   visualNormalization?: VisualNormalization | null;
   isDraft?: boolean;
-  draftState?: "draft" | "photo_uploaded" | "ingesting" | "ready" | "failed" | null;
+  draftState?:
+    | "draft"
+    | "awaiting_confirmation"
+    | "photo_uploaded"
+    | "ingesting"
+    | "ready"
+    | "failed"
+    | "cancelled"
+    | null;
 
   // lifecycle
   status: ClothingStatus;
+  laundryStatus?: LaundryStatus | null;
   wearCountSinceWash: number;
+  laundryUpdatedAt?: number | Timestamp | null;
+  lastWornAt?: number | Timestamp | null;
 
   createdAt: number;
   lastWornDate?: number | null;

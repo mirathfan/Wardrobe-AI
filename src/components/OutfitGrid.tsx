@@ -1,9 +1,13 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import AppImage from "@/src/components/common/AppImage";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { getItemImageUrl } from "../../src/lib/itemImage";
+import { Colors } from "@/constants/theme";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "../../src/lib/resolveItemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
 import { formatLastWorn } from "../utils/outfitPlanning";
+
+const colors = Colors.dark;
 
 type SlotKey = "outerwear" | "top" | "bottom" | "shoes";
 
@@ -26,7 +30,8 @@ function Tile({
   editable: boolean;
   onPressSlot?: (slot: SlotKey) => void;
 }) {
-  const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+  const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "outfit_card" }) : null;
+  const uri = resolvedImage?.uri ?? null;
   const name = item?.name || item?.subCategory || item?.category || "+ Add";
 
   return (
@@ -35,7 +40,14 @@ function Tile({
       style={[styles.tile, editable ? styles.tileEditable : null]}
     >
       {uri ? (
-        <Image source={{ uri }} style={styles.image} resizeMode="contain" />
+        <AppImage
+          source={{
+            uri,
+          }}
+          style={styles.image}
+          resizeMode="contain"
+          onError={() => (resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined)}
+        />
       ) : (
         <View style={styles.placeholder}>
           <Text style={styles.placeholderText}>Pick item</Text>
@@ -79,13 +91,13 @@ const styles = StyleSheet.create({
   tile: {
     width: "47%",
     borderWidth: 1,
-    borderColor: "#ebebeb",
+    borderColor: colors.borderWarm,
     borderRadius: 12,
     padding: 8,
-    backgroundColor: "#fafafa",
+    backgroundColor: colors.boardLight,
   },
   tileEditable: {
-    borderColor: "#d1d5db",
+    borderColor: colors.borderWarm,
   },
   image: {
     width: "100%",
@@ -95,12 +107,12 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 60,
     borderRadius: 8,
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "rgba(25,0,25,0.06)",
     alignItems: "center",
     justifyContent: "center",
   },
   placeholderText: {
-    color: "#999",
+    color: colors.textOnLightSecondary,
     fontSize: 11,
   },
   slotHeader: {
@@ -110,19 +122,19 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   label: {
-    color: "#666",
+    color: colors.textOnLightSecondary,
     fontSize: 11,
     fontWeight: "700",
   },
   name: {
     marginTop: 2,
     fontSize: 13,
-    color: "#111",
+    color: colors.textOnLight,
     fontWeight: "800",
   },
   meta: {
     marginTop: 2,
     fontSize: 11,
-    color: "#555",
+    color: colors.textOnLightSecondary,
   },
 });

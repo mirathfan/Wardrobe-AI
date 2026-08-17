@@ -6,9 +6,11 @@
   "types": "src/index.ts",
   "private": true,
   "license": "MIT",
+  "dependencies": {
+    "expo-modules-core": "*"
+  },
   "peerDependencies": {
     "expo": "*",
-    "expo-modules-core": "*",
     "react-native": "*"
   }
 }

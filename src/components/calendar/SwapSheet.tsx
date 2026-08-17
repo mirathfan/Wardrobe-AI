@@ -1,5 +1,12 @@
 import React from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  auraButtonStyle,
+  auraButtonTextStyle,
+  auraCardStyle,
+  auraSheetBackdropStyle,
+  auraTypography,
+} from "@/src/components/ui/auraStylePrimitives";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
 import { useResponsiveLayout } from "@/src/hooks/useResponsiveLayout";
 
@@ -17,38 +24,54 @@ type Props = {
 export default function SwapSheet({ visible, title, options, onSelect, onClear, onClose }: Props) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
+  const renderOption = React.useCallback(
+    ({ item }: { item: Option }) => (
+      <Pressable
+        style={[styles.option, auraCardStyle(colors, "inset")]}
+        onPress={() => onSelect(item.id)}
+      >
+        <Text style={[auraTypography.body, styles.optionText, { color: colors.text }]}>{item.label}</Text>
+      </Pressable>
+    ),
+    [colors, onSelect],
+  );
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.backdrop}>
+      <View style={[styles.backdrop, auraSheetBackdropStyle(colors)]}>
         <View
           style={[
             styles.sheet,
+            auraCardStyle(colors, "sheet"),
             {
-              backgroundColor: colors.surface,
               borderTopLeftRadius: layout.largeRadius,
               borderTopRightRadius: layout.largeRadius,
+              borderBottomLeftRadius: 0,
+              borderBottomRightRadius: 0,
               padding: layout.cardPadding,
             },
           ]}
         >
-          <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+          <Text style={[auraTypography.cardTitle, styles.title, { color: colors.text }]}>{title}</Text>
           {options.length === 0 ? <Text style={[styles.empty, { color: colors.textSecondary }]}>No matching items yet.</Text> : null}
-          {options.map((option) => (
-            <Pressable
-              key={option.id}
-              style={[styles.option, { borderColor: colors.border, backgroundColor: colors.overlay }]}
-              onPress={() => onSelect(option.id)}
-            >
-              <Text style={[styles.optionText, { color: colors.text }]}>{option.label}</Text>
-            </Pressable>
-          ))}
+          <FlatList
+            data={options}
+            keyExtractor={(item) => item.id}
+            renderItem={renderOption}
+            ItemSeparatorComponent={OptionSeparator}
+            style={styles.optionsList}
+            removeClippedSubviews
+            initialNumToRender={12}
+            maxToRenderPerBatch={10}
+            windowSize={6}
+          />
           {onClear ? (
-            <Pressable style={[styles.clear, { borderColor: "#ef4444" }]} onPress={onClear}>
-              <Text style={styles.clearText}>Clear slot</Text>
+            <Pressable style={[styles.clear, auraButtonStyle(colors, "danger", false, "compact")]} onPress={onClear}>
+              <Text style={auraButtonTextStyle(colors, "danger")}>Clear slot</Text>
             </Pressable>
           ) : null}
-          <Pressable style={[styles.close, { borderColor: colors.border, backgroundColor: colors.background }]} onPress={onClose}>
-            <Text style={[styles.closeText, { color: colors.text }]}>Done</Text>
+          <Pressable style={[styles.close, auraButtonStyle(colors, "primary", false, "compact")]} onPress={onClose}>
+            <Text style={auraButtonTextStyle(colors, "primary")}>Done</Text>
           </Pressable>
         </View>
       </View>
@@ -56,35 +79,29 @@ export default function SwapSheet({ visible, title, options, onSelect, onClear, 
   );
 }
 
+function OptionSeparator() {
+  return <View style={{ height: 8 }} />;
+}
+
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.25)", justifyContent: "flex-end" },
+  backdrop: { flex: 1, justifyContent: "flex-end" },
   sheet: {
     gap: 8,
+    maxHeight: "82%",
   },
-  title: { fontSize: 16, fontWeight: "800", marginBottom: 8 },
+  optionsList: { flexGrow: 0 },
+  title: { marginBottom: 8 },
   option: {
+    minHeight: 44,
     paddingVertical: 12,
     paddingHorizontal: 12,
-    borderRadius: 14,
-    borderWidth: 1,
   },
   optionText: { fontWeight: "600" },
   empty: { marginBottom: 8 },
   clear: {
     marginTop: 4,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#ef4444",
-    alignItems: "center",
-    paddingVertical: 10,
   },
-  clearText: { fontWeight: "700", color: "#b91c1c" },
   close: {
     marginTop: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: "center",
-    paddingVertical: 10,
   },
-  closeText: { fontWeight: "700" },
 });

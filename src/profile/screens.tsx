@@ -1,22 +1,53 @@
 import { router } from "expo-router";
-import { signOut } from "firebase/auth";
-import React, { useCallback, useEffect, useState } from "react";
+import * as Clipboard from "expo-clipboard";
+import Constants from "expo-constants";
+import * as ImagePicker from "expo-image-picker";
+import { sendEmailVerification, sendPasswordResetEmail, signOut, updateProfile } from "firebase/auth";
+import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
+  Share,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Pill } from "@/src/addItem/ui/Pill";
 import { SafeScreen } from "@/src/components/SafeScreen";
+import AuraPressable from "@/src/components/aura/AuraPressable";
+import AuraSubpageHeader from "@/src/components/ui/AuraSubpageHeader";
+import {
+  auraButtonStyle,
+  auraButtonTextStyle,
+  auraCardStyle,
+  auraSheetBackdropStyle,
+  auraSurfaceTiers,
+  auraTypography,
+} from "@/src/components/ui/auraStylePrimitives";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useAppTheme } from "@/src/hooks/useAppTheme";
-import { auth } from "@/src/lib/firebase";
+import {
+  SUPPORTED_CURRENCIES,
+  formatMoney,
+  resolveUserCurrency,
+  type SupportedCurrencyCode,
+} from "@/src/lib/currency";
+import { app, auth, db, storage } from "@/src/lib/firebase";
+import { getFriendlyErrorMessage } from "@/src/lib/errors";
+import { signOutGoogle } from "@/src/auth/googleAuth";
+import { Storage } from "@/src/lib/storage";
+import { clearAssistantMemory, buildCompactMemorySummary, loadAssistantProfile, loadBehaviorProfile } from "@/src/lib/assistantMemory";
+import { loadStyleProfile, loadLearnedStyleMemory, saveLearnedStyleMemory, saveStyleProfile } from "@/src/lib/auraMemory";
+import { getCachedProfilePreferences, setCachedProfilePreferences } from "@/src/lib/localCache";
 import {
   EMPTY_USER_ACCOUNT_PROFILE,
   EMPTY_USER_PROFILE_PREFERENCES,
@@ -26,7 +57,12 @@ import {
   saveUserProfilePreferences,
 } from "@/src/lib/userProfile";
 import type { UserAccountProfile } from "@/src/lib/userProfile";
-import type { UserProfilePreferences } from "@/src/types/UserProfilePreferences";
+import type {
+  BudgetPreference,
+  SustainabilityPreference,
+  UserProfilePreferences,
+} from "@/src/types/UserProfilePreferences";
+import { emptyLearnedStyleMemory, emptyStyleProfile, type StyleProfile } from "@/shared/auraMemory";
 
 const BODY_FIELDS: { key: keyof UserProfilePreferences["body"]; label: string }[] = [
   { key: "height", label: "Height" },
@@ -66,6 +102,28 @@ const SHOE_SIZE_OPTIONS = {
   EU: ["EU 38", "EU 39", "EU 40", "EU 41", "EU 42", "EU 43", "EU 44", "EU 45", "EU 46", "EU 47"],
 } as const;
 
+type DeleteAccountDataResult = {
+  ok: boolean;
+  firestoreDocumentsDeleted: number;
+  storageFilesDeleted: number;
+  rateLimitDocumentsDeleted?: number;
+  authUserDeleted: boolean;
+};
+
+const TOP_FIT_OPTIONS = ["slim", "regular", "relaxed", "oversized"] as const;
+const OUTERWEAR_FIT_OPTIONS = ["slim", "regular", "roomy"] as const;
+const BOTTOM_RISE_OPTIONS = ["low", "mid", "high"] as const;
+const BOTTOM_LEG_OPTIONS = ["skinny", "slim", "straight", "tapered", "wide"] as const;
+const SHOE_FIT_OPTIONS = ["true_to_size", "half_up", "half_down"] as const;
+const LENGTH_UNIT_OPTIONS = ["cm", "in"] as const;
+const WEIGHT_UNIT_OPTIONS = ["kg", "lb"] as const;
+const SHOE_REGION_OPTIONS = ["US", "UK", "EU"] as const;
+const CLOTHING_REGION_OPTIONS = ["US", "UK", "EU", "INTL"] as const;
+const CURRENCY_MODE_OPTIONS = ["auto", "manual"] as const;
+const CURRENCY_OPTIONS = SUPPORTED_CURRENCIES.map((currency) => currency.code) as SupportedCurrencyCode[];
+const BUDGET_PREFERENCE_OPTIONS = ["budget", "mid", "premium"] as const;
+const SUSTAINABILITY_PREFERENCE_OPTIONS = ["new", "secondhand", "either"] as const;
+
 function commaText(values?: string[]) {
   return Array.isArray(values) && values.length ? values.join(", ") : "";
 }
@@ -88,6 +146,18 @@ function parseInputNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function firstSupportedPreferredFit(
+  values: string[]
+): UserProfilePreferences["preferredFit"] {
+  const next = values.find((value) =>
+    value === "slim" ||
+    value === "regular" ||
+    value === "relaxed" ||
+    value === "oversized"
+  );
+  return (next as UserProfilePreferences["preferredFit"]) ?? null;
+}
+
 export function useProfilePreferencesState() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -101,14 +171,21 @@ export function useProfilePreferencesState() {
       setLoading(false);
       return;
     }
+    setProfile(EMPTY_USER_PROFILE_PREFERENCES);
     setLoading(true);
+    void getCachedProfilePreferences(user.uid).then((cached) => {
+      if (!cancelled && cached?.data) {
+        setProfile(cached.data);
+        setLoading(false);
+      }
+    });
     void loadUserProfilePreferences(user.uid)
       .then((nextProfile) => {
         if (!cancelled) setProfile(nextProfile);
       })
-      .catch((error: any) => {
+      .catch(() => {
         if (!cancelled) {
-          Alert.alert("Profile", error?.message ?? "Unable to load profile.");
+          Alert.alert("Profile", "Unable to load profile.");
           setProfile(EMPTY_USER_PROFILE_PREFERENCES);
         }
       })
@@ -128,9 +205,10 @@ export function useProfilePreferencesState() {
     try {
       setSaving(true);
       await saveUserProfilePreferences(user.uid, profile);
+      void setCachedProfilePreferences(user.uid, profile);
       Alert.alert("Saved", "Profile updated.");
-    } catch (error: any) {
-      Alert.alert("Save failed", error?.message ?? "Unable to save profile.");
+    } catch {
+      Alert.alert("Save failed", "Unable to save profile.");
     } finally {
       setSaving(false);
     }
@@ -157,9 +235,9 @@ export function useAccountProfileState() {
       .then((nextProfile) => {
         if (!cancelled) setAccountProfile(nextProfile);
       })
-      .catch((error: any) => {
+      .catch(() => {
         if (!cancelled) {
-          Alert.alert("Account", error?.message ?? "Unable to load account.");
+          Alert.alert("Account", "Unable to load account.");
           setAccountProfile(EMPTY_USER_ACCOUNT_PROFILE);
         }
       })
@@ -180,8 +258,8 @@ export function useAccountProfileState() {
       setSaving(true);
       await saveUserAccountProfile(user.uid, accountProfile);
       Alert.alert("Saved", "Account updated.");
-    } catch (error: any) {
-      Alert.alert("Save failed", error?.message ?? "Unable to save account.");
+    } catch {
+      Alert.alert("Save failed", "Unable to save account.");
     } finally {
       setSaving(false);
     }
@@ -213,11 +291,14 @@ export function formatDefaultSizesSummary(profile: UserProfilePreferences) {
 }
 
 export function formatUnitsSummary(profile: UserProfilePreferences) {
+  const currency = resolveUserCurrency(profile);
+  const currencyMode = profile.currencyMode === "manual" ? "Manual" : "Auto";
   return [
     profile.units.length,
     profile.units.weight,
     profile.units.shoeRegion,
     profile.units.clothingRegion,
+    `${currencyMode} ${currency}`,
   ]
     .filter(Boolean)
     .join(" • ");
@@ -230,6 +311,20 @@ export function formatStyleSummary(profile: UserProfilePreferences) {
     ...(profile.stylePreferences.preferredBrands ?? []).slice(0, 1),
   ];
   return parts.join(" • ") || "Not set";
+}
+
+export function formatShoppingSummary(profile: UserProfilePreferences) {
+  const parts = [
+    profile.budgetPreference ? humanize(profile.budgetPreference) : "",
+    profile.defaultSizes.top || profile.defaultSizes.tops ? `Top ${profile.defaultSizes.top ?? profile.defaultSizes.tops}` : "",
+    profile.defaultSizes.shoes ? `Shoes ${profile.defaultSizes.shoes}` : "",
+    profile.preferredBrands?.[0] ||
+      profile.stylePreferences.preferredBrands?.[0] ||
+      profile.favoriteColors?.[0] ||
+      profile.stylePreferences.favoriteColors?.[0] ||
+      "",
+  ].filter(Boolean);
+  return parts.slice(0, 3).join(" • ") || "Sizes, budget, brands";
 }
 
 export function formatClosetSummary(profile: UserProfilePreferences) {
@@ -261,13 +356,15 @@ export function ProfileHubRow({
 }) {
   const { colors } = useAppTheme();
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
+      haptic="selection"
+      hapticTrigger="press"
+      pressedScale={0.985}
+      pressedOpacity={0.88}
       style={{
-        backgroundColor: colors.surface,
+        ...auraSurfaceTiers.surfaceInteractive,
         borderRadius: 18,
-        borderWidth: 1,
-        borderColor: colors.border,
         padding: 16,
         flexDirection: "row",
         alignItems: "center",
@@ -276,17 +373,16 @@ export function ProfileHubRow({
       }}
     >
       <View style={{ flex: 1, gap: 4 }}>
-        <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text }}>{title}</Text>
-        <Text style={{ color: colors.textSecondary }}>{summary}</Text>
+        <Text style={[auraTypography.cardTitle, { color: colors.text }]}>{title}</Text>
+        <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>{summary}</Text>
       </View>
       <Text style={{ color: colors.textSecondary, fontSize: 18 }}>›</Text>
-    </Pressable>
+    </AuraPressable>
   );
 }
 
 export function ProfileSectionScreen({
   title,
-  subtitle,
   children,
   onSave,
   saving,
@@ -298,34 +394,15 @@ export function ProfileSectionScreen({
   saving?: boolean;
 }) {
   const { colors } = useAppTheme();
+  const insets = useSafeAreaInsets();
   return (
-    <SafeScreen backgroundColor={colors.background} style={{ flex: 1 }}>
+    <SafeScreen backgroundColor={colors.background} includeTopInset={false} includeBottomInset={false} style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 120 }}>
-          <View style={{ gap: 8 }}>
-            <Pressable
-              onPress={() => router.back()}
-              style={{
-                alignSelf: "flex-start",
-                paddingHorizontal: 12,
-                paddingVertical: 8,
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: colors.border,
-                backgroundColor: colors.surface,
-              }}
-            >
-              <Text style={{ color: colors.text, fontWeight: "700" }}>Back</Text>
-            </Pressable>
-            <Text style={{ fontSize: 28, fontWeight: "900", color: colors.text }}>{title}</Text>
-            {subtitle ? <Text style={{ color: colors.textSecondary }}>{subtitle}</Text> : null}
-          </View>
+        <AuraSubpageHeader title={title} eyebrow="PROFILE" fallbackRoute="/(tabs)/profile" />
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, gap: 14, paddingBottom: onSave ? 24 : insets.bottom + 24 }}>
           <View
             style={{
-              backgroundColor: colors.surface,
-              borderRadius: 18,
-              borderWidth: 1,
-              borderColor: colors.border,
+              ...auraCardStyle(colors, "card"),
               padding: 16,
               gap: 14,
             }}
@@ -337,11 +414,11 @@ export function ProfileSectionScreen({
           <View
             style={{
               paddingHorizontal: 16,
-              paddingTop: 12,
-              paddingBottom: 12,
+              paddingTop: 10,
+              paddingBottom: insets.bottom + 10,
               borderTopWidth: 1,
               borderTopColor: colors.border,
-              backgroundColor: colors.background,
+              backgroundColor: "rgba(9,0,11,0.88)",
             }}
           >
             <PrimaryButton label={saving ? "Saving..." : "Save"} onPress={onSave} disabled={saving} />
@@ -352,46 +429,547 @@ export function ProfileSectionScreen({
   );
 }
 
+function providerName(providerId: string) {
+  if (providerId === "password") return "Email & Password";
+  if (providerId === "google.com") return "Google";
+  if (providerId === "apple.com") return "Apple";
+  return providerId;
+}
+
+function getAccountInitials(name: string, email?: string | null) {
+  const source = name.trim() || email?.split("@")[0] || "AURA";
+  const parts = source.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? "A";
+  const second = parts.length > 1 ? parts[parts.length - 1]?.[0] : parts[0]?.[1];
+  return `${first}${second ?? ""}`.toUpperCase();
+}
+
+function appVersionLabel() {
+  const version = Constants.expoConfig?.version ?? Constants.manifest2?.extra?.expoClient?.version ?? "Unknown";
+  const build =
+    Constants.expoConfig?.ios?.buildNumber ??
+    Constants.expoConfig?.android?.versionCode ??
+    Constants.nativeBuildVersion ??
+    null;
+  return build ? `${version} (${build})` : String(version);
+}
+
+function cleanExportValue(value: unknown): unknown {
+  if (value == null) return value;
+  if (typeof value === "number" || typeof value === "string" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.map(cleanExportValue);
+  if (typeof value === "object") {
+    if ("toMillis" in value && typeof value.toMillis === "function") return value.toMillis();
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !/image|photo|url|embedding/i.test(key))
+      .map(([key, entry]) => [key, cleanExportValue(entry)]);
+    return Object.fromEntries(entries);
+  }
+  return String(value);
+}
+
+function summarizeClosetItem(data: Record<string, unknown>, id: string) {
+  return {
+    id,
+    name: data.name ?? null,
+    brand: data.brand ?? null,
+    category: data.category ?? null,
+    subCategory: data.subCategory ?? null,
+    colors: data.colors ?? data.displayColors ?? [],
+    status: data.status ?? null,
+    wearCountSinceWash: data.wearCountSinceWash ?? 0,
+    createdAt: cleanExportValue(data.createdAt),
+    lastWornDate: cleanExportValue(data.lastWornDate),
+  };
+}
+
+async function readCollectionSummary(uid: string, collectionName: string, max = 100) {
+  const snap = await getDocs(query(collection(db, "users", uid, collectionName), limit(max)));
+  return snap.docs.map((entry) => ({
+    id: entry.id,
+    ...(cleanExportValue(entry.data()) as Record<string, unknown>),
+  }));
+}
+
+async function buildAccountExport(uid: string, profilePreferences: UserProfilePreferences, accountProfile: UserAccountProfile) {
+  const [userSnap, itemsSnap, savedLooks, savedOutfits, feedbackLooks, assistantMain, assistantBehavior, learnedStyle] =
+    await Promise.all([
+      getDoc(doc(db, "users", uid)),
+      getDocs(query(collection(db, "users", uid, "items"), orderBy("createdAt", "desc"), limit(250))),
+      readCollectionSummary(uid, "savedLooks", 100),
+      readCollectionSummary(uid, "savedOutfits", 100),
+      readCollectionSummary(uid, "outfitFeedback", 100),
+      loadAssistantProfile(uid),
+      loadBehaviorProfile(uid),
+      loadLearnedStyleMemory(uid),
+    ]);
+
+  return {
+    exportedAt: new Date().toISOString(),
+    account: {
+      uid,
+      name: accountProfile.name,
+      email: auth.currentUser?.email ?? null,
+      emailVerified: auth.currentUser?.emailVerified ?? false,
+      memberSince: auth.currentUser?.metadata?.creationTime ?? null,
+      profileUpdatedAt: cleanExportValue(userSnap.data()?.profileUpdatedAt),
+    },
+    profilePreferences,
+    closetItems: itemsSnap.docs.map((entry) => summarizeClosetItem(entry.data(), entry.id)),
+    savedLooks: {
+      savedLooks,
+      savedOutfits,
+      outfitFeedback: feedbackLooks,
+    },
+    auraMemory: {
+      summary: buildCompactMemorySummary(assistantMain, assistantBehavior),
+      assistantProfile: assistantMain,
+      learnedStyle,
+    },
+  };
+}
+
+async function blobFromUri(uri: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onerror = () => reject(new Error("Unable to read selected image."));
+    xhr.onload = () => resolve(xhr.response as Blob);
+    xhr.responseType = "blob";
+    xhr.open("GET", uri, true);
+    xhr.send(null);
+  });
+}
+
+async function uploadAccountPhoto(uid: string, uri: string) {
+  const blob = await blobFromUri(uri);
+  const fileRef = ref(storage, `users/${uid}/profile/avatar.jpg`);
+  await uploadBytes(fileRef, blob, { contentType: "image/jpeg" });
+  return getDownloadURL(fileRef);
+}
+
+function AccountSection({ title, children }: { title: string; children: React.ReactNode }) {
+  const { colors } = useAppTheme();
+  return (
+    <View style={{ gap: 10 }}>
+      <Text style={[auraTypography.eyebrow, { color: colors.iridescentStart }]}>{title}</Text>
+      <View
+        style={{
+          ...auraCardStyle(colors, "card"),
+          padding: 16,
+          gap: 14,
+        }}
+      >
+        {children}
+      </View>
+    </View>
+  );
+}
+
+function AccountActionRow({
+  title,
+  subtitle,
+  onPress,
+  disabled,
+  danger,
+}: {
+  title: string;
+  subtitle?: string;
+  onPress: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  const { colors } = useAppTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={{
+        minHeight: 50,
+        ...(danger ? auraButtonStyle(colors, "danger", disabled, "compact") : auraCardStyle(colors, "inset")),
+        alignItems: "stretch",
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        opacity: disabled ? 0.55 : 1,
+        gap: 4,
+      }}
+    >
+      <Text style={[auraTypography.body, { color: danger ? colors.danger : colors.text, fontWeight: "800" }]}>{title}</Text>
+      {subtitle ? <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary, fontSize: 13, lineHeight: 18 }]}>{subtitle}</Text> : null}
+    </Pressable>
+  );
+}
+
 export function AccountScreen() {
-  const { user, loading: profileLoading, saving, accountProfile, setAccountProfile, save } = useAccountProfileState();
+  const { user, loading: profileLoading, accountProfile, setAccountProfile } = useAccountProfileState();
+  const { profile, loading: preferencesLoading } = useProfilePreferencesState();
   const { colors } = useAppTheme();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [workingAction, setWorkingAction] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState<UserAccountProfile>(EMPTY_USER_ACCOUNT_PROFILE);
+  const [snapshotHydrated, setSnapshotHydrated] = useState(false);
+  const providerIds = user?.providerData?.map((provider) => provider.providerId).filter(Boolean) ?? [];
+  const isPasswordUser = providerIds.includes("password");
+  const displayName = accountProfile.name ?? user?.displayName ?? user?.email?.split("@")[0] ?? "AURA member";
+  const photoURL = accountProfile.photoURL ?? user?.photoURL ?? null;
+  const accountChanged =
+    (accountProfile.name ?? "") !== (savedSnapshot.name ?? "") ||
+    (accountProfile.photoURL ?? "") !== (savedSnapshot.photoURL ?? "");
 
-  const onLogout = useCallback(async () => {
+  useEffect(() => {
+    if (!profileLoading && !snapshotHydrated) {
+      setSavedSnapshot(accountProfile);
+      setSnapshotHydrated(true);
+    }
+  }, [accountProfile, profileLoading, snapshotHydrated]);
+
+  const runAction = useCallback(async (label: string, action: () => Promise<void>) => {
     try {
-      setLoggingOut(true);
-      await signOut(auth);
-      router.replace("/(auth)/login");
-    } catch (err: any) {
-      Alert.alert("Logout failed", err?.message ?? "Unable to sign out.");
+      setWorkingAction(label);
+      await action();
+    } catch (error) {
+      Alert.alert(label, getFriendlyErrorMessage(error));
     } finally {
-      setLoggingOut(false);
+      setWorkingAction(null);
     }
   }, []);
 
+  const saveAccount = useCallback(async () => {
+    if (!user?.uid || savingAccount || !accountChanged) return;
+    try {
+      setSavingAccount(true);
+      await saveUserAccountProfile(user.uid, accountProfile);
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, {
+          displayName: accountProfile.name ?? undefined,
+          photoURL: accountProfile.photoURL ?? undefined,
+        });
+      }
+      setSavedSnapshot(accountProfile);
+      Alert.alert("Saved", "Account updated.");
+    } catch {
+      Alert.alert("Save failed", "Unable to save account.");
+    } finally {
+      setSavingAccount(false);
+    }
+  }, [accountChanged, accountProfile, savingAccount, user?.uid]);
+
+  const pickProfilePhoto = useCallback(async () => {
+    if (!user?.uid) {
+      Alert.alert("Account", "Please sign in first.");
+      return;
+    }
+    await runAction("Profile photo", async () => {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Profile photo", "Please allow photo access to choose an avatar.");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.82,
+      });
+      if (result.canceled || !result.assets[0]?.uri) return;
+      const nextPhotoURL = await uploadAccountPhoto(user.uid, result.assets[0].uri);
+      setAccountProfile((prev) => ({ ...prev, photoURL: nextPhotoURL }));
+      await saveUserAccountProfile(user.uid, { ...accountProfile, photoURL: nextPhotoURL });
+      if (auth.currentUser) await updateProfile(auth.currentUser, { photoURL: nextPhotoURL });
+      setSavedSnapshot((prev) => ({ ...prev, photoURL: nextPhotoURL }));
+      Alert.alert("Profile photo", "Avatar updated.");
+    });
+  }, [accountProfile, runAction, setAccountProfile, user?.uid]);
+
+  const onLogout = useCallback(async () => {
+    const uid = auth.currentUser?.uid ?? user?.uid ?? null;
+    try {
+      setLoggingOut(true);
+      await signOutGoogle();
+      if (uid) await Storage.clearUserScopedData(uid);
+      await signOut(auth);
+      router.replace("/(auth)/login");
+    } catch {
+      Alert.alert("Logout failed", "Unable to sign out.");
+    } finally {
+      setLoggingOut(false);
+    }
+  }, [user?.uid]);
+
+  const confirmLogout = useCallback(() => {
+    Alert.alert("Log out?", "You can sign back in any time.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log out", style: "destructive", onPress: () => void onLogout() },
+    ]);
+  }, [onLogout]);
+
+  const sendVerification = useCallback(() => {
+    void runAction("Email verification", async () => {
+      if (!auth.currentUser) throw new Error("Please sign in again first.");
+      await sendEmailVerification(auth.currentUser);
+      Alert.alert("Email sent", "Check your inbox for the verification link.");
+    });
+  }, [runAction]);
+
+  const sendReset = useCallback(() => {
+    void runAction("Reset password", async () => {
+      const email = user?.email;
+      if (!email) throw new Error("No email address is attached to this account.");
+      await sendPasswordResetEmail(auth, email);
+      Alert.alert("Email sent", "Check your inbox for the password reset link.");
+    });
+  }, [runAction, user?.email]);
+
+  const clearMemory = useCallback(() => {
+    Alert.alert(
+      "Clear AURA memory?",
+      "This clears assistant preference-learning data only. Closet items and saved looks will stay untouched.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear memory",
+          style: "destructive",
+          onPress: () => {
+            void runAction("Clear AURA memory", async () => {
+              if (!user?.uid) throw new Error("Please sign in first.");
+              await Promise.all([
+                clearAssistantMemory(user.uid),
+                saveLearnedStyleMemory(user.uid, emptyLearnedStyleMemory(Date.now())),
+              ]);
+              Alert.alert("AURA memory cleared", "Preference-learning memory was reset.");
+            });
+          },
+        },
+      ],
+    );
+  }, [runAction, user?.uid]);
+
+  const exportData = useCallback(() => {
+    void runAction("Export my data", async () => {
+      if (!user?.uid) throw new Error("Please sign in first.");
+      const payload = await buildAccountExport(user.uid, profile, accountProfile);
+      await Share.share({
+        title: "AURA data export",
+        message: JSON.stringify(payload, null, 2),
+      });
+    });
+  }, [accountProfile, profile, runAction, user?.uid]);
+
+  const exportProfileJson = useCallback(() => {
+    void runAction("Download profile JSON", async () => {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        accountProfile,
+        profilePreferences: profile,
+      };
+      await Share.share({
+        title: "AURA profile preferences",
+        message: JSON.stringify(payload, null, 2),
+      });
+    });
+  }, [accountProfile, profile, runAction]);
+
+  const copyUserId = useCallback(() => {
+    if (!user?.uid) return;
+    void Clipboard.setStringAsync(user.uid).then(() => {
+      Alert.alert("Copied", "User ID copied to clipboard.");
+    });
+  }, [user?.uid]);
+
+  const confirmDeleteAccount = useCallback(() => {
+    Alert.alert(
+      "Delete account?",
+      "This permanently deletes your account, closet data, AURA chats, saved looks, and uploaded files.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert("Final confirmation", "Delete your account and data now?", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Delete",
+                style: "destructive",
+                onPress: () => {
+                  void runAction("Delete account", async () => {
+                    const uid = auth.currentUser?.uid ?? user?.uid ?? null;
+                    if (!uid) throw new Error("Please sign in again first.");
+                    const callable = httpsCallable<{ uid: string }, DeleteAccountDataResult>(
+                      getFunctions(app),
+                      "deleteAccountData",
+                    );
+                    await callable({ uid });
+                    await signOutGoogle().catch(() => undefined);
+                    await Storage.clearUserScopedData(uid).catch(() => undefined);
+                    await signOut(auth).catch(() => undefined);
+                    router.replace("/(auth)/welcome");
+                  });
+                },
+              },
+            ]);
+          },
+        },
+      ],
+    );
+  }, [runAction, user?.uid]);
+
   return (
-    <ProfileSectionScreen title="Account" subtitle="Personal details and sign-out" onSave={save} saving={saving}>
-      {profileLoading ? <ActivityIndicator color={colors.accent} /> : (
-        <>
-          <ProfileInputRow
-            label="Name"
-            value={accountProfile.name ?? ""}
-            placeholder="How should AURA address you?"
-            onChangeText={(value) =>
-              setAccountProfile((prev) => ({
-                ...prev,
-                name: value,
-              }))
-            }
-          />
-          <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19 }}>
-            AURA may use your name occasionally in greetings and replies, but it will not overdo it.
-          </Text>
-        </>
-      )}
-      <ProfileValueRow label="Email" value={user?.email ?? "No email found."} />
-      <PrimaryButton label={loggingOut ? "Signing out..." : "Log out"} onPress={onLogout} disabled={loggingOut} />
-    </ProfileSectionScreen>
+    <SafeScreen backgroundColor={colors.background} includeTopInset={false} includeBottomInset={false} style={{ flex: 1 }}>
+      <AuraSubpageHeader
+        title="Account"
+        eyebrow="PROFILE"
+        fallbackRoute="/(tabs)/profile"
+      />
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, gap: 16, paddingBottom: 32 }}>
+
+        {profileLoading || preferencesLoading ? (
+          <View style={{ paddingVertical: 40, alignItems: "center" }}>
+            <ActivityIndicator color={colors.accent} />
+          </View>
+        ) : (
+          <>
+            <AccountSection title="IDENTITY">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+                <Pressable
+                  onPress={pickProfilePhoto}
+                  disabled={workingAction === "Profile photo"}
+                  style={{
+                    width: 76,
+                    height: 76,
+                    borderRadius: 38,
+                    borderWidth: 1,
+                    borderColor: colors.glassBorder,
+                    backgroundColor: colors.surfaceInteractive,
+                    overflow: "hidden",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {photoURL ? (
+                    <Image source={{ uri: photoURL }} style={{ width: 76, height: 76 }} />
+                  ) : (
+                    <Text style={{ color: colors.text, fontSize: 24, fontWeight: "900" }}>
+                      {getAccountInitials(displayName, user?.email)}
+                    </Text>
+                  )}
+                </Pressable>
+                <View style={{ flex: 1, gap: 5 }}>
+                  <Text style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>{displayName}</Text>
+                  <Pressable onPress={pickProfilePhoto} disabled={workingAction === "Profile photo"}>
+                    <Text style={{ color: colors.iridescentStart, fontSize: 13, fontWeight: "900" }}>
+                      {workingAction === "Profile photo" ? "Updating photo..." : "Change profile photo"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+              <ProfileInputRow
+                label="Display name"
+                value={accountProfile.name ?? ""}
+                placeholder="How should AURA address you?"
+                onChangeText={(value) =>
+                  setAccountProfile((prev) => ({
+                    ...prev,
+                    name: value,
+                  }))
+                }
+              />
+              {accountChanged ? (
+                <PrimaryButton
+                  label={savingAccount ? "Saving..." : "Save account changes"}
+                  onPress={saveAccount}
+                  disabled={savingAccount}
+                />
+              ) : null}
+              <ProfileValueRow label="Email" value={user?.email ?? "No email found."} />
+              <ProfileValueRow label="Email status" value={user?.emailVerified ? "Verified" : "Unverified"} />
+              {!user?.emailVerified && user?.email ? (
+                <AccountActionRow
+                  title="Send verification email"
+                  subtitle="Send a fresh verification link to your inbox."
+                  onPress={sendVerification}
+                  disabled={workingAction === "Email verification"}
+                />
+              ) : null}
+              <ProfileValueRow label="Member since" value={user?.metadata?.creationTime ?? "Not available"} />
+            </AccountSection>
+
+            <AccountSection title="SECURITY">
+              <AccountActionRow
+                title="Change password"
+                subtitle={isPasswordUser ? "Send a password reset email to change your password." : "Managed by connected sign-in provider."}
+                onPress={sendReset}
+                disabled={!isPasswordUser || !user?.email || workingAction === "Reset password"}
+              />
+              <AccountActionRow
+                title="Reset password email"
+                subtitle="Send a Firebase password reset email to your current address."
+                onPress={sendReset}
+                disabled={!user?.email || workingAction === "Reset password"}
+              />
+              <ProfileValueRow
+                label="Connected sign-in methods"
+                value={providerIds.length ? providerIds.map(providerName).join(" • ") : "Unknown"}
+              />
+            </AccountSection>
+
+            <AccountSection title="AURA DATA">
+              <AccountActionRow
+                title="Clear AURA memory"
+                subtitle="Reset assistant preference-learning only. Closet and saved looks stay intact."
+                onPress={clearMemory}
+                danger
+                disabled={workingAction === "Clear AURA memory"}
+              />
+              <AccountActionRow
+                title="Export my data"
+                subtitle="Share a lightweight JSON export of profile, closet summaries, looks, and AURA memory."
+                onPress={exportData}
+                disabled={workingAction === "Export my data"}
+              />
+              <AccountActionRow
+                title="Download profile/preferences JSON"
+                subtitle="Share only your account profile and profilePreferences JSON."
+                onPress={exportProfileJson}
+                disabled={workingAction === "Download profile JSON"}
+              />
+            </AccountSection>
+
+            <AccountSection title="ADVANCED">
+              <AccountActionRow
+                title={showAdvanced ? "Hide advanced details" : "Show advanced details"}
+                onPress={() => setShowAdvanced((prev) => !prev)}
+              />
+              {showAdvanced ? (
+                <>
+                  <ProfileValueRow label="User ID" value={user?.uid ?? "Not signed in"} />
+                  {user?.uid ? <AccountActionRow title="Copy User ID" onPress={copyUserId} /> : null}
+                  <ProfileValueRow label="App version/build" value={appVersionLabel()} />
+                </>
+              ) : null}
+            </AccountSection>
+
+            <AccountSection title="DANGER ZONE">
+              <AccountActionRow
+                title={loggingOut ? "Signing out..." : "Log out"}
+                subtitle="End this session on this device."
+                onPress={confirmLogout}
+                disabled={loggingOut}
+                danger
+              />
+              <AccountActionRow
+                title="Delete account"
+                subtitle="Permanently deletes your account data and owned uploads."
+                onPress={confirmDeleteAccount}
+                disabled={workingAction === "Delete account"}
+                danger
+              />
+            </AccountSection>
+          </>
+        )}
+      </ScrollView>
+    </SafeScreen>
   );
 }
 
@@ -430,7 +1008,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Top fit"
             value={profile.fitPreferences.tops ?? ""}
-            options={["slim", "regular", "relaxed", "oversized"]}
+            options={TOP_FIT_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -441,7 +1019,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Outerwear fit"
             value={profile.fitPreferences.outerwear ?? ""}
-            options={["slim", "regular", "roomy"]}
+            options={OUTERWEAR_FIT_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -452,7 +1030,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Bottom rise"
             value={profile.fitPreferences.bottomsRise ?? ""}
-            options={["low", "mid", "high"]}
+            options={BOTTOM_RISE_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -463,7 +1041,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Bottom leg"
             value={profile.fitPreferences.bottomsLeg ?? ""}
-            options={["skinny", "slim", "straight", "tapered", "wide"]}
+            options={BOTTOM_LEG_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -474,7 +1052,7 @@ export function BodyFitScreen() {
           <ProfilePillField
             label="Shoe fit"
             value={profile.fitPreferences.shoes ?? ""}
-            options={["true_to_size", "half_up", "half_down"]}
+            options={SHOE_FIT_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
@@ -508,21 +1086,21 @@ export function DefaultSizesScreen() {
     return DEFAULT_SIZE_FIELDS.find((field) => field.key === activePicker)?.label ?? "";
   }, [activePicker]);
 
-  const pickerOptions = useMemo(() => {
+  const pickerOptions = useMemo<string[]>(() => {
     switch (activePicker) {
       case "top":
       case "outerwear":
       case "hoodie":
       case "formalShirt":
-        return ALPHA_SIZE_OPTIONS;
+        return [...ALPHA_SIZE_OPTIONS];
       case "bottomWaist":
-        return BOTTOM_WAIST_OPTIONS;
+        return [...BOTTOM_WAIST_OPTIONS];
       case "bottomLength":
-        return BOTTOM_LENGTH_OPTIONS;
+        return [...BOTTOM_LENGTH_OPTIONS];
       case "jeans":
         return jeansOptions;
       case "shoes":
-        return SHOE_SIZE_OPTIONS[profile.units.shoeRegion] ?? SHOE_SIZE_OPTIONS.US;
+        return [...(SHOE_SIZE_OPTIONS[profile.units.shoeRegion] ?? SHOE_SIZE_OPTIONS.US)];
       default:
         return [];
     }
@@ -584,7 +1162,7 @@ export function DefaultSizesScreen() {
           ))}
 
           <Modal visible={activePicker != null} transparent animationType="slide" onRequestClose={closePicker}>
-            <View style={{ flex: 1, justifyContent: "flex-end" }}>
+            <View style={auraSheetBackdropStyle(colors)}>
               <Pressable
                 onPress={closePicker}
                 style={{
@@ -593,15 +1171,16 @@ export function DefaultSizesScreen() {
                   right: 0,
                   bottom: 0,
                   left: 0,
-                  backgroundColor: "rgba(0,0,0,0.3)",
                 }}
               />
               <View
                 style={{
                   maxHeight: "78%",
-                  backgroundColor: colors.surface,
+                  ...auraCardStyle(colors, "sheet"),
                   borderTopLeftRadius: 24,
                   borderTopRightRadius: 24,
+                  borderBottomLeftRadius: 0,
+                  borderBottomRightRadius: 0,
                   paddingHorizontal: 16,
                   paddingTop: 16,
                   paddingBottom: 24,
@@ -624,12 +1203,9 @@ export function DefaultSizesScreen() {
                       closePicker();
                     }}
                     style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      borderRadius: 14,
+                      ...auraCardStyle(colors, !activeValue ? "inset" : "card"),
                       paddingHorizontal: 14,
                       paddingVertical: 12,
-                      backgroundColor: !activeValue ? colors.background : colors.surface,
                     }}
                   >
                     <Text style={{ color: colors.text, fontWeight: "700" }}>Not set</Text>
@@ -642,12 +1218,10 @@ export function DefaultSizesScreen() {
                         closePicker();
                       }}
                       style={{
-                        borderWidth: 1,
-                        borderColor: colors.accent,
-                        borderRadius: 14,
+                        ...auraCardStyle(colors, "inset"),
+                        borderColor: colors.purpleBorder,
                         paddingHorizontal: 14,
                         paddingVertical: 12,
-                        backgroundColor: colors.background,
                       }}
                     >
                       <Text style={{ color: colors.text, fontWeight: "700" }}>
@@ -664,12 +1238,10 @@ export function DefaultSizesScreen() {
                         closePicker();
                       }}
                       style={{
-                        borderWidth: 1,
-                        borderColor: activeValue === option ? colors.accent : colors.border,
-                        borderRadius: 14,
+                        ...auraCardStyle(colors, activeValue === option ? "inset" : "card"),
+                        borderColor: activeValue === option ? colors.purpleBorder : colors.border,
                         paddingHorizontal: 14,
                         paddingVertical: 12,
-                        backgroundColor: activeValue === option ? colors.background : colors.surface,
                       }}
                     >
                       <Text style={{ color: colors.text, fontWeight: "700" }}>{option}</Text>
@@ -679,12 +1251,9 @@ export function DefaultSizesScreen() {
                   <Pressable
                     onPress={() => setShowCustomInput((prev) => !prev)}
                     style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      borderRadius: 14,
+                      ...auraCardStyle(colors, "card"),
                       paddingHorizontal: 14,
                       paddingVertical: 12,
-                      backgroundColor: colors.surface,
                     }}
                   >
                     <Text style={{ color: colors.text, fontWeight: "700" }}>Custom…</Text>
@@ -730,11 +1299,13 @@ export function DefaultSizesScreen() {
 export function UnitsRegionScreen() {
   const { profile, setProfile, save, loading, saving } = useProfilePreferencesState();
   const { colors } = useAppTheme();
+  const resolvedCurrency = resolveUserCurrency(profile);
+  const detectedCurrency = profile.detectedCurrency ?? resolvedCurrency;
 
   return (
     <ProfileSectionScreen
       title="Units & Region"
-      subtitle="Measurement labels and size region defaults."
+      subtitle="Measurement labels, size regions, and money display."
       onSave={save}
       saving={saving}
     >
@@ -745,38 +1316,75 @@ export function UnitsRegionScreen() {
           <ProfilePillField
             label="Length"
             value={profile.units.length}
-            options={["cm", "in"]}
+            options={LENGTH_UNIT_OPTIONS}
             onSelect={(value) =>
-              setProfile((prev) => ({ ...prev, units: { ...prev.units, length: value as any } }))
+              setProfile((prev) => ({ ...prev, units: { ...prev.units, length: value } }))
             }
           />
           <ProfilePillField
             label="Weight"
             value={profile.units.weight}
-            options={["kg", "lb"]}
+            options={WEIGHT_UNIT_OPTIONS}
             onSelect={(value) =>
-              setProfile((prev) => ({ ...prev, units: { ...prev.units, weight: value as any } }))
+              setProfile((prev) => ({ ...prev, units: { ...prev.units, weight: value } }))
             }
           />
           <ProfilePillField
             label="Shoe region"
             value={profile.units.shoeRegion}
-            options={["US", "UK", "EU"]}
+            options={SHOE_REGION_OPTIONS}
             onSelect={(value) =>
-              setProfile((prev) => ({ ...prev, units: { ...prev.units, shoeRegion: value as any } }))
+              setProfile((prev) => ({ ...prev, units: { ...prev.units, shoeRegion: value } }))
             }
           />
           <ProfilePillField
             label="Clothing region"
             value={profile.units.clothingRegion}
-            options={["US", "UK", "EU", "INTL"]}
+            options={CLOTHING_REGION_OPTIONS}
             onSelect={(value) =>
               setProfile((prev) => ({
                 ...prev,
-                units: { ...prev.units, clothingRegion: value as any },
+                units: { ...prev.units, clothingRegion: value },
               }))
             }
           />
+          <ProfilePillField
+            label="Currency"
+            value={profile.currencyMode ?? "auto"}
+            options={CURRENCY_MODE_OPTIONS}
+            onSelect={(value) =>
+              setProfile((prev) => ({
+                ...prev,
+                currencyMode: value,
+                preferredCurrency: prev.preferredCurrency ?? resolvedCurrency,
+                detectedCurrency: detectedCurrency,
+              }))
+            }
+            labelFormatter={(value) => (value === "auto" ? "Auto-detect" : "Manual")}
+          />
+          {profile.currencyMode === "manual" ? (
+            <ProfilePillField
+              label="Preferred currency"
+              value={(profile.preferredCurrency ?? resolvedCurrency) as SupportedCurrencyCode}
+              options={CURRENCY_OPTIONS}
+              onSelect={(value) =>
+                setProfile((prev) => ({
+                  ...prev,
+                  currencyMode: "manual",
+                  preferredCurrency: value,
+                  detectedCurrency: detectedCurrency,
+                }))
+              }
+              labelFormatter={(value) =>
+                SUPPORTED_CURRENCIES.find((currency) => currency.code === value)?.label ?? value
+              }
+            />
+          ) : (
+            <ProfileValueRow
+              label="Detected currency"
+              value={`${detectedCurrency} • ${formatMoney(0, detectedCurrency)}`}
+            />
+          )}
         </>
       )}
     </ProfileSectionScreen>
@@ -784,62 +1392,156 @@ export function UnitsRegionScreen() {
 }
 
 export function StylePreferencesScreen() {
-  const { profile, setProfile, save, loading, saving } = useProfilePreferencesState();
+  const { user, profile, loading } = useProfilePreferencesState();
   const { colors } = useAppTheme();
+  const [styleProfile, setStyleProfile] = useState<StyleProfile>(emptyStyleProfile());
+  const [styleProfileLoading, setStyleProfileLoading] = useState(true);
+  const [savingAll, setSavingAll] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.uid) {
+      setStyleProfile(emptyStyleProfile());
+      setStyleProfileLoading(false);
+      return;
+    }
+    setStyleProfileLoading(true);
+    void loadStyleProfile(user.uid)
+      .then((nextProfile) => {
+        if (!cancelled) setStyleProfile(nextProfile);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          Alert.alert("Style profile", "Unable to load style profile.");
+          setStyleProfile(emptyStyleProfile());
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setStyleProfileLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid]);
+
+  const handleSave = useCallback(async () => {
+    if (!user?.uid) {
+      Alert.alert("Profile", "Please sign in first.");
+      return;
+    }
+    try {
+      setSavingAll(true);
+      const normalizedStyleProfile: StyleProfile = {
+        ...styleProfile,
+        styleVibes: parseCommaText(commaText(styleProfile.styleVibes)),
+        preferredFits: parseCommaText(commaText(styleProfile.preferredFits)),
+        favoriteColors: parseCommaText(commaText(styleProfile.favoriteColors)),
+        avoidColors: parseCommaText(commaText(styleProfile.avoidColors)),
+        dressingGoals: parseCommaText(commaText(styleProfile.dressingGoals)),
+        updatedAt: Date.now(),
+      };
+      const nextProfile: UserProfilePreferences = {
+        ...profile,
+        styleAesthetics: normalizedStyleProfile.styleVibes,
+        preferredFit: firstSupportedPreferredFit(normalizedStyleProfile.preferredFits) ?? profile.preferredFit,
+        favoriteColors: normalizedStyleProfile.favoriteColors,
+        avoidedColors: normalizedStyleProfile.avoidColors,
+        goals: normalizedStyleProfile.dressingGoals,
+        stylePreferences: {
+          ...profile.stylePreferences,
+          preferredStyles: normalizedStyleProfile.styleVibes,
+          favoriteColors: normalizedStyleProfile.favoriteColors,
+          avoidedColors: normalizedStyleProfile.avoidColors,
+        },
+      };
+
+      await saveUserProfilePreferences(user.uid, nextProfile);
+      await saveStyleProfile(user.uid, normalizedStyleProfile);
+      Alert.alert("Saved", "Style preferences updated.");
+    } catch {
+      Alert.alert("Save failed", "Unable to save style preferences.");
+    } finally {
+      setSavingAll(false);
+    }
+  }, [profile, styleProfile, user?.uid]);
+
   return (
     <ProfileSectionScreen
       title="Style Preferences"
-      subtitle="Saved now for later. Not yet wired into outfit logic."
-      onSave={save}
-      saving={saving}
+      subtitle="AURA uses these to personalize tone, outfit direction, and how bold to go."
+      onSave={handleSave}
+      saving={savingAll}
     >
-      {loading ? (
+      {loading || styleProfileLoading ? (
         <ActivityIndicator color={colors.accent} />
       ) : (
         <>
           <ProfileInputRow
-            label="Preferred styles"
-            value={commaText(profile.stylePreferences.preferredStyles)}
+            label="Style vibes"
+            value={commaText(styleProfile.styleVibes)}
             onChangeText={(value) =>
-              setProfile((prev) => ({
+              setStyleProfile((prev) => ({
                 ...prev,
-                stylePreferences: { ...prev.stylePreferences, preferredStyles: parseCommaText(value) },
+                styleVibes: parseCommaText(value),
               }))
             }
-            placeholder="casual, streetwear, luxury"
+            placeholder="clean, layered, relaxed"
+          />
+          <ProfileInputRow
+            label="Preferred fits"
+            value={commaText(styleProfile.preferredFits)}
+            onChangeText={(value) =>
+              setStyleProfile((prev) => ({
+                ...prev,
+                preferredFits: parseCommaText(value),
+              }))
+            }
+            placeholder="relaxed, regular"
           />
           <ProfileInputRow
             label="Favorite colors"
-            value={commaText(profile.stylePreferences.favoriteColors)}
+            value={commaText(styleProfile.favoriteColors)}
             onChangeText={(value) =>
-              setProfile((prev) => ({
+              setStyleProfile((prev) => ({
                 ...prev,
-                stylePreferences: { ...prev.stylePreferences, favoriteColors: parseCommaText(value) },
+                favoriteColors: parseCommaText(value),
               }))
             }
-            placeholder="blue, black, olive"
+            placeholder="navy, black, olive"
           />
           <ProfileInputRow
-            label="Avoided colors"
-            value={commaText(profile.stylePreferences.avoidedColors)}
+            label="Avoid colors"
+            value={commaText(styleProfile.avoidColors)}
             onChangeText={(value) =>
-              setProfile((prev) => ({
+              setStyleProfile((prev) => ({
                 ...prev,
-                stylePreferences: { ...prev.stylePreferences, avoidedColors: parseCommaText(value) },
+                avoidColors: parseCommaText(value),
               }))
             }
             placeholder="orange, neon green"
           />
           <ProfileInputRow
-            label="Preferred brands"
-            value={commaText(profile.stylePreferences.preferredBrands)}
+            label="Dressing goals"
+            value={commaText(styleProfile.dressingGoals)}
             onChangeText={(value) =>
-              setProfile((prev) => ({
+              setStyleProfile((prev) => ({
                 ...prev,
-                stylePreferences: { ...prev.stylePreferences, preferredBrands: parseCommaText(value) },
+                dressingGoals: parseCommaText(value),
               }))
             }
-            placeholder="Moncler, Prada, Stussy"
+            placeholder="sharper, easier everyday, more polished"
+          />
+          <ProfilePillField
+            label="Experimentation level"
+            value={styleProfile.experimentationLevel}
+            options={["low", "medium", "high"] as const}
+            onSelect={(value) =>
+              setStyleProfile((prev) => ({
+                ...prev,
+                experimentationLevel: value,
+              }))
+            }
           />
         </>
       )}
@@ -898,13 +1600,275 @@ export function ClosetPreferencesScreen() {
   );
 }
 
+export function ShoppingPreferencesScreen() {
+  const { user, profile, setProfile, loading } = useProfilePreferencesState();
+  const { colors } = useAppTheme();
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: "success" | "error"; message: string } | null>(null);
+
+  const saveShoppingPreferences = useCallback(async () => {
+    if (!user?.uid) {
+      setStatus({ tone: "error", message: "Please sign in before saving shopping preferences." });
+      return;
+    }
+    try {
+      setSaving(true);
+      setStatus(null);
+      await saveUserProfilePreferences(user.uid, profile);
+      setStatus({ tone: "success", message: "Shopping preferences saved." });
+    } catch {
+      setStatus({ tone: "error", message: "Unable to save shopping preferences right now." });
+    } finally {
+      setSaving(false);
+    }
+  }, [profile, user?.uid]);
+
+  return (
+    <ProfileSectionScreen
+      title="Shopping Preferences"
+      subtitle="Used for personalized shopping recommendations."
+      onSave={saveShoppingPreferences}
+      saving={saving || loading}
+    >
+      {loading ? (
+        <ActivityIndicator color={colors.accent} />
+      ) : (
+        <>
+          <View
+            style={{
+              ...auraCardStyle(colors, "inset"),
+              padding: 14,
+              gap: 5,
+            }}
+          >
+            <Text style={[auraTypography.body, { color: colors.text, fontWeight: "800" }]}>
+              These help AURA recommend pieces that work with your closet.
+            </Text>
+            <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>
+              Leave anything blank if it does not matter yet.
+            </Text>
+          </View>
+
+          <ProfileInputRow
+            label="Top sizes"
+            value={profile.defaultSizes.top ?? profile.defaultSizes.tops ?? ""}
+            onChangeText={(value) =>
+              setProfile((prev) => ({
+                ...prev,
+                defaultSizes: {
+                  ...prev.defaultSizes,
+                  top: value.trim() || null,
+                  tops: value.trim() || null,
+                },
+              }))
+            }
+            placeholder="M, L, 15.5"
+          />
+          <ProfileInputRow
+            label="Bottom waist"
+            value={profile.defaultSizes.bottomWaist ?? profile.defaultSizes.bottomsWaist ?? profile.defaultSizes.bottoms ?? ""}
+            onChangeText={(value) =>
+              setProfile((prev) => ({
+                ...prev,
+                defaultSizes: {
+                  ...prev.defaultSizes,
+                  bottomWaist: value.trim() || null,
+                  bottomsWaist: value.trim() || null,
+                  bottoms: value.trim() || null,
+                },
+              }))
+            }
+            placeholder="30, 32, M"
+          />
+          <ProfileInputRow
+            label="Bottom length"
+            value={profile.defaultSizes.bottomLength ?? profile.defaultSizes.bottomsLength ?? ""}
+            onChangeText={(value) =>
+              setProfile((prev) => ({
+                ...prev,
+                defaultSizes: {
+                  ...prev.defaultSizes,
+                  bottomLength: value.trim() || null,
+                  bottomsLength: value.trim() || null,
+                },
+              }))
+            }
+            placeholder="28, 30, 32"
+          />
+          <ProfileInputRow
+            label="Shoe sizes"
+            value={profile.defaultSizes.shoes ?? ""}
+            onChangeText={(value) =>
+              setProfile((prev) => ({
+                ...prev,
+                defaultSizes: { ...prev.defaultSizes, shoes: value.trim() || null },
+              }))
+            }
+            placeholder={`${profile.units.shoeRegion} 8, ${profile.units.shoeRegion} 9.5`}
+          />
+
+          <NullableProfilePillField<BudgetPreference>
+            label="Budget preference"
+            value={profile.budgetPreference ?? null}
+            options={BUDGET_PREFERENCE_OPTIONS}
+            onSelect={(value) =>
+              setProfile((prev) => ({
+                ...prev,
+                budgetPreference: value,
+              }))
+            }
+            labelFormatter={(value) => humanize(value)}
+          />
+          <NullableProfilePillField<SustainabilityPreference>
+            label="Sustainability preference"
+            value={profile.sustainabilityPreference ?? null}
+            options={SUSTAINABILITY_PREFERENCE_OPTIONS}
+            onSelect={(value) =>
+              setProfile((prev) => ({
+                ...prev,
+                sustainabilityPreference: value,
+              }))
+            }
+            labelFormatter={(value) => (value === "new" ? "New" : value === "secondhand" ? "Secondhand" : "Either")}
+          />
+
+          <ProfileInputRow
+            label="Preferred colours"
+            value={commaText(profile.favoriteColors)}
+            onChangeText={(value) => {
+              const next = parseCommaText(value);
+              setProfile((prev) => ({
+                ...prev,
+                favoriteColors: next,
+                stylePreferences: {
+                  ...prev.stylePreferences,
+                  favoriteColors: next,
+                },
+              }));
+            }}
+            placeholder="black, navy, cream"
+          />
+          <ProfileInputRow
+            label="Avoided colours"
+            value={commaText(profile.avoidedColors)}
+            onChangeText={(value) => {
+              const next = parseCommaText(value);
+              setProfile((prev) => ({
+                ...prev,
+                avoidedColors: next,
+                stylePreferences: {
+                  ...prev.stylePreferences,
+                  avoidedColors: next,
+                },
+              }));
+            }}
+            placeholder="orange, neon green"
+          />
+          <ProfileInputRow
+            label="Preferred brands"
+            value={commaText(profile.preferredBrands ?? profile.stylePreferences.preferredBrands)}
+            onChangeText={(value) => {
+              const next = parseCommaText(value);
+              setProfile((prev) => ({
+                ...prev,
+                preferredBrands: next,
+                stylePreferences: {
+                  ...prev.stylePreferences,
+                  preferredBrands: next,
+                },
+              }));
+            }}
+            placeholder="COS, Uniqlo, Nike"
+          />
+          <ProfileInputRow
+            label="Avoided brands"
+            value={commaText(profile.avoidedBrands ?? profile.stylePreferences.avoidedBrands)}
+            onChangeText={(value) => {
+              const next = parseCommaText(value);
+              setProfile((prev) => ({
+                ...prev,
+                avoidedBrands: next,
+                stylePreferences: {
+                  ...prev.stylePreferences,
+                  avoidedBrands: next,
+                },
+              }));
+            }}
+            placeholder="Brands you do not want"
+          />
+          <ProfileInputRow
+            label="Preferred styles"
+            value={commaText(profile.preferredStyles?.length ? profile.preferredStyles : profile.stylePreferences.preferredStyles)}
+            onChangeText={(value) => {
+              const next = parseCommaText(value);
+              setProfile((prev) => ({
+                ...prev,
+                preferredStyles: next,
+                styleAesthetics: next,
+                stylePreferences: {
+                  ...prev.stylePreferences,
+                  preferredStyles: next,
+                },
+              }));
+            }}
+            placeholder="minimal, workwear, streetwear"
+          />
+          <ProfileInputRow
+            label="Avoided materials"
+            value={commaText(profile.avoidedMaterials ?? profile.materialPreferences?.avoided)}
+            onChangeText={(value) => {
+              const next = parseCommaText(value);
+              setProfile((prev) => ({
+                ...prev,
+                avoidedMaterials: next,
+                materialPreferences: {
+                  ...prev.materialPreferences,
+                  avoided: next,
+                },
+              }));
+            }}
+            placeholder="polyester, wool"
+          />
+          <ProfileInputRow
+            label="Shopping goals"
+            value={commaText(profile.shoppingGoals?.length ? profile.shoppingGoals : profile.goals)}
+            onChangeText={(value) => {
+              const next = parseCommaText(value);
+              setProfile((prev) => ({
+                ...prev,
+                shoppingGoals: next,
+                goals: next,
+              }));
+            }}
+            placeholder="work outfits, better basics, travel capsule"
+          />
+
+          {status ? (
+            <Text
+              style={[
+                auraTypography.bodySecondary,
+                {
+                  color: status.tone === "success" ? colors.success : colors.danger,
+                  fontWeight: "700",
+                },
+              ]}
+            >
+              {status.message}
+            </Text>
+          ) : null}
+        </>
+      )}
+    </ProfileSectionScreen>
+  );
+}
+
 export function NotificationsScreen() {
   const { profile, setProfile, save, loading, saving } = useProfilePreferencesState();
   const { colors } = useAppTheme();
   return (
     <ProfileSectionScreen
       title="Notifications"
-      subtitle="Saved now for later. Not yet wired into reminders."
+      subtitle="Notification preferences"
       onSave={save}
       saving={saving}
     >
@@ -912,16 +1876,6 @@ export function NotificationsScreen() {
         <ActivityIndicator color={colors.accent} />
       ) : (
         <>
-          <ProfileBooleanRow
-            label="Laundry reminders"
-            value={!!profile.notifications.laundryReminders}
-            onSet={(value) =>
-              setProfile((prev) => ({
-                ...prev,
-                notifications: { ...prev.notifications, laundryReminders: value },
-              }))
-            }
-          />
           <ProfileBooleanRow
             label="Outfit reminders"
             value={!!profile.notifications.outfitReminders}
@@ -956,8 +1910,8 @@ function ProfileValueRow({ label, value }: { label: string; value: string }) {
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 6 }}>
-      <Text style={{ color: colors.text, fontWeight: "700" }}>{label}</Text>
-      <Text style={{ color: colors.textSecondary }}>{value}</Text>
+      <Text style={[auraTypography.body, { color: colors.text, fontWeight: "700" }]}>{label}</Text>
+      <Text style={[auraTypography.bodySecondary, { color: colors.textSecondary }]}>{value}</Text>
     </View>
   );
 }
@@ -980,7 +1934,7 @@ function ProfileInputRow({
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 6 }}>
-      <Text style={{ color: colors.text, fontWeight: "700" }}>
+      <Text style={[auraTypography.body, { color: colors.text, fontWeight: "700" }]}>
         {label}
         {suffix ? ` (${suffix})` : ""}
       </Text>
@@ -993,11 +1947,11 @@ function ProfileInputRow({
         style={{
           borderWidth: 1,
           borderColor: colors.border,
-          borderRadius: 12,
+          borderRadius: 16,
           paddingHorizontal: 12,
           paddingVertical: 11,
           color: colors.text,
-          backgroundColor: colors.background,
+          backgroundColor: colors.inputBackground,
           fontSize: 16,
         }}
       />
@@ -1019,19 +1973,16 @@ function ProfileSelectorRow({
     <Pressable
       onPress={onPress}
       style={{
-        borderWidth: 1,
-        borderColor: colors.border,
-        borderRadius: 14,
+        ...auraCardStyle(colors, "inset"),
         paddingHorizontal: 14,
         paddingVertical: 13,
-        backgroundColor: colors.background,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         gap: 12,
       }}
     >
-      <Text style={{ color: colors.text, fontWeight: "700", flex: 1 }}>{label}</Text>
+      <Text style={[auraTypography.body, { color: colors.text, fontWeight: "700", flex: 1 }]}>{label}</Text>
       <Text style={{ color: value ? colors.text : colors.textSecondary }}>
         {value || "Not set"}  ›
       </Text>
@@ -1039,7 +1990,7 @@ function ProfileSelectorRow({
   );
 }
 
-function ProfilePillField({
+function ProfilePillField<T extends string>({
   label,
   value,
   options,
@@ -1047,16 +1998,48 @@ function ProfilePillField({
   labelFormatter,
 }: {
   label: string;
-  value: string;
-  options: string[];
-  onSelect: (value: string) => void;
+  value: T | "";
+  options: readonly T[];
+  onSelect: (value: T) => void;
   labelFormatter?: (value: string) => string;
 }) {
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ color: colors.text, fontWeight: "700" }}>{label}</Text>
+      <Text style={[auraTypography.body, { color: colors.text, fontWeight: "700" }]}>{label}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {options.map((option) => (
+          <Pill
+            key={option}
+            label={labelFormatter ? labelFormatter(option) : option}
+            active={value === option}
+            onPress={() => onSelect(option)}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function NullableProfilePillField<T extends string>({
+  label,
+  value,
+  options,
+  onSelect,
+  labelFormatter,
+}: {
+  label: string;
+  value: T | null;
+  options: readonly T[];
+  onSelect: (value: T | null) => void;
+  labelFormatter?: (value: string) => string;
+}) {
+  const { colors } = useAppTheme();
+  return (
+    <View style={{ gap: 8 }}>
+      <Text style={[auraTypography.body, { color: colors.text, fontWeight: "700" }]}>{label}</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        <Pill label="Not set" active={!value} onPress={() => onSelect(null)} />
         {options.map((option) => (
           <Pill
             key={option}
@@ -1082,7 +2065,7 @@ function ProfileBooleanRow({
   const { colors } = useAppTheme();
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ fontWeight: "700", color: colors.text }}>{label}</Text>
+      <Text style={[auraTypography.body, { fontWeight: "700", color: colors.text }]}>{label}</Text>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Pill label="On" active={value} onPress={() => onSet(true)} />
         <Pill label="Off" active={!value} onPress={() => onSet(false)} />
@@ -1102,18 +2085,19 @@ function PrimaryButton({
 }) {
   const { colors } = useAppTheme();
   return (
-    <Pressable
+    <AuraPressable
       onPress={onPress}
       disabled={disabled}
+      haptic="light"
+      hapticTrigger="press"
+      pressedScale={0.98}
+      pressedOpacity={0.88}
+      disabledOpacity={0.6}
       style={{
-        paddingVertical: 14,
-        borderRadius: 12,
-        alignItems: "center",
-        backgroundColor: colors.accent,
-        opacity: disabled ? 0.6 : 1,
+        ...auraButtonStyle(colors, "primary", disabled),
       }}
     >
-      <Text style={{ color: colors.background, fontWeight: "900", fontSize: 16 }}>{label}</Text>
-    </Pressable>
+      <Text style={auraButtonTextStyle(colors, "primary", disabled)}>{label}</Text>
+    </AuraPressable>
   );
 }

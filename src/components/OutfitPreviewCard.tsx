@@ -1,8 +1,12 @@
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import AppImage from "@/src/components/common/AppImage";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { getItemImageUrl } from "../../src/lib/itemImage";
+import { Colors } from "@/constants/theme";
+import { logResolvedItemImageLoadFailure, resolveItemImage } from "../../src/lib/resolveItemImage";
 import { ClothingItem } from "../../src/types/ClothingItem";
+
+const colors = Colors.dark;
 
 type SlotName = "outerwear" | "top" | "bottom" | "shoes";
 
@@ -19,10 +23,20 @@ function slotTitle(item: ClothingItem | null, fallback: string) {
 }
 
 function SlotTile({ label, item }: { label: string; item: ClothingItem | null }) {
-  const uri = item ? getItemImageUrl(item, { variant: "thumb" }) : null;
+  const resolvedImage = item ? resolveItemImage(item, { variant: "thumb", surface: "outfit_card" }) : null;
+  const uri = resolvedImage?.uri ?? null;
   return (
     <View style={styles.tile}>
-      {uri ? <Image source={{ uri }} style={styles.image} resizeMode="contain" /> : <View style={styles.placeholder} />}
+      {uri ? (
+        <AppImage
+          source={{
+            uri,
+          }}
+          style={styles.image}
+          resizeMode="contain"
+          onError={() => (resolvedImage ? logResolvedItemImageLoadFailure(resolvedImage) : undefined)}
+        />
+      ) : <View style={styles.placeholder} />}
       <Text style={styles.slotLabel}>{label}</Text>
       <Text style={styles.slotValue} numberOfLines={1}>
         {slotTitle(item, label)}
@@ -57,11 +71,12 @@ const styles = StyleSheet.create({
   card: {
     padding: 12,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: colors.border,
     borderRadius: 14,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
   },
   title: {
+    color: colors.textPrimary,
     fontSize: 16,
     fontWeight: "800",
     marginBottom: 10,
@@ -74,10 +89,10 @@ const styles = StyleSheet.create({
   tile: {
     width: "47%",
     borderWidth: 1,
-    borderColor: "#ececec",
+    borderColor: colors.borderWarm,
     borderRadius: 12,
     padding: 8,
-    backgroundColor: "#fafafa",
+    backgroundColor: colors.boardLight,
   },
   image: {
     width: "100%",
@@ -87,19 +102,19 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 64,
     borderRadius: 8,
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "rgba(25,0,25,0.06)",
   },
   slotLabel: {
     marginTop: 6,
     fontSize: 11,
-    color: "#666",
+    color: colors.textOnLightSecondary,
     fontWeight: "700",
   },
   slotValue: {
     marginTop: 2,
     fontSize: 13,
     fontWeight: "700",
-    color: "#111",
+    color: colors.textOnLight,
   },
   actions: {
     marginTop: 12,
@@ -110,23 +125,23 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 11,
     borderRadius: 12,
-    backgroundColor: "#111",
+    backgroundColor: colors.ctaCream,
     alignItems: "center",
   },
   primaryBtnText: {
-    color: "#fff",
+    color: colors.ctaText,
     fontWeight: "800",
   },
   secondaryBtn: {
     paddingHorizontal: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#111",
+    borderColor: colors.border,
     justifyContent: "center",
     alignItems: "center",
   },
   secondaryBtnText: {
-    color: "#111",
+    color: colors.textPrimary,
     fontWeight: "800",
   },
 });

@@ -1,23 +1,45 @@
 {
   "expo": {
-    "name": "closet",
-    "slug": "closet",
+    "name": "AURA",
+    "slug": "aura-ai-personal-stylist",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "closet",
+    "icon": "./assets/icon.png",
+    "scheme": "aura",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "icon": "./assets/icon.png",
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.closet",
-      "deploymentTarget": "17.0",
+      "usesAppleSignIn": true,
+      "bundleIdentifier": "com.kasat.aura",
+      "buildNumber": "7",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "We use your location to show local weather in your wardrobe insights.",
-        "NSCalendarsUsageDescription": "We use your calendar to show today’s events in your wardrobe insights."
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "com.googleusercontent.apps.1043970871162-4mbfs4taqvn9b81imga67hg6kn15k644"
+            ]
+          }
+        ],
+        "NSLocationWhenInUseUsageDescription": "AURA uses your approximate location while you use the app to show local weather for outfit planning.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "AURA uses location only while you use the app to show local weather for outfit planning.",
+        "NSLocationAlwaysUsageDescription": "AURA uses location only while you use the app to show local weather for outfit planning.",
+        "NSCalendarsUsageDescription": "We use your calendar to show today's events in your wardrobe insights.",
+        "NSCalendarsFullAccessUsageDescription": "We use your calendar to show today's events in your wardrobe insights.",
+        "NSRemindersUsageDescription": "AURA uses reminders only if calendar access includes them for outfit planning context.",
+        "NSRemindersFullAccessUsageDescription": "AURA uses reminders only if calendar access includes them for outfit planning context.",
+        "NSCameraUsageDescription": "AURA uses your camera so you can add clothing items to your wardrobe.",
+        "NSPhotoLibraryUsageDescription": "AURA uses your photo library so you can select clothing photos for your wardrobe.",
+        "NSPhotoLibraryAddUsageDescription": "AURA may save edited clothing images to your photo library when you choose to.",
+        "NSMicrophoneUsageDescription": "Allow AURA to use your microphone for voice dictation.",
+        "NSSpeechRecognitionUsageDescription": "Allow AURA to turn your speech into chat text."
       }
     },
     "android": {
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -26,7 +48,12 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.closet"
+      "package": "com.kasat.aura",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "output": "static",
@@ -40,7 +67,7 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#000000",
           "dark": {
             "backgroundColor": "#000000"
           }
@@ -53,11 +80,36 @@
             "deploymentTarget": "17.0"
           }
         }
-      ]
+      ],
+      "expo-audio",
+      [
+        "@react-native-voice/voice",
+        {
+          "microphonePermission": "Allow AURA to use your microphone for voice dictation.",
+          "speechRecognitionPermission": "Allow AURA to turn your speech into chat text."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "AURA uses your photo library so you can select clothing photos for your wardrobe.",
+          "cameraPermission": "AURA uses your camera so you can add clothing items to your wardrobe."
+        }
+      ],
+      "@react-native-google-signin/google-signin",
+      "expo-apple-authentication",
+      "expo-asset",
+      "@sentry/react-native"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a5ab8afd-5c1a-4ec6-9218-b835a9c43d0d"
+      }
     }
   }
 }

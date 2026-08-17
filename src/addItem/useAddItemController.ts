@@ -1,4 +1,3 @@
-import { doc, getDoc } from "firebase/firestore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createStyles } from "./styles";
@@ -14,30 +13,42 @@ import {
   SEASON_OPTIONS,
   SIZE_OPTIONS,
   DEFAULT_COLORS,
+  type AddItemMode,
+  buildUsefulItemName,
   makeCreateSessionId,
   norm,
   normColor,
+  titleCaseLabel,
 } from "./controllerShared";
 import { useItemDraft } from "./hooks/useItemDraft";
 import { useItemExtraction } from "./hooks/useItemExtraction";
 import { usePhotoStep } from "./hooks/usePhotoStep";
 import { useAuth } from "../hooks/useAuth";
 import { useAppTheme } from "../hooks/useAppTheme";
-import { db } from "../lib/firebase";
 import { getDefaultSizeForSelection, loadUserProfilePreferences } from "../lib/userProfile";
-import { SUB_CATEGORIES } from "../shared/wardrobeTaxonomy";
+import { resolveUserCurrency } from "../lib/currency";
+import { getCachedProfilePreferences } from "../lib/localCache";
+import { SUB_CATEGORIES, type Category } from "../shared/wardrobeTaxonomy";
 import type { UserProfilePreferences } from "../types/UserProfilePreferences";
 
 export function useAddItemController({
+  mode,
   editItemId,
+  duplicateItemId,
+  initialCategory,
+  formSessionKey,
 }: {
+  mode: AddItemMode;
   editItemId: string | null;
+  duplicateItemId?: string | null;
+  initialCategory?: Category | null;
+  formSessionKey: string;
 }) {
   const { user } = useAuth();
   const { colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const uid = user?.uid ?? null;
-  const isEdit = !!editItemId;
+  const isEdit = mode === "edit" && !!editItemId;
 
   const [createSessionId, setCreateSessionId] = useState(() => makeCreateSessionId());
   const [profilePreferences, setProfilePreferences] = useState<UserProfilePreferences | null>(null);
@@ -67,6 +78,17 @@ export function useAddItemController({
     createSessionRef.current.sessionId = createSessionId;
   }
 
+  const previousFormSessionKeyRef = useRef(formSessionKey);
+  useEffect(() => {
+    if (previousFormSessionKeyRef.current === formSessionKey) return;
+    previousFormSessionKeyRef.current = formSessionKey;
+    createSessionRef.current.requestId += 1;
+    createSessionRef.current.draftId = null;
+    const nextSessionId = makeCreateSessionId();
+    createSessionRef.current.sessionId = nextSessionId;
+    setCreateSessionId(nextSessionId);
+  }, [formSessionKey]);
+
   const beginAsyncRequest = useCallback(() => {
     createSessionRef.current.requestId += 1;
     return {
@@ -88,9 +110,17 @@ export function useAddItemController({
       setProfilePreferences(null);
       return;
     }
-    void loadUserProfilePreferences(uid).then((profile) => {
-      if (!cancelled) setProfilePreferences(profile);
+    setProfilePreferences(null);
+    void getCachedProfilePreferences(uid).then((cached) => {
+      if (!cancelled && cached?.data) setProfilePreferences(cached.data);
     });
+    void loadUserProfilePreferences(uid)
+      .then((profile) => {
+        if (!cancelled) setProfilePreferences(profile);
+      })
+      .catch(() => {
+        if (!cancelled) setProfilePreferences(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -98,8 +128,12 @@ export function useAddItemController({
 
   const draft = useItemDraft({
     uid,
+    mode,
     editItemId,
+    duplicateItemId: duplicateItemId ?? null,
     isEdit,
+    initialCategory: initialCategory ?? null,
+    formSessionKey,
     photoRef,
     extractionRef,
     resetCreateFlowRef,
@@ -137,6 +171,7 @@ export function useAddItemController({
         photo.state.photoUrl ||
         photo.state.photoUri ||
         photo.state.refiningCutout ||
+        photo.state.productPolishStatus !== "idle" ||
         draft.state.loading ||
         photo.state.uploadingPhoto
     );
@@ -149,6 +184,7 @@ export function useAddItemController({
     photo.state.pendingPhotoUri,
     photo.state.photoUri,
     photo.state.photoUrl,
+    photo.state.productPolishStatus,
     photo.state.refiningCutout,
     photo.state.serverCleanedUrl,
     photo.state.uploadingPhoto,
@@ -168,6 +204,25 @@ export function useAddItemController({
       profilePreferences,
     ],
   );
+  const profileCurrency = useMemo(
+    () => resolveUserCurrency(profilePreferences),
+    [profilePreferences],
+  );
+
+  useEffect(() => {
+    if (isEdit) return;
+    if (draft.refs.userEditedKeysRef.current.has("price")) return;
+    if (draft.state.priceAmount) return;
+    if (draft.state.priceCurrency === profileCurrency) return;
+    draft.actions.setPriceCurrency(profileCurrency);
+  }, [
+    draft.actions,
+    draft.refs.userEditedKeysRef,
+    draft.state.priceAmount,
+    draft.state.priceCurrency,
+    isEdit,
+    profileCurrency,
+  ]);
 
   useEffect(() => {
     if (isEdit) return;
@@ -202,14 +257,13 @@ export function useAddItemController({
     profileDefaultSize,
   ]);
 
-  const resetCreateFlow = useCallback(
+  const resetFormSession = useCallback(
     async (
       reason: string,
       options?: {
         deleteActiveDraft?: boolean;
       }
     ) => {
-      if (isEdit) return;
       if (__DEV__) {
         console.log("[AddItemLifecycle] resetCreateFlow:start", {
           reason,
@@ -236,7 +290,20 @@ export function useAddItemController({
         });
       }
     },
-    [draft.actions, extraction.actions, extraction.state.draftItemId, isEdit, photo.actions]
+    [draft.actions, extraction.actions, extraction.state.draftItemId, photo.actions]
+  );
+
+  const resetCreateFlow = useCallback(
+    async (
+      reason: string,
+      options?: {
+        deleteActiveDraft?: boolean;
+      }
+    ) => {
+      if (isEdit) return;
+      await resetFormSession(reason, options);
+    },
+    [isEdit, resetFormSession]
   );
   resetCreateFlowRef.current = resetCreateFlow;
 
@@ -249,46 +316,13 @@ export function useAddItemController({
     draft.actions.setShowAttributeSheet(null);
 
     if (nowEdit) return;
-    if (!hasActiveCreateState && prevEdit && !nowEdit) {
-      void resetCreateFlow("focus-create-after-edit");
-      return;
-    }
-
-    const existingDraftId = createSessionRef.current.draftId ?? extraction.state.draftItemId;
-    if (existingDraftId && uid) {
-      createSessionRef.current.draftId = existingDraftId;
-      const sessionId = createSessionRef.current.sessionId;
-      void getDoc(doc(db, "users", uid, "items", existingDraftId)).then((snap) => {
-        if (createSessionRef.current.sessionId !== sessionId) return;
-        if (!snap.exists()) {
-          createSessionRef.current.draftId = null;
-          extraction.actions.resetDraftTracking?.();
-          return;
-        }
-        const data = snap.data() as any;
-        if (data?.isDraft !== true) {
-          // Prevent finalized items from being re-hydrated into add-item as an active draft.
-          createSessionRef.current.draftId = null;
-          extraction.actions.resetDraftTracking?.();
-          return;
-        }
-        extraction.actions.maybeApplyAutofillFromDraft(data);
-        extraction.actions.attachDraftSubscription(
-          existingDraftId,
-          sessionId,
-          extraction.refs.aiRunIdRef.current
-        );
-      });
+    if (prevEdit && !nowEdit) {
+      void resetFormSession("focus-create-after-edit", { deleteActiveDraft: false });
     }
   }, [
     draft.actions,
     editItemId,
-    extraction.actions,
-    extraction.refs.aiRunIdRef,
-    extraction.state.draftItemId,
-    hasActiveCreateState,
-    resetCreateFlow,
-    uid,
+    resetFormSession,
   ]);
 
   const onScreenBlur = useCallback(() => {
@@ -308,6 +342,7 @@ export function useAddItemController({
       !!draft.state.pattern ||
       !!draft.state.material ||
       !!draft.state.size ||
+      !!draft.state.sourceUrl ||
       !!draft.state.notes;
     if (isDirty && !extraction.refs.isFinalizingRef.current) {
       void draft.actions.syncDraftProgress();
@@ -330,6 +365,7 @@ export function useAddItemController({
   const hasPhoto = useMemo(
     () =>
       !!(
+        photo.state.selectedPhotos?.length ||
         photo.state.pendingCleanedPhotoUri ||
         photo.state.pendingPhotoUri ||
         photo.state.photoUri ||
@@ -339,6 +375,7 @@ export function useAddItemController({
       ),
     [
       photo.state.cleanedPhotoUrl,
+      photo.state.selectedPhotos,
       photo.state.pendingCleanedPhotoUri,
       photo.state.pendingPhotoUri,
       photo.state.photoUri,
@@ -366,11 +403,12 @@ export function useAddItemController({
   );
   const fallbackPreviewUri = useMemo(
     () =>
+      photo.derived.activePhotoUri ??
       photo.state.pendingPhotoUri ??
       photo.state.photoUrl ??
       photo.state.photoUri ??
       null,
-    [photo.state.pendingPhotoUri, photo.state.photoUri, photo.state.photoUrl]
+    [photo.derived.activePhotoUri, photo.state.pendingPhotoUri, photo.state.photoUri, photo.state.photoUrl]
   );
   const normalizedPreviewUri = useMemo(
     () => photo.state.pendingNormalizedPreviewUri ?? null,
@@ -477,8 +515,15 @@ export function useAddItemController({
   }, [draft.actions, draft.state.fit, draft.state.occasionTags, draft.state.seasonTags, extraction.state.aiFit, extraction.state.aiOccasionTags, extraction.state.aiSeasonTags]);
 
   const aiStatusRows = useMemo(() => {
+    if (extraction.state.extractionPartialSuccess) {
+      return [
+        "Detected most details — review before saving.",
+        aiHasCategory ? "✓ Category detected" : "⚠️ Category missing",
+        aiHasColors ? "✓ Colors detected" : "⚠️ Colors missing",
+      ];
+    }
     if (extraction.state.aiStatus === "error" || extraction.state.ingestionStatus === "failed") {
-      return ["⚠️ AI failed — you can fill manually"];
+      return ["Couldn’t detect details — you can fill them manually"];
     }
     if (
       extraction.state.aiStatus === "running" ||
@@ -511,30 +556,75 @@ export function useAddItemController({
       ];
     }
     return [];
-  }, [aiHasCategory, aiHasColors, extraction.state.aiMaterial, extraction.state.aiPattern, extraction.state.aiStage, extraction.state.aiStatus, extraction.state.ingestionStatus]);
+  }, [aiHasCategory, aiHasColors, extraction.state.aiMaterial, extraction.state.aiPattern, extraction.state.aiStage, extraction.state.aiStatus, extraction.state.extractionPartialSuccess, extraction.state.ingestionStatus]);
+
+  const detectedItemSummary = useMemo(() => {
+    const brand = norm(draft.state.brand) || norm(photo.state.detectedBrand ?? "");
+    const itemName =
+      norm(draft.state.name) ||
+      buildUsefulItemName({
+        displayColor: draft.state.displayColor,
+        colors: draft.state.selectedColors,
+        material: draft.state.material ?? extraction.state.aiMaterial,
+        fit: draft.state.fit ?? extraction.state.aiFit,
+        subCategory: draft.state.subCategory,
+        category: draft.state.category ?? draft.derived.selectedCategory,
+      });
+    const summary = [brand, itemName].filter(Boolean).join(" • ");
+    return summary || titleCaseLabel(draft.state.category ?? draft.derived.selectedCategory);
+  }, [
+    draft.derived.selectedCategory,
+    draft.state.brand,
+    draft.state.category,
+    draft.state.displayColor,
+    draft.state.fit,
+    draft.state.material,
+    draft.state.name,
+    draft.state.selectedColors,
+    draft.state.subCategory,
+    extraction.state.aiFit,
+    extraction.state.aiMaterial,
+    photo.state.detectedBrand,
+  ]);
 
   const aiStatusPill = useMemo(() => {
+    if (extraction.state.extractionPartialSuccess) {
+      return { label: "Detected most details — review before saving.", tone: "ready" as const };
+    }
     if (extraction.state.aiStatus === "error" || extraction.state.ingestionStatus === "failed") {
-      return { label: "AI failed — fill manually", tone: "error" as const };
+      return { label: "Couldn’t detect details — you can fill them manually", tone: "error" as const };
     }
     if (
       extraction.state.aiStatus === "running" ||
       extraction.state.ingestionStatus === "pending" ||
       extraction.state.ingestionStatus === "processing"
     ) {
-      return { label: "AI filling details…", tone: "running" as const };
+      return { label: "Reading brand, color, fabric…", tone: "running" as const };
+    }
+    if (
+      (extraction.state.aiStatus === "ready" || extraction.state.ingestionStatus === "done") &&
+      extraction.state.aiColorNeedsReview
+    ) {
+      return { label: "Needs color confirmation", tone: "warning" as const };
     }
     if (
       (extraction.state.aiStatus === "ready" || extraction.state.ingestionStatus === "done") &&
       aiSuggestions.length > 0
     ) {
-      return { label: "AI suggestions ready", tone: "ready" as const };
+      return { label: `Detected: ${detectedItemSummary}`, tone: "ready" as const };
     }
     if (extraction.state.aiStatus === "ready" || extraction.state.ingestionStatus === "done") {
-      return { label: "AI ready", tone: "ready" as const };
+      return { label: `Detected: ${detectedItemSummary}`, tone: "ready" as const };
     }
-    return { label: "AI idle", tone: "idle" as const };
-  }, [aiSuggestions.length, extraction.state.aiStatus, extraction.state.ingestionStatus]);
+    return { label: "AURA will autofill details after upload", tone: "idle" as const };
+  }, [
+    aiSuggestions.length,
+    detectedItemSummary,
+    extraction.state.aiColorNeedsReview,
+    extraction.state.aiStatus,
+    extraction.state.extractionPartialSuccess,
+    extraction.state.ingestionStatus,
+  ]);
 
   const canApplyAiSuggestions =
     extraction.state.ingestionStatus === "done" && aiSuggestions.length > 0;
@@ -557,7 +647,17 @@ export function useAddItemController({
   const ctaStatusText = photo.state.uploadError
     ? "Upload failed. Retry below."
     : photo.state.uploadingPhoto
-      ? "Uploading photo…"
+        ? "Uploading photo…"
+      : photo.state.productPolishStatus === "analyzing"
+        ? "Analyzing photo…"
+      : photo.state.productPolishStatus === "polishing"
+        ? "Improving product photo…"
+      : photo.state.productPolishStatus === "cutout"
+        ? "Creating clean cutout…"
+      : photo.state.studioSourceWarning === "Background removal failed, but you can still continue with the polished image."
+        ? "Cleaned image ready; cutout failed"
+      : photo.state.studioSourceWarning
+        ? "Photo ready with fallback"
       : photo.state.refiningCutout ||
           extraction.state.isAutofillRunning ||
           (extraction.state.draftItemId &&
@@ -610,6 +710,7 @@ export function useAddItemController({
   const state = {
     uid,
     editItemId,
+    mode,
     isEdit,
     ...draft.state,
     ...photo.state,
@@ -659,6 +760,7 @@ export function useAddItemController({
     aiSuggestions,
     aiStatusRows,
     aiStatusPill,
+    detectedItemSummary,
     canApplyAiSuggestions,
     hasRequiredPhoto,
     canSave,
@@ -666,6 +768,7 @@ export function useAddItemController({
     rowKeys,
     touched,
     isDirty:
+      (photo.state.selectedPhotos?.length ?? 0) > 0 ||
       !!photo.state.pendingPhotoUri ||
       !!draft.state.brand ||
       !!draft.state.name ||
@@ -675,6 +778,7 @@ export function useAddItemController({
       !!draft.state.pattern ||
       !!draft.state.material ||
       !!draft.state.size ||
+      !!draft.state.sourceUrl ||
       !!draft.state.notes,
   };
 
@@ -687,6 +791,7 @@ export function useAddItemController({
     onScreenFocus,
     onScreenBlur,
     resetCreateFlow,
+    resetFormSession,
   };
 
   return { state, derived, actions, styles };
