@@ -29,7 +29,7 @@
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-          <string>com.googleusercontent.apps.1043970871162-6ap96ennmcs0r0rmld05d2j4gs1o5o5p</string>
+        <string>com.googleusercontent.apps.1043970871162-4mbfs4taqvn9b81imga67hg6kn15k644</string>
         </array>
       </dict>
       <dict>
@@ -40,7 +40,7 @@
       </dict>
     </array>
     <key>CFBundleVersion</key>
-    <string>6</string>
+    <string>7</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
     <key>LSMinimumSystemVersion</key>
